@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#39d353"/>
+      <stop offset="100%" stop-color="#006d32"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#006d32"/>
+      <stop offset="100%" stop-color="#39d353"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#0e4429"/>
+      <stop offset="100%" stop-color="#26a641"/>
+    </linearGradient>
+    <linearGradient id="bar3" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#2ea043"/>
+      <stop offset="100%" stop-color="#56d364"/>
+    </linearGradient>
+    <linearGradient id="bar4" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#238636"/>
+      <stop offset="100%" stop-color="#3fb950"/>
+    </linearGradient>
+    <linearGradient id="bar5" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#1a7f37"/>
+      <stop offset="100%" stop-color="#2ea043"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softglow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Subtle grid pattern -->
+  <g opacity="0.06">
+    <line x1="0" y1="128" x2="512" y2="128" stroke="#39d353" stroke-width="0.5"/>
+    <line x1="0" y1="256" x2="512" y2="256" stroke="#39d353" stroke-width="0.5"/>
+    <line x1="0" y1="384" x2="512" y2="384" stroke="#39d353" stroke-width="0.5"/>
+    <line x1="128" y1="0" x2="128" y2="512" stroke="#39d353" stroke-width="0.5"/>
+    <line x1="256" y1="0" x2="256" y2="512" stroke="#39d353" stroke-width="0.5"/>
+    <line x1="384" y1="0" x2="384" y2="512" stroke="#39d353" stroke-width="0.5"/>
+  </g>
+
+  <!-- Outer ring (meter gauge) -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#21262d" stroke-width="8"/>
+  <circle cx="256" cy="256" r="200" fill="none" stroke="url(#accent)" stroke-width="8"
+          stroke-dasharray="880" stroke-dashoffset="220" stroke-linecap="round"
+          transform="rotate(-135 256 256)" filter="url(#glow)" opacity="0.8"/>
+
+  <!-- Tick marks around the gauge -->
+  <g transform="rotate(-135 256 256)" opacity="0.3">
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(27 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(54 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(81 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(108 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(135 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(162 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(189 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(216 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(243 256 256)"/>
+    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(270 256 256)"/>
+  </g>
+
+  <!-- Bar chart (5 bars) — centered inside the ring -->
+  <g transform="translate(148, 180)">
+    <!-- Bar backgrounds -->
+    <rect x="20"  y="0"   width="40" height="200" rx="4" fill="#21262d"/>
+    <rect x="76"  y="40"  width="40" height="160" rx="4" fill="#21262d"/>
+    <rect x="132" y="80"  width="40" height="120" rx="4" fill="#21262d"/>
+    <rect x="188" y="20"  width="40" height="180" rx="4" fill="#21262d"/>
+    <rect x="244" y="100" width="40" height="100" rx="4" fill="#21262d"/>
+
+    <!-- Colored bars -->
+    <rect x="20"  y="50"  width="40" height="150" rx="4" fill="url(#bar1)" filter="url(#softglow)"/>
+    <rect x="76"  y="70"  width="40" height="130" rx="4" fill="url(#bar2)" filter="url(#softglow)"/>
+    <rect x="132" y="110" width="40" height="90"  rx="4" fill="url(#bar3)" filter="url(#softglow)"/>
+    <rect x="188" y="60"  width="40" height="140" rx="4" fill="url(#bar4)" filter="url(#softglow)"/>
+    <rect x="244" y="120" width="40" height="80"  rx="4" fill="url(#bar5)" filter="url(#softglow)"/>
+
+    <!-- Bar top highlights -->
+    <rect x="20"  y="50"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+    <rect x="76"  y="70"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+    <rect x="132" y="110" width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+    <rect x="188" y="60"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+    <rect x="244" y="120" width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+  </g>
+
+  <!-- Sparkline overlay (bottom area) -->
+  <polyline points="148,420 178,408 208,415 238,395 268,400 298,385 328,390 358,375"
+            fill="none" stroke="#39d353" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round" opacity="0.4" filter="url(#softglow)"/>
+  <polyline points="148,420 178,408 208,415 238,395 268,400 298,385 328,390 358,375 358,420 148,420"
+            fill="#39d353" opacity="0.05"/>
+
+  <!-- "T" token symbol — top left accent -->
+  <g transform="translate(72, 72)" opacity="0.15">
+    <rect x="0" y="0" width="48" height="8" rx="4" fill="#39d353"/>
+    <rect x="18" y="0" width="12" height="40" rx="4" fill="#39d353"/>
+  </g>
+
+  <!-- Dot accents (data points) -->
+  <circle cx="378" cy="130" r="4" fill="#39d353" opacity="0.5" filter="url(#softglow)"/>
+  <circle cx="400" cy="118" r="3" fill="#26a641" opacity="0.4"/>
+  <circle cx="390" cy="145" r="2.5" fill="#56d364" opacity="0.3"/>
+</svg>
