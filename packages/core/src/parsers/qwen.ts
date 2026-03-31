@@ -1,0 +1,61 @@
+/**
+ * @tokmeter/core — Qwen CLI session parser.
+ *
+ * Reads from ~/.qwen/projects/{PROJECT_PATH}/chats/{CHAT_ID}.jsonl
+ */
+
+import type { TokenRecord, SessionParser } from "../types.js";
+import {
+  expandHome,
+  findFiles,
+  readJsonlFile,
+  createRecord,
+  extractProjectFromPath,
+} from "./utils.js";
+
+interface QwenMessage {
+  type?: string;
+  model?: string;
+  timestamp?: string;
+  sessionId?: string;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
+}
+
+export class QwenParser implements SessionParser {
+  readonly providerId = "qwen" as const;
+
+  async scan(homeDir: string): Promise<TokenRecord[]> {
+    const projectsDir = expandHome("~/.qwen/projects", homeDir);
+    const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 3);
+    const records: TokenRecord[] = [];
+
+    for (const file of files) {
+      const project = extractProjectFromPath(file);
+      const lines = await readJsonlFile<QwenMessage>(file);
+
+      for (const msg of lines) {
+        if (!msg.usageMetadata) continue;
+
+        records.push(
+          createRecord({
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            provider: "qwen",
+            model: msg.model || "qwen",
+            project,
+            sourceFile: file,
+            inputTokens: msg.usageMetadata.promptTokenCount ?? 0,
+            outputTokens: msg.usageMetadata.candidatesTokenCount ?? 0,
+            reasoningTokens: msg.usageMetadata.thoughtsTokenCount ?? 0,
+            cacheReadTokens: msg.usageMetadata.cachedContentTokenCount ?? 0,
+          }),
+        );
+      }
+    }
+    return records;
+  }
+}

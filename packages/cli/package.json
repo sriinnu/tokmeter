@@ -1,0 +1,26 @@
+{
+  "name": "@tokmeter/cli",
+  "version": "0.1.0",
+  "description": "Token usage tracking CLI — table and JSON output",
+  "type": "module",
+  "bin": {
+    "tokmeter": "dist/cli.js"
+  },
+  "main": "dist/cli.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "@tokmeter/core": "workspace:*",
+    "cli-table3": "^0.6.5",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/cli-table3": "^0.6.0",
+    "typescript": "^5.7.0"
+  }
+}
