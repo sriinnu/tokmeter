@@ -1,0 +1,25 @@
+{
+  "name": "@tokmeter/tui",
+  "version": "0.1.0",
+  "description": "Token usage tracking TUI — interactive terminal UI with charts",
+  "type": "module",
+  "bin": {
+    "tokmeter-tui": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "bun src/index.tsx"
+  },
+  "dependencies": {
+    "@tokmeter/core": "workspace:*",
+    "ink": "^5.0.0",
+    "react": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "typescript": "^5.7.0"
+  }
+}
