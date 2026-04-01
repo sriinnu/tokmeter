@@ -11,6 +11,11 @@
  *   drishti help         Show usage instructions
  */
 
+// Force chalk to output ANSI colors even when stdout is not a TTY.
+// The statusline runs as a subprocess hook (stdout → Claude Code, not a terminal),
+// so chalk's auto-detection strips colors. FORCE_COLOR makes them always emit.
+process.env.FORCE_COLOR = "3";
+
 import { C } from "./formatter.js";
 
 const command = process.argv[2] ?? "live";
@@ -57,7 +62,7 @@ function printHelp(): void {
   const a = C.accent;
 
   console.log(`
-${t("दृष्टि  @tokmeter/drishti")} ${d("— token observatory for AI coding agents")}
+${t("【♾️】 दृष्टि  @tokmeter/drishti")} ${d("— token observatory for AI coding agents")}
 
 ${b("USAGE")}
   ${a("drishti")} ${d("[command]")}

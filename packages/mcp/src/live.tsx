@@ -12,43 +12,19 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Box, Text, useInput, useApp, render } from "ink";
 import { LiveTracker, type Snapshot } from "./tracker.js";
+import {
+  formatNumber as fmtNum,
+  formatCost as fmtCost,
+  formatBar as barStr,
+  sparkline,
+} from "./formatter.js";
 import type {
   ModelSummary,
   ProviderSummary,
   DailyEntry,
 } from "@tokmeter/core";
 
-// ─── Formatting Helpers ──────────────────────────────────────────
-
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function fmtCost(n: number): string {
-  if (n >= 100) return `$${n.toFixed(0)}`;
-  if (n >= 10) return `$${n.toFixed(1)}`;
-  return `$${n.toFixed(2)}`;
-}
-
-function barStr(value: number, max: number, width: number): string {
-  if (max <= 0) return "░".repeat(width);
-  const filled = Math.round((value / max) * width);
-  const clamped = Math.min(filled, width);
-  return "█".repeat(clamped) + "░".repeat(width - clamped);
-}
-
-function sparkline(values: number[]): string {
-  const chars = "▁▂▃▄▅▆▇█";
-  if (values.length === 0) return "";
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const range = max - min || 1;
-  return values
-    .map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))])
-    .join("");
-}
+// ─── Formatting Helpers (only TUI-specific ones) ────────────────
 
 function timeAgo(ts: number): string {
   const diff = Math.floor((Date.now() - ts) / 1000);
@@ -97,7 +73,7 @@ function Header({ tab, lastUpdated }: { tab: TabId; lastUpdated: number }) {
       <Box justifyContent="space-between">
         <Text>
           <Text color="magenta" bold>
-            {"दृष्टि DRISHTI"}
+            {"【♾️】 DRISHTI"}
           </Text>
           <Text color="gray">{" · Live Token Observatory"}</Text>
         </Text>
@@ -317,28 +293,12 @@ function SparklineRow({ daily }: { daily: DailyEntry[] }) {
 // ─── Overview Tab ────────────────────────────────────────────────
 
 function OverviewTab({ snapshot }: { snapshot: Snapshot }) {
-  const { stats, models, providers, daily } = snapshot;
+  const { stats, models, providers, daily, sessionTokens } = snapshot;
 
-  const sessionInput = snapshot.sessionRecords.reduce(
-    (s, r) => s + r.inputTokens,
-    0,
-  );
-  const sessionOutput = snapshot.sessionRecords.reduce(
-    (s, r) => s + r.outputTokens,
-    0,
-  );
-  const sessionCacheRead = snapshot.sessionRecords.reduce(
-    (s, r) => s + r.cacheReadTokens,
-    0,
-  );
-  const sessionCacheWrite = snapshot.sessionRecords.reduce(
-    (s, r) => s + r.cacheWriteTokens,
-    0,
-  );
-  const sessionReasoning = snapshot.sessionRecords.reduce(
-    (s, r) => s + r.reasoningTokens,
-    0,
-  );
+  // Use precomputed token breakdown from tracker — avoids O(n) per frame
+  const { inputTokens: sessionInput, outputTokens: sessionOutput,
+    cacheReadTokens: sessionCacheRead, cacheWriteTokens: sessionCacheWrite,
+    reasoningTokens: sessionReasoning } = sessionTokens;
 
   const todayRecords = daily.length > 0 ? daily[daily.length - 1] : null;
   const maxCost = models.length > 0 ? models[0].cost : 1;
@@ -614,7 +574,7 @@ function LoadingScreen() {
       paddingY={2}
     >
       <Text bold color="magenta">
-        {"दृष्टि DRISHTI"}
+        {"【♾️】 DRISHTI"}
       </Text>
       <Text color="gray">{"Live Token Observatory"}</Text>
       <Box marginTop={1}>

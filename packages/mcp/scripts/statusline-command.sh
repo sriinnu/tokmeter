@@ -117,7 +117,7 @@ if [ -d "$tokmeter_dir" ]; then
   cache_file="/tmp/drishti-today-cost.txt"
   cache_age=0
   if [ -f "$cache_file" ]; then
-    cache_age=$(( $(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
+    cache_age=$(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
   fi
   # Refresh every 30s in background
   if [ ! -f "$cache_file" ] || [ "$cache_age" -gt 30 ]; then
@@ -137,7 +137,7 @@ block_section=""
 block_cache="/tmp/drishti-block.json"
 block_cache_age=0
 if [ -f "$block_cache" ]; then
-  block_cache_age=$(( $(date +%s) - $(stat -f %m "$block_cache" 2>/dev/null || echo 0) ))
+  block_cache_age=$(( $(date +%s) - $(stat -c %Y "$block_cache" 2>/dev/null || stat -f %m "$block_cache" 2>/dev/null || echo 0) ))
 fi
 # Refresh block calc every 60s in background
 if [ ! -f "$block_cache" ] || [ "$block_cache_age" -gt 60 ]; then

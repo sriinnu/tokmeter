@@ -4,6 +4,10 @@
  * Polls TokmeterCore at a configurable interval and emits "update"
  * events whenever the record set changes. Computes session-level
  * metrics such as burn rate and tokens per minute.
+ *
+ * The tracker maintains a {@link Snapshot} that includes precomputed
+ * token aggregations for both session and all-today records, avoiding
+ * expensive O(n) reduces in hot render paths like the TUI.
  */
 
 import { EventEmitter } from "node:events";
@@ -16,6 +20,16 @@ import {
 } from "@tokmeter/core";
 
 // ─── Types ──────────────────────────────────────────────────────────
+
+/** Precomputed token breakdown — avoids per-frame reduces in consumers. */
+export interface TokenBreakdown {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+}
 
 /** Aggregated stats computed from the current record set. */
 export interface Stats {
@@ -46,6 +60,8 @@ export interface Snapshot {
   sessionRecords: TokenRecord[];
   sessionCost: number;
   todayCost: number;
+  /** Precomputed token breakdown for session records. */
+  sessionTokens: TokenBreakdown;
   /** Dollars per hour (based on session elapsed time). */
   burnRate: number;
   /** Total tokens per minute (based on session elapsed time). */
@@ -62,15 +78,69 @@ export interface LiveTrackerOptions {
   sessionId?: string;
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Compute a token breakdown from an array of records in a single pass.
+ * Used to precompute aggregations so consumers don't need per-frame reduces.
+ */
+function computeTokenBreakdown(records: TokenRecord[]): TokenBreakdown {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
+
+  for (const r of records) {
+    inputTokens += r.inputTokens;
+    outputTokens += r.outputTokens;
+    cacheReadTokens += r.cacheReadTokens;
+    cacheWriteTokens += r.cacheWriteTokens;
+    reasoningTokens += r.reasoningTokens;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens,
+  };
+}
+
+/**
+ * Compute a lightweight hash of the record set for change detection.
+ * Considers both count and cost totals so we emit updates when
+ * costs are recalculated even if the record count stays the same.
+ */
+function snapshotHash(records: TokenRecord[]): string {
+  let costSum = 0;
+  let tokenSum = 0;
+  for (const r of records) {
+    costSum += r.cost;
+    tokenSum += r.inputTokens + r.outputTokens;
+  }
+  return `${records.length}:${costSum.toFixed(6)}:${tokenSum}`;
+}
+
 // ─── LiveTracker ────────────────────────────────────────────────────
 
+/**
+ * Polls TokmeterCore and emits "update" events when the data changes.
+ *
+ * Emits:
+ * - `"update"` — when records change (count, cost, or token totals)
+ * - `"error"` — when a refresh cycle fails
+ */
 export class LiveTracker extends EventEmitter {
   private core: TokmeterCore;
   private timer: ReturnType<typeof setInterval> | null = null;
   private refreshMs: number;
   private sessionId: string | undefined;
   private startedAt: number;
-  private lastRecordCount = -1;
+  /** Hash of the last emitted snapshot — used for change detection. */
+  private lastHash = "";
   private _snapshot: Snapshot | null = null;
 
   constructor(options?: LiveTrackerOptions) {
@@ -107,7 +177,13 @@ export class LiveTracker extends EventEmitter {
     this.sessionId = id;
   }
 
-  /** Perform a single refresh cycle — scan, compute, and (maybe) emit. */
+  /**
+   * Perform a single refresh cycle — scan, compute, and (maybe) emit.
+   *
+   * Emits "update" when the data hash changes (record count, cost totals,
+   * or token totals differ from the last emission). This ensures consumers
+   * see updates even when record count stays the same but costs change.
+   */
   async refresh(): Promise<Snapshot> {
     const records = await this.core.scan({ today: true });
     const stats = this.core.getStats() as Stats;
@@ -120,24 +196,16 @@ export class LiveTracker extends EventEmitter {
     const sessionCost = sessionRecords.reduce((sum, r) => sum + r.cost, 0);
     const todayCost = records.reduce((sum, r) => sum + r.cost, 0);
 
+    // Precomputed token breakdown — avoids O(n) per render frame
+    const sessionTokens = computeTokenBreakdown(sessionRecords);
+
     // Elapsed time for rate calculations
     const elapsedMs = Date.now() - this.startedAt;
     const elapsedHours = elapsedMs / 3_600_000;
     const elapsedMinutes = elapsedMs / 60_000;
 
-    const sessionTokens = sessionRecords.reduce(
-      (sum, r) =>
-        sum +
-        r.inputTokens +
-        r.outputTokens +
-        r.cacheReadTokens +
-        r.cacheWriteTokens +
-        r.reasoningTokens,
-      0,
-    );
-
     const burnRate = elapsedHours > 0 ? sessionCost / elapsedHours : 0;
-    const tokensPerMin = elapsedMinutes > 0 ? sessionTokens / elapsedMinutes : 0;
+    const tokensPerMin = elapsedMinutes > 0 ? sessionTokens.totalTokens / elapsedMinutes : 0;
 
     const snapshot: Snapshot = {
       records,
@@ -148,6 +216,7 @@ export class LiveTracker extends EventEmitter {
       sessionRecords,
       sessionCost,
       todayCost,
+      sessionTokens,
       burnRate,
       tokensPerMin,
       lastUpdated: Date.now(),
@@ -155,18 +224,23 @@ export class LiveTracker extends EventEmitter {
 
     this._snapshot = snapshot;
 
-    // Emit "update" only when the record count changes
-    if (records.length !== this.lastRecordCount) {
-      this.lastRecordCount = records.length;
+    // Emit "update" when data actually changes (count, cost, or tokens)
+    const hash = snapshotHash(records);
+    if (hash !== this.lastHash) {
+      this.lastHash = hash;
       this.emit("update", snapshot);
     }
 
     return snapshot;
   }
 
-  /** Filter records that belong to the current session. */
+  /**
+   * Filter records that belong to the current session.
+   *
+   * Attempts to match by sessionId against sourceFile paths first.
+   * Falls back to timestamp-based filtering (records since tracker started).
+   */
   private computeSessionRecords(records: TokenRecord[]): TokenRecord[] {
-    // If a sessionId is set, try to match against sourceFile paths
     if (this.sessionId) {
       const matched = records.filter(
         (r) => r.sourceFile?.includes(this.sessionId!) ?? false,
