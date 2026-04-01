@@ -25,7 +25,7 @@
       "name": "@tokmeter/core",
       "version": "0.1.0",
       "dependencies": {
-        "kosha-discovery": "^0.4.0",
+        "@sriinnu/kosha-discovery": "^0.6.0",
       },
       "devDependencies": {
         "@types/node": "^25.5.0",
@@ -282,6 +282,8 @@
     "@rollup/rollup-win32-x64-gnu": ["@rollup/rollup-win32-x64-gnu@4.60.1", "", { "os": "win32", "cpu": "x64" }, "sha512-k+600V9Zl1CM7eZxJgMyTUzmrmhB/0XZnF4pRypKAlAgxmedUA+1v9R+XOFv56W4SlHEzfeMtzujLJD22Uz5zg=="],
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.60.1", "", { "os": "win32", "cpu": "x64" }, "sha512-lWMnixq/QzxyhTV6NjQJ4SFo1J6PvOX8vUx5Wb4bBPsEb+8xZ89Bz6kOXpfXj9ak9AHTQVQzlgzBEc1SyM27xQ=="],
+
+    "@sriinnu/kosha-discovery": ["@sriinnu/kosha-discovery@0.6.0", "", { "dependencies": { "@hono/node-server": "^1.19.10", "hono": "^4.12.9" }, "bin": { "kosha": "dist/cli.js" } }, "sha512-KR9eZpXyhwTrkgh53AiX+4eRde2v+/EyiLySpk4N6SmzjYYeygyV42kPBapRxT+/lEJaV9BqLRytUP+o/zeJ1g=="],
 
     "@tokmeter/cli": ["@tokmeter/cli@workspace:packages/cli"],
 
@@ -816,8 +818,6 @@
     "kdbush": ["kdbush@4.0.2", "", {}, "sha512-WbCVYJ27Sz8zi9Q7Q0xHC+05iwkm3Znipc2XTlrnJbsHMYktW4hPhXUE8Ys1engBrvffoSCqbil1JQAa7clRpA=="],
 
     "kind-of": ["kind-of@6.0.3", "", {}, "sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw=="],
-
-    "kosha-discovery": ["kosha-discovery@0.4.1", "", { "dependencies": { "@hono/node-server": "^1.13.0", "hono": "^4.7.0" }, "bin": { "kosha": "dist/cli.js" } }, "sha512-k+4RIzBMneWGZ0ruDMWXNH2AUzsMbLtaYU3sZiM+vjyRfg5GmuV57VG/vwtnav0hRdvaxNPBgQgE31a80zjVwA=="],
 
     "loader-runner": ["loader-runner@4.3.1", "", {}, "sha512-IWqP2SCPhyVFTBtRcgMHdzlf9ul25NwaFx4wCEH/KjAXuuHY4yNjvPXsBokp8jCB936PyWRaPKUNh8NvylLp2Q=="],
 

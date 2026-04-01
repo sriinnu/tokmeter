@@ -8,13 +8,14 @@
 export { createServer, startServer } from "./server.js";
 export { runStatusline } from "./statusline.js";
 export { startLive } from "./live.js";
-export { LiveTracker, type Snapshot } from "./tracker.js";
+export { LiveTracker, type Snapshot, type TokenBreakdown } from "./tracker.js";
 export {
   formatNumber,
   formatCost,
   formatPercent,
   formatBar,
   formatBurnRate,
+  formatDuration,
   sparkline,
   C,
 } from "./formatter.js";

@@ -26,11 +26,67 @@ import {
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-/** Get a fresh core instance with data scanned according to options. */
+/** Cached core instance with TTL to avoid rescanning on every tool call. */
+let _cachedCore: TokmeterCore | null = null;
+let _cachedRecords: TokenRecord[] = [];
+let _cacheTimestamp = 0;
+let _cacheOptionsKey = "";
+const CORE_CACHE_TTL_MS = 5_000; // 5 seconds
+
+/** Metadata from the last scan — surfaced in tool outputs for transparency. */
+interface ScanMeta {
+  recordCount: number;
+  /** Number of records where pricing was unavailable (cost === 0 despite having tokens). */
+  unpricedRecords: number;
+  /** Model IDs that had no pricing data. */
+  unpricedModels: string[];
+  /** Milliseconds the scan took. */
+  scanDurationMs: number;
+}
+let _lastScanMeta: ScanMeta = { recordCount: 0, unpricedRecords: 0, unpricedModels: [], scanDurationMs: 0 };
+
+function optionsKey(options?: ScanOptions): string {
+  return JSON.stringify(options ?? {});
+}
+
+/** Get a core instance, reusing cached data if recent and same options. */
 async function getCore(options?: ScanOptions): Promise<TokmeterCore> {
+  const key = optionsKey(options);
+  const now = Date.now();
+  if (_cachedCore && key === _cacheOptionsKey && now - _cacheTimestamp < CORE_CACHE_TTL_MS) {
+    return _cachedCore;
+  }
+  const scanStart = Date.now();
   const core = new TokmeterCore();
-  await core.scan(options);
+  const records = await core.scan(options);
+  const scanDuration = Date.now() - scanStart;
+
+  // Compute scan metadata for transparency
+  const hasTokens = (r: TokenRecord) => r.inputTokens + r.outputTokens > 0;
+  const unpriced = records.filter((r) => r.cost === 0 && hasTokens(r));
+  const unpricedModels = [...new Set(unpriced.map((r) => r.model))];
+  _lastScanMeta = {
+    recordCount: records.length,
+    unpricedRecords: unpriced.length,
+    unpricedModels,
+    scanDurationMs: scanDuration,
+  };
+
+  _cachedCore = core;
+  _cachedRecords = records;
+  _cacheTimestamp = now;
+  _cacheOptionsKey = key;
   return core;
+}
+
+/** Build a transparency footer for tool outputs. */
+function scanFooter(): string {
+  const m = _lastScanMeta;
+  const parts = [`📊 ${m.recordCount} records scanned in ${m.scanDurationMs}ms`];
+  if (m.unpricedRecords > 0) {
+    parts.push(`⚠️  ${m.unpricedRecords} records missing pricing (models: ${m.unpricedModels.join(", ")})`);
+  }
+  return "\n" + separator() + "\n" + parts.join("\n");
 }
 
 /** Build ScanOptions from the common scope/filter params many tools accept. */
@@ -56,9 +112,13 @@ function buildScanOptions(params: {
 }
 
 // ── Formatting ──────────────────────────────────────────────
+// These formatters are MCP-server-specific (plain text, no chalk colors).
+// The shared chalk-colored formatters live in formatter.ts.
 
+/** Unicode block characters for sparkline rendering. */
 const SPARKLINE_CHARS = "▁▂▃▄▅▆▇█";
 
+/** Render a sparkline from an array of numeric values. */
 function sparkline(values: number[]): string {
   if (values.length === 0) return "";
   const max = Math.max(...values);
@@ -69,6 +129,7 @@ function sparkline(values: number[]): string {
     .join("");
 }
 
+/** Format a USD cost with adaptive precision: $0.0012, $0.123, $4.56. */
 function fmtCost(n: number): string {
   if (n === 0) return "$0.00";
   if (n < 0.01) return `$${n.toFixed(4)}`;
@@ -76,6 +137,7 @@ function fmtCost(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+/** Format a number compactly: 1.2B, 45.3M, 890K, 1,234. */
 function fmtNum(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -83,20 +145,24 @@ function fmtNum(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/** Format a percentage to one decimal place. */
 function fmtPct(n: number): string {
   return `${n.toFixed(1)}%`;
 }
 
+/** Format a timestamp as YYYY-MM-DD, or "—" for invalid/missing values. */
 function fmtDate(ts: number): string {
   if (!ts || ts === Infinity || ts === -Infinity) return "—";
   return new Date(ts).toISOString().slice(0, 10);
 }
 
+/** Format a timestamp as YYYY-MM-DD HH:MM:SS, or "—" for invalid/missing values. */
 function fmtDatetime(ts: number): string {
   if (!ts || ts === Infinity || ts === -Infinity) return "—";
   return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
 }
 
+/** Render a filled/empty progress bar: ████░░░░ */
 function progressBar(value: number, max: number, width: number = 20): string {
   const ratio = max > 0 ? Math.min(value / max, 1) : 0;
   const filled = Math.round(ratio * width);
@@ -104,20 +170,30 @@ function progressBar(value: number, max: number, width: number = 20): string {
   return "█".repeat(filled) + "░".repeat(empty);
 }
 
+/** Render a shaded bar chart segment: ▓▓▓▓░░░░ */
 function barChart(value: number, max: number, width: number = 25): string {
   const ratio = max > 0 ? Math.min(value / max, 1) : 0;
   const filled = Math.round(ratio * width);
   return "▓".repeat(filled) + "░".repeat(width - filled);
 }
 
+/** Render a दृष्टि section header with double-line borders. */
 function header(title: string): string {
-  return `\n═══════════════════════════════════════════════════════\n  दृष्टि ${title}\n═══════════════════════════════════════════════════════`;
+  return `\n═══════════════════════════════════════════════════════\n  【♾️】 ${title}\n═══════════════════════════════════════════════════════`;
 }
 
+/** Render a horizontal separator line. */
 function separator(): string {
   return "───────────────────────────────────────────────────────";
 }
 
+/**
+ * Format a table with auto-sized columns and optional right-alignment.
+ *
+ * @param headers - Column header labels.
+ * @param rows - 2D array of cell values.
+ * @param alignRight - Per-column right-alignment flags (default: left-align).
+ */
 function formatTable(headers: string[], rows: string[][], alignRight?: boolean[]): string {
   if (rows.length === 0) return "  (no data)";
 
@@ -143,6 +219,7 @@ function formatTable(headers: string[], rows: string[][], alignRight?: boolean[]
   return `${headerLine}\n${divider}\n${body}`;
 }
 
+/** Convert a scope enum value to a human-readable label for display. */
 function scopeLabel(scope?: string): string {
   if (scope === "today") return "Today";
   if (scope === "week") return "Last 7 Days";
@@ -150,6 +227,7 @@ function scopeLabel(scope?: string): string {
   return "All Time";
 }
 
+/** Render a "no data" message when a tool finds zero records for the given scope. */
 function noDataMessage(scope?: string): string {
   return `${header("NO DATA")}\n\n  No token usage records found for scope: ${scopeLabel(scope)}.\n  Make sure you have used an AI coding agent that tokmeter supports.\n`;
 }
@@ -185,11 +263,21 @@ const UntilDate = z
 // Server & Tools
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Create and configure the दृष्टि MCP server with all 16 tools.
+ *
+ * Each tool call uses {@link getCore} which caches the TokmeterCore instance
+ * for 5 seconds to avoid rescanning the filesystem on rapid successive calls.
+ * Every tool output includes a transparency footer showing record count,
+ * scan duration, and warnings for models with missing pricing.
+ *
+ * @returns Configured McpServer ready to be connected to a transport.
+ */
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "drishti",
     version: "0.1.0",
-    description: "दृष्टि — Token usage observatory for AI coding agents",
+    description: "∞ — Token usage observatory for AI coding agents",
   });
 
   // ────────────────────────────────────────────
@@ -244,7 +332,7 @@ export function createServer(): McpServer {
         "",
       ];
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -298,7 +386,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -344,7 +432,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -399,7 +487,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -460,7 +548,7 @@ export function createServer(): McpServer {
       );
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -551,7 +639,7 @@ export function createServer(): McpServer {
         "",
       ];
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -642,7 +730,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -789,7 +877,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -943,7 +1031,7 @@ export function createServer(): McpServer {
         const daily = core.getDailyBreakdown({ project: params.project });
 
         const md: string[] = [
-          `# दृष्टि Token Usage Report`,
+          `# 【♾️】 Token Usage Report`,
           "",
           `**Scope:** ${scopeLabel(params.scope)}${params.project ? ` | **Project:** ${params.project}` : ""}`,
           `**Generated:** ${new Date().toISOString().slice(0, 19)}`,
@@ -1121,7 +1209,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -1243,7 +1331,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -1426,7 +1514,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -1545,7 +1633,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -1723,7 +1811,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -1867,7 +1955,7 @@ export function createServer(): McpServer {
         "",
       );
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
@@ -2052,7 +2140,7 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     },
   );
 
