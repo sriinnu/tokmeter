@@ -128,12 +128,11 @@ export async function runStatusline(): Promise<void> {
 
   const header: string[] = [C.title("【♾️】")];
   if (projectName) {
-    let projectStr = C.accent(projectName);
+    header.push(C.accent(`📂${projectName}`));
     if (git) {
-      projectStr += " " + C.dim(`(${git.branch})`);
-      if (git.dirty > 0) projectStr += " " + C.warn(`*${git.dirty}`);
+      header.push(C.chevron("❯") + " " + C.input(`🌿${git.branch}`));
+      if (git.dirty > 0) header.push(C.warn(`✎${git.dirty}`));
     }
-    header.push(projectStr);
   }
   parts.push(header.join(" "));
 
