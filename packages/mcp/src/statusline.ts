@@ -152,11 +152,33 @@ function shortModelName(id: string | undefined): string {
 }
 
 async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk as Buffer);
+  // If stdin is a TTY (manual run), return empty immediately
+  if (process.stdin.isTTY) {
+    return "";
   }
-  return Buffer.concat(chunks).toString("utf-8");
+
+  // Otherwise, read from stdin with a timeout
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    }, 100); // 100ms timeout
+
+    process.stdin.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
+    process.stdin.on("end", () => {
+      clearTimeout(timeout);
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    });
+
+    // Handle case where stdin is available but no events fire
+    if (process.stdin.readableEnded) {
+      clearTimeout(timeout);
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    }
+  });
 }
 
 function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
