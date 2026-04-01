@@ -5,14 +5,9 @@
  * with live cost, token flow, context usage, and burn rate, and writes
  * it to stdout. Designed to run as a Claude Code statusline hook.
  *
- * Config in ~/.claude/settings.json:
- *   "hooks": {
- *     "StatusLine": [{ "command": "drishti statusline" }]
- *   }
+ * ## Display Layout (inspired by pi-mono's elegant statusline)
  *
- * ## Display Layout
- *
- * दृ │ ⚡$1.23 │ opus-4-6 │ ↑12.3K ↓8.1K ◆2.4K │ ███░░░░░░░ 25% │ 🔥$36.9/hr │ today:$4.56 (↑45K ↓32K)
+ * 【♾️】 › myproject (main) *3 › ○ sonnet-4-6 › ⚡$5.97 › ↑42K ↓18K ⟳12K › ▮ 3%/200k › 🔥$4.55/hr › today $37.8 › opus $33 · sonnet $4.5
  *
  * ## Cost Sources
  *
@@ -24,7 +19,7 @@
 
 import { execSync } from "node:child_process";
 import { TokmeterCore } from "@tokmeter/core";
-import { C, formatCost, formatNumber, formatBar } from "./formatter.js";
+import { C, formatCost, formatNumber } from "./formatter.js";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -38,7 +33,6 @@ interface StatuslineInput {
   version?: string;
   cost?: { total_cost_usd?: number; total_duration_ms?: number };
   context_window?: { total_input_tokens?: number; context_window_size?: number };
-  /** Token counts for the current turn / session (if provided by Claude Code). */
   token_counts?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -49,12 +43,7 @@ interface StatuslineInput {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-/**
- * Strip "claude-" prefix and trailing date suffix (e.g. "-20250514")
- * from a model identifier to produce a shorter display name.
- *
- * @example shortModelName("claude-sonnet-4-20250514") → "sonnet-4"
- */
+/** Strip "claude-" prefix and trailing date suffix from a model ID. */
 function shortModelName(id: string | undefined): string {
   if (!id) return "unknown";
   let name = id;
@@ -72,21 +61,49 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+/**
+ * Get git info for a directory: branch name and dirty file count.
+ * Returns { branch, dirty } or null if not a git repo.
+ */
+function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd, timeout: 2000, stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    let dirty = 0;
+    try {
+      const status = execSync("git status --porcelain", {
+        cwd, timeout: 2000, stdio: ["ignore", "pipe", "ignore"],
+      }).toString().trim();
+      if (status) dirty = status.split("\n").length;
+    } catch { /* ignore */ }
+    return { branch, dirty };
+  } catch {
+    return null;
+  }
+}
+
+/** Format context window compactly: "▮ 11.5%/200k" */
+function formatContext(used: number, max: number): string {
+  if (max <= 0) return "";
+  const pct = (used / max) * 100;
+  const maxStr = formatNumber(max);
+
+  // Color based on utilisation
+  let barColor: (s: string) => string;
+  if (pct > 80) barColor = C.danger;
+  else if (pct > 50) barColor = C.warn;
+  else barColor = C.accent;
+
+  // Mini bar — 8 chars, filled portion colored
+  const width = 8;
+  const filled = Math.round((pct / 100) * width);
+  const bar = barColor("▮".repeat(filled)) + C.muted("▯".repeat(width - filled));
+  return `${bar} ${barColor(`${pct.toFixed(pct >= 10 ? 0 : 1)}%`)}${C.dim(`/${maxStr}`)}`;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────
 
-/**
- * Run the statusline handler.
- *
- * Reads Claude Code session JSON from stdin, computes a detailed status
- * line, and writes it to stdout. Shows:
- *
- * 1. Session cost
- * 2. Short model name
- * 3. Token flow: ↑input ↓output ⟳cache ◆reasoning
- * 4. Context window bar (color-coded)
- * 5. Burn rate $/hr (after 1+ min)
- * 6. Today's total cost + token totals from all agents
- */
 export async function runStatusline(): Promise<void> {
   let input: StatuslineInput;
 
@@ -99,38 +116,36 @@ export async function runStatusline(): Promise<void> {
   }
 
   const parts: string[] = [];
-  /** Per-model breakdown segment — appended inline to line 1 if multiple models. */
   let modelSegment = "";
 
-  // ── Logo + Project name + Git branch ──
+  // ── chevron separator ──
+  const sep = C.muted(" › ");
+
+  // ── Logo + Project + Git ──
   const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
   const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
-  let gitBranch = "";
-  if (projectDir) {
-    try {
-      gitBranch = execSync("git rev-parse --abbrev-ref HEAD", {
-        cwd: projectDir,
-        timeout: 2000,
-        stdio: ["ignore", "pipe", "ignore"],
-      }).toString().trim();
-    } catch {
-      // not a git repo or git not available
+  const git = projectDir ? getGitInfo(projectDir) : null;
+
+  const header: string[] = [C.title("【♾️】")];
+  if (projectName) {
+    let projectStr = C.accent(projectName);
+    if (git) {
+      projectStr += " " + C.dim(`(${git.branch})`);
+      if (git.dirty > 0) projectStr += " " + C.warn(`*${git.dirty}`);
     }
+    header.push(projectStr);
   }
-  const nameSegments: string[] = [C.title("【♾️】")];
-  if (projectName) nameSegments.push(C.accent(projectName));
-  if (gitBranch) nameSegments.push(C.dim(`(${gitBranch})`));
-  parts.push(nameSegments.join(" "));
+  parts.push(header.join(" "));
+
+  // ── Model ──
+  const modelId = input.model?.id ?? input.model?.display_name;
+  parts.push(C.think(`○ ${shortModelName(modelId)}`));
 
   // ── Session cost ──
   const sessionCost = input.cost?.total_cost_usd ?? 0;
   parts.push(C.cost(`⚡${formatCost(sessionCost)}`));
 
-  // ── Model — accented so it pops ──
-  const modelId = input.model?.id ?? input.model?.display_name;
-  parts.push(C.think(shortModelName(modelId)));
-
-  // ── Session token flow ──
+  // ── Token flow ──
   const tc = input.token_counts;
   if (tc) {
     const tokenParts: string[] = [];
@@ -141,26 +156,11 @@ export async function runStatusline(): Promise<void> {
     if (tokenParts.length > 0) parts.push(tokenParts.join(" "));
   }
 
-  // ── Context window bar — filled blocks colored, empty blocks muted ──
-  // Splits the bar into filled + empty so each gets its own color.
+  // ── Context window — compact "▮▮▮▯▯▯▯▯ 3%/200k" ──
   const ctxUsed = input.context_window?.total_input_tokens ?? 0;
   const ctxMax = input.context_window?.context_window_size ?? 0;
-  if (ctxMax > 0) {
-    const pct = (ctxUsed / ctxMax) * 100;
-    const width = 10;
-    const filled = Math.round((pct / 100) * width);
-    const empty = width - filled;
-
-    // Color the filled blocks based on utilisation
-    let fillColor: (s: string) => string;
-    let pctColor: (s: string) => string;
-    if (pct > 80) { fillColor = C.danger; pctColor = C.danger; }
-    else if (pct > 50) { fillColor = C.warn; pctColor = C.warn; }
-    else { fillColor = C.accent; pctColor = C.success; }
-
-    const bar = fillColor("█".repeat(filled)) + C.muted("░".repeat(empty));
-    parts.push(`${bar} ${pctColor(`${Math.round(pct)}%`)}`);
-  }
+  const ctxStr = formatContext(ctxUsed, ctxMax);
+  if (ctxStr) parts.push(ctxStr);
 
   // ── Burn rate (after 1+ min) ──
   const durationMs = input.cost?.total_duration_ms ?? 0;
@@ -169,10 +169,7 @@ export async function runStatusline(): Promise<void> {
     parts.push(C.warn(`🔥${formatCost(costPerHour)}/hr`));
   }
 
-  // ── Today's totals from all agents (disk scan) ──
-  // Itemized per model so switching between e.g. opus and sonnet is transparent.
-  // Each record is already priced at its own model's rate — the total is correct,
-  // but without the breakdown you can't tell which model drove which cost.
+  // ── Today's totals from all agents ──
   try {
     const core = new TokmeterCore();
     const todayRecords = await core.scan({ today: true });
@@ -181,16 +178,13 @@ export async function runStatusline(): Promise<void> {
       let todayIn = 0;
       let todayOut = 0;
       let todayCache = 0;
-      let todayReasoning = 0;
 
-      // Accumulate per-model cost + tokens in a single pass
       const byModel = new Map<string, { cost: number; in: number; out: number }>();
       for (const r of todayRecords) {
         todayCost += r.cost;
         todayIn += r.inputTokens;
         todayOut += r.outputTokens;
         todayCache += r.cacheReadTokens + r.cacheWriteTokens;
-        todayReasoning += r.reasoningTokens;
 
         const shortModel = r.model
           .replace(/^claude-/, "")
@@ -203,36 +197,31 @@ export async function runStatusline(): Promise<void> {
         byModel.set(shortModel, entry);
       }
 
-      // Total cost + token breakdown
-      const todayParts: string[] = [C.accent(`today:${formatCost(todayCost)}`)];
-      const tokenDetail: string[] = [];
-      if (todayIn > 0) tokenDetail.push(C.input(`↑${formatNumber(todayIn)}`));
-      if (todayOut > 0) tokenDetail.push(C.output(`↓${formatNumber(todayOut)}`));
-      if (todayCache > 0) tokenDetail.push(C.cache(`⟳${formatNumber(todayCache)}`));
-      if (todayReasoning > 0) tokenDetail.push(C.think(`◆${formatNumber(todayReasoning)}`));
-      if (tokenDetail.length > 0) todayParts.push(`(${tokenDetail.join(" ")})`);
-      parts.push(todayParts.join(" "));
+      // Today summary — compact
+      const todayTokens: string[] = [];
+      if (todayIn > 0) todayTokens.push(C.input(`↑${formatNumber(todayIn)}`));
+      if (todayOut > 0) todayTokens.push(C.output(`↓${formatNumber(todayOut)}`));
+      if (todayCache > 0) todayTokens.push(C.cache(`⟳${formatNumber(todayCache)}`));
+      const todayStr = C.accent(`today ${formatCost(todayCost)}`) +
+        (todayTokens.length > 0 ? " " + todayTokens.join(" ") : "");
+      parts.push(todayStr);
 
-      // Per-model itemization — only shown if more than one model used today,
-      // and only if the model has actual tokens (filter synthetic/zero entries).
+      // Per-model breakdown
       const activeModels = [...byModel.entries()]
-        .filter(([, m]) => m.in + m.out > 0)   // skip zero-token noise like <synthetic>
-        .sort((a, b) => b[1].cost - a[1].cost); // highest cost first
+        .filter(([, m]) => m.in + m.out > 0)
+        .sort((a, b) => b[1].cost - a[1].cost);
 
       if (activeModels.length > 1) {
-        const modelItems = activeModels.map(([model, m]) =>
-          `${C.think(model)} ${C.cost(formatCost(m.cost))} ${C.input(`↑${formatNumber(m.in)}`)} ${C.output(`↓${formatNumber(m.out)}`)}`
-        );
-        modelSegment = modelItems.join(C.separator(" · "));
+        modelSegment = activeModels
+          .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
+          .join(C.muted(" · "));
       }
     }
   } catch {
     // Don't break the statusline for a scan failure
   }
 
-  // ── Output — single line, model breakdown appended inline after today's cost ──
-  // We never force a newline — Claude Code wraps naturally based on terminal width.
-  const sep = C.separator(" │ ");
+  // ── Output ──
   if (modelSegment) parts.push(modelSegment);
   process.stdout.write(parts.join(sep));
 }
