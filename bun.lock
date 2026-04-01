@@ -17,6 +17,7 @@
       },
       "dependencies": {
         "@tokmeter/core": "workspace:*",
+        "@tokmeter/drishti": "workspace:*",
         "chalk": "^5.3.0",
         "cli-table3": "^0.6.5",
       },

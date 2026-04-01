@@ -23,8 +23,9 @@ import Table from "cli-table3";
 interface CliArgs extends ScanOptions {
   json: boolean;
   light: boolean;
-  command?: "models" | "daily" | "projects" | "pricing" | "tui" | "serve" | "stats";
+  command?: "models" | "daily" | "projects" | "pricing" | "tui" | "serve" | "stats" | "live" | "statusline" | "daemon" | "install-statusline" | "install-mcp" | "uninstall-statusline" | "uninstall-mcp" | "editors";
   pricingModel?: string;
+  daemonCmd?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -132,42 +133,56 @@ function parseArgs(argv: string[]): CliArgs {
 Usage: tokmeter [command] [options]
 
 Commands:
-  projects    Show per-project breakdown (default: overview)
-  models      Show per-model breakdown
-  daily       Show daily usage over time
-  stats       Show overall statistics
-  pricing     Show pricing for a model
+  projects        Show per-project breakdown (default: overview)
+  models          Show per-model breakdown
+  daily           Show daily usage over time
+  stats           Show overall statistics
+  pricing         Show pricing for a model
+
+Live & Daemon:
+  live            Start live TUI dashboard (from drishti)
+  statusline      Statusline mode for Claude Code hooks
+  daemon start    Start cross-provider aggregation daemon
+  daemon stop     Stop the daemon
+  daemon status   Check daemon status
+
+Installer:
+  install-statusline   Install statusline hook for ALL editors
+  install-mcp          Install MCP server for ALL editors
+  uninstall-statusline Remove statusline hook from all editors
+  uninstall-mcp        Remove MCP server from all editors
+  editors              List all supported editors
 
 Date Filters:
-  --today     Only today's usage
-  --week      Last 7 days
-  --month     Current calendar month
-  --year N    Specific year
-  --since D   From date (YYYY-MM-DD or ISO)
-  --until D   To date (inclusive)
+  --today         Only today's usage
+  --week          Last 7 days
+  --month         Current calendar month
+  --year N        Specific year
+  --since D       From date (YYYY-MM-DD or ISO)
+  --until D       To date (inclusive)
 
 Other Filters:
-  --project NAME   Filter by project name substring
-  --claude         Only Claude Code
-  --opencode       Only OpenCode
-  --codex          Only Codex CLI
-  --gemini         Only Gemini CLI
-  --cursor         Only Cursor
-  --amp            Only Amp
-  --droid          Only Droid
-  --openclaw       Only OpenClaw
-  --pi             Only Pi
-  --kimi           Only Kimi
-  --qwen           Only Qwen
-  --roocode        Only Roo Code
-  --kilocode       Only Kilo Code
-  --kilo           Only Kilo CLI
-  --mux            Only Mux
-  --synthetic      Only Synthetic
+  --project NAME  Filter by project name substring
+  --claude        Only Claude Code
+  --opencode      Only OpenCode
+  --codex         Only Codex CLI
+  --gemini        Only Gemini CLI
+  --cursor        Only Cursor
+  --amp           Only Amp
+  --droid         Only Droid
+  --openclaw      Only OpenClaw
+  --pi            Only Pi
+  --kimi          Only Kimi
+  --qwen          Only Qwen
+  --roocode       Only Roo Code
+  --kilocode      Only Kilo Code
+  --kilo          Only Kilo CLI
+  --mux           Only Mux
+  --synthetic     Only Synthetic
 
 Output:
-  --json           Output as JSON
-  --light          Lightweight mode (skip pricing)
+  --json          Output as JSON
+  --light         Lightweight mode (skip pricing)
 `);
         process.exit(0);
         break;
@@ -178,11 +193,23 @@ Output:
       case "tui":
       case "serve":
       case "pricing":
+      case "live":
+      case "statusline":
+      case "daemon":
+      case "install-statusline":
+      case "install-mcp":
+      case "uninstall-statusline":
+      case "uninstall-mcp":
+      case "editors":
         args.command = arg;
         break;
       default:
         if (!arg.startsWith("-") && !args.pricingModel && args.command === "pricing") {
           args.pricingModel = arg;
+        }
+        // Daemon subcommand
+        if (!arg.startsWith("-") && args.command === "daemon" && !args.daemonCmd) {
+          args.daemonCmd = arg;
         }
         break;
     }
@@ -302,6 +329,56 @@ async function main() {
   if (args.command === "serve") {
     console.log("Web server — run `tokmeter-serve` or use packages/web");
     process.exit(0);
+  }
+
+  // Delegate to drishti for live/statusline/daemon commands
+  if (args.command === "live") {
+    const { startLive } = await import("@tokmeter/drishti/live.js");
+    await startLive();
+    return;
+  }
+
+  if (args.command === "statusline") {
+    const { runStatusline } = await import("@tokmeter/drishti/statusline.js");
+    await runStatusline();
+    return;
+  }
+
+  if (args.command === "daemon") {
+    const { runDaemonCLI } = await import("@tokmeter/drishti/daemon/server.js");
+    runDaemonCLI(args.daemonCmd ?? "status");
+    return;
+  }
+
+  // Installer commands
+  if (args.command === "install-statusline") {
+    const { installStatusline } = await import("@tokmeter/drishti/installer.js");
+    installStatusline();
+    return;
+  }
+
+  if (args.command === "install-mcp") {
+    const { installMCP } = await import("@tokmeter/drishti/installer.js");
+    installMCP();
+    return;
+  }
+
+  if (args.command === "uninstall-statusline") {
+    const { uninstallStatusline } = await import("@tokmeter/drishti/installer.js");
+    uninstallStatusline();
+    return;
+  }
+
+  if (args.command === "uninstall-mcp") {
+    const { uninstallMCP } = await import("@tokmeter/drishti/installer.js");
+    uninstallMCP();
+    return;
+  }
+
+  if (args.command === "editors") {
+    const { listEditors } = await import("@tokmeter/drishti/installer.js");
+    listEditors();
+    return;
   }
 
   if (args.command === "pricing") {
