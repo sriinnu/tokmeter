@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0f1a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+
+    <!-- Infinity gradient - purple to cyan -->
+    <linearGradient id="infinityGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+
+    <!-- Eye inner glow -->
+    <radialGradient id="eyeInner" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="40%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </radialGradient>
+
+    <!-- Gold gradient for cost -->
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+
+    <!-- Green for tokens -->
+    <linearGradient id="green" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+
+    <!-- Filters -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="strongGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background with rounded corners -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Outer ring - meter gauge -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#2d2d44" stroke-width="4"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="url(#infinityGrad)" stroke-width="4"
+          stroke-dasharray="565 1130" stroke-linecap="round"
+          transform="rotate(-90 256 256)" filter="url(#glow)" opacity="0.8"/>
+
+  <!-- ===== INFINITY AS WATCHING EYES ===== -->
+  <g transform="translate(256, 220)" filter="url(#strongGlow)">
+    <!-- Main infinity symbol - thicker, more prominent -->
+    <path d="M0,-60
+             C-60,-60 -90,-30 -90,15
+             C-90,60 -60,75 -30,60
+             C0,45 0,15 0,-10
+             C0,15 0,45 30,60
+             C60,75 90,60 90,15
+             C90,-30 60,-60 0,-60"
+          fill="none"
+          stroke="url(#infinityGrad)"
+          stroke-width="12"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- Left eye core -->
+    <circle cx="-50" cy="0" r="28" fill="url(#eyeInner)" opacity="0.9"/>
+    <circle cx="-50" cy="0" r="14" fill="#0f0f1a"/>
+    <circle cx="-50" cy="0" r="8" fill="#06b6d4" filter="url(#glow)"/>
+    <circle cx="-54" cy="-4" r="3" fill="#fff" opacity="0.9"/>
+
+    <!-- Right eye core -->
+    <circle cx="50" cy="0" r="28" fill="url(#eyeInner)" opacity="0.9"/>
+    <circle cx="50" cy="0" r="14" fill="#0f0f1a"/>
+    <circle cx="50" cy="0" r="8" fill="#8b5cf6" filter="url(#glow)"/>
+    <circle cx="46" cy="-4" r="3" fill="#fff" opacity="0.9"/>
+  </g>
+
+  <!-- ===== TOKEN METRICS BELOW ===== -->
+  <g transform="translate(106, 340)">
+    <!-- 5 metric bars -->
+    <g filter="url(#glow)">
+      <rect x="0" y="60" width="48" height="60" rx="6" fill="url(#green)" opacity="0.9"/>
+      <rect x="70" y="40" width="48" height="80" rx="6" fill="url(#green)" opacity="0.8"/>
+      <rect x="140" y="70" width="48" height="50" rx="6" fill="url(#green)" opacity="0.7"/>
+      <rect x="210" y="20" width="48" height="100" rx="6" fill="url(#green)" opacity="0.9"/>
+      <rect x="280" y="50" width="48" height="70" rx="6" fill="url(#green)" opacity="0.8"/>
+    </g>
+    <!-- Bar highlights -->
+    <rect x="0" y="60" width="48" height="3" rx="1.5" fill="#34d399" opacity="0.7"/>
+    <rect x="70" y="40" width="48" height="3" rx="1.5" fill="#34d399" opacity="0.7"/>
+    <rect x="140" y="70" width="48" height="3" rx="1.5" fill="#34d399" opacity="0.7"/>
+    <rect x="210" y="20" width="48" height="3" rx="1.5" fill="#34d399" opacity="0.7"/>
+    <rect x="280" y="50" width="48" height="3" rx="1.5" fill="#34d399" opacity="0.7"/>
+  </g>
+
+  <!-- ===== COST INDICATOR ===== -->
+  <g transform="translate(256, 475)" filter="url(#glow)">
+    <text font-family="SF Mono, Monaco, monospace" font-size="24" fill="url(#gold)"
+          text-anchor="middle" font-weight="600">$ tokmeter</text>
+  </g>
+
+  <!-- Subtle corner accents -->
+  <circle cx="80" cy="80" r="4" fill="#8b5cf6" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="432" cy="80" r="4" fill="#06b6d4" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="80" cy="432" r="4" fill="#10b981" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="432" cy="432" r="4" fill="#fbbf24" opacity="0.5" filter="url(#glow)"/>
+</svg>

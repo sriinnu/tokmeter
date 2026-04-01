@@ -7,6 +7,9 @@
  *   drishti live                   Start live TUI dashboard
  *   drishti serve|mcp              Start MCP server (stdio transport)
  *   drishti statusline|status      Statusline mode (stdin → stdout)
+ *   drishti daemon start           Start cross-provider aggregation daemon
+ *   drishti daemon stop            Stop the daemon
+ *   drishti daemon status          Check daemon status
  *   drishti install-statusline     Install statusline hook for ALL editors
  *   drishti install-mcp            Install MCP server for ALL editors
  *   drishti uninstall-statusline   Remove statusline hook from all editors
@@ -94,6 +97,13 @@ switch (command) {
     break;
   }
 
+  case "daemon": {
+    const { runDaemonCLI } = await import("./daemon/server.js");
+    const daemonCmd = process.argv[3] ?? "status";
+    runDaemonCLI(daemonCmd);
+    break;
+  }
+
   case "help":
   case "--help":
   case "-h":
@@ -121,16 +131,33 @@ ${b("USAGE")}
   ${a("drishti")} ${d("[command]")}
 
 ${b("COMMANDS")}
-  ${a("live")}          Start the live TUI dashboard ${d("(default)")}
-  ${a("serve, mcp")}    Start MCP server via stdio transport
-  ${a("statusline")}    Claude Code statusline hook mode
-  ${a("status")}        Alias for statusline
+  ${a("live")}              Start the live TUI dashboard ${d("(default)")}
+  ${a("serve, mcp")}        Start MCP server via stdio transport
+  ${a("statusline")}        Claude Code statusline hook mode
+  ${a("status")}            Alias for statusline
+  ${a("daemon start")}      Start cross-provider aggregation daemon
+  ${a("daemon stop")}       Stop the daemon
+  ${a("daemon status")}     Check daemon status
   ${a("install-statusline")} Install statusline hook for ALL editors
-  ${a("install-mcp")}   Install MCP server for ALL editors
+  ${a("install-mcp")}       Install MCP server for ALL editors
   ${a("uninstall-statusline")} Remove statusline hook from all editors
-  ${a("uninstall-mcp")} Remove MCP server from all editors
-  ${a("editors")}       List all supported editors
-  ${a("help")}          Show this help message
+  ${a("uninstall-mcp")}     Remove MCP server from all editors
+  ${a("editors")}           List all supported editors
+  ${a("help")}              Show this help message
+
+${b("DAEMON — Cross-Provider Aggregation")}
+  The daemon enables real-time aggregation across multiple AI coding assistants.
+  When running, the statusline shows both your session AND totals from all
+  open windows (Claude Code, Cursor, Codex, etc.)
+
+  ${d("# Start the daemon")}
+  ${a("drishti daemon start")}
+
+  ${d("# Check if running")}
+  ${a("drishti daemon status")}
+
+  ${d("# Stop the daemon")}
+  ${a("drishti daemon stop")}
 
 ${b("SUPPORTED EDITORS")}
   Claude Code, OpenCode, Codex, Cursor, Windsurf, Zed, VS Code Copilot
@@ -144,29 +171,6 @@ ${b("INSTALL EXAMPLES")}
 
   ${d("# Install for specific editor(s)")}
   ${a("drishti install-statusline claude opencode")}
-
-${b("MCP INTEGRATION (Manual)")}
-  Add to ${d("~/.claude/settings.json")} to expose token tools inside Claude Code:
-
-  ${d("{")}
-    ${d('"mcpServers": {')}
-      ${a('"drishti"')}: {
-        "command": "npx",
-        "args": ["-y", "@tokmeter/drishti", "mcp"]
-      }
-    ${d("}")}
-  ${d("}")}
-
-${b("STATUSLINE HOOK (Manual)")}
-  Add to ${d("~/.claude/settings.json")} for a live cost bar in Claude Code:
-
-  ${d("{")}
-    ${d('"hooks": {')}
-      ${a('"StatusLine"')}: [
-        { "command": "npx -y @tokmeter/drishti statusline" }
-      ]
-    ${d("}")}
-  ${d("}")}
 
 ${b("MCP TOOLS")}
   When running as an MCP server, drishti exposes these tools:
