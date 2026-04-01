@@ -5,7 +5,14 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
-import chalk from "chalk";
+import chalk, { Chalk } from "chalk";
+
+// Force TrueColor (level 3) regardless of TTY detection.
+// In subprocess contexts (Claude Code statusline hook), stdout is not a TTY
+// and chalk auto-detects level 0 (no color). ESM import hoisting means
+// process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads.
+// Explicit level assignment fixes this.
+chalk.level = 3 as typeof Chalk.prototype.level;
 
 // ─── Number Formatting ─────────────────────────────────────────────
 
