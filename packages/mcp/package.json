@@ -12,6 +12,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./live.js": {
+      "types": "./dist/live.d.ts",
+      "import": "./dist/live.js"
+    },
+    "./statusline.js": {
+      "types": "./dist/statusline.d.ts",
+      "import": "./dist/statusline.js"
+    },
+    "./daemon/server.js": {
+      "types": "./dist/daemon/server.d.ts",
+      "import": "./dist/daemon/server.js"
+    },
+    "./installer.js": {
+      "types": "./dist/installer.d.ts",
+      "import": "./dist/installer.js"
     }
   },
   "files": ["dist"],
