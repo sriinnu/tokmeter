@@ -1,10 +1,10 @@
 /**
- * @tokmeter/core — Pricing bridge using @sriinnu/kosha-discovery.
+ * @tokmeter/core — Pricing bridge using kosha-discovery.
  *
  * Resolves model pricing via the user's existing kosha-discovery package.
  */
 
-import type { ModelPricing } from "@sriinnu/kosha-discovery";
+import type { ModelPricing } from "kosha-discovery";
 
 /** Cached pricing lookup table: modelId → pricing. */
 export class PricingService {
@@ -21,7 +21,7 @@ export class PricingService {
   async init(): Promise<void> {
     if (this.initialized) return;
     try {
-      const { createKosha } = await import("@sriinnu/kosha-discovery");
+      const { createKosha } = await import("kosha-discovery");
       this.kosha = await createKosha();
     } catch {
       // kosha-discovery not available — pricing will be unavailable
@@ -78,7 +78,7 @@ export class PricingService {
     }
     // Use dedicated reasoning pricing if available, otherwise bill as output tokens
     if (reasoningTokens) {
-      const reasoningPerMillion = (pricing as Record<string, unknown>).reasoningPerMillion as number | undefined;
+      const reasoningPerMillion = (pricing as unknown as Record<string, unknown>).reasoningPerMillion as number | undefined;
       cost += reasoningTokens * perToken(reasoningPerMillion ?? pricing.outputPerMillion);
     }
     return cost;

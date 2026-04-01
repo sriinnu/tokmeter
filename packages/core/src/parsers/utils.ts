@@ -73,7 +73,7 @@ export async function readJsonFile<T>(path: string): Promise<T | null> {
 export async function readJsonlFile<T>(path: string): Promise<T[]> {
   try {
     const raw = await readFile(path, "utf-8");
-    const lines = raw.split("\n").filter((l) => l.trim());
+    const lines = raw.split("\n").filter((l: string) => l.trim());
     const results: T[] = [];
     for (const line of lines) {
       try {

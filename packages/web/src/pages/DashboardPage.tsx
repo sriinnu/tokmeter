@@ -10,7 +10,7 @@ export function DashboardPage() {
 
   if (loading) return <div style={{ color: "#8b949e" }}>Loading data...</div>;
   if (error) return <div style={{ color: "#f85149" }}>Error: {error}</div>;
-  if (!data) return <div style={{ color: "#8b949e" }}>No data available. Run `tokmeter --json > packages/web/public/data.json`</div>;
+  if (!data) return <div style={{ color: "#8b949e" }}>{"No data available. Run `tokmeter --json > packages/web/public/data.json`"}</div>;
 
   const { stats, models, daily, projects } = data;
 

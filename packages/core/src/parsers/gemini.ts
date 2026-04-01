@@ -1,7 +1,7 @@
 /**
  * @tokmeter/core — Gemini CLI session parser.
  *
- * Reads from ~/.gemini/tmp/*/chats/*.json
+ * Reads from ~/.gemini/tmp/{id}/chats/{file}.json
  */
 
 import type { TokenRecord, SessionParser } from "../types.js";
