@@ -22,6 +22,7 @@
  *   are recalculated using kosha-discovery.
  */
 
+import { execSync } from "node:child_process";
 import { TokmeterCore } from "@tokmeter/core";
 import { C, formatCost, formatNumber, formatBar } from "./formatter.js";
 
@@ -101,14 +102,25 @@ export async function runStatusline(): Promise<void> {
   /** Per-model breakdown segment — appended inline to line 1 if multiple models. */
   let modelSegment = "";
 
-  // ── Logo + Project name ──
+  // ── Logo + Project name + Git branch ──
   const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
   const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
-  if (projectName) {
-    parts.push(C.title("【♾️】") + " " + C.accent(projectName));
-  } else {
-    parts.push(C.title("【♾️】"));
+  let gitBranch = "";
+  if (projectDir) {
+    try {
+      gitBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: projectDir,
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString().trim();
+    } catch {
+      // not a git repo or git not available
+    }
   }
+  const nameSegments: string[] = [C.title("【♾️】")];
+  if (projectName) nameSegments.push(C.accent(projectName));
+  if (gitBranch) nameSegments.push(C.dim(`(${gitBranch})`));
+  parts.push(nameSegments.join(" "));
 
   // ── Session cost ──
   const sessionCost = input.cost?.total_cost_usd ?? 0;
