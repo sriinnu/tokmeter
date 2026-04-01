@@ -118,8 +118,8 @@ export async function runStatusline(): Promise<void> {
   const parts: string[] = [];
   let modelSegment = "";
 
-  // ── chevron separator ──
-  const sep = C.muted(" › ");
+  // ── chevron separator — bright cyan like pi-mono's electric blue ──
+  const sep = " " + C.chevron("❯") + " ";
 
   // ── Logo + Project + Git ──
   const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
@@ -214,7 +214,7 @@ export async function runStatusline(): Promise<void> {
       if (activeModels.length > 1) {
         modelSegment = activeModels
           .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
-          .join(C.muted(" · "));
+          .join(C.dim(" · "));
       }
     }
   } catch {
