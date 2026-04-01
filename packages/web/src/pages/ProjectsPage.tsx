@@ -1,7 +1,10 @@
-import React from "react";
 import { useParams } from "react-router-dom";
-import { useTokmeterData, type TokmeterProjectSummary, type TokmeterModelSummary } from "../hooks/useTokmeterData.js";
 import { ModelCostChart } from "../charts/ModelCostChart.js";
+import {
+  type TokmeterModelSummary,
+  type TokmeterProjectSummary,
+  useTokmeterData,
+} from "../hooks/useTokmeterData.js";
 
 export function ProjectsPage() {
   const { name } = useParams<{ name?: string }>();
@@ -13,14 +16,22 @@ export function ProjectsPage() {
   // Single project view
   if (name) {
     const project = data.projects.find(
-      (p: TokmeterProjectSummary) => p.project === name || p.project.toLowerCase().includes(name.toLowerCase()),
+      (p: TokmeterProjectSummary) =>
+        p.project === name || p.project.toLowerCase().includes(name.toLowerCase())
     );
     if (!project) return <div style={{ color: "#f85149" }}>Project not found</div>;
 
     return (
       <div>
         <h2 style={{ color: "#39d353" }}>{project.project}</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
           <StatCard label="Total Cost" value={`$${project.totalCost.toFixed(2)}`} />
           <StatCard label="Total Tokens" value={formatNum(project.totalTokens)} />
           <StatCard label="Models" value={project.models.length.toString()} />
@@ -33,7 +44,9 @@ export function ProjectsPage() {
           <thead>
             <tr style={{ borderBottom: "1px solid #30363d" }}>
               {["Model", "Provider", "Tokens", "Input", "Output", "Cost", "%"].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>{h}</th>
+                <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+                  {h}
+                </th>
               ))}
             </tr>
           </thead>
@@ -78,12 +91,17 @@ export function ProjectsPage() {
               <div>
                 <div style={{ color: "#c9d1d9", fontWeight: 600, fontSize: 16 }}>{p.project}</div>
                 <div style={{ color: "#8b949e", fontSize: 13 }}>
-                  {p.models.length} models | {p.providers.length} providers | {p.activeDays} active days
+                  {p.models.length} models | {p.providers.length} providers | {p.activeDays} active
+                  days
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ color: "#39d353", fontSize: 18, fontWeight: 700 }}>${p.totalCost.toFixed(2)}</div>
-                <div style={{ color: "#8b949e", fontSize: 13 }}>{formatNum(p.totalTokens)} tokens</div>
+                <div style={{ color: "#39d353", fontSize: 18, fontWeight: 700 }}>
+                  ${p.totalCost.toFixed(2)}
+                </div>
+                <div style={{ color: "#8b949e", fontSize: 13 }}>
+                  {formatNum(p.totalTokens)} tokens
+                </div>
               </div>
             </div>
           </a>
@@ -95,7 +113,9 @@ export function ProjectsPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}>
+    <div
+      style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}
+    >
       <div style={{ color: "#8b949e", fontSize: 12 }}>{label}</div>
       <div style={{ color: "#c9d1d9", fontSize: 24, fontWeight: 700 }}>{value}</div>
     </div>

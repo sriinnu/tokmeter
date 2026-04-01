@@ -3,21 +3,21 @@
  */
 
 import type { ProviderId, SessionParser } from "../types.js";
-import { ClaudeCodeParser } from "./claude-code.js";
-import { OpenCodeParser } from "./opencode.js";
-import { CodexParser } from "./codex.js";
-import { GeminiParser } from "./gemini.js";
-import { CursorParser } from "./cursor.js";
 import { AmpParser } from "./amp.js";
+import { ClaudeCodeParser } from "./claude-code.js";
+import { CodexParser } from "./codex.js";
+import { CursorParser } from "./cursor.js";
 import { DroidParser } from "./droid.js";
-import { OpenClawParser } from "./openclaw.js";
-import { PiParser } from "./pi.js";
+import { GeminiParser } from "./gemini.js";
+import { KiloCliParser } from "./kilo-cli.js";
+import { KiloParser } from "./kilo.js";
 import { KimiParser } from "./kimi.js";
+import { MuxParser } from "./mux.js";
+import { OpenClawParser } from "./openclaw.js";
+import { OpenCodeParser } from "./opencode.js";
+import { PiParser } from "./pi.js";
 import { QwenParser } from "./qwen.js";
 import { RooCodeParser } from "./roo-code.js";
-import { KiloParser } from "./kilo.js";
-import { KiloCliParser } from "./kilo-cli.js";
-import { MuxParser } from "./mux.js";
 import { SyntheticParser } from "./synthetic.js";
 
 /** All available parsers. */

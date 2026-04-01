@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "description": "Token usage tracking web dashboard — React + Plotly",
   "type": "module",
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -24,5 +22,25 @@
     "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
-  }
+  },
+  "license": "MIT",
+  "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriinnu/tokmeter.git",
+    "directory": "packages/web"
+  },
+  "keywords": [
+    "tokens",
+    "ai",
+    "llm",
+    "usage-tracking",
+    "pricing",
+    "dashboard",
+    "react",
+    "claude",
+    "anthropic"
+  ],
+  "engines": { "node": ">=22.0.0" },
+  "publishConfig": { "access": "public" }
 }

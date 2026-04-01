@@ -5,15 +5,9 @@
  * Also scans legacy paths: ~/.clawdbot/, ~/.moltbot/, ~/.moldbot/
  */
 
-import { dirname, join, isAbsolute } from "node:path";
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonFile,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import { dirname, isAbsolute, join } from "node:path";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonFile, readJsonlFile } from "./utils.js";
 
 interface OpenClawSessionIndex {
   [key: string]: {
@@ -42,12 +36,7 @@ export class OpenClawParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const paths = [
-      "~/.openclaw/agents",
-      "~/.clawdbot",
-      "~/.moltbot",
-      "~/.moldbot",
-    ];
+    const paths = ["~/.openclaw/agents", "~/.clawdbot", "~/.moltbot", "~/.moldbot"];
 
     for (const basePath of paths) {
       const dir = expandHome(basePath, homeDir);
@@ -88,7 +77,7 @@ export class OpenClawParser implements SessionParser {
                 outputTokens: msg.message.usage.output ?? 0,
                 cacheReadTokens: msg.message.usage.cacheRead ?? 0,
                 cost: msg.message.usage.cost?.total ?? 0,
-              }),
+              })
             );
           }
         }

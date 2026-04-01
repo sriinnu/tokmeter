@@ -3,8 +3,19 @@
  * tokmeter — Token usage tracking CLI.
  */
 
+// Process-level error handlers
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
 import { TokmeterCore } from "@tokmeter/core";
-import type { ProviderId, ScanOptions, ProjectSummary, ModelSummary } from "@tokmeter/core";
+import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@tokmeter/core";
 import Table from "cli-table3";
 
 // ---- Arg parser (lightweight, no deps) ----
@@ -53,7 +64,7 @@ function parseArgs(argv: string[]): CliArgs {
         }
         break;
       case "--year":
-        if (!rest[i + 1] || isNaN(Number(rest[i + 1]))) {
+        if (!rest[i + 1] || Number.isNaN(Number(rest[i + 1]))) {
           console.error("Error: --year requires a numeric argument");
           process.exit(1);
         }
@@ -228,7 +239,7 @@ function renderModelsTable(models: ModelSummary[]) {
       formatNumber(m.cacheReadTokens),
       formatNumber(m.cacheWriteTokens),
       formatCost(m.cost),
-      m.percentageOfTotal.toFixed(1) + "%",
+      `${m.percentageOfTotal.toFixed(1)}%`,
     ]);
   }
   console.log(table.toString());
@@ -271,7 +282,7 @@ function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
     ["Models Used", stats.models.toString()],
     ["Providers", stats.providers.toString()],
     ["Active Days", stats.activeDays.toString()],
-    ["Longest Streak", stats.longestStreak.toString()],
+    ["Longest Streak", stats.longestStreak.toString()]
   );
   console.log(table.toString());
 }
@@ -313,10 +324,16 @@ async function main() {
     } else {
       const table = new Table({ head: ["Metric", "Per Million Tokens"], colWidths: [25, 20] });
       table.push(
-        ["Input", "$" + (p.inputPerMillion ?? 0).toFixed(2)],
-        ["Output", "$" + (p.outputPerMillion ?? 0).toFixed(2)],
-        ["Cache Read", p.cacheReadPerMillion != null ? "$" + p.cacheReadPerMillion.toFixed(2) : "N/A"],
-        ["Cache Write", p.cacheWritePerMillion != null ? "$" + p.cacheWritePerMillion.toFixed(2) : "N/A"],
+        ["Input", `$${(p.inputPerMillion ?? 0).toFixed(2)}`],
+        ["Output", `$${(p.outputPerMillion ?? 0).toFixed(2)}`],
+        [
+          "Cache Read",
+          p.cacheReadPerMillion != null ? `$${p.cacheReadPerMillion.toFixed(2)}` : "N/A",
+        ],
+        [
+          "Cache Write",
+          p.cacheWritePerMillion != null ? `$${p.cacheWritePerMillion.toFixed(2)}` : "N/A",
+        ]
       );
       console.log(`Pricing for: ${modelId}`);
       console.log(table.toString());
@@ -379,7 +396,9 @@ async function main() {
       // Overview: projects + totals
       const stats = core.getStats();
       renderProjectsTable(core.getAllProjects());
-      console.log(`\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`);
+      console.log(
+        `\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`
+      );
     }
   }
 }

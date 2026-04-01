@@ -4,13 +4,8 @@
  * Reads from ~/.gemini/tmp/{id}/chats/{file}.json
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonFile } from "./utils.js";
 
 interface GeminiMessage {
   type?: string;
@@ -43,17 +38,13 @@ export class GeminiParser implements SessionParser {
       if (!session?.messages) continue;
 
       // Use session-level timestamp as fallback for messages without timestamps
-      const sessionTs = session.timestamp
-        ? new Date(session.timestamp).getTime()
-        : undefined;
+      const sessionTs = session.timestamp ? new Date(session.timestamp).getTime() : undefined;
 
       for (const msg of session.messages) {
         if (msg.type !== "gemini" || !msg.tokens) continue;
 
         // Prefer per-message timestamp, fall back to session timestamp, then Date.now()
-        const ts = msg.timestamp
-          ? new Date(msg.timestamp).getTime()
-          : sessionTs ?? Date.now();
+        const ts = msg.timestamp ? new Date(msg.timestamp).getTime() : (sessionTs ?? Date.now());
 
         records.push(
           createRecord({
@@ -66,7 +57,7 @@ export class GeminiParser implements SessionParser {
             outputTokens: msg.tokens.output ?? 0,
             cacheReadTokens: msg.tokens.cached ?? 0,
             reasoningTokens: msg.tokens.thoughts ?? 0,
-          }),
+          })
         );
       }
     }

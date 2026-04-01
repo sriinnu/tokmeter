@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 
 interface BarChartProps {
@@ -20,7 +19,8 @@ export function BarChart({ data, width = 30, barChar = "█" }: BarChartProps) {
       {data.map((item, i) => {
         const barWidth = Math.round((item.value / max) * width);
         const bar = barChar.repeat(barWidth);
-        const percentage = item.maxValue > 0 ? ((item.value / item.maxValue) * 100).toFixed(1) : "0.0";
+        const percentage =
+          item.maxValue > 0 ? ((item.value / item.maxValue) * 100).toFixed(1) : "0.0";
 
         return (
           <Box key={i} flexDirection="row">

@@ -6,9 +6,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join, basename } from "node:path";
-import type { TokenRecord, SessionParser } from "../types.js";
-import { expandHome, findFiles, createRecord } from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles } from "./utils.js";
 
 export class CursorParser implements SessionParser {
   readonly providerId = "cursor" as const;
@@ -39,7 +38,7 @@ export class CursorParser implements SessionParser {
               inputTokens: Number(cols[3]) || 0,
               outputTokens: Number(cols[4]) || 0,
               cost: Number(cols[5]) || 0,
-            }),
+            })
           );
         }
       } catch {

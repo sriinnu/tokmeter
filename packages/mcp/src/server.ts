@@ -9,18 +9,15 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import {
-  TokmeterCore,
-  ALL_PROVIDER_IDS,
-  type ProviderId,
-  type TokenRecord,
   type ModelSummary,
+  type ProviderId,
   type ProviderSummary,
-  type DailyEntry,
-  type ProjectSummary,
   type ScanOptions,
+  type TokenRecord,
+  TokmeterCore,
 } from "@tokmeter/core";
+import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -43,7 +40,12 @@ interface ScanMeta {
   /** Milliseconds the scan took. */
   scanDurationMs: number;
 }
-let _lastScanMeta: ScanMeta = { recordCount: 0, unpricedRecords: 0, unpricedModels: [], scanDurationMs: 0 };
+let _lastScanMeta: ScanMeta = {
+  recordCount: 0,
+  unpricedRecords: 0,
+  unpricedModels: [],
+  scanDurationMs: 0,
+};
 
 function optionsKey(options?: ScanOptions): string {
   return JSON.stringify(options ?? {});
@@ -84,9 +86,11 @@ function scanFooter(): string {
   const m = _lastScanMeta;
   const parts = [`📊 ${m.recordCount} records scanned in ${m.scanDurationMs}ms`];
   if (m.unpricedRecords > 0) {
-    parts.push(`⚠️  ${m.unpricedRecords} records missing pricing (models: ${m.unpricedModels.join(", ")})`);
+    parts.push(
+      `⚠️  ${m.unpricedRecords} records missing pricing (models: ${m.unpricedModels.join(", ")})`
+    );
   }
-  return "\n" + separator() + "\n" + parts.join("\n");
+  return `\n${separator()}\n${parts.join("\n")}`;
 }
 
 /** Build ScanOptions from the common scope/filter params many tools accept. */
@@ -152,18 +156,18 @@ function fmtPct(n: number): string {
 
 /** Format a timestamp as YYYY-MM-DD, or "—" for invalid/missing values. */
 function fmtDate(ts: number): string {
-  if (!ts || ts === Infinity || ts === -Infinity) return "—";
+  if (!ts || ts === Number.POSITIVE_INFINITY || ts === Number.NEGATIVE_INFINITY) return "—";
   return new Date(ts).toISOString().slice(0, 10);
 }
 
 /** Format a timestamp as YYYY-MM-DD HH:MM:SS, or "—" for invalid/missing values. */
 function fmtDatetime(ts: number): string {
-  if (!ts || ts === Infinity || ts === -Infinity) return "—";
+  if (!ts || ts === Number.POSITIVE_INFINITY || ts === Number.NEGATIVE_INFINITY) return "—";
   return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
 }
 
 /** Render a filled/empty progress bar: ████░░░░ */
-function progressBar(value: number, max: number, width: number = 20): string {
+function progressBar(value: number, max: number, width = 20): string {
   const ratio = max > 0 ? Math.min(value / max, 1) : 0;
   const filled = Math.round(ratio * width);
   const empty = width - filled;
@@ -171,7 +175,7 @@ function progressBar(value: number, max: number, width: number = 20): string {
 }
 
 /** Render a shaded bar chart segment: ▓▓▓▓░░░░ */
-function barChart(value: number, max: number, width: number = 25): string {
+function barChart(value: number, max: number, width = 25): string {
   const ratio = max > 0 ? Math.min(value / max, 1) : 0;
   const filled = Math.round(ratio * width);
   return "▓".repeat(filled) + "░".repeat(width - filled);
@@ -199,21 +203,16 @@ function formatTable(headers: string[], rows: string[][], alignRight?: boolean[]
 
   // Compute column widths
   const colWidths = headers.map((h, i) =>
-    Math.max(h.length, ...rows.map((r) => (r[i] || "").length)),
+    Math.max(h.length, ...rows.map((r) => (r[i] || "").length))
   );
 
-  const pad = (s: string, w: number, right?: boolean) =>
-    right ? s.padStart(w) : s.padEnd(w);
+  const pad = (s: string, w: number, right?: boolean) => (right ? s.padStart(w) : s.padEnd(w));
 
-  const headerLine = headers
-    .map((h, i) => pad(h, colWidths[i], alignRight?.[i]))
-    .join("  │  ");
+  const headerLine = headers.map((h, i) => pad(h, colWidths[i], alignRight?.[i])).join("  │  ");
   const divider = colWidths.map((w) => "─".repeat(w)).join("──┼──");
 
   const body = rows
-    .map((r) =>
-      r.map((cell, i) => pad(cell || "", colWidths[i], alignRight?.[i])).join("  │  "),
-    )
+    .map((r) => r.map((cell, i) => pad(cell || "", colWidths[i], alignRight?.[i])).join("  │  "))
     .join("\n");
 
   return `${headerLine}\n${divider}\n${body}`;
@@ -244,20 +243,11 @@ const ProvidersArray = z
   .optional()
   .describe("Filter to specific providers (e.g. ['claude-code','cursor'])");
 
-const ProjectFilter = z
-  .string()
-  .optional()
-  .describe("Filter by project name/path substring");
+const ProjectFilter = z.string().optional().describe("Filter by project name/path substring");
 
-const SinceDate = z
-  .string()
-  .optional()
-  .describe("Start date (YYYY-MM-DD) for custom date range");
+const SinceDate = z.string().optional().describe("Start date (YYYY-MM-DD) for custom date range");
 
-const UntilDate = z
-  .string()
-  .optional()
-  .describe("End date (YYYY-MM-DD) for custom date range");
+const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for custom date range");
 
 // ─────────────────────────────────────────────────────────────
 // Server & Tools
@@ -333,7 +323,7 @@ export function createServer(): McpServer {
       ];
 
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -377,7 +367,7 @@ export function createServer(): McpServer {
           `    Provider: ${m.provider}  │  Cost: ${fmtCost(m.cost)}  │  Share: ${fmtPct(m.percentageOfTotal)}`,
           `    Tokens: ${fmtNum(m.totalTokens)}  (in: ${fmtNum(m.inputTokens)} │ out: ${fmtNum(m.outputTokens)} │ cache: ${fmtNum(m.cacheReadTokens)} │ reason: ${fmtNum(m.reasoningTokens)})`,
           `    ${bar}  ${fmtCost(m.cost)}`,
-          "",
+          ""
         );
       }
 
@@ -387,7 +377,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -427,13 +417,13 @@ export function createServer(): McpServer {
           `    Cost: ${fmtCost(p.cost)}  │  Share: ${fmtPct(p.percentageOfTotal)}  │  Tokens: ${fmtNum(p.totalTokens)}`,
           `    Models: ${p.models.join(", ")}`,
           `    ${bar}  ${fmtCost(p.cost)}`,
-          "",
+          ""
         );
       }
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -478,7 +468,7 @@ export function createServer(): McpServer {
           `    Active: ${p.activeDays} days  │  Models: ${p.models.length}  │  Providers: ${p.providers.length}`,
           `    Range: ${fmtDate(p.firstUsed)} → ${fmtDate(p.lastUsed)}`,
           `    ${bar}  ${fmtCost(p.totalCost)}`,
-          "",
+          ""
         );
       }
 
@@ -488,7 +478,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -540,16 +530,18 @@ export function createServer(): McpServer {
       ]);
 
       lines.push(
-        formatTable(
-          ["Date", "Cost", "Tokens", "Records", ""],
-          rows,
-          [false, true, true, true, false],
-        ),
+        formatTable(["Date", "Cost", "Tokens", "Records", ""], rows, [
+          false,
+          true,
+          true,
+          true,
+          false,
+        ])
       );
 
       lines.push("", "");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -583,8 +575,7 @@ export function createServer(): McpServer {
       // Compute recent (last 7 days) vs older trend
       const recentDays = daily.slice(-7);
       const olderDays = daily.slice(0, -7);
-      const recentAvgCost =
-        recentDays.reduce((s, d) => s + d.cost, 0) / recentDays.length;
+      const recentAvgCost = recentDays.reduce((s, d) => s + d.cost, 0) / recentDays.length;
       const olderAvgCost =
         olderDays.length > 0
           ? olderDays.reduce((s, d) => s + d.cost, 0) / olderDays.length
@@ -613,34 +604,34 @@ export function createServer(): McpServer {
         `  Scope: ${scopeLabel(params.scope)}  │  Based on ${totalDays} day(s) of data`,
         separator(),
         "",
-        `  Historical Averages`,
+        "  Historical Averages",
         `    Daily Cost:    ${fmtCost(avgDailyCost)}`,
         `    Weekly Cost:   ${fmtCost(avgDailyCost * 7)}`,
         `    Monthly Cost:  ${fmtCost(avgDailyCost * 30)}`,
         `    Daily Tokens:  ${fmtNum(avgDailyTokens)}`,
         "",
-        `  Recent Trend (last 7 days)`,
+        "  Recent Trend (last 7 days)",
         `    Avg Daily Cost:   ${fmtCost(recentAvgCost)}`,
         `    Trend:            ${trendEmoji} ${trendDirection} (${trendRatio > 1 ? "+" : ""}${((trendRatio - 1) * 100).toFixed(1)}% vs earlier)`,
         "",
         separator(),
-        `  Projected Costs (weighted blend)`,
+        "  Projected Costs (weighted blend)",
         `    Next  7 days:   ${fmtCost(projectedDaily * 7)}`,
         `    Next 30 days:   ${fmtCost(projectedDaily * 30)}`,
         `    Next 90 days:   ${fmtCost(projectedDaily * 90)}`,
         "",
-        `  Projected Tokens`,
+        "  Projected Tokens",
         `    Next  7 days:   ${fmtNum(avgDailyTokens * 7)}`,
         `    Next 30 days:   ${fmtNum(avgDailyTokens * 30)}`,
         `    Next 90 days:   ${fmtNum(avgDailyTokens * 90)}`,
         "",
-        `  ⚠ Forecasts are based on past usage patterns and assume`,
-        `    similar usage going forward. Actual costs may vary.`,
+        "  ⚠ Forecasts are based on past usage patterns and assume",
+        "    similar usage going forward. Actual costs may vary.",
         "",
       ];
 
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -693,10 +684,7 @@ export function createServer(): McpServer {
       if (sortBy === "cost") {
         records.sort((a, b) => b.cost - a.cost);
       } else if (sortBy === "tokens") {
-        records.sort(
-          (a, b) =>
-            b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens),
-        );
+        records.sort((a, b) => b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens));
       } else {
         records.sort((a, b) => b.timestamp - a.timestamp);
       }
@@ -716,22 +704,29 @@ export function createServer(): McpServer {
       ];
 
       for (const r of shown) {
-        const totalTok = r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
+        const totalTok =
+          r.inputTokens +
+          r.outputTokens +
+          r.cacheReadTokens +
+          r.cacheWriteTokens +
+          r.reasoningTokens;
         lines.push(
           `  ${fmtDatetime(r.timestamp)}  │  ${r.provider}  │  ${r.model}`,
           `    Project: ${r.project}  │  Cost: ${fmtCost(r.cost)}  │  Tokens: ${fmtNum(totalTok)}`,
           `    in: ${fmtNum(r.inputTokens)} │ out: ${fmtNum(r.outputTokens)} │ cache_r: ${fmtNum(r.cacheReadTokens)} │ cache_w: ${fmtNum(r.cacheWriteTokens)} │ reason: ${fmtNum(r.reasoningTokens)}`,
-          "",
+          ""
         );
       }
 
       if (records.length > limit) {
-        lines.push(`  ... ${records.length - limit} more record(s) not shown. Increase limit to see more.`);
+        lines.push(
+          `  ... ${records.length - limit} more record(s) not shown. Increase limit to see more.`
+        );
       }
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -767,7 +762,11 @@ export function createServer(): McpServer {
         let models = core.getModelCosts({ project: params.project });
         if (params.names && params.names.length > 0) {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
-          models = models.filter((m) => nameSet.has(m.model.toLowerCase()) || params.names!.some((n) => m.model.toLowerCase().includes(n.toLowerCase())));
+          models = models.filter(
+            (m) =>
+              nameSet.has(m.model.toLowerCase()) ||
+              params.names!.some((n) => m.model.toLowerCase().includes(n.toLowerCase()))
+          );
         } else {
           models = models.slice(0, 5);
         }
@@ -780,7 +779,10 @@ export function createServer(): McpServer {
         const maxTokens = Math.max(...models.map((m) => m.totalTokens));
         const maxCost = Math.max(...models.map((m) => m.cost));
 
-        const headers = ["Metric", ...models.map((m) => m.model.length > 25 ? m.model.slice(0, 22) + "..." : m.model)];
+        const headers = [
+          "Metric",
+          ...models.map((m) => (m.model.length > 25 ? `${m.model.slice(0, 22)}...` : m.model)),
+        ];
         const rows: string[][] = [
           ["Provider", ...models.map((m) => m.provider)],
           ["Total Cost", ...models.map((m) => fmtCost(m.cost))],
@@ -793,9 +795,7 @@ export function createServer(): McpServer {
           [
             "Cost/1M tokens",
             ...models.map((m) =>
-              m.totalTokens > 0
-                ? fmtCost((m.cost / m.totalTokens) * 1_000_000)
-                : "—",
+              m.totalTokens > 0 ? fmtCost((m.cost / m.totalTokens) * 1_000_000) : "—"
             ),
           ],
           [
@@ -814,7 +814,11 @@ export function createServer(): McpServer {
         let providers = core.getProviderBreakdown();
         if (params.names && params.names.length > 0) {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
-          providers = providers.filter((p) => nameSet.has(p.provider.toLowerCase()) || params.names!.some((n) => p.provider.toLowerCase().includes(n.toLowerCase())));
+          providers = providers.filter(
+            (p) =>
+              nameSet.has(p.provider.toLowerCase()) ||
+              params.names!.some((n) => p.provider.toLowerCase().includes(n.toLowerCase()))
+          );
         } else {
           providers = providers.slice(0, 5);
         }
@@ -833,9 +837,7 @@ export function createServer(): McpServer {
           [
             "Cost/1M tokens",
             ...providers.map((p) =>
-              p.totalTokens > 0
-                ? fmtCost((p.cost / p.totalTokens) * 1_000_000)
-                : "—",
+              p.totalTokens > 0 ? fmtCost((p.cost / p.totalTokens) * 1_000_000) : "—"
             ),
           ],
           ["Cost Bar", ...providers.map((p) => barChart(p.cost, maxCost, 12))],
@@ -847,7 +849,7 @@ export function createServer(): McpServer {
         let projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
         if (params.names && params.names.length > 0) {
           projects = projects.filter((p) =>
-            params.names!.some((n) => p.project.toLowerCase().includes(n.toLowerCase())),
+            params.names!.some((n) => p.project.toLowerCase().includes(n.toLowerCase()))
           );
         } else {
           projects = projects.slice(0, 5);
@@ -860,7 +862,9 @@ export function createServer(): McpServer {
         const maxCost = Math.max(...projects.map((p) => p.totalCost));
         const headers = [
           "Metric",
-          ...projects.map((p) => p.project.length > 20 ? "..." + p.project.slice(-17) : p.project),
+          ...projects.map((p) =>
+            p.project.length > 20 ? `...${p.project.slice(-17)}` : p.project
+          ),
         ];
         const rows: string[][] = [
           ["Total Cost", ...projects.map((p) => fmtCost(p.totalCost))],
@@ -878,7 +882,7 @@ export function createServer(): McpServer {
 
       lines.push("", "");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -890,9 +894,7 @@ export function createServer(): McpServer {
       "Returns the full data payload in the requested format. " +
       "Use JSON for programmatic consumption, CSV for spreadsheets, Markdown for reports.",
     {
-      format: z
-        .enum(["json", "csv", "markdown"])
-        .describe("Export format: json, csv, or markdown"),
+      format: z.enum(["json", "csv", "markdown"]).describe("Export format: json, csv, or markdown"),
       scope: ScopeEnum,
       project: ProjectFilter,
       providers: ProvidersArray,
@@ -958,7 +960,7 @@ export function createServer(): McpServer {
               r.cacheWriteTokens,
               r.reasoningTokens,
               r.cost.toFixed(6),
-            ].join(","),
+            ].join(",")
           );
           csv = [csvHeaders.join(","), ...csvRows].join("\n");
         } else if (dataType === "models") {
@@ -987,7 +989,7 @@ export function createServer(): McpServer {
               m.totalTokens,
               m.cost.toFixed(6),
               m.percentageOfTotal.toFixed(2),
-            ].join(","),
+            ].join(",")
           );
           csv = [csvHeaders.join(","), ...csvRows].join("\n");
         } else if (dataType === "daily") {
@@ -1014,11 +1016,11 @@ export function createServer(): McpServer {
               d.reasoningTokens,
               d.cost.toFixed(6),
               d.records,
-            ].join(","),
+            ].join(",")
           );
           csv = [csvHeaders.join(","), ...csvRows].join("\n");
         } else {
-          csv = "# Unsupported CSV export for data type: " + dataType + ". Use 'records', 'models', or 'daily'.";
+          csv = `# Unsupported CSV export for data type: ${dataType}. Use 'records', 'models', or 'daily'.`;
         }
         return { content: [{ type: "text", text: csv }] };
       }
@@ -1031,15 +1033,15 @@ export function createServer(): McpServer {
         const daily = core.getDailyBreakdown({ project: params.project });
 
         const md: string[] = [
-          `# 【♾️】 Token Usage Report`,
+          "# 【♾️】 Token Usage Report",
           "",
           `**Scope:** ${scopeLabel(params.scope)}${params.project ? ` | **Project:** ${params.project}` : ""}`,
           `**Generated:** ${new Date().toISOString().slice(0, 19)}`,
           "",
           "## Summary",
           "",
-          `| Metric | Value |`,
-          `|--------|-------|`,
+          "| Metric | Value |",
+          "|--------|-------|",
           `| Total Cost | ${fmtCost(stats.totalCost)} |`,
           `| Total Tokens | ${fmtNum(stats.totalTokens)} |`,
           `| Records | ${fmtNum(stats.totalRecords)} |`,
@@ -1054,7 +1056,7 @@ export function createServer(): McpServer {
           "|-------|----------|------|--------|-------|",
           ...models.map(
             (m) =>
-              `| ${m.model} | ${m.provider} | ${fmtCost(m.cost)} | ${fmtNum(m.totalTokens)} | ${fmtPct(m.percentageOfTotal)} |`,
+              `| ${m.model} | ${m.provider} | ${fmtCost(m.cost)} | ${fmtNum(m.totalTokens)} | ${fmtPct(m.percentageOfTotal)} |`
           ),
           "",
           "## Providers",
@@ -1063,17 +1065,18 @@ export function createServer(): McpServer {
           "|----------|------|--------|-------|",
           ...providers.map(
             (p) =>
-              `| ${p.provider} | ${fmtCost(p.cost)} | ${fmtNum(p.totalTokens)} | ${fmtPct(p.percentageOfTotal)} |`,
+              `| ${p.provider} | ${fmtCost(p.cost)} | ${fmtNum(p.totalTokens)} | ${fmtPct(p.percentageOfTotal)} |`
           ),
           "",
           "## Daily Breakdown",
           "",
           "| Date | Cost | Tokens | Records |",
           "|------|------|--------|---------|",
-          ...daily.slice(-30).map(
-            (d) =>
-              `| ${d.date} | ${fmtCost(d.cost)} | ${fmtNum(d.totalTokens)} | ${d.records} |`,
-          ),
+          ...daily
+            .slice(-30)
+            .map(
+              (d) => `| ${d.date} | ${fmtCost(d.cost)} | ${fmtNum(d.totalTokens)} | ${d.records} |`
+            ),
           "",
         ];
 
@@ -1081,7 +1084,7 @@ export function createServer(): McpServer {
       }
 
       return { content: [{ type: "text", text: "Unknown format." }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1105,9 +1108,7 @@ export function createServer(): McpServer {
           content: [
             {
               type: "text",
-              text:
-                header("BUDGET") +
-                "\n\n  ⚠ Please provide at least one budget: daily_budget, weekly_budget, or monthly_budget.\n",
+              text: `${header("BUDGET")}\n\n  ⚠ Please provide at least one budget: daily_budget, weekly_budget, or monthly_budget.\n`,
             },
           ],
         };
@@ -1122,7 +1123,7 @@ export function createServer(): McpServer {
             scope: "today",
             project: params.project,
             providers: params.providers,
-          }),
+          })
         );
         const stats = core.getStats();
         const spent = stats.totalCost;
@@ -1130,15 +1131,14 @@ export function createServer(): McpServer {
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
         const bar = progressBar(spent, budget, 30);
-        const status =
-          pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
+        const status = pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
 
         lines.push(
           `  Daily Budget: ${fmtCost(budget)}`,
           `    Spent:     ${fmtCost(spent)}  │  ${fmtPct(pct)} used  │  ${status}`,
           `    Remaining: ${remaining >= 0 ? fmtCost(remaining) : `-${fmtCost(Math.abs(remaining))}`}`,
           `    ${bar}`,
-          "",
+          ""
         );
       }
 
@@ -1149,7 +1149,7 @@ export function createServer(): McpServer {
             scope: "week",
             project: params.project,
             providers: params.providers,
-          }),
+          })
         );
         const stats = core.getStats();
         const spent = stats.totalCost;
@@ -1157,8 +1157,7 @@ export function createServer(): McpServer {
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
         const bar = progressBar(spent, budget, 30);
-        const status =
-          pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
+        const status = pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
 
         // Days elapsed in week for projection
         const dayOfWeek = new Date().getDay() || 7; // 1-7
@@ -1170,7 +1169,7 @@ export function createServer(): McpServer {
           `    Remaining:  ${remaining >= 0 ? fmtCost(remaining) : `-${fmtCost(Math.abs(remaining))}`}`,
           `    Projected:  ${fmtCost(projectedWeekly)} by end of week ${projectedWeekly > budget ? "⚠ WILL EXCEED" : "✓ within budget"}`,
           `    ${bar}`,
-          "",
+          ""
         );
       }
 
@@ -1181,7 +1180,7 @@ export function createServer(): McpServer {
             scope: "month",
             project: params.project,
             providers: params.providers,
-          }),
+          })
         );
         const stats = core.getStats();
         const spent = stats.totalCost;
@@ -1189,8 +1188,7 @@ export function createServer(): McpServer {
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
         const bar = progressBar(spent, budget, 30);
-        const status =
-          pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
+        const status = pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
 
         // Days elapsed/remaining in month for projection
         const now = new Date();
@@ -1204,13 +1202,13 @@ export function createServer(): McpServer {
           `    Remaining:   ${remaining >= 0 ? fmtCost(remaining) : `-${fmtCost(Math.abs(remaining))}`}`,
           `    Projected:   ${fmtCost(projectedMonthly)} by end of month ${projectedMonthly > budget ? "⚠ WILL EXCEED" : "✓ within budget"}`,
           `    ${bar}`,
-          "",
+          ""
         );
       }
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1285,8 +1283,11 @@ export function createServer(): McpServer {
         `  Scope: ${scopeLabel(params.scope)}  │  Metric: ${metricLabel}  │  ${records.length} records`,
         separator(),
         "",
-        `  Hour-of-Day × Day-of-Week Heatmap`,
-        `  Intensity: ${heatChars.split("").map((c, i) => `${c}${i === 0 ? "=none" : ""}`).join(" ")}`,
+        "  Hour-of-Day × Day-of-Week Heatmap",
+        `  Intensity: ${heatChars
+          .split("")
+          .map((c, i) => `${c}${i === 0 ? "=none" : ""}`)
+          .join(" ")}`,
         "",
       ];
 
@@ -1298,7 +1299,8 @@ export function createServer(): McpServer {
         const hourLabel = `${String(h).padStart(2, "0")}:00`;
         const cells = DAYS.map((_, d) => {
           const val = hourly[h][d];
-          const intensity = globalMax > 0 ? Math.round((val / globalMax) * (heatChars.length - 1)) : 0;
+          const intensity =
+            globalMax > 0 ? Math.round((val / globalMax) * (heatChars.length - 1)) : 0;
           return ` ${heatChars[intensity]}${heatChars[intensity]} `;
         });
         lines.push(`  ${hourLabel}  ${cells.join("")}`);
@@ -1306,13 +1308,14 @@ export function createServer(): McpServer {
 
       // Day-of-week summary
       lines.push("", separator(), "  Busiest Days:");
-      const sortedDays = DAYS.map((name, i) => ({ name, total: dayTotals[i] }))
-        .sort((a, b) => b.total - a.total);
+      const sortedDays = DAYS.map((name, i) => ({ name, total: dayTotals[i] })).sort(
+        (a, b) => b.total - a.total
+      );
       const maxDay = sortedDays[0]?.total ?? 0;
       for (const d of sortedDays) {
         if (d.total === 0) continue;
         lines.push(
-          `    ${d.name}  ${barChart(d.total, maxDay, 15)}  ${metric === "cost" ? fmtCost(d.total) : fmtNum(d.total)}`,
+          `    ${d.name}  ${barChart(d.total, maxDay, 15)}  ${metric === "cost" ? fmtCost(d.total) : fmtNum(d.total)}`
         );
       }
 
@@ -1326,13 +1329,13 @@ export function createServer(): McpServer {
       for (const h of sortedHours) {
         if (h.total === 0) continue;
         lines.push(
-          `    ${String(h.hour).padStart(2, "0")}:00  ${barChart(h.total, maxHour, 15)}  ${metric === "cost" ? fmtCost(h.total) : fmtNum(h.total)}`,
+          `    ${String(h.hour).padStart(2, "0")}:00  ${barChart(h.total, maxHour, 15)}  ${metric === "cost" ? fmtCost(h.total) : fmtNum(h.total)}`
         );
       }
 
       lines.push("", "");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1363,9 +1366,7 @@ export function createServer(): McpServer {
           content: [
             {
               type: "text",
-              text:
-                header("ANOMALY") +
-                "\n\n  ⚠ Need at least 2 days of data for anomaly detection.\n",
+              text: `${header("ANOMALY")}\n\n  ⚠ Need at least 2 days of data for anomaly detection.\n`,
             },
           ],
         };
@@ -1389,11 +1390,15 @@ export function createServer(): McpServer {
       // ── Daily cost anomalies (z-score) ──
       const costs = daily.map((d) => d.cost);
       const mean = costs.reduce((s, c) => s + c, 0) / costs.length;
-      const variance =
-        costs.reduce((s, c) => s + (c - mean) ** 2, 0) / costs.length;
+      const variance = costs.reduce((s, c) => s + (c - mean) ** 2, 0) / costs.length;
       const stddev = Math.sqrt(variance);
 
-      const dailyAnomalies: Array<{ date: string; cost: number; zScore: number; direction: string }> = [];
+      const dailyAnomalies: Array<{
+        date: string;
+        cost: number;
+        zScore: number;
+        direction: string;
+      }> = [];
 
       if (stddev > 0) {
         for (const d of daily) {
@@ -1416,7 +1421,7 @@ export function createServer(): McpServer {
         for (const a of dailyAnomalies.sort((x, y) => Math.abs(y.zScore) - Math.abs(x.zScore))) {
           const emoji = a.direction === "SPIKE" ? "🔴" : "🔵";
           lines.push(
-            `    ${emoji} ${a.date}  │  ${a.direction}  │  Cost: ${fmtCost(a.cost)}  │  z-score: ${a.zScore > 0 ? "+" : ""}${a.zScore.toFixed(2)}  │  ${fmtPct(((a.cost - mean) / mean) * 100)} from mean`,
+            `    ${emoji} ${a.date}  │  ${a.direction}  │  Cost: ${fmtCost(a.cost)}  │  z-score: ${a.zScore > 0 ? "+" : ""}${a.zScore.toFixed(2)}  │  ${fmtPct(((a.cost - mean) / mean) * 100)} from mean`
           );
         }
         lines.push("");
@@ -1430,13 +1435,14 @@ export function createServer(): McpServer {
           recordCosts.reduce((s, c) => s + (c - recMean) ** 2, 0) / records.length;
         const recStddev = Math.sqrt(recVariance);
 
-        const expensiveRecords = recStddev > 0
-          ? records
-              .map((r) => ({ ...r, zScore: (r.cost - recMean) / recStddev }))
-              .filter((r) => r.zScore >= zThreshold)
-              .sort((a, b) => b.zScore - a.zScore)
-              .slice(0, 10)
-          : [];
+        const expensiveRecords =
+          recStddev > 0
+            ? records
+                .map((r) => ({ ...r, zScore: (r.cost - recMean) / recStddev }))
+                .filter((r) => r.zScore >= zThreshold)
+                .sort((a, b) => b.zScore - a.zScore)
+                .slice(0, 10)
+            : [];
 
         lines.push(`  💸 Unusually Expensive Requests (mean: ${fmtCost(recMean)}/request)`);
         if (expensiveRecords.length === 0) {
@@ -1445,7 +1451,7 @@ export function createServer(): McpServer {
           for (const r of expensiveRecords) {
             lines.push(
               `    🔴 ${fmtDatetime(r.timestamp)}  │  ${r.model}  │  Cost: ${fmtCost(r.cost)}  │  z: +${r.zScore.toFixed(2)}`,
-              `       Project: ${r.project}  │  Tokens: in=${fmtNum(r.inputTokens)} out=${fmtNum(r.outputTokens)}`,
+              `       Project: ${r.project}  │  Tokens: in=${fmtNum(r.inputTokens)} out=${fmtNum(r.outputTokens)}`
             );
           }
           lines.push("");
@@ -1460,7 +1466,8 @@ export function createServer(): McpServer {
         dailyModels.get(date)!.add(r.model);
       }
       const sortedDates = [...dailyModels.keys()].sort();
-      const modelChanges: Array<{ date: string; newModels: string[]; removedModels: string[] }> = [];
+      const modelChanges: Array<{ date: string; newModels: string[]; removedModels: string[] }> =
+        [];
       for (let i = 1; i < sortedDates.length; i++) {
         const prev = dailyModels.get(sortedDates[i - 1])!;
         const curr = dailyModels.get(sortedDates[i])!;
@@ -1506,7 +1513,7 @@ export function createServer(): McpServer {
           for (const v of velocities.slice(-5)) {
             const emoji = v.change > 0 ? "📈" : "📉";
             lines.push(
-              `    ${emoji} ${v.date}  │  ${v.change > 0 ? "+" : ""}${fmtCost(v.change)}  │  ${v.pctChange > 0 ? "+" : ""}${v.pctChange.toFixed(0)}%`,
+              `    ${emoji} ${v.date}  │  ${v.change > 0 ? "+" : ""}${fmtCost(v.change)}  │  ${v.pctChange > 0 ? "+" : ""}${v.pctChange.toFixed(0)}%`
             );
           }
           lines.push("");
@@ -1515,7 +1522,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1552,16 +1559,17 @@ export function createServer(): McpServer {
       const inputOutputRatio = stats.outputTokens > 0 ? stats.inputTokens / stats.outputTokens : 0;
 
       // Cost savings from caching (estimated: cache reads cost ~90% less than fresh input)
-      const estimatedCacheSavings = stats.cacheReadTokens > 0
-        ? (stats.cacheReadTokens / 1_000_000) * costPerMillionTokens * 0.9
-        : 0;
+      const estimatedCacheSavings =
+        stats.cacheReadTokens > 0
+          ? (stats.cacheReadTokens / 1_000_000) * costPerMillionTokens * 0.9
+          : 0;
 
       const lines = [
         header("EFFICIENCY"),
         `  Scope: ${scopeLabel(params.scope)}`,
         separator(),
         "",
-        `  Overall Metrics`,
+        "  Overall Metrics",
         `    Cache Hit Rate:        ${fmtPct(cacheHitRate)}  ${progressBar(cacheHitRate, 100, 20)}`,
         `    Reasoning Ratio:       ${fmtPct(reasoningRatio)}  ${progressBar(reasoningRatio, 100, 20)}`,
         `    Output Ratio:          ${fmtPct(outputRatio)}  ${progressBar(outputRatio, 100, 20)}`,
@@ -1571,7 +1579,7 @@ export function createServer(): McpServer {
         `    Est. Cache Savings:    ~${fmtCost(estimatedCacheSavings)}`,
         "",
         separator(),
-        `  Per-Model Efficiency`,
+        "  Per-Model Efficiency",
         "",
       ];
 
@@ -1589,7 +1597,7 @@ export function createServer(): McpServer {
         const mAvgCost = modelRecords.length > 0 ? m.cost / modelRecords.length : 0;
 
         modelRows.push([
-          m.model.length > 30 ? m.model.slice(0, 27) + "..." : m.model,
+          m.model.length > 30 ? `${m.model.slice(0, 27)}...` : m.model,
           fmtPct(mCacheRate),
           fmtPct(mReasonRate),
           fmtCost(mCostPer1M),
@@ -1603,38 +1611,48 @@ export function createServer(): McpServer {
       lines.push("", separator(), "  💡 Insights", "");
 
       if (cacheHitRate < 20) {
-        lines.push("    ⚠ Low cache hit rate. Consider using longer sessions to benefit from context caching.");
+        lines.push(
+          "    ⚠ Low cache hit rate. Consider using longer sessions to benefit from context caching."
+        );
       } else if (cacheHitRate > 60) {
-        lines.push("    ✓ Excellent cache utilization! Context caching is saving significant costs.");
+        lines.push(
+          "    ✓ Excellent cache utilization! Context caching is saving significant costs."
+        );
       }
 
       if (reasoningRatio > 30) {
-        lines.push("    ℹ High reasoning token ratio. Models are doing extensive thinking — consider if all tasks need this.");
+        lines.push(
+          "    ℹ High reasoning token ratio. Models are doing extensive thinking — consider if all tasks need this."
+        );
       }
 
       if (inputOutputRatio > 10) {
-        lines.push("    ⚠ Very high input:output ratio. Large prompts with small outputs may indicate overloaded context.");
+        lines.push(
+          "    ⚠ Very high input:output ratio. Large prompts with small outputs may indicate overloaded context."
+        );
       }
 
       const mostExpensiveModel = models[0];
       const cheapestModel = models[models.length - 1];
       if (mostExpensiveModel && cheapestModel && models.length > 1) {
-        const expRate = mostExpensiveModel.totalTokens > 0
-          ? (mostExpensiveModel.cost / mostExpensiveModel.totalTokens) * 1_000_000
-          : 0;
-        const cheapRate = cheapestModel.totalTokens > 0
-          ? (cheapestModel.cost / cheapestModel.totalTokens) * 1_000_000
-          : 0;
+        const expRate =
+          mostExpensiveModel.totalTokens > 0
+            ? (mostExpensiveModel.cost / mostExpensiveModel.totalTokens) * 1_000_000
+            : 0;
+        const cheapRate =
+          cheapestModel.totalTokens > 0
+            ? (cheapestModel.cost / cheapestModel.totalTokens) * 1_000_000
+            : 0;
         if (expRate > 0 && cheapRate > 0) {
           lines.push(
-            `    ℹ Most expensive: ${mostExpensiveModel.model} (${fmtCost(expRate)}/1M tok) vs cheapest: ${cheapestModel.model} (${fmtCost(cheapRate)}/1M tok)`,
+            `    ℹ Most expensive: ${mostExpensiveModel.model} (${fmtCost(expRate)}/1M tok) vs cheapest: ${cheapestModel.model} (${fmtCost(cheapRate)}/1M tok)`
           );
         }
       }
 
       lines.push("", "");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1737,7 +1755,7 @@ export function createServer(): McpServer {
             if (rankBy === "output_volume") return m.outputTokens;
             if (rankBy === "records") return m.recordCount;
             return m.cost;
-          }),
+          })
         );
 
         for (let i = 0; i < shown.length; i++) {
@@ -1746,20 +1764,37 @@ export function createServer(): McpServer {
           let metricValue: string;
           let metricRaw: number;
 
-          if (rankBy === "cost") { metricValue = fmtCost(m.cost); metricRaw = m.cost; }
-          else if (rankBy === "cost_efficiency") { metricValue = `${fmtCost(m.costPer1M)}/1M tok`; metricRaw = m.costPer1M; }
-          else if (rankBy === "tokens") { metricValue = fmtNum(m.totalTokens); metricRaw = m.totalTokens; }
-          else if (rankBy === "cache_rate") { metricValue = fmtPct(m.cacheRate); metricRaw = m.cacheRate; }
-          else if (rankBy === "reasoning_rate") { metricValue = fmtPct(m.reasoningRate); metricRaw = m.reasoningRate; }
-          else if (rankBy === "output_volume") { metricValue = fmtNum(m.outputTokens); metricRaw = m.outputTokens; }
-          else if (rankBy === "records") { metricValue = `${m.recordCount} requests`; metricRaw = m.recordCount; }
-          else { metricValue = fmtCost(m.cost); metricRaw = m.cost; }
+          if (rankBy === "cost") {
+            metricValue = fmtCost(m.cost);
+            metricRaw = m.cost;
+          } else if (rankBy === "cost_efficiency") {
+            metricValue = `${fmtCost(m.costPer1M)}/1M tok`;
+            metricRaw = m.costPer1M;
+          } else if (rankBy === "tokens") {
+            metricValue = fmtNum(m.totalTokens);
+            metricRaw = m.totalTokens;
+          } else if (rankBy === "cache_rate") {
+            metricValue = fmtPct(m.cacheRate);
+            metricRaw = m.cacheRate;
+          } else if (rankBy === "reasoning_rate") {
+            metricValue = fmtPct(m.reasoningRate);
+            metricRaw = m.reasoningRate;
+          } else if (rankBy === "output_volume") {
+            metricValue = fmtNum(m.outputTokens);
+            metricRaw = m.outputTokens;
+          } else if (rankBy === "records") {
+            metricValue = `${m.recordCount} requests`;
+            metricRaw = m.recordCount;
+          } else {
+            metricValue = fmtCost(m.cost);
+            metricRaw = m.cost;
+          }
 
           const bar = barChart(metricRaw, maxMetric, 15);
           lines.push(
             `  ${rank.padEnd(3)} ${m.model}`,
             `      ${bar}  ${metricValue}  │  Provider: ${m.provider}  │  Total: ${fmtCost(m.cost)}`,
-            "",
+            ""
           );
         }
       } else {
@@ -1805,14 +1840,14 @@ export function createServer(): McpServer {
             `  ${rank.padEnd(3)} ${p.provider.toUpperCase()}`,
             `      Cost: ${fmtCost(p.cost)}  │  Tokens: ${fmtNum(p.totalTokens)}  │  $/1M tok: ${fmtCost(p.costPer1M)}  │  Requests: ${p.recordCount}`,
             `      Models: ${p.models.join(", ")}`,
-            "",
+            ""
           );
         }
       }
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -1844,19 +1879,14 @@ export function createServer(): McpServer {
       const scope = scopeLabel(params.scope);
 
       // Build narrative
-      const lines: string[] = [
-        header("DIGEST"),
-        `  ${scope} Usage Summary`,
-        separator(),
-        "",
-      ];
+      const lines: string[] = [header("DIGEST"), `  ${scope} Usage Summary`, separator(), ""];
 
       // Opening summary
       lines.push(
         `  Over ${stats.activeDays} active day(s), you have consumed ${fmtNum(stats.totalTokens)} tokens`,
         `  across ${stats.models} model(s) from ${stats.providers} provider(s), spanning`,
         `  ${stats.projects} project(s) — totaling ${fmtCost(stats.totalCost)} in cost.`,
-        "",
+        ""
       );
 
       // Top model
@@ -1864,11 +1894,11 @@ export function createServer(): McpServer {
         const top = models[0];
         lines.push(
           `  Your most-used model is ${top.model} (via ${top.provider}), accounting`,
-          `  for ${fmtPct(top.percentageOfTotal)} of total spend at ${fmtCost(top.cost)}.`,
+          `  for ${fmtPct(top.percentageOfTotal)} of total spend at ${fmtCost(top.cost)}.`
         );
         if (models.length > 1) {
           lines.push(
-            `  Runner-up: ${models[1].model} at ${fmtCost(models[1].cost)} (${fmtPct(models[1].percentageOfTotal)}).`,
+            `  Runner-up: ${models[1].model} at ${fmtCost(models[1].cost)} (${fmtPct(models[1].percentageOfTotal)}).`
           );
         }
         lines.push("");
@@ -1880,7 +1910,7 @@ export function createServer(): McpServer {
         lines.push(
           `  The dominant provider is ${top.provider} with ${fmtPct(top.percentageOfTotal)} of`,
           `  total cost and ${top.models.length} active model(s).`,
-          "",
+          ""
         );
       }
 
@@ -1892,7 +1922,7 @@ export function createServer(): McpServer {
         lines.push(
           `  Your most expensive project is "${top.project}" at ${fmtCost(top.totalCost)}`,
           `  (${fmtPct(share)} of total), active for ${top.activeDays} day(s).`,
-          "",
+          ""
         );
       }
 
@@ -1901,9 +1931,8 @@ export function createServer(): McpServer {
         const recent = daily.slice(-3);
         const earlier = daily.slice(-6, -3);
         const recentAvg = recent.reduce((s, d) => s + d.cost, 0) / recent.length;
-        const earlierAvg = earlier.length > 0
-          ? earlier.reduce((s, d) => s + d.cost, 0) / earlier.length
-          : recentAvg;
+        const earlierAvg =
+          earlier.length > 0 ? earlier.reduce((s, d) => s + d.cost, 0) / earlier.length : recentAvg;
 
         if (earlierAvg > 0) {
           const change = ((recentAvg - earlierAvg) / earlierAvg) * 100;
@@ -1911,13 +1940,10 @@ export function createServer(): McpServer {
             lines.push(
               `  Trend: Your recent daily spend is ${change > 0 ? "up" : "down"} ${fmtPct(Math.abs(change))}`,
               `  compared to earlier in the period (${fmtCost(recentAvg)}/day vs ${fmtCost(earlierAvg)}/day).`,
-              "",
+              ""
             );
           } else {
-            lines.push(
-              `  Trend: Spending is relatively stable at ~${fmtCost(recentAvg)}/day.`,
-              "",
-            );
+            lines.push(`  Trend: Spending is relatively stable at ~${fmtCost(recentAvg)}/day.`, "");
           }
         }
       }
@@ -1933,7 +1959,7 @@ export function createServer(): McpServer {
             : cacheRate > 20
               ? "  Moderate cache usage — longer sessions could improve this."
               : "  Low cache hit rate — consider maintaining longer sessions for better caching.",
-          "",
+          ""
         );
       }
 
@@ -1943,20 +1969,16 @@ export function createServer(): McpServer {
         lines.push(
           `  Busiest day: ${busiest.date} with ${fmtCost(busiest.cost)} spent across`,
           `  ${busiest.records} request(s) and ${fmtNum(busiest.totalTokens)} tokens.`,
-          "",
+          ""
         );
       }
 
       // Sparkline footer
       const costSpark = sparkline(daily.map((d) => d.cost));
-      lines.push(
-        separator(),
-        `  Daily Cost:  ${costSpark}`,
-        "",
-      );
+      lines.push(separator(), `  Daily Cost:  ${costSpark}`, "");
 
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   // ────────────────────────────────────────────
@@ -2045,7 +2067,7 @@ export function createServer(): McpServer {
         `  🔥 Current Streak:  ${currentStreak} day(s)`,
         `  🏆 Longest Streak:  ${longestStreak} day(s) (${longestStreakStart} → ${longestStreakEnd})`,
         `  📅 Active Days:     ${stats.activeDays}`,
-        "",
+        ""
       );
 
       // ── Date range span & coverage ──
@@ -2057,7 +2079,7 @@ export function createServer(): McpServer {
         lines.push(
           `  📊 Date Range:      ${sortedDates[0]} → ${sortedDates[sortedDates.length - 1]} (${spanDays} days)`,
           `  📈 Coverage:        ${fmtPct(coverage)} of days active`,
-          "",
+          ""
         );
       }
 
@@ -2082,7 +2104,7 @@ export function createServer(): McpServer {
       const weekendAvg = weekendDays > 0 ? weekendCost / weekendDays : 0;
 
       lines.push(
-        `  Weekday vs Weekend`,
+        "  Weekday vs Weekend",
         `    Weekday:  ${weekdayDays} active day(s)  │  Avg: ${fmtCost(weekdayAvg)}/day  │  Total: ${fmtCost(weekdayCost)}`,
         `    Weekend:  ${weekendDays} active day(s)  │  Avg: ${fmtCost(weekendAvg)}/day  │  Total: ${fmtCost(weekendCost)}`,
         weekendAvg > weekdayAvg
@@ -2090,7 +2112,7 @@ export function createServer(): McpServer {
           : weekdayAvg > weekendAvg * 2
             ? "    → Weekdays are significantly heavier. 💼"
             : "    → Fairly balanced usage. ⚖️",
-        "",
+        ""
       );
 
       // ── Session intensity ──
@@ -2110,12 +2132,12 @@ export function createServer(): McpServer {
       const avgSessionsPerDay = stats.activeDays > 0 ? sessionCount / stats.activeDays : 0;
 
       lines.push(
-        `  Session Analysis (30min gap = new session)`,
+        "  Session Analysis (30min gap = new session)",
         `    Total Sessions:      ~${sessionCount}`,
         `    Avg Requests/Day:    ${avgRecordsPerDay.toFixed(1)}`,
         `    Avg Sessions/Day:    ${avgSessionsPerDay.toFixed(1)}`,
         `    Avg Requests/Session: ${sessionCount > 0 ? (stats.totalRecords / sessionCount).toFixed(1) : "—"}`,
-        "",
+        ""
       );
 
       // ── Weekly activity pattern (mini calendar) ──
@@ -2124,7 +2146,9 @@ export function createServer(): McpServer {
         const date = new Date(d.date);
         // Approximate ISO week
         const jan1 = new Date(date.getFullYear(), 0, 1);
-        const weekNum = Math.ceil(((date.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+        const weekNum = Math.ceil(
+          ((date.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7
+        );
         const weekKey = `${date.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
         weekMap.set(weekKey, (weekMap.get(weekKey) ?? 0) + d.cost);
       }
@@ -2135,13 +2159,13 @@ export function createServer(): McpServer {
         lines.push(
           `  Weekly Trend:  ${sparkline(weekCosts)}`,
           `    (${weeks.length} weeks, min: ${fmtCost(Math.min(...weekCosts))}, max: ${fmtCost(Math.max(...weekCosts))})`,
-          "",
+          ""
         );
       }
 
       lines.push("");
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
-    },
+    }
   );
 
   return server;

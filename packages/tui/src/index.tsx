@@ -3,12 +3,23 @@
  * tokmeter-tui — Interactive terminal UI for token usage tracking.
  */
 
-import React, { useState, useEffect, useMemo } from "react";
-import { Box, Text, useInput, useApp, render } from "ink";
+// Process-level error handlers
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
 import { TokmeterCore } from "@tokmeter/core";
-import { OverviewView } from "./views/OverviewView.js";
-import { ModelsView } from "./views/ModelsView.js";
+import { Box, Text, render, useApp, useInput } from "ink";
+import React, { useState, useEffect, useMemo } from "react";
 import { DailyView } from "./views/DailyView.js";
+import { ModelsView } from "./views/ModelsView.js";
+import { OverviewView } from "./views/OverviewView.js";
 import { StatsView } from "./views/StatsView.js";
 
 type TabId = "overview" | "models" | "daily" | "stats";
@@ -28,10 +39,13 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    core.scan().then(() => setLoading(false)).catch((err: Error) => {
-      setError(err.message);
-      setLoading(false);
-    });
+    core
+      .scan()
+      .then(() => setLoading(false))
+      .catch((err: Error) => {
+        setError(err.message);
+        setLoading(false);
+      });
   }, [core]);
 
   useInput((input, key) => {

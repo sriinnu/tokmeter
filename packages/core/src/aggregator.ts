@@ -4,20 +4,27 @@
  * Groups parsed TokenRecords by project, model, provider, and date.
  */
 
-import type {
-  TokenRecord,
-  ProjectSummary,
-  ModelSummary,
-  ProviderSummary,
-  DailyEntry,
-  ProviderId,
-} from "./types.js";
 import { toDateStr } from "./parsers/utils.js";
+import type {
+  DailyEntry,
+  ModelSummary,
+  ProjectSummary,
+  ProviderId,
+  ProviderSummary,
+  TokenRecord,
+} from "./types.js";
 
 /** Filter records by date range. */
 export function filterByDate(
   records: TokenRecord[],
-  opts: { since?: string; until?: string; today?: boolean; week?: boolean; month?: boolean; year?: number },
+  opts: {
+    since?: string;
+    until?: string;
+    today?: boolean;
+    week?: boolean;
+    month?: boolean;
+    year?: number;
+  }
 ): TokenRecord[] {
   const now = new Date();
   let since: Date | undefined;
@@ -41,7 +48,7 @@ export function filterByDate(
       if (untilStr.includes("T") || untilStr.includes("Z")) {
         until = new Date(untilStr);
       } else {
-        until = new Date(untilStr + "T23:59:59.999Z");
+        until = new Date(`${untilStr}T23:59:59.999Z`);
       }
     }
   }
@@ -86,8 +93,14 @@ function sumTokens(records: TokenRecord[]) {
     cacheWrite: records.reduce((s, r) => s + r.cacheWriteTokens, 0),
     reasoning: records.reduce((s, r) => s + r.reasoningTokens, 0),
     total: records.reduce(
-      (s, r) => s + r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens,
-      0,
+      (s, r) =>
+        s +
+        r.inputTokens +
+        r.outputTokens +
+        r.cacheReadTokens +
+        r.cacheWriteTokens +
+        r.reasoningTokens,
+      0
     ),
     cost: records.reduce((s, r) => s + r.cost, 0),
   };
@@ -117,8 +130,8 @@ export function aggregateByProject(records: TokenRecord[]): ProjectSummary[] {
       providers,
       dailyBreakdown: daily,
       activeDays: daily.length,
-      firstUsed: recs.reduce((min, r) => Math.min(min, r.timestamp), Infinity),
-      lastUsed: recs.reduce((max, r) => Math.max(max, r.timestamp), -Infinity),
+      firstUsed: recs.reduce((min, r) => Math.min(min, r.timestamp), Number.POSITIVE_INFINITY),
+      lastUsed: recs.reduce((max, r) => Math.max(max, r.timestamp), Number.NEGATIVE_INFINITY),
     };
   });
 }

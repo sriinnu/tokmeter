@@ -4,13 +4,8 @@
  * Reads from ~/.local/share/amp/threads/
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 interface AmpMessage {
   role?: string;
@@ -55,7 +50,7 @@ export class AmpParser implements SessionParser {
             outputTokens: msg.usage.output ?? 0,
             cacheReadTokens: msg.usage.cacheRead ?? 0,
             cacheWriteTokens: msg.usage.cacheWrite ?? 0,
-          }),
+          })
         );
       }
     }

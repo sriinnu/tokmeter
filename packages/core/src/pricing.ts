@@ -43,81 +43,249 @@ type FullPricing = ModelPricing;
 
 const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
   // ── Anthropic Claude 4.x ─────────────────────────────────────────
-  ["claude-opus-4-6",    { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
-  ["claude-opus-4-5",    { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
-  ["claude-opus-4",      { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
-  ["claude-sonnet-4-6",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
-  ["claude-sonnet-4-5",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
-  ["claude-sonnet-4",    { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
-  ["claude-haiku-4-5",   { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
-  ["claude-haiku-4",     { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
+  [
+    "claude-opus-4-6",
+    {
+      inputPerMillion: 15,
+      outputPerMillion: 75,
+      cacheReadPerMillion: 1.5,
+      cacheWritePerMillion: 18.75,
+    },
+  ],
+  [
+    "claude-opus-4-5",
+    {
+      inputPerMillion: 15,
+      outputPerMillion: 75,
+      cacheReadPerMillion: 1.5,
+      cacheWritePerMillion: 18.75,
+    },
+  ],
+  [
+    "claude-opus-4",
+    {
+      inputPerMillion: 15,
+      outputPerMillion: 75,
+      cacheReadPerMillion: 1.5,
+      cacheWritePerMillion: 18.75,
+    },
+  ],
+  [
+    "claude-sonnet-4-6",
+    {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+      cacheReadPerMillion: 0.3,
+      cacheWritePerMillion: 3.75,
+    },
+  ],
+  [
+    "claude-sonnet-4-5",
+    {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+      cacheReadPerMillion: 0.3,
+      cacheWritePerMillion: 3.75,
+    },
+  ],
+  [
+    "claude-sonnet-4",
+    {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+      cacheReadPerMillion: 0.3,
+      cacheWritePerMillion: 3.75,
+    },
+  ],
+  [
+    "claude-haiku-4-5",
+    {
+      inputPerMillion: 0.8,
+      outputPerMillion: 4,
+      cacheReadPerMillion: 0.08,
+      cacheWritePerMillion: 1,
+    },
+  ],
+  [
+    "claude-haiku-4",
+    {
+      inputPerMillion: 0.8,
+      outputPerMillion: 4,
+      cacheReadPerMillion: 0.08,
+      cacheWritePerMillion: 1,
+    },
+  ],
   // ── Anthropic Claude 3.x ─────────────────────────────────────────
-  ["claude-3-5-sonnet",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
-  ["claude-3-5-haiku",   { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
-  ["claude-3-opus",      { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
-  ["claude-3-sonnet",    { inputPerMillion: 3,     outputPerMillion: 15                                                             }],
-  ["claude-3-haiku",     { inputPerMillion: 0.25,  outputPerMillion: 1.25                                                          }],
+  [
+    "claude-3-5-sonnet",
+    {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+      cacheReadPerMillion: 0.3,
+      cacheWritePerMillion: 3.75,
+    },
+  ],
+  [
+    "claude-3-5-haiku",
+    {
+      inputPerMillion: 0.8,
+      outputPerMillion: 4,
+      cacheReadPerMillion: 0.08,
+      cacheWritePerMillion: 1,
+    },
+  ],
+  [
+    "claude-3-opus",
+    {
+      inputPerMillion: 15,
+      outputPerMillion: 75,
+      cacheReadPerMillion: 1.5,
+      cacheWritePerMillion: 18.75,
+    },
+  ],
+  ["claude-3-sonnet", { inputPerMillion: 3, outputPerMillion: 15 }],
+  ["claude-3-haiku", { inputPerMillion: 0.25, outputPerMillion: 1.25 }],
   // ── OpenAI GPT / O-series ────────────────────────────────────────
-  ["gpt-5",              { inputPerMillion: 10,    outputPerMillion: 40                                                             }],
-  ["gpt-4o-mini",        { inputPerMillion: 0.15,  outputPerMillion: 0.6                                                           }],
-  ["gpt-4o",             { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
-  ["gpt-4-turbo",        { inputPerMillion: 10,    outputPerMillion: 30                                                            }],
-  ["gpt-4",              { inputPerMillion: 30,    outputPerMillion: 60                                                            }],
-  ["gpt-3.5-turbo",      { inputPerMillion: 0.5,   outputPerMillion: 1.5                                                           }],
-  ["o4-mini",            { inputPerMillion: 1.1,   outputPerMillion: 4.4,  reasoningInputPerMillion: 1.1,  reasoningOutputPerMillion: 4.4  }],
-  ["o3-mini",            { inputPerMillion: 1.1,   outputPerMillion: 4.4,  reasoningInputPerMillion: 1.1,  reasoningOutputPerMillion: 4.4  }],
-  ["o3",                 { inputPerMillion: 10,    outputPerMillion: 40,   reasoningInputPerMillion: 10,   reasoningOutputPerMillion: 40   }],
-  ["o1-mini",            { inputPerMillion: 3,     outputPerMillion: 12,   reasoningInputPerMillion: 3,    reasoningOutputPerMillion: 12   }],
-  ["o1",                 { inputPerMillion: 15,    outputPerMillion: 60,   reasoningInputPerMillion: 15,   reasoningOutputPerMillion: 60   }],
+  ["gpt-5", { inputPerMillion: 10, outputPerMillion: 40 }],
+  ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6 }],
+  ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10 }],
+  ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30 }],
+  ["gpt-4", { inputPerMillion: 30, outputPerMillion: 60 }],
+  ["gpt-3.5-turbo", { inputPerMillion: 0.5, outputPerMillion: 1.5 }],
+  [
+    "o4-mini",
+    {
+      inputPerMillion: 1.1,
+      outputPerMillion: 4.4,
+      reasoningInputPerMillion: 1.1,
+      reasoningOutputPerMillion: 4.4,
+    },
+  ],
+  [
+    "o3-mini",
+    {
+      inputPerMillion: 1.1,
+      outputPerMillion: 4.4,
+      reasoningInputPerMillion: 1.1,
+      reasoningOutputPerMillion: 4.4,
+    },
+  ],
+  [
+    "o3",
+    {
+      inputPerMillion: 10,
+      outputPerMillion: 40,
+      reasoningInputPerMillion: 10,
+      reasoningOutputPerMillion: 40,
+    },
+  ],
+  [
+    "o1-mini",
+    {
+      inputPerMillion: 3,
+      outputPerMillion: 12,
+      reasoningInputPerMillion: 3,
+      reasoningOutputPerMillion: 12,
+    },
+  ],
+  [
+    "o1",
+    {
+      inputPerMillion: 15,
+      outputPerMillion: 60,
+      reasoningInputPerMillion: 15,
+      reasoningOutputPerMillion: 60,
+    },
+  ],
   // ── Google Gemini ─────────────────────────────────────────────────
-  ["gemini-2.5-pro",     { inputPerMillion: 1.25,  outputPerMillion: 10                                                            }],
-  ["gemini-2.5-flash",   { inputPerMillion: 0.15,  outputPerMillion: 0.6,  reasoningInputPerMillion: 3.5, reasoningOutputPerMillion: 3.5  }],
-  ["gemini-2.0-flash",   { inputPerMillion: 0.1,   outputPerMillion: 0.4                                                           }],
-  ["gemini-1.5-pro",     { inputPerMillion: 1.25,  outputPerMillion: 5                                                             }],
-  ["gemini-1.5-flash",   { inputPerMillion: 0.075, outputPerMillion: 0.3                                                           }],
-  ["gemini-pro",         { inputPerMillion: 0.125, outputPerMillion: 0.375                                                         }],
+  ["gemini-2.5-pro", { inputPerMillion: 1.25, outputPerMillion: 10 }],
+  [
+    "gemini-2.5-flash",
+    {
+      inputPerMillion: 0.15,
+      outputPerMillion: 0.6,
+      reasoningInputPerMillion: 3.5,
+      reasoningOutputPerMillion: 3.5,
+    },
+  ],
+  ["gemini-2.0-flash", { inputPerMillion: 0.1, outputPerMillion: 0.4 }],
+  ["gemini-1.5-pro", { inputPerMillion: 1.25, outputPerMillion: 5 }],
+  ["gemini-1.5-flash", { inputPerMillion: 0.075, outputPerMillion: 0.3 }],
+  ["gemini-pro", { inputPerMillion: 0.125, outputPerMillion: 0.375 }],
   // ── DeepSeek ──────────────────────────────────────────────────────
-  ["deepseek-reasoner",  { inputPerMillion: 0.55,  outputPerMillion: 2.19, reasoningInputPerMillion: 0.55, reasoningOutputPerMillion: 2.19 }],
-  ["deepseek-r1",        { inputPerMillion: 0.55,  outputPerMillion: 2.19, reasoningInputPerMillion: 0.55, reasoningOutputPerMillion: 2.19 }],
-  ["deepseek-v3",        { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
-  ["deepseek-chat",      { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
-  ["deepseek-coder",     { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
+  [
+    "deepseek-reasoner",
+    {
+      inputPerMillion: 0.55,
+      outputPerMillion: 2.19,
+      reasoningInputPerMillion: 0.55,
+      reasoningOutputPerMillion: 2.19,
+    },
+  ],
+  [
+    "deepseek-r1",
+    {
+      inputPerMillion: 0.55,
+      outputPerMillion: 2.19,
+      reasoningInputPerMillion: 0.55,
+      reasoningOutputPerMillion: 2.19,
+    },
+  ],
+  ["deepseek-v3", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
+  ["deepseek-chat", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
+  ["deepseek-coder", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
   // ── xAI Grok ─────────────────────────────────────────────────────
-  ["grok-4",             { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
-  ["grok-3-mini",        { inputPerMillion: 0.3,   outputPerMillion: 0.5,  reasoningInputPerMillion: 0.3, reasoningOutputPerMillion: 0.5  }],
-  ["grok-3",             { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
-  ["grok-2",             { inputPerMillion: 2,     outputPerMillion: 10                                                            }],
+  ["grok-4", { inputPerMillion: 3, outputPerMillion: 15 }],
+  [
+    "grok-3-mini",
+    {
+      inputPerMillion: 0.3,
+      outputPerMillion: 0.5,
+      reasoningInputPerMillion: 0.3,
+      reasoningOutputPerMillion: 0.5,
+    },
+  ],
+  ["grok-3", { inputPerMillion: 3, outputPerMillion: 15 }],
+  ["grok-2", { inputPerMillion: 2, outputPerMillion: 10 }],
   // ── Mistral ───────────────────────────────────────────────────────
-  ["codestral",          { inputPerMillion: 0.2,   outputPerMillion: 0.6                                                           }],
-  ["mistral-large",      { inputPerMillion: 2,     outputPerMillion: 6                                                             }],
-  ["mistral-medium",     { inputPerMillion: 0.4,   outputPerMillion: 2                                                             }],
-  ["mistral-small",      { inputPerMillion: 0.1,   outputPerMillion: 0.3                                                           }],
-  ["mistral-7b",         { inputPerMillion: 0.025, outputPerMillion: 0.025                                                         }],
-  ["mixtral-8x22b",      { inputPerMillion: 2,     outputPerMillion: 6                                                             }],
-  ["mixtral-8x7b",       { inputPerMillion: 0.65,  outputPerMillion: 0.65                                                          }],
+  ["codestral", { inputPerMillion: 0.2, outputPerMillion: 0.6 }],
+  ["mistral-large", { inputPerMillion: 2, outputPerMillion: 6 }],
+  ["mistral-medium", { inputPerMillion: 0.4, outputPerMillion: 2 }],
+  ["mistral-small", { inputPerMillion: 0.1, outputPerMillion: 0.3 }],
+  ["mistral-7b", { inputPerMillion: 0.025, outputPerMillion: 0.025 }],
+  ["mixtral-8x22b", { inputPerMillion: 2, outputPerMillion: 6 }],
+  ["mixtral-8x7b", { inputPerMillion: 0.65, outputPerMillion: 0.65 }],
   // ── Moonshot / Kimi ──────────────────────────────────────────────
-  ["kimi-k2",            { inputPerMillion: 0.15,  outputPerMillion: 2.5                                                           }],
-  ["kimi-k1",            { inputPerMillion: 0.15,  outputPerMillion: 2.5                                                           }],
-  ["moonshot-v1-128k",   { inputPerMillion: 24,    outputPerMillion: 24                                                            }],
-  ["moonshot-v1-32k",    { inputPerMillion: 24,    outputPerMillion: 24                                                            }],
-  ["moonshot-v1-8k",     { inputPerMillion: 12,    outputPerMillion: 12                                                            }],
+  ["kimi-k2", { inputPerMillion: 0.15, outputPerMillion: 2.5 }],
+  ["kimi-k1", { inputPerMillion: 0.15, outputPerMillion: 2.5 }],
+  ["moonshot-v1-128k", { inputPerMillion: 24, outputPerMillion: 24 }],
+  ["moonshot-v1-32k", { inputPerMillion: 24, outputPerMillion: 24 }],
+  ["moonshot-v1-8k", { inputPerMillion: 12, outputPerMillion: 12 }],
   // ── Meta Llama ────────────────────────────────────────────────────
-  ["llama-4-maverick",   { inputPerMillion: 0.18,  outputPerMillion: 0.6                                                           }],
-  ["llama-4-scout",      { inputPerMillion: 0.08,  outputPerMillion: 0.3                                                           }],
-  ["llama-3.3-70b",      { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
-  ["llama-3.1-405b",     { inputPerMillion: 4,     outputPerMillion: 4                                                             }],
-  ["llama-3.1-70b",      { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
-  ["llama-3.1-8b",       { inputPerMillion: 0.05,  outputPerMillion: 0.1                                                           }],
-  ["llama-3-70b",        { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
-  ["llama-3-8b",         { inputPerMillion: 0.05,  outputPerMillion: 0.1                                                           }],
+  ["llama-4-maverick", { inputPerMillion: 0.18, outputPerMillion: 0.6 }],
+  ["llama-4-scout", { inputPerMillion: 0.08, outputPerMillion: 0.3 }],
+  ["llama-3.3-70b", { inputPerMillion: 0.23, outputPerMillion: 0.4 }],
+  ["llama-3.1-405b", { inputPerMillion: 4, outputPerMillion: 4 }],
+  ["llama-3.1-70b", { inputPerMillion: 0.23, outputPerMillion: 0.4 }],
+  ["llama-3.1-8b", { inputPerMillion: 0.05, outputPerMillion: 0.1 }],
+  ["llama-3-70b", { inputPerMillion: 0.23, outputPerMillion: 0.4 }],
+  ["llama-3-8b", { inputPerMillion: 0.05, outputPerMillion: 0.1 }],
   // ── Cohere ────────────────────────────────────────────────────────
-  ["command-a",          { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
-  ["command-r-plus",     { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
-  ["command-r",          { inputPerMillion: 0.15,  outputPerMillion: 0.6                                                           }],
+  ["command-a", { inputPerMillion: 2.5, outputPerMillion: 10 }],
+  ["command-r-plus", { inputPerMillion: 2.5, outputPerMillion: 10 }],
+  ["command-r", { inputPerMillion: 0.15, outputPerMillion: 0.6 }],
   // ── Perplexity ───────────────────────────────────────────────────
-  ["sonar-pro",          { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
-  ["sonar-reasoning",    { inputPerMillion: 1,     outputPerMillion: 5,    reasoningInputPerMillion: 1,   reasoningOutputPerMillion: 5    }],
-  ["sonar",              { inputPerMillion: 1,     outputPerMillion: 1                                                             }],
+  ["sonar-pro", { inputPerMillion: 3, outputPerMillion: 15 }],
+  [
+    "sonar-reasoning",
+    {
+      inputPerMillion: 1,
+      outputPerMillion: 5,
+      reasoningInputPerMillion: 1,
+      reasoningOutputPerMillion: 5,
+    },
+  ],
+  ["sonar", { inputPerMillion: 1, outputPerMillion: 1 }],
 ];
 
 // Sorted once at module load — longest prefix wins
@@ -156,9 +324,7 @@ export class PricingService {
     if (this.initialized) return;
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
-      this.registry = await createKosha(
-        this.cacheDir ? { cacheDir: this.cacheDir } : undefined,
-      );
+      this.registry = await createKosha(this.cacheDir ? { cacheDir: this.cacheDir } : undefined);
     } catch {
       this.registry = null;
       this.pricingUnavailable = true;
@@ -190,10 +356,12 @@ export class PricingService {
     if (this.registry) {
       // Tier 3: kosha canonical lookup (works for all major models since 0.6.0)
       try {
-        const card = this.registry.model(modelId) as {
-          pricing?: ModelPricing;
-          originPricing?: ModelPricing;
-        } | undefined;
+        const card = this.registry.model(modelId) as
+          | {
+              pricing?: ModelPricing;
+              originPricing?: ModelPricing;
+            }
+          | undefined;
         // originPricing = direct-provider rate on proxied routes (preferred)
         const raw = card?.originPricing ?? card?.pricing;
         if (raw) {
@@ -241,7 +409,7 @@ export class PricingService {
     outputTokens: number,
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
-    reasoningTokens = 0,
+    reasoningTokens = 0
   ): Promise<number> {
     const pricing = await this.getPricing(modelId);
     if (!pricing) return 0;
@@ -300,9 +468,8 @@ export class PricingService {
     }
     const all: KoshaModel[] = this.registry.models();
 
-
     const best = all
-      .filter(m => {
+      .filter((m) => {
         const eff = m.originPricing ?? m.pricing;
         if (!eff || eff.inputPerMillion <= 0 || eff.outputPerMillion <= 0) return false;
         const lower = m.id.toLowerCase();
@@ -328,12 +495,16 @@ export class PricingService {
   private roundPricing(p: ModelPricing): FullPricing {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
     return {
-      inputPerMillion:  r(p.inputPerMillion),
+      inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),
-      ...(p.cacheReadPerMillion          ? { cacheReadPerMillion:          r(p.cacheReadPerMillion)          } : {}),
-      ...(p.cacheWritePerMillion         ? { cacheWritePerMillion:         r(p.cacheWritePerMillion)         } : {}),
-      ...(p.reasoningInputPerMillion     ? { reasoningInputPerMillion:     r(p.reasoningInputPerMillion)     } : {}),
-      ...(p.reasoningOutputPerMillion    ? { reasoningOutputPerMillion:    r(p.reasoningOutputPerMillion)    } : {}),
+      ...(p.cacheReadPerMillion ? { cacheReadPerMillion: r(p.cacheReadPerMillion) } : {}),
+      ...(p.cacheWritePerMillion ? { cacheWritePerMillion: r(p.cacheWritePerMillion) } : {}),
+      ...(p.reasoningInputPerMillion
+        ? { reasoningInputPerMillion: r(p.reasoningInputPerMillion) }
+        : {}),
+      ...(p.reasoningOutputPerMillion
+        ? { reasoningOutputPerMillion: r(p.reasoningOutputPerMillion) }
+        : {}),
     };
   }
 }

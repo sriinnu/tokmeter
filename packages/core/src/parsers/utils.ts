@@ -4,8 +4,8 @@
  * Shared helpers for session file discovery, reading, and record creation.
  */
 
-import { readdir, readFile, stat, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { TokenRecord } from "../types.js";
 
 /** Default maximum number of files returned by findFiles. */
@@ -32,7 +32,7 @@ export async function findFiles(
   dir: string,
   predicate: (name: string) => boolean,
   maxDepth = 5,
-  maxFiles = DEFAULT_MAX_FILES,
+  maxFiles = DEFAULT_MAX_FILES
 ): Promise<string[]> {
   const results: string[] = [];
   if (maxDepth <= 0 || results.length >= maxFiles) return results;
@@ -49,7 +49,12 @@ export async function findFiles(
 
     // Skip symlink directories to prevent path traversal attacks
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      const sub = await findFiles(join(dir, entry.name), predicate, maxDepth - 1, maxFiles - results.length);
+      const sub = await findFiles(
+        join(dir, entry.name),
+        predicate,
+        maxDepth - 1,
+        maxFiles - results.length
+      );
       results.push(...sub);
     } else if (entry.isFile() && !entry.isSymbolicLink() && predicate(entry.name)) {
       results.push(join(dir, entry.name));
@@ -104,7 +109,7 @@ export function extractProjectFromPath(filePath: string): string {
 
 /** Create a base token record with sensible defaults. */
 export function createRecord(
-  overrides: Partial<TokenRecord> & Pick<TokenRecord, "timestamp" | "provider" | "model">,
+  overrides: Partial<TokenRecord> & Pick<TokenRecord, "timestamp" | "provider" | "model">
 ): TokenRecord {
   const ts =
     typeof overrides.timestamp === "number" && Number.isFinite(overrides.timestamp)

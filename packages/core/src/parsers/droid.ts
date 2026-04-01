@@ -4,13 +4,8 @@
  * Reads from ~/.factory/sessions/
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 interface DroidMessage {
   role?: string;
@@ -48,7 +43,7 @@ export class DroidParser implements SessionParser {
             outputTokens: msg.usage.output_tokens ?? 0,
             cacheReadTokens: msg.usage.cache_read_tokens ?? 0,
             cacheWriteTokens: msg.usage.cache_write_tokens ?? 0,
-          }),
+          })
         );
       }
     }

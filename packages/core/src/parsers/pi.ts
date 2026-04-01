@@ -4,13 +4,8 @@
  * Reads from ~/.pi/agent/sessions/<encoded-cwd>/*.jsonl
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 interface PiSessionHeader {
   type: "session";
@@ -71,7 +66,7 @@ export class PiParser implements SessionParser {
             outputTokens: msg.message.usage.output ?? 0,
             cacheReadTokens: msg.message.usage.cacheRead ?? 0,
             cacheWriteTokens: msg.message.usage.cacheWrite ?? 0,
-          }),
+          })
         );
       }
     }

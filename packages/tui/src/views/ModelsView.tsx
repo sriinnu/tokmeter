@@ -1,7 +1,6 @@
-import React from "react";
+import type { ModelSummary } from "@tokmeter/core";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
-import type { ModelSummary } from "@tokmeter/core";
 
 interface ModelsViewProps {
   models: ModelSummary[];
@@ -18,7 +17,7 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
   }
 
   const chartData = models.slice(0, 10).map((m) => ({
-    label: m.model.length > 18 ? m.model.slice(0, 15) + "..." : m.model,
+    label: m.model.length > 18 ? `${m.model.slice(0, 15)}...` : m.model,
     value: m.cost,
     maxValue: totalCost,
   }));

@@ -6,7 +6,7 @@
  * For development, loads from /data.json.
  */
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /** Matches the shape of TokmeterCore.toJSON() output. */
 export interface TokmeterStats {
@@ -85,7 +85,11 @@ export interface TokmeterData {
   stats: TokmeterStats;
 }
 
-export function useTokmeterData(): { data: TokmeterData | null; loading: boolean; error: string | null } {
+export function useTokmeterData(): {
+  data: TokmeterData | null;
+  loading: boolean;
+  error: string | null;
+} {
   const [data, setData] = useState<TokmeterData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -5,8 +5,7 @@
  * Also checks Octofriend SQLite at ~/.local/share/octofriend/sqlite.db.
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import { expandHome, fileExists } from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
 
 export class SyntheticParser implements SessionParser {
   readonly providerId = "synthetic" as const;

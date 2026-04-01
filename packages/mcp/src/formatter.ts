@@ -5,7 +5,7 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
-import chalk, { Chalk } from "chalk";
+import chalk, { type Chalk } from "chalk";
 
 // Force TrueColor (level 3) regardless of TTY detection.
 // In subprocess contexts (Claude Code statusline hook), stdout is not a TTY
@@ -85,9 +85,7 @@ export function sparkline(values: number[]): string {
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = max - min || 1;
-  return values
-    .map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))])
-    .join("");
+  return values.map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))]).join("");
 }
 
 // ─── Color Constants ────────────────────────────────────────────────
