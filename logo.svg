@@ -1,57 +1,73 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
+    <!-- Background -->
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#161b22"/>
+      <stop offset="0%" stop-color="#0f0f1a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#39d353"/>
-      <stop offset="100%" stop-color="#006d32"/>
+
+    <!-- Infinity gradient - purple to cyan -->
+    <linearGradient id="infinityGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#f0b429"/>
-      <stop offset="100%" stop-color="#d4941c"/>
-    </linearGradient>
+
+    <!-- Eye inner glow -->
+    <radialGradient id="eyeInner" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="40%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </radialGradient>
+
+    <!-- Bar gradients - rainbow spectrum -->
     <linearGradient id="bar1" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" stop-color="#006d32"/>
-      <stop offset="100%" stop-color="#39d353"/>
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
     </linearGradient>
     <linearGradient id="bar2" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" stop-color="#0e4429"/>
-      <stop offset="100%" stop-color="#26a641"/>
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
     </linearGradient>
     <linearGradient id="bar3" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" stop-color="#2ea043"/>
-      <stop offset="100%" stop-color="#56d364"/>
+      <stop offset="0%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
     </linearGradient>
     <linearGradient id="bar4" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" stop-color="#238636"/>
-      <stop offset="100%" stop-color="#3fb950"/>
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#34d399"/>
     </linearGradient>
     <linearGradient id="bar5" x1="0%" y1="100%" x2="0%" y2="0%">
-      <stop offset="0%" stop-color="#1a7f37"/>
-      <stop offset="100%" stop-color="#2ea043"/>
+      <stop offset="0%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
     </linearGradient>
-    <linearGradient id="purple" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#a78bfa"/>
-      <stop offset="100%" stop-color="#7c3aed"/>
+
+    <!-- Gold gradient for text -->
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
     </linearGradient>
-    <filter id="glow">
+
+    <!-- Filters -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
       <feGaussianBlur stdDeviation="6" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <filter id="softglow">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
+
+    <filter id="strongGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
       <feMerge>
+        <feMergeNode in="blur"/>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <filter id="textglow">
-      <feGaussianBlur stdDeviation="8" result="blur"/>
+
+    <filter id="barGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -59,88 +75,100 @@
     </filter>
   </defs>
 
-  <!-- Background -->
+  <!-- Background with rounded corners -->
   <rect width="512" height="512" rx="96" fill="url(#bg)"/>
 
-  <!-- Subtle grid pattern -->
-  <g opacity="0.04">
-    <line x1="0" y1="128" x2="512" y2="128" stroke="#39d353" stroke-width="0.5"/>
-    <line x1="0" y1="256" x2="512" y2="256" stroke="#39d353" stroke-width="0.5"/>
-    <line x1="0" y1="384" x2="512" y2="384" stroke="#39d353" stroke-width="0.5"/>
-    <line x1="128" y1="0" x2="128" y2="512" stroke="#39d353" stroke-width="0.5"/>
-    <line x1="256" y1="0" x2="256" y2="512" stroke="#39d353" stroke-width="0.5"/>
-    <line x1="384" y1="0" x2="384" y2="512" stroke="#39d353" stroke-width="0.5"/>
+  <!-- Outer ring - meter gauge -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#2d2d44" stroke-width="4"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="url(#infinityGrad)" stroke-width="4"
+          stroke-dasharray="565 1130" stroke-linecap="round"
+          transform="rotate(-90 256 256)" filter="url(#glow)" opacity="0.8"/>
+
+  <!-- ===== INFINITY AS WATCHING EYES ===== -->
+  <g transform="translate(256, 200)" filter="url(#strongGlow)">
+    <!-- Main infinity symbol -->
+    <path d="M0,-60
+             C-60,-60 -90,-30 -90,15
+             C-90,60 -60,75 -30,60
+             C0,45 0,15 0,-10
+             C0,15 0,45 30,60
+             C60,75 90,60 90,15
+             C90,-30 60,-60 0,-60"
+          fill="none"
+          stroke="url(#infinityGrad)"
+          stroke-width="12"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- Left eye core -->
+    <circle cx="-50" cy="0" r="28" fill="url(#eyeInner)" opacity="0.9"/>
+    <circle cx="-50" cy="0" r="14" fill="#0f0f1a"/>
+    <circle cx="-50" cy="0" r="8" fill="#06b6d4" filter="url(#glow)"/>
+    <circle cx="-54" cy="-4" r="3" fill="#fff" opacity="0.9"/>
+
+    <!-- Right eye core -->
+    <circle cx="50" cy="0" r="28" fill="url(#eyeInner)" opacity="0.9"/>
+    <circle cx="50" cy="0" r="14" fill="#0f0f1a"/>
+    <circle cx="50" cy="0" r="8" fill="#8b5cf6" filter="url(#glow)"/>
+    <circle cx="46" cy="-4" r="3" fill="#fff" opacity="0.9"/>
   </g>
 
-  <!-- Outer ring (meter gauge) -->
-  <circle cx="256" cy="256" r="200" fill="none" stroke="#21262d" stroke-width="8"/>
-  <circle cx="256" cy="256" r="200" fill="none" stroke="url(#accent)" stroke-width="8"
-          stroke-dasharray="880" stroke-dashoffset="220" stroke-linecap="round"
-          transform="rotate(-135 256 256)" filter="url(#glow)" opacity="0.8"/>
+  <!-- ===== IMPROVED TOKEN BARS ===== -->
+  <g transform="translate(76, 320)">
+    <!-- Bar backgrounds with rounded tops -->
+    <g opacity="0.15">
+      <rect x="0"   y="0"  width="56" height="120" rx="8" fill="#fff"/>
+      <rect x="76"  y="0"  width="56" height="120" rx="8" fill="#fff"/>
+      <rect x="152" y="0"  width="56" height="120" rx="8" fill="#fff"/>
+      <rect x="228" y="0"  width="56" height="120" rx="8" fill="#fff"/>
+      <rect x="304" y="0"  width="56" height="120" rx="8" fill="#fff"/>
+    </g>
 
-  <!-- Tick marks around the gauge -->
-  <g transform="rotate(-135 256 256)" opacity="0.3">
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(27 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(54 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(81 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(108 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(135 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(162 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(189 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(216 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(243 256 256)"/>
-    <line x1="256" y1="60" x2="256" y2="75" stroke="#39d353" stroke-width="2" stroke-linecap="round" transform="rotate(270 256 256)"/>
+    <!-- Filled bars - varied dynamic heights -->
+    <g filter="url(#barGlow)">
+      <!-- Bar 1 - Purple -->
+      <rect x="0"   y="20"  width="56" height="100" rx="8" fill="url(#bar1)"/>
+      <rect x="0"   y="20"  width="56" height="4" rx="2" fill="#c4b5fd" opacity="0.8"/>
+      <!-- Token count -->
+      <text x="28" y="140" font-family="SF Mono, monospace" font-size="11" fill="#a78bfa" text-anchor="middle">42K</text>
+
+      <!-- Bar 2 - Blue -->
+      <rect x="76"  y="5"   width="56" height="115" rx="8" fill="url(#bar2)"/>
+      <rect x="76"  y="5"   width="56" height="4" rx="2" fill="#93c5fd" opacity="0.8"/>
+      <text x="104" y="140" font-family="SF Mono, monospace" font-size="11" fill="#60a5fa" text-anchor="middle">67K</text>
+
+      <!-- Bar 3 - Cyan -->
+      <rect x="152" y="35"  width="56" height="85" rx="8" fill="url(#bar3)"/>
+      <rect x="152" y="35"  width="56" height="4" rx="2" fill="#67e8f9" opacity="0.8"/>
+      <text x="180" y="140" font-family="SF Mono, monospace" font-size="11" fill="#22d3ee" text-anchor="middle">31K</text>
+
+      <!-- Bar 4 - Green -->
+      <rect x="228" y="12"  width="56" height="108" rx="8" fill="url(#bar4)"/>
+      <rect x="228" y="12"  width="56" height="4" rx="2" fill="#6ee7b7" opacity="0.8"/>
+      <text x="256" y="140" font-family="SF Mono, monospace" font-size="11" fill="#34d399" text-anchor="middle">58K</text>
+
+      <!-- Bar 5 - Gold -->
+      <rect x="304" y="45"  width="56" height="75" rx="8" fill="url(#bar5)"/>
+      <rect x="304" y="45"  width="56" height="4" rx="2" fill="#fde68a" opacity="0.8"/>
+      <text x="332" y="140" font-family="SF Mono, monospace" font-size="11" fill="#fbbf24" text-anchor="middle">24K</text>
+    </g>
+
+    <!-- Animated pulse lines across bars -->
+    <g opacity="0.4">
+      <line x1="0" y1="60" x2="360" y2="60" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="4 8"/>
+      <line x1="0" y1="90" x2="360" y2="90" stroke="#06b6d4" stroke-width="1" stroke-dasharray="4 8"/>
+    </g>
   </g>
 
-  <!-- Bar chart (5 bars) inside the ring -->
-  <g transform="translate(148, 180)">
-    <rect x="20"  y="0"   width="40" height="200" rx="4" fill="#21262d"/>
-    <rect x="76"  y="40"  width="40" height="160" rx="4" fill="#21262d"/>
-    <rect x="132" y="80"  width="40" height="120" rx="4" fill="#21262d"/>
-    <rect x="188" y="20"  width="40" height="180" rx="4" fill="#21262d"/>
-    <rect x="244" y="100" width="40" height="100" rx="4" fill="#21262d"/>
-
-    <rect x="20"  y="50"  width="40" height="150" rx="4" fill="url(#bar1)" filter="url(#softglow)"/>
-    <rect x="76"  y="70"  width="40" height="130" rx="4" fill="url(#bar2)" filter="url(#softglow)"/>
-    <rect x="132" y="110" width="40" height="90"  rx="4" fill="url(#bar3)" filter="url(#softglow)"/>
-    <rect x="188" y="60"  width="40" height="140" rx="4" fill="url(#bar4)" filter="url(#softglow)"/>
-    <rect x="244" y="120" width="40" height="80"  rx="4" fill="url(#bar5)" filter="url(#softglow)"/>
-
-    <rect x="20"  y="50"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
-    <rect x="76"  y="70"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
-    <rect x="132" y="110" width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
-    <rect x="188" y="60"  width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
-    <rect x="244" y="120" width="40" height="3" rx="1.5" fill="#56d364" opacity="0.8"/>
+  <!-- ===== BRAND TEXT ===== -->
+  <g transform="translate(256, 490)" filter="url(#glow)">
+    <text font-family="SF Mono, Monaco, monospace" font-size="22" fill="url(#gold)"
+          text-anchor="middle" font-weight="600">$ tokmeter</text>
   </g>
 
-  <!-- Sparkline overlay (bottom) -->
-  <polyline points="148,420 178,408 208,415 238,395 268,400 298,385 328,390 358,375"
-            fill="none" stroke="#39d353" stroke-width="2.5" stroke-linecap="round"
-            stroke-linejoin="round" opacity="0.4" filter="url(#softglow)"/>
-  <polyline points="148,420 178,408 208,415 238,395 268,400 298,385 328,390 358,375 358,420 148,420"
-            fill="#39d353" opacity="0.05"/>
-
-  <!-- Infinity symbol — top left -->
-  <g transform="translate(68, 68)" opacity="0.6" filter="url(#textglow)">
-    <text font-family="serif" font-size="42" fill="url(#purple)" font-weight="bold">&#x267E;</text>
-  </g>
-
-  <!-- Cost symbol — top right -->
-  <g transform="translate(396, 92)" opacity="0.4">
-    <text font-family="monospace" font-size="28" fill="url(#gold)" font-weight="bold">$</text>
-  </g>
-
-  <!-- Token arrows — bottom corners -->
-  <g transform="translate(82, 420)" opacity="0.3">
-    <text font-family="monospace" font-size="20" fill="#58a6ff">&#x2191;</text>
-  </g>
-  <g transform="translate(410, 420)" opacity="0.3">
-    <text font-family="monospace" font-size="20" fill="#f97583">&#x2193;</text>
-  </g>
-
-  <!-- Data point accents -->
-  <circle cx="378" cy="130" r="4" fill="#39d353" opacity="0.5" filter="url(#softglow)"/>
-  <circle cx="400" cy="118" r="3" fill="#26a641" opacity="0.4"/>
-  <circle cx="390" cy="145" r="2.5" fill="#56d364" opacity="0.3"/>
+  <!-- Corner accent particles -->
+  <circle cx="80" cy="80" r="4" fill="#8b5cf6" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="432" cy="80" r="4" fill="#06b6d4" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="80" cy="432" r="4" fill="#34d399" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="432" cy="432" r="4" fill="#fbbf24" opacity="0.6" filter="url(#glow)"/>
 </svg>
