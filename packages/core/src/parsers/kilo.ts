@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Kilo (VS Code extension) session parser.
+ * @sriinnu/tokmeter-core — Kilo (VS Code extension) session parser.
  *
  * Same shape as Roo Code — reads ui_messages.json from VS Code globalStorage.
  */

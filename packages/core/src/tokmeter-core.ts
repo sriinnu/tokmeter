@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Main TokmeterCore class.
+ * @sriinnu/tokmeter-core — Main TokmeterCore class.
  *
  * Public API for scanning, aggregating, and querying token usage.
  * Consumable by CLI, TUI, web app, macOS bar, and external projects.

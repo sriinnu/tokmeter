@@ -1,8 +1,8 @@
 /**
- * @tokmeter/core — Public API barrel export.
+ * @sriinnu/tokmeter-core — Public API barrel export.
  *
  * Re-exports everything so consumers can use:
- *   import { TokmeterCore } from "@tokmeter/core";
+ *   import { TokmeterCore } from "@sriinnu/tokmeter-core";
  */
 
 export { TokmeterCore } from "./tokmeter-core.js";

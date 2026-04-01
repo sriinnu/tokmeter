@@ -1,4 +1,4 @@
-import type { TokmeterCore } from "@tokmeter/core";
+import type { TokmeterCore } from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
 import { Sparkline } from "../components/Sparkline.js";

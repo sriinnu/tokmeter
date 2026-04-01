@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Qwen CLI session parser.
+ * @sriinnu/tokmeter-core — Qwen CLI session parser.
  *
  * Reads from ~/.qwen/projects/{PROJECT_PATH}/chats/{CHAT_ID}.jsonl
  */

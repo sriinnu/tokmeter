@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Parser utilities.
+ * @sriinnu/tokmeter-core — Parser utilities.
  *
  * Shared helpers for session file discovery, reading, and record creation.
  */

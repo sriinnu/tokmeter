@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — Installer for statusline and MCP across all AI coding agents.
+ * @sriinnu/drishti — Installer for statusline and MCP across all AI coding agents.
  *
  * Supports:
  *   - Claude Code (~/.claude/settings.json)
@@ -112,7 +112,7 @@ export function installStatusline(editors?: string[]): void {
 
   console.log(C.title("\n【♾️】 Installing Statusline Hook\n"));
 
-  const command = "npx -y @tokmeter/drishti statusline";
+  const command = "npx -y @sriinnu/drishti statusline";
   let installed = 0;
   let skipped = 0;
 
@@ -127,7 +127,7 @@ export function installStatusline(editors?: string[]): void {
     const existingHooks = settings.hooks?.StatusLine ?? [];
 
     // Check if already installed
-    if (existingHooks.some((h) => h.command.includes("@tokmeter/drishti"))) {
+    if (existingHooks.some((h) => h.command.includes("@sriinnu/drishti"))) {
       console.log(C.accent(`  ✓ ${editor.name} — already installed`));
       continue;
     }
@@ -198,7 +198,7 @@ export function installMCP(editors?: string[]): void {
       ...existingServers,
       [serverName]: {
         command: "npx",
-        args: ["-y", "@tokmeter/drishti", "mcp"],
+        args: ["-y", "@sriinnu/drishti", "mcp"],
       },
     };
 
@@ -241,7 +241,7 @@ export function uninstallStatusline(editors?: string[]): void {
     }
 
     settings.hooks.StatusLine = settings.hooks.StatusLine.filter(
-      (h) => !h.command.includes("@tokmeter/drishti")
+      (h) => !h.command.includes("@sriinnu/drishti")
     );
 
     if (settings.hooks.StatusLine.length === 0) {

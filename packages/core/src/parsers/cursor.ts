@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Cursor IDE parser.
+ * @sriinnu/tokmeter-core — Cursor IDE parser.
  *
  * Reads from ~/.config/tokscale/cursor-cache/ (CSV usage files).
  * Requires prior sync via Cursor API.

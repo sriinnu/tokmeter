@@ -1,5 +1,5 @@
 {
-  "name": "@tokmeter/cli",
+  "name": "@sriinnu/tokmeter-cli",
   "version": "0.1.0",
   "description": "Token usage tracking CLI — table and JSON output",
   "type": "module",
@@ -13,8 +13,8 @@
     "dev": "bun src/cli.ts"
   },
   "dependencies": {
-    "@tokmeter/core": "workspace:*",
-    "@tokmeter/drishti": "workspace:*",
+    "@sriinnu/tokmeter-core": "workspace:*",
+    "@sriinnu/drishti": "workspace:*",
     "cli-table3": "^0.6.5",
     "chalk": "^5.3.0"
   },

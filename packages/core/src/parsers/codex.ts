@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Codex CLI session parser.
+ * @sriinnu/tokmeter-core — Codex CLI session parser.
  *
  * Reads from ~/.codex/sessions/*.jsonl
  * Format: Event-based with token_count events.

@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — Live TUI Dashboard
+ * @sriinnu/drishti — Live TUI Dashboard
  *
  * A beautiful, colorful, auto-refreshing terminal dashboard
  * built with Ink (React for terminals).
@@ -9,7 +9,7 @@
  *   startLive();
  */
 
-import type { DailyEntry, ModelSummary, ProviderSummary } from "@tokmeter/core";
+import type { DailyEntry, ModelSummary, ProviderSummary } from "@sriinnu/tokmeter-core";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
 import {

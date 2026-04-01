@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @tokmeter/drishti — CLI entry point.
+ * @sriinnu/drishti — CLI entry point.
  *
  * Subcommands:
  *   drishti                        Start live TUI dashboard (default)
@@ -125,7 +125,7 @@ function printHelp(): void {
   const a = C.accent;
 
   console.log(`
-${t("【♾️】 दृष्टि  @tokmeter/drishti")} ${d("— token observatory for AI coding agents")}
+${t("【♾️】 दृष्टि  @sriinnu/drishti")} ${d("— token observatory for AI coding agents")}
 
 ${b("USAGE")}
   ${a("drishti")} ${d("[command]")}

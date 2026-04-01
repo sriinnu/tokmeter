@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Gemini CLI session parser.
+ * @sriinnu/tokmeter-core — Gemini CLI session parser.
  *
  * Reads from ~/.gemini/tmp/{id}/chats/{file}.json
  */

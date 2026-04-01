@@ -1,5 +1,5 @@
 {
-  "name": "@tokmeter/web",
+  "name": "@sriinnu/tokmeter-web",
   "version": "0.1.0",
   "description": "Token usage tracking web dashboard — React + Plotly",
   "type": "module",

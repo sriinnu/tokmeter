@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Synthetic session parser.
+ * @sriinnu/tokmeter-core — Synthetic session parser.
  *
  * Re-attributed from other sources via "hf:" model prefix or "synthetic" provider.
  * Also checks Octofriend SQLite at ~/.local/share/octofriend/sqlite.db.

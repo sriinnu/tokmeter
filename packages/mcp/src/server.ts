@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — MCP Server
+ * @sriinnu/drishti — MCP Server
  *
  * दृष्टि (Drishti) — "Vision" — Token usage observatory for AI coding agents.
  *
@@ -16,7 +16,7 @@ import {
   type ScanOptions,
   type TokenRecord,
   TokmeterCore,
-} from "@tokmeter/core";
+} from "@sriinnu/tokmeter-core";
 import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────

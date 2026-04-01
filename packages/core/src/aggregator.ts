@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Aggregator.
+ * @sriinnu/tokmeter-core — Aggregator.
  *
  * Groups parsed TokenRecords by project, model, provider, and date.
  */

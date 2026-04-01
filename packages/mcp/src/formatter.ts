@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — Shared formatting utilities.
+ * @sriinnu/drishti — Shared formatting utilities.
  *
  * Provides number, cost, duration, and bar formatters with chalk colors.
  * Used by the MCP server, statusline, and live TUI dashboard.

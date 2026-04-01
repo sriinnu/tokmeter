@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — Live file tracker.
+ * @sriinnu/drishti — Live file tracker.
  *
  * Polls TokmeterCore at a configurable interval and emits "update"
  * events whenever the record set changes. Computes session-level
@@ -17,7 +17,7 @@ import {
   type ProviderSummary,
   type TokenRecord,
   TokmeterCore,
-} from "@tokmeter/core";
+} from "@sriinnu/tokmeter-core";
 
 // ─── Types ──────────────────────────────────────────────────────────
 

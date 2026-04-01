@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Parser registry and index.
+ * @sriinnu/tokmeter-core — Parser registry and index.
  */
 
 import type { ProviderId, SessionParser } from "../types.js";

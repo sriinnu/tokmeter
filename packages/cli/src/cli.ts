@@ -14,8 +14,8 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { TokmeterCore } from "@tokmeter/core";
-import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@tokmeter/core";
+import { TokmeterCore } from "@sriinnu/tokmeter-core";
+import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter-core";
 import Table from "cli-table3";
 
 // ---- Arg parser (lightweight, no deps) ----
@@ -333,56 +333,56 @@ async function main() {
 
   // Delegate to drishti for live/statusline/daemon commands
   if (args.command === "live") {
-    const { startLive } = await import("@tokmeter/drishti/live.js");
+    const { startLive } = await import("@sriinnu/drishti/live.js");
     await startLive();
     return;
   }
 
   if (args.command === "statusline") {
-    const { runStatusline } = await import("@tokmeter/drishti/statusline.js");
+    const { runStatusline } = await import("@sriinnu/drishti/statusline.js");
     await runStatusline();
     return;
   }
 
   if (args.command === "daemon") {
-    const { runDaemonCLI } = await import("@tokmeter/drishti/daemon/server.js");
+    const { runDaemonCLI } = await import("@sriinnu/drishti/daemon/server.js");
     runDaemonCLI(args.daemonCmd ?? "status");
     return;
   }
 
   // Installer commands
   if (args.command === "install-statusline") {
-    const { installStatusline } = await import("@tokmeter/drishti/installer.js");
+    const { installStatusline } = await import("@sriinnu/drishti/installer.js");
     installStatusline();
     return;
   }
 
   if (args.command === "install-mcp") {
-    const { installMCP } = await import("@tokmeter/drishti/installer.js");
+    const { installMCP } = await import("@sriinnu/drishti/installer.js");
     installMCP();
     return;
   }
 
   if (args.command === "uninstall-statusline") {
-    const { uninstallStatusline } = await import("@tokmeter/drishti/installer.js");
+    const { uninstallStatusline } = await import("@sriinnu/drishti/installer.js");
     uninstallStatusline();
     return;
   }
 
   if (args.command === "uninstall-mcp") {
-    const { uninstallMCP } = await import("@tokmeter/drishti/installer.js");
+    const { uninstallMCP } = await import("@sriinnu/drishti/installer.js");
     uninstallMCP();
     return;
   }
 
   if (args.command === "editors") {
-    const { listEditors } = await import("@tokmeter/drishti/installer.js");
+    const { listEditors } = await import("@sriinnu/drishti/installer.js");
     listEditors();
     return;
   }
 
   if (args.command === "pricing") {
-    const { PricingService } = await import("@tokmeter/core");
+    const { PricingService } = await import("@sriinnu/tokmeter-core");
     const pricing = new PricingService();
     await pricing.init();
     const modelId = args.pricingModel;

@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@tokmeter/core": resolve(__dirname, "../core/src/index.ts"),
+      "@sriinnu/tokmeter-core": resolve(__dirname, "../core/src/index.ts"),
     },
   },
   server: {

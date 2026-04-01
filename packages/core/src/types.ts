@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Shared type definitions.
+ * @sriinnu/tokmeter-core — Shared type definitions.
  */
 
 /** Provider identifiers for all supported AI coding agents. */
