@@ -197,7 +197,7 @@ export class TokmeterCore {
     projects: ProjectSummary[];
     models: ModelSummary[];
     daily: DailyEntry[];
-    stats: ReturnType<typeof this.getStats>;
+    stats: ReturnType<TokmeterCore["getStats"]>;
   } {
     return {
       records: this.records,
@@ -208,7 +208,17 @@ export class TokmeterCore {
     };
   }
 
-  /** Enrich records that lack a cost with pricing data. */
+  /**
+   * Enrich records that lack a cost with pricing data from kosha-discovery.
+   *
+   * Only processes records where `cost === 0`. Each record's cost is
+   * calculated based on its model's per-million-token pricing for all
+   * five token types: input, output, cache read, cache write, reasoning.
+   *
+   * Records whose model has no pricing entry will remain at cost 0.
+   * Consumers should treat `cost === 0 && (inputTokens + outputTokens) > 0`
+   * as a signal that pricing data was unavailable.
+   */
   private async enrichCosts(records: TokenRecord[]): Promise<void> {
     const costPromises = records.map(async (r) => {
       if (r.cost > 0) return; // already has cost

@@ -1,7 +1,7 @@
 /**
  * @tokmeter/core — OpenClaw session parser.
  *
- * Reads from ~/.openclaw/agents/*/sessions/sessions.json
+ * Reads from ~/.openclaw/agents/{id}/sessions/sessions.json
  * Also scans legacy paths: ~/.clawdbot/, ~/.moltbot/, ~/.moldbot/
  */
 

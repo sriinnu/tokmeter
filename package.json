@@ -5,16 +5,22 @@
     "packages/core",
     "packages/cli",
     "packages/tui",
-    "packages/web"
+    "packages/web",
+    "packages/mcp"
   ],
   "scripts": {
-    "build": "bun run build:core && bun run build:cli && bun run build:tui && bun run build:web",
+    "build": "bun run build:core && bun run build:cli && bun run build:tui && bun run build:web && bun run build:mcp",
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
     "build:tui": "cd packages/tui && bun run build",
     "build:web": "cd packages/web && bun run build",
+    "build:mcp": "cd packages/mcp && bun run build",
     "cli": "cd packages/cli && bun src/cli.ts",
     "tui": "cd packages/tui && bun src/index.tsx",
-    "dev:web": "cd packages/web && bun run dev"
+    "dev:web": "cd packages/web && bun run dev",
+    "drishti": "cd packages/mcp && bun src/cli.ts",
+    "drishti:live": "cd packages/mcp && bun src/cli.ts live",
+    "drishti:serve": "cd packages/mcp && bun src/cli.ts serve",
+    "drishti:statusline": "cd packages/mcp && bun src/cli.ts statusline"
   }
 }
