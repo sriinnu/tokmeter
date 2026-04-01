@@ -1,8 +1,6 @@
-import React from "react";
-import { Box, Text } from "ink";
-import { BarChart } from "../components/BarChart.js";
-import { Heatmap } from "../components/Heatmap.js";
 import type { DailyEntry } from "@tokmeter/core";
+import { Box, Text } from "ink";
+import { Heatmap } from "../components/Heatmap.js";
 
 interface StatsSummary {
   totalCost: number;

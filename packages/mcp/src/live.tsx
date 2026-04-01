@@ -9,20 +9,16 @@
  *   startLive();
  */
 
+import type { DailyEntry, ModelSummary, ProviderSummary } from "@tokmeter/core";
+import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
-import { Box, Text, useInput, useApp, render } from "ink";
-import { LiveTracker, type Snapshot } from "./tracker.js";
 import {
-  formatNumber as fmtNum,
-  formatCost as fmtCost,
   formatBar as barStr,
+  formatCost as fmtCost,
+  formatNumber as fmtNum,
   sparkline,
 } from "./formatter.js";
-import type {
-  ModelSummary,
-  ProviderSummary,
-  DailyEntry,
-} from "@tokmeter/core";
+import { LiveTracker, type Snapshot } from "./tracker.js";
 
 // ─── Formatting Helpers (only TUI-specific ones) ────────────────
 
@@ -42,7 +38,7 @@ function burnColor(rate: number): string {
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max - 1) + "…";
+  return `${s.slice(0, max - 1)}…`;
 }
 
 function padRight(s: string, w: number): string {
@@ -64,12 +60,7 @@ const TAB_NAMES = ["Overview", "Models", "Providers"] as const;
 
 function Header({ tab, lastUpdated }: { tab: TabId; lastUpdated: number }) {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="magenta"
-      paddingX={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="magenta" paddingX={1}>
       <Box justifyContent="space-between">
         <Text>
           <Text color="magenta" bold>
@@ -195,13 +186,7 @@ function BurnRateBar({ snapshot }: { snapshot: Snapshot }) {
   const { burnRate, tokensPerMin } = snapshot;
   const stats = snapshot.stats;
   return (
-    <Box
-      borderStyle="round"
-      borderColor="gray"
-      paddingX={1}
-      justifyContent="center"
-      gap={2}
-    >
+    <Box borderStyle="round" borderColor="gray" paddingX={1} justifyContent="center" gap={2}>
       <Text>
         <Text bold color={burnColor(burnRate)}>
           {"BURN: "}
@@ -279,11 +264,10 @@ function SparklineRow({ daily }: { daily: DailyEntry[] }) {
       <Text color="green" bold>
         {spark}
       </Text>
-      <Text color="gray">{" "}</Text>
+      <Text color="gray"> </Text>
       {last7.map((d) => (
         <Text key={d.date} color="yellow">
-          {fmtCost(d.cost)}
-          {" "}
+          {fmtCost(d.cost)}{" "}
         </Text>
       ))}
     </Box>
@@ -296,9 +280,13 @@ function OverviewTab({ snapshot }: { snapshot: Snapshot }) {
   const { stats, models, providers, daily, sessionTokens } = snapshot;
 
   // Use precomputed token breakdown from tracker — avoids O(n) per frame
-  const { inputTokens: sessionInput, outputTokens: sessionOutput,
-    cacheReadTokens: sessionCacheRead, cacheWriteTokens: sessionCacheWrite,
-    reasoningTokens: sessionReasoning } = sessionTokens;
+  const {
+    inputTokens: sessionInput,
+    outputTokens: sessionOutput,
+    cacheReadTokens: sessionCacheRead,
+    cacheWriteTokens: sessionCacheWrite,
+    reasoningTokens: sessionReasoning,
+  } = sessionTokens;
 
   const todayRecords = daily.length > 0 ? daily[daily.length - 1] : null;
   const maxCost = models.length > 0 ? models[0].cost : 1;
@@ -387,9 +375,7 @@ function OverviewTab({ snapshot }: { snapshot: Snapshot }) {
             barWidth={16}
           />
         ))}
-        {models.length === 0 && (
-          <Text color="gray">{"  No model data yet"}</Text>
-        )}
+        {models.length === 0 && <Text color="gray">{"  No model data yet"}</Text>}
       </Box>
 
       {/* Burn Rate */}
@@ -430,18 +416,14 @@ function ModelsTab({ snapshot }: { snapshot: Snapshot }) {
           {padLeft("%", 7)}
         </Text>
       </Box>
-      <Text color="gray">
-        {"─".repeat(108)}
-      </Text>
-      {models.map((m, i) => (
+      <Text color="gray">{"─".repeat(108)}</Text>
+      {models.map((m, _i) => (
         <Box key={`${m.provider}-${m.model}`}>
           <Text bold>{padRight(truncate(m.model, 23), 24)}</Text>
           <Text color="gray">{padRight(m.provider, 14)}</Text>
           <Text color="blue">{padLeft(fmtNum(m.inputTokens), 9)}</Text>
           <Text color="red">{padLeft(fmtNum(m.outputTokens), 9)}</Text>
-          <Text color="gray">
-            {padLeft(fmtNum(m.cacheReadTokens + m.cacheWriteTokens), 9)}
-          </Text>
+          <Text color="gray">{padLeft(fmtNum(m.cacheReadTokens + m.cacheWriteTokens), 9)}</Text>
           <Text color="magenta">{padLeft(fmtNum(m.reasoningTokens), 9)}</Text>
           <Text>{padLeft(fmtNum(m.totalTokens), 9)}</Text>
           <Text>{"  "}</Text>
@@ -449,9 +431,7 @@ function ModelsTab({ snapshot }: { snapshot: Snapshot }) {
           <Text bold color="yellow">
             {padLeft(fmtCost(m.cost), 8)}
           </Text>
-          <Text color="gray">
-            {padLeft(`${m.percentageOfTotal.toFixed(1)}%`, 7)}
-          </Text>
+          <Text color="gray">{padLeft(`${m.percentageOfTotal.toFixed(1)}%`, 7)}</Text>
         </Box>
       ))}
       {models.length === 0 && (
@@ -502,9 +482,7 @@ function ProvidersTab({ snapshot }: { snapshot: Snapshot }) {
               <Text bold color="yellow">
                 {fmtCost(p.cost)}
               </Text>
-              <Text color="gray">
-                {` (${p.percentageOfTotal.toFixed(1)}%)`}
-              </Text>
+              <Text color="gray">{` (${p.percentageOfTotal.toFixed(1)}%)`}</Text>
             </Text>
           </Box>
           <Box gap={1}>
@@ -546,13 +524,9 @@ function ProvidersTab({ snapshot }: { snapshot: Snapshot }) {
             {" provider"}
             {providers.length !== 1 ? "s" : ""}
             {" and "}
-            <Text bold>
-              {providers.reduce((s, p) => s + p.models.length, 0)}
-            </Text>
+            <Text bold>{providers.reduce((s, p) => s + p.models.length, 0)}</Text>
             {" model"}
-            {providers.reduce((s, p) => s + p.models.length, 0) !== 1
-              ? "s"
-              : ""}
+            {providers.reduce((s, p) => s + p.models.length, 0) !== 1 ? "s" : ""}
           </Text>
         </Box>
       )}
@@ -588,12 +562,7 @@ function LoadingScreen() {
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <Box
-      borderStyle="round"
-      borderColor="red"
-      paddingX={1}
-      marginBottom={1}
-    >
+    <Box borderStyle="round" borderColor="red" paddingX={1} marginBottom={1}>
       <Text color="red" bold>
         {"ERROR: "}
       </Text>
@@ -628,15 +597,18 @@ function App() {
       }
     });
 
-    tracker.start().then(() => {
-      if (mounted) {
-        setSnapshot(tracker.snapshot);
-      }
-    }).catch((err: Error) => {
-      if (mounted) {
-        setError(err.message);
-      }
-    });
+    tracker
+      .start()
+      .then(() => {
+        if (mounted) {
+          setSnapshot(tracker.snapshot);
+        }
+      })
+      .catch((err: Error) => {
+        if (mounted) {
+          setError(err.message);
+        }
+      });
 
     return () => {
       mounted = false;

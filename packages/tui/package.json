@@ -6,9 +6,7 @@
   "bin": {
     "tokmeter-tui": "dist/index.js"
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "dev": "bun src/index.tsx"
@@ -22,5 +20,25 @@
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "license": "MIT",
+  "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriinnu/tokmeter.git",
+    "directory": "packages/tui"
+  },
+  "keywords": [
+    "tokens",
+    "ai",
+    "llm",
+    "usage-tracking",
+    "pricing",
+    "tui",
+    "terminal",
+    "claude",
+    "anthropic"
+  ],
+  "engines": { "node": ">=22.0.0" },
+  "publishConfig": { "access": "public" }
 }

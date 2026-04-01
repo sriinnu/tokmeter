@@ -7,9 +7,7 @@
     "tokmeter": "dist/cli.js"
   },
   "main": "dist/cli.js",
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "dev": "bun src/cli.ts"
@@ -22,5 +20,15 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "license": "MIT",
+  "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriinnu/tokmeter.git",
+    "directory": "packages/cli"
+  },
+  "keywords": ["tokens", "ai", "llm", "usage-tracking", "pricing", "cli", "claude", "anthropic"],
+  "engines": { "node": ">=22.0.0" },
+  "publishConfig": { "access": "public" }
 }

@@ -5,13 +5,8 @@
  * Format: Event-based with token_count events.
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 interface CodexEvent {
   type?: string;
@@ -54,7 +49,7 @@ export class CodexParser implements SessionParser {
             sourceFile: file,
             inputTokens: info.last_token_usage.input_tokens ?? 0,
             outputTokens: info.last_token_usage.output_tokens ?? 0,
-          }),
+          })
         );
       }
     }

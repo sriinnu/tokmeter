@@ -1,18 +1,10 @@
-/**
- * @tokmeter/core — Claude Code session parser.
- *
- * Reads from ~/.claude/projects/{projectPath}/*.jsonl
- * Format: JSONL with assistant messages containing usage data.
- */
-
-import { join } from "node:path";
-import type { TokenRecord, SessionParser } from "../types.js";
+import type { SessionParser, TokenRecord } from "../types.js";
 import {
+  createRecord,
   expandHome,
+  extractProjectFromPath,
   findFiles,
   readJsonlFile,
-  createRecord,
-  extractProjectFromPath,
 } from "./utils.js";
 
 interface ClaudeMessage {
@@ -58,7 +50,7 @@ export class ClaudeCodeParser implements SessionParser {
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
             cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
             cost: msg.costUSD ?? 0,
-          }),
+          })
         );
       }
     }

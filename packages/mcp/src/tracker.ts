@@ -12,11 +12,11 @@
 
 import { EventEmitter } from "node:events";
 import {
-  TokmeterCore,
-  type TokenRecord,
+  type DailyEntry,
   type ModelSummary,
   type ProviderSummary,
-  type DailyEntry,
+  type TokenRecord,
+  TokmeterCore,
 } from "@tokmeter/core";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -242,9 +242,7 @@ export class LiveTracker extends EventEmitter {
    */
   private computeSessionRecords(records: TokenRecord[]): TokenRecord[] {
     if (this.sessionId) {
-      const matched = records.filter(
-        (r) => r.sourceFile?.includes(this.sessionId!) ?? false,
-      );
+      const matched = records.filter((r) => r.sourceFile?.includes(this.sessionId!) ?? false);
       if (matched.length > 0) return matched;
     }
     // Fallback: all records since the tracker was started

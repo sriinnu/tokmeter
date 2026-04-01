@@ -4,13 +4,9 @@
  * Reads from VS Code globalStorage task directories.
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  createRecord,
-  findFiles,
-} from "./utils.js";
 import { readFile } from "node:fs/promises";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles } from "./utils.js";
 
 interface RooUiMessage {
   type?: string;
@@ -72,7 +68,7 @@ export class RooCodeParser implements SessionParser {
                 cacheReadTokens: data.cacheReads ?? 0,
                 cacheWriteTokens: data.cacheWrites ?? 0,
                 cost: data.cost ?? 0,
-              }),
+              })
             );
           }
         } catch {

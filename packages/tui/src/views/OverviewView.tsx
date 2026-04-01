@@ -1,6 +1,5 @@
-import React from "react";
+import type { TokmeterCore } from "@tokmeter/core";
 import { Box, Text } from "ink";
-import { TokmeterCore } from "@tokmeter/core";
 import { BarChart } from "../components/BarChart.js";
 import { Sparkline } from "../components/Sparkline.js";
 
@@ -16,7 +15,9 @@ export function OverviewView({ core }: OverviewViewProps) {
   if (stats.totalRecords === 0) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Overview</Text>
+        <Text bold color="cyan">
+          Overview
+        </Text>
         <Text color="gray">No token usage data found. Run some AI coding sessions first.</Text>
       </Box>
     );
@@ -81,7 +82,8 @@ export function OverviewView({ core }: OverviewViewProps) {
           <Box key={i} flexDirection="row">
             <Text color="gray">{p.provider.padEnd(12)}</Text>
             <Text>
-              {formatNum(p.totalTokens)} tokens | ${p.cost.toFixed(2)} ({p.percentageOfTotal.toFixed(1)}%)
+              {formatNum(p.totalTokens)} tokens | ${p.cost.toFixed(2)} (
+              {p.percentageOfTotal.toFixed(1)}%)
             </Text>
           </Box>
         ))}

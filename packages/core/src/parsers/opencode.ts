@@ -5,14 +5,8 @@
  * or ~/.local/share/opencode/storage/message/ (legacy JSON).
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonFile,
-  createRecord,
-  fileExists,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, fileExists, findFiles, readJsonFile } from "./utils.js";
 
 interface OpenCodeMessage {
   id?: string;
@@ -42,9 +36,11 @@ export class OpenCodeParser implements SessionParser {
       if (await fileExists(dbPath)) {
         const db = new Database(dbPath, { readonly: true });
         try {
-          const rows = db.prepare(
-            "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at FROM messages WHERE role = 'assistant'",
-          ).all() as Array<{
+          const rows = db
+            .prepare(
+              "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at FROM messages WHERE role = 'assistant'"
+            )
+            .all() as Array<{
             model_id?: string;
             provider_id?: string;
             input_tokens?: number;
@@ -66,7 +62,7 @@ export class OpenCodeParser implements SessionParser {
                 reasoningTokens: row.reasoning_tokens ?? 0,
                 cacheReadTokens: row.cache_read ?? 0,
                 cacheWriteTokens: row.cache_write ?? 0,
-              }),
+              })
             );
           }
         } finally {
@@ -98,7 +94,7 @@ export class OpenCodeParser implements SessionParser {
           reasoningTokens: msg.tokens.reasoning ?? 0,
           cacheReadTokens: msg.tokens.cache?.read ?? 0,
           cacheWriteTokens: msg.tokens.cache?.write ?? 0,
-        }),
+        })
       );
     }
     return records;

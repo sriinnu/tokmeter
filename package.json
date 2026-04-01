@@ -1,13 +1,7 @@
 {
   "name": "tokmeter-monorepo",
   "private": true,
-  "workspaces": [
-    "packages/core",
-    "packages/cli",
-    "packages/tui",
-    "packages/web",
-    "packages/mcp"
-  ],
+  "workspaces": ["packages/core", "packages/cli", "packages/tui", "packages/web", "packages/mcp"],
   "scripts": {
     "build": "bun run build:core && bun run build:cli && bun run build:tui && bun run build:web && bun run build:mcp",
     "build:core": "cd packages/core && bun run build",
@@ -21,6 +15,15 @@
     "drishti": "cd packages/mcp && bun src/cli.ts",
     "drishti:live": "cd packages/mcp && bun src/cli.ts live",
     "drishti:serve": "cd packages/mcp && bun src/cli.ts serve",
-    "drishti:statusline": "cd packages/mcp && bun src/cli.ts statusline"
+    "drishti:statusline": "cd packages/mcp && bun src/cli.ts statusline",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "vitest": "^3.0.0"
   }
 }

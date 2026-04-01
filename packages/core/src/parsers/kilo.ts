@@ -5,8 +5,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { TokenRecord, SessionParser } from "../types.js";
-import { expandHome, findFiles, createRecord } from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles } from "./utils.js";
 
 interface KiloUiMessage {
   type?: string;
@@ -66,7 +66,7 @@ export class KiloParser implements SessionParser {
                 cacheReadTokens: data.cacheReads ?? 0,
                 cacheWriteTokens: data.cacheWrites ?? 0,
                 cost: data.cost ?? 0,
-              }),
+              })
             );
           }
         } catch {

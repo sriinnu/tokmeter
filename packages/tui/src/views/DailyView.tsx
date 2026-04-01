@@ -1,8 +1,7 @@
-import React from "react";
-import { Box, Text } from "ink";
-import { Sparkline } from "../components/Sparkline.js";
-import { Heatmap } from "../components/Heatmap.js";
 import type { DailyEntry } from "@tokmeter/core";
+import { Box, Text } from "ink";
+import { Heatmap } from "../components/Heatmap.js";
+import { Sparkline } from "../components/Sparkline.js";
 
 interface DailyViewProps {
   daily: DailyEntry[];

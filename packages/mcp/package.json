@@ -14,9 +14,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "dev": "bun src/cli.ts",
@@ -36,5 +34,25 @@
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "license": "MIT",
+  "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriinnu/tokmeter.git",
+    "directory": "packages/mcp"
+  },
+  "keywords": [
+    "tokens",
+    "ai",
+    "llm",
+    "usage-tracking",
+    "pricing",
+    "mcp",
+    "claude",
+    "anthropic",
+    "statusline"
+  ],
+  "engines": { "node": ">=22.0.0" },
+  "publishConfig": { "access": "public" }
 }

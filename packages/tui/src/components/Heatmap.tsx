@@ -1,5 +1,5 @@
-import React from "react";
 import { Box, Text } from "ink";
+import type React from "react";
 
 interface HeatmapProps {
   data: { date: string; value: number }[];
@@ -23,7 +23,7 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
 
   // Determine the date range to display
   const lastDate = recentData.length > 0 ? recentData[recentData.length - 1].date : "";
-  const lastDateObj = new Date(lastDate + "T00:00:00");
+  const lastDateObj = new Date(`${lastDate}T00:00:00`);
   const endDate = new Date(lastDateObj);
   // Move to end of that week (Sunday)
   endDate.setDate(endDate.getDate() + (7 - (endDate.getDay() || 7)));
@@ -48,7 +48,7 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
       row.push(
         <Text key={`${week}-${dayOfWeek}`} color={color}>
           ██
-        </Text>,
+        </Text>
       );
     }
     rows.push(
@@ -57,7 +57,7 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
           <Text color="gray">{dayLabels[dayOfWeek]}</Text>
         </Box>
         {row}
-      </Box>,
+      </Box>
     );
   }
 

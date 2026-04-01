@@ -3,13 +3,28 @@
  * @tokmeter/drishti — CLI entry point.
  *
  * Subcommands:
- *   drishti              Start live TUI dashboard (default)
- *   drishti live         Start live TUI dashboard
- *   drishti serve|mcp    Start MCP server (stdio transport)
- *   drishti statusline   Statusline mode (stdin → stdout)
- *   drishti status       Alias for statusline
- *   drishti help         Show usage instructions
+ *   drishti                        Start live TUI dashboard (default)
+ *   drishti live                   Start live TUI dashboard
+ *   drishti serve|mcp              Start MCP server (stdio transport)
+ *   drishti statusline|status      Statusline mode (stdin → stdout)
+ *   drishti install-statusline     Install statusline hook for ALL editors
+ *   drishti install-mcp            Install MCP server for ALL editors
+ *   drishti uninstall-statusline   Remove statusline hook from all editors
+ *   drishti uninstall-mcp          Remove MCP server from all editors
+ *   drishti editors                List all supported editors
+ *   drishti help                   Show usage instructions
  */
+
+// Process-level error handlers
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
 
 // Force chalk to output ANSI colors even when stdout is not a TTY.
 // The statusline runs as a subprocess hook (stdout → Claude Code, not a terminal),
@@ -38,6 +53,44 @@ switch (command) {
   case "status": {
     const { runStatusline } = await import("./statusline.js");
     await runStatusline();
+    break;
+  }
+
+  case "install-statusline":
+  case "statusline-install": {
+    const { installStatusline } = await import("./installer.js");
+    const targetEditors = process.argv.slice(3);
+    installStatusline(targetEditors.length > 0 ? targetEditors : undefined);
+    break;
+  }
+
+  case "install-mcp":
+  case "mcp-install": {
+    const { installMCP } = await import("./installer.js");
+    const targetEditors = process.argv.slice(3);
+    installMCP(targetEditors.length > 0 ? targetEditors : undefined);
+    break;
+  }
+
+  case "uninstall-statusline":
+  case "statusline-uninstall": {
+    const { uninstallStatusline } = await import("./installer.js");
+    const targetEditors = process.argv.slice(3);
+    uninstallStatusline(targetEditors.length > 0 ? targetEditors : undefined);
+    break;
+  }
+
+  case "uninstall-mcp":
+  case "mcp-uninstall": {
+    const { uninstallMCP } = await import("./installer.js");
+    const targetEditors = process.argv.slice(3);
+    uninstallMCP(targetEditors.length > 0 ? targetEditors : undefined);
+    break;
+  }
+
+  case "editors": {
+    const { listEditors } = await import("./installer.js");
+    listEditors();
     break;
   }
 
@@ -72,27 +125,45 @@ ${b("COMMANDS")}
   ${a("serve, mcp")}    Start MCP server via stdio transport
   ${a("statusline")}    Claude Code statusline hook mode
   ${a("status")}        Alias for statusline
+  ${a("install-statusline")} Install statusline hook for ALL editors
+  ${a("install-mcp")}   Install MCP server for ALL editors
+  ${a("uninstall-statusline")} Remove statusline hook from all editors
+  ${a("uninstall-mcp")} Remove MCP server from all editors
+  ${a("editors")}       List all supported editors
   ${a("help")}          Show this help message
 
-${b("MCP INTEGRATION")}
+${b("SUPPORTED EDITORS")}
+  Claude Code, OpenCode, Codex, Cursor, Windsurf, Zed, VS Code Copilot
+
+${b("INSTALL EXAMPLES")}
+  ${d("# Install statusline for ALL editors")}
+  ${a("drishti install-statusline")}
+
+  ${d("# Install MCP for ALL editors")}
+  ${a("drishti install-mcp")}
+
+  ${d("# Install for specific editor(s)")}
+  ${a("drishti install-statusline claude opencode")}
+
+${b("MCP INTEGRATION (Manual)")}
   Add to ${d("~/.claude/settings.json")} to expose token tools inside Claude Code:
 
   ${d("{")}
     ${d('"mcpServers": {')}
       ${a('"drishti"')}: {
         "command": "npx",
-        "args": ["@tokmeter/drishti", "mcp"]
+        "args": ["-y", "@tokmeter/drishti", "mcp"]
       }
     ${d("}")}
   ${d("}")}
 
-${b("STATUSLINE HOOK")}
+${b("STATUSLINE HOOK (Manual)")}
   Add to ${d("~/.claude/settings.json")} for a live cost bar in Claude Code:
 
   ${d("{")}
     ${d('"hooks": {')}
       ${a('"StatusLine"')}: [
-        { "command": "npx @tokmeter/drishti statusline" }
+        { "command": "npx -y @tokmeter/drishti statusline" }
       ]
     ${d("}")}
   ${d("}")}
@@ -108,6 +179,6 @@ ${b("MCP TOOLS")}
   ${a("compare_models")}      Compare cost-efficiency across models
   ${a("export_csv")}          Export usage data as CSV
 
-${d("docs: https://github.com/tokmeter/tokmeter")}
+${d("docs: https://github.com/sriinnu/tokmeter")}
 `);
 }

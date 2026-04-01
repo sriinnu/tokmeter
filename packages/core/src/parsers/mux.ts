@@ -5,8 +5,8 @@
  */
 
 import { stat } from "node:fs/promises";
-import type { TokenRecord, SessionParser } from "../types.js";
-import { expandHome, findFiles, readJsonFile, createRecord } from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonFile } from "./utils.js";
 
 interface MuxSessionUsage {
   timestamp?: string;
@@ -61,7 +61,7 @@ export class MuxParser implements SessionParser {
             cacheReadTokens: tokens.cached ?? 0,
             cacheWriteTokens: tokens.cacheCreate ?? 0,
             reasoningTokens: tokens.reasoning ?? 0,
-          }),
+          })
         );
       }
     }

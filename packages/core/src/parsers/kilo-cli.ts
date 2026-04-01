@@ -4,8 +4,8 @@
  * Reads from ~/.local/share/kilo/kilo.db (SQLite, fork of OpenCode).
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import { expandHome, createRecord, fileExists } from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { expandHome, fileExists } from "./utils.js";
 
 export class KiloCliParser implements SessionParser {
   readonly providerId = "kilo-cli" as const;

@@ -1,7 +1,7 @@
 import React from "react";
-import { useTokmeterData, type TokmeterModelSummary } from "../hooks/useTokmeterData.js";
-import { ModelCostChart } from "../charts/ModelCostChart.js";
 import Plot from "react-plotly.js";
+import { ModelCostChart } from "../charts/ModelCostChart.js";
+import { type TokmeterModelSummary, useTokmeterData } from "../hooks/useTokmeterData.js";
 
 export function ModelsPage() {
   const { data, loading, error } = useTokmeterData();
@@ -70,8 +70,20 @@ export function ModelsPage() {
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 24 }}>
         <thead>
           <tr style={{ borderBottom: "1px solid #30363d" }}>
-            {["Model", "Provider", "Input", "Output", "Cache R", "Cache W", "Reasoning", "Cost", "%"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>{h}</th>
+            {[
+              "Model",
+              "Provider",
+              "Input",
+              "Output",
+              "Cache R",
+              "Cache W",
+              "Reasoning",
+              "Cost",
+              "%",
+            ].map((h) => (
+              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+                {h}
+              </th>
             ))}
           </tr>
         </thead>

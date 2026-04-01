@@ -45,7 +45,13 @@ declare namespace Plotly {
   interface Layout {
     title?: string | { text: string };
     xaxis?: { title?: string; tickangle?: number; visible?: boolean };
-    yaxis?: { title?: string; side?: string; overlaying?: string; rangemode?: string; visible?: boolean };
+    yaxis?: {
+      title?: string;
+      side?: string;
+      overlaying?: string;
+      rangemode?: string;
+      visible?: boolean;
+    };
     yaxis2?: { title?: string; side?: string; overlaying?: string; rangemode?: string };
     legend?: { orientation?: string; y?: number };
     margin?: { t?: number; b?: number; l?: number; r?: number };

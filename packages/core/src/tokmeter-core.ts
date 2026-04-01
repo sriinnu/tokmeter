@@ -6,24 +6,24 @@
  */
 
 import { homedir } from "node:os";
-import type {
-  TokenRecord,
-  ProjectSummary,
-  ModelSummary,
-  DailyEntry,
-  ScanOptions,
-  TokmeterConfig,
-} from "./types.js";
-import { getParsers } from "./parsers/index.js";
-import { PricingService } from "./pricing.js";
 import {
-  aggregateByProject,
-  aggregateByModel,
-  aggregateByProvider,
   aggregateByDate,
+  aggregateByModel,
+  aggregateByProject,
+  aggregateByProvider,
   filterByDate,
   filterByProject,
 } from "./aggregator.js";
+import { getParsers } from "./parsers/index.js";
+import { PricingService } from "./pricing.js";
+import type {
+  DailyEntry,
+  ModelSummary,
+  ProjectSummary,
+  ScanOptions,
+  TokenRecord,
+  TokmeterConfig,
+} from "./types.js";
 
 export class TokmeterCore {
   private records: TokenRecord[] = [];
@@ -61,7 +61,14 @@ export class TokmeterCore {
     if (options?.project) {
       records = filterByProject(records, options.project);
     }
-    if (options?.since || options?.until || options?.today || options?.week || options?.month || options?.year) {
+    if (
+      options?.since ||
+      options?.until ||
+      options?.today ||
+      options?.week ||
+      options?.month ||
+      options?.year
+    ) {
       records = filterByDate(records, options);
     }
 
@@ -87,7 +94,10 @@ export class TokmeterCore {
   /** Get summary for a specific project (by exact name or substring match). */
   getProjectSummary(projectName: string): ProjectSummary | undefined {
     const all = this.getAllProjects();
-    return all.find((p) => p.project === projectName || p.project.toLowerCase().includes(projectName.toLowerCase()));
+    return all.find(
+      (p) =>
+        p.project === projectName || p.project.toLowerCase().includes(projectName.toLowerCase())
+    );
   }
 
   /** Get model summaries, optionally filtered by project. */
@@ -128,8 +138,8 @@ export class TokmeterCore {
     let cacheWriteTokens = 0;
     let reasoningTokens = 0;
     let totalCost = 0;
-    let firstUsed = Infinity;
-    let lastUsed = -Infinity;
+    let firstUsed = Number.POSITIVE_INFINITY;
+    let lastUsed = Number.NEGATIVE_INFINITY;
 
     const projectSet = new Set<string>();
     const modelSet = new Set<string>();
@@ -151,7 +161,8 @@ export class TokmeterCore {
       daySet.add(new Date(r.timestamp).toISOString().slice(0, 10));
     }
 
-    const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens;
+    const totalTokens =
+      inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens;
     const days = [...daySet].sort();
 
     // Calculate longest consecutive-day streak
@@ -228,7 +239,7 @@ export class TokmeterCore {
         r.outputTokens,
         r.cacheReadTokens,
         r.cacheWriteTokens,
-        r.reasoningTokens,
+        r.reasoningTokens
       );
     });
     await Promise.all(costPromises);

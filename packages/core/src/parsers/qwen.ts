@@ -4,13 +4,13 @@
  * Reads from ~/.qwen/projects/{PROJECT_PATH}/chats/{CHAT_ID}.jsonl
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
+import type { SessionParser, TokenRecord } from "../types.js";
 import {
+  createRecord,
   expandHome,
+  extractProjectFromPath,
   findFiles,
   readJsonlFile,
-  createRecord,
-  extractProjectFromPath,
 } from "./utils.js";
 
 interface QwenMessage {
@@ -52,7 +52,7 @@ export class QwenParser implements SessionParser {
             outputTokens: msg.usageMetadata.candidatesTokenCount ?? 0,
             reasoningTokens: msg.usageMetadata.thoughtsTokenCount ?? 0,
             cacheReadTokens: msg.usageMetadata.cachedContentTokenCount ?? 0,
-          }),
+          })
         );
       }
     }

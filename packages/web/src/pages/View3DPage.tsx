@@ -21,8 +21,8 @@ export function View3DPage() {
   const valueByDate = new Map(daily.map((d) => [d.date, d.totalTokens]));
 
   // Determine the date range to cover
-  const firstDate = new Date(daily[0].date + "T00:00:00");
-  const lastDate = new Date(daily[daily.length - 1].date + "T00:00:00");
+  const firstDate = new Date(`${daily[0].date}T00:00:00`);
+  const lastDate = new Date(`${daily[daily.length - 1].date}T00:00:00`);
 
   // Align to week boundaries (Monday-based)
   // getDay(): 0=Sun, 1=Mon, ..., 6=Sat => convert to Mon=0..Sun=6

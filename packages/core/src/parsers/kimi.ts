@@ -4,13 +4,8 @@
  * Reads from ~/.kimi/sessions/{GROUP_ID}/{SESSION_UUID}/wire.jsonl
  */
 
-import type { TokenRecord, SessionParser } from "../types.js";
-import {
-  expandHome,
-  findFiles,
-  readJsonlFile,
-  createRecord,
-} from "./utils.js";
+import type { SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 interface KimiStatusUpdate {
   timestamp?: number;
@@ -46,7 +41,9 @@ export class KimiParser implements SessionParser {
           createRecord({
             // Kimi timestamps are in seconds — convert to ms. Guard against already-ms values.
             timestamp: line.timestamp
-              ? (line.timestamp > 1e12 ? line.timestamp : line.timestamp * 1000)
+              ? line.timestamp > 1e12
+                ? line.timestamp
+                : line.timestamp * 1000
               : Date.now(),
             provider: "kimi",
             model: "kimi",
@@ -56,7 +53,7 @@ export class KimiParser implements SessionParser {
             outputTokens: payload.token_usage.output ?? 0,
             cacheReadTokens: payload.token_usage.input_cache_read ?? 0,
             cacheWriteTokens: payload.token_usage.input_cache_creation ?? 0,
-          }),
+          })
         );
       }
     }

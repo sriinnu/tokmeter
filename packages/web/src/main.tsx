@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
 import { DashboardPage } from "./pages/DashboardPage.js";
-import { ProjectsPage } from "./pages/ProjectsPage.js";
 import { ModelsPage } from "./pages/ModelsPage.js";
+import { ProjectsPage } from "./pages/ProjectsPage.js";
 import { TimelinePage } from "./pages/TimelinePage.js";
 import { View3DPage } from "./pages/View3DPage.js";
 
@@ -72,10 +72,7 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  ErrorBoundaryState
-> {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -90,9 +87,7 @@ class ErrorBoundary extends React.Component<
       return (
         <div style={{ color: "#f85149", padding: 24 }}>
           <h2>Something went wrong</h2>
-          <pre style={{ color: "#8b949e", fontSize: 13 }}>
-            {this.state.error?.message}
-          </pre>
+          <pre style={{ color: "#8b949e", fontSize: 13 }}>{this.state.error?.message}</pre>
         </div>
       );
     }

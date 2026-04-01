@@ -1,7 +1,6 @@
-import React from "react";
-import { useTokmeterData, type TokmeterDailyEntry } from "../hooks/useTokmeterData.js";
-import { DailyTrendChart } from "../charts/DailyTrendChart.js";
 import { ContributionHeatmap } from "../charts/ContributionHeatmap.js";
+import { DailyTrendChart } from "../charts/DailyTrendChart.js";
+import { type TokmeterDailyEntry, useTokmeterData } from "../hooks/useTokmeterData.js";
 
 export function TimelinePage() {
   const { data, loading, error } = useTokmeterData();
@@ -17,7 +16,14 @@ export function TimelinePage() {
       <h2 style={{ color: "#39d353" }}>Timeline</h2>
 
       {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 16,
+          marginBottom: 24,
+        }}
+      >
         <StatCard label="Active Days" value={stats.activeDays.toString()} />
         <StatCard label="Longest Streak" value={`${stats.longestStreak} days`} />
         <StatCard label="Total Records" value={stats.totalRecords.toString()} />
@@ -32,21 +38,26 @@ export function TimelinePage() {
         <thead>
           <tr style={{ borderBottom: "1px solid #30363d" }}>
             {["Date", "Tokens", "Input", "Output", "Cost", "Records"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>{h}</th>
+              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+                {h}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {daily.slice(-30).reverse().map((d: TokmeterDailyEntry, i: number) => (
-            <tr key={d.date} style={{ borderBottom: "1px solid #21262d" }}>
-              <td style={{ padding: 8, color: "#c9d1d9" }}>{d.date}</td>
-              <td style={{ padding: 8 }}>{formatNum(d.totalTokens)}</td>
-              <td style={{ padding: 8 }}>{formatNum(d.inputTokens)}</td>
-              <td style={{ padding: 8 }}>{formatNum(d.outputTokens)}</td>
-              <td style={{ padding: 8, color: "#39d353" }}>${d.cost.toFixed(2)}</td>
-              <td style={{ padding: 8, color: "#8b949e" }}>{d.records}</td>
-            </tr>
-          ))}
+          {daily
+            .slice(-30)
+            .reverse()
+            .map((d: TokmeterDailyEntry, _i: number) => (
+              <tr key={d.date} style={{ borderBottom: "1px solid #21262d" }}>
+                <td style={{ padding: 8, color: "#c9d1d9" }}>{d.date}</td>
+                <td style={{ padding: 8 }}>{formatNum(d.totalTokens)}</td>
+                <td style={{ padding: 8 }}>{formatNum(d.inputTokens)}</td>
+                <td style={{ padding: 8 }}>{formatNum(d.outputTokens)}</td>
+                <td style={{ padding: 8, color: "#39d353" }}>${d.cost.toFixed(2)}</td>
+                <td style={{ padding: 8, color: "#8b949e" }}>{d.records}</td>
+              </tr>
+            ))}
         </tbody>
       </table>
     </div>
@@ -55,7 +66,9 @@ export function TimelinePage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}>
+    <div
+      style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}
+    >
       <div style={{ color: "#8b949e", fontSize: 12 }}>{label}</div>
       <div style={{ color: "#c9d1d9", fontSize: 24, fontWeight: 700 }}>{value}</div>
     </div>
