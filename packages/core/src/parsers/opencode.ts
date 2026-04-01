@@ -37,6 +37,7 @@ export class OpenCodeParser implements SessionParser {
     // Try SQLite first (v1.2+) — requires better-sqlite3 or similar optional dep
     const dbPath = expandHome("~/.local/share/opencode/opencode.db", homeDir);
     try {
+      // @ts-ignore — better-sqlite3 is optional
       const { default: Database } = await import("better-sqlite3");
       if (await fileExists(dbPath)) {
         const db = new Database(dbPath, { readonly: true });

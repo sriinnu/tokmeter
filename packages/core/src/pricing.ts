@@ -1,59 +1,240 @@
 /**
- * @tokmeter/core — Pricing bridge using @sriinnu/kosha-discovery.
+ * @tokmeter/core — Pricing bridge using @sriinnu/kosha-discovery with static fallback.
  *
- * Resolves model pricing via the user's existing kosha-discovery package.
+ * Resolves model pricing across 20+ AI providers. Resolution order:
+ *
+ * 1. In-memory cache
+ * 2. Static table — hardcoded direct-API pricing for major known models.
+ *    Prefix-matched so "claude-opus-4-6-20260401" → "claude-opus-4-6".
+ *    Stays ahead of kosha because some OpenRouter proxy prices differ from
+ *    direct-API rates (e.g. Claude Opus 3× cheaper on OpenRouter).
+ * 3. kosha direct — `registry.model(id)` now resolves canonical IDs since 0.6.0.
+ *    Uses `originPricing` (direct-provider rate) when available, else `pricing`.
+ * 4. kosha fuzzy — searches 300+ OpenRouter models with an exact-first scorer.
+ *    Covers the long tail of providers automatically.
+ * 5. null — no pricing available
+ *
+ * Static pricing sources (as of 2025-07):
+ *   Anthropic  — https://www.anthropic.com/pricing
+ *   OpenAI     — https://openai.com/api/pricing
+ *   Google     — https://ai.google.dev/gemini-api/docs/pricing
+ *   DeepSeek   — https://api-docs.deepseek.com/quick_start/pricing
+ *   xAI (Grok) — https://x.ai/api
+ *   Mistral    — https://mistral.ai/technology/#pricing
+ *   Meta Llama — via Groq/Fireworks reference pricing
+ *   Moonshot   — https://platform.moonshot.cn/docs/pricing
  */
 
 import type { ModelPricing } from "@sriinnu/kosha-discovery";
 
-/** Cached pricing lookup table: modelId → pricing. */
+// ─── Types ──────────────────────────────────────────────────────────
+
+/**
+ * Full pricing shape used internally — extends kosha's ModelPricing with the
+ * reasoning fields added in kosha 0.6.0. The static table uses these directly;
+ * kosha results are spread into this shape after resolution.
+ */
+type FullPricing = ModelPricing;
+
+// ─── Static pricing table ────────────────────────────────────────────
+//
+// All prices USD per million tokens. Longest-prefix match wins.
+// reasoningInputPerMillion / reasoningOutputPerMillion: kosha 0.6.0 fields.
+
+const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
+  // ── Anthropic Claude 4.x ─────────────────────────────────────────
+  ["claude-opus-4-6",    { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
+  ["claude-opus-4-5",    { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
+  ["claude-opus-4",      { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
+  ["claude-sonnet-4-6",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
+  ["claude-sonnet-4-5",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
+  ["claude-sonnet-4",    { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
+  ["claude-haiku-4-5",   { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
+  ["claude-haiku-4",     { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
+  // ── Anthropic Claude 3.x ─────────────────────────────────────────
+  ["claude-3-5-sonnet",  { inputPerMillion: 3,     outputPerMillion: 15,   cacheReadPerMillion: 0.3,   cacheWritePerMillion: 3.75   }],
+  ["claude-3-5-haiku",   { inputPerMillion: 0.8,   outputPerMillion: 4,    cacheReadPerMillion: 0.08,  cacheWritePerMillion: 1      }],
+  ["claude-3-opus",      { inputPerMillion: 15,    outputPerMillion: 75,   cacheReadPerMillion: 1.5,   cacheWritePerMillion: 18.75  }],
+  ["claude-3-sonnet",    { inputPerMillion: 3,     outputPerMillion: 15                                                             }],
+  ["claude-3-haiku",     { inputPerMillion: 0.25,  outputPerMillion: 1.25                                                          }],
+  // ── OpenAI GPT / O-series ────────────────────────────────────────
+  ["gpt-5",              { inputPerMillion: 10,    outputPerMillion: 40                                                             }],
+  ["gpt-4o-mini",        { inputPerMillion: 0.15,  outputPerMillion: 0.6                                                           }],
+  ["gpt-4o",             { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
+  ["gpt-4-turbo",        { inputPerMillion: 10,    outputPerMillion: 30                                                            }],
+  ["gpt-4",              { inputPerMillion: 30,    outputPerMillion: 60                                                            }],
+  ["gpt-3.5-turbo",      { inputPerMillion: 0.5,   outputPerMillion: 1.5                                                           }],
+  ["o4-mini",            { inputPerMillion: 1.1,   outputPerMillion: 4.4,  reasoningInputPerMillion: 1.1,  reasoningOutputPerMillion: 4.4  }],
+  ["o3-mini",            { inputPerMillion: 1.1,   outputPerMillion: 4.4,  reasoningInputPerMillion: 1.1,  reasoningOutputPerMillion: 4.4  }],
+  ["o3",                 { inputPerMillion: 10,    outputPerMillion: 40,   reasoningInputPerMillion: 10,   reasoningOutputPerMillion: 40   }],
+  ["o1-mini",            { inputPerMillion: 3,     outputPerMillion: 12,   reasoningInputPerMillion: 3,    reasoningOutputPerMillion: 12   }],
+  ["o1",                 { inputPerMillion: 15,    outputPerMillion: 60,   reasoningInputPerMillion: 15,   reasoningOutputPerMillion: 60   }],
+  // ── Google Gemini ─────────────────────────────────────────────────
+  ["gemini-2.5-pro",     { inputPerMillion: 1.25,  outputPerMillion: 10                                                            }],
+  ["gemini-2.5-flash",   { inputPerMillion: 0.15,  outputPerMillion: 0.6,  reasoningInputPerMillion: 3.5, reasoningOutputPerMillion: 3.5  }],
+  ["gemini-2.0-flash",   { inputPerMillion: 0.1,   outputPerMillion: 0.4                                                           }],
+  ["gemini-1.5-pro",     { inputPerMillion: 1.25,  outputPerMillion: 5                                                             }],
+  ["gemini-1.5-flash",   { inputPerMillion: 0.075, outputPerMillion: 0.3                                                           }],
+  ["gemini-pro",         { inputPerMillion: 0.125, outputPerMillion: 0.375                                                         }],
+  // ── DeepSeek ──────────────────────────────────────────────────────
+  ["deepseek-reasoner",  { inputPerMillion: 0.55,  outputPerMillion: 2.19, reasoningInputPerMillion: 0.55, reasoningOutputPerMillion: 2.19 }],
+  ["deepseek-r1",        { inputPerMillion: 0.55,  outputPerMillion: 2.19, reasoningInputPerMillion: 0.55, reasoningOutputPerMillion: 2.19 }],
+  ["deepseek-v3",        { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
+  ["deepseek-chat",      { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
+  ["deepseek-coder",     { inputPerMillion: 0.27,  outputPerMillion: 1.1                                                           }],
+  // ── xAI Grok ─────────────────────────────────────────────────────
+  ["grok-4",             { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
+  ["grok-3-mini",        { inputPerMillion: 0.3,   outputPerMillion: 0.5,  reasoningInputPerMillion: 0.3, reasoningOutputPerMillion: 0.5  }],
+  ["grok-3",             { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
+  ["grok-2",             { inputPerMillion: 2,     outputPerMillion: 10                                                            }],
+  // ── Mistral ───────────────────────────────────────────────────────
+  ["codestral",          { inputPerMillion: 0.2,   outputPerMillion: 0.6                                                           }],
+  ["mistral-large",      { inputPerMillion: 2,     outputPerMillion: 6                                                             }],
+  ["mistral-medium",     { inputPerMillion: 0.4,   outputPerMillion: 2                                                             }],
+  ["mistral-small",      { inputPerMillion: 0.1,   outputPerMillion: 0.3                                                           }],
+  ["mistral-7b",         { inputPerMillion: 0.025, outputPerMillion: 0.025                                                         }],
+  ["mixtral-8x22b",      { inputPerMillion: 2,     outputPerMillion: 6                                                             }],
+  ["mixtral-8x7b",       { inputPerMillion: 0.65,  outputPerMillion: 0.65                                                          }],
+  // ── Moonshot / Kimi ──────────────────────────────────────────────
+  ["kimi-k2",            { inputPerMillion: 0.15,  outputPerMillion: 2.5                                                           }],
+  ["kimi-k1",            { inputPerMillion: 0.15,  outputPerMillion: 2.5                                                           }],
+  ["moonshot-v1-128k",   { inputPerMillion: 24,    outputPerMillion: 24                                                            }],
+  ["moonshot-v1-32k",    { inputPerMillion: 24,    outputPerMillion: 24                                                            }],
+  ["moonshot-v1-8k",     { inputPerMillion: 12,    outputPerMillion: 12                                                            }],
+  // ── Meta Llama ────────────────────────────────────────────────────
+  ["llama-4-maverick",   { inputPerMillion: 0.18,  outputPerMillion: 0.6                                                           }],
+  ["llama-4-scout",      { inputPerMillion: 0.08,  outputPerMillion: 0.3                                                           }],
+  ["llama-3.3-70b",      { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
+  ["llama-3.1-405b",     { inputPerMillion: 4,     outputPerMillion: 4                                                             }],
+  ["llama-3.1-70b",      { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
+  ["llama-3.1-8b",       { inputPerMillion: 0.05,  outputPerMillion: 0.1                                                           }],
+  ["llama-3-70b",        { inputPerMillion: 0.23,  outputPerMillion: 0.4                                                           }],
+  ["llama-3-8b",         { inputPerMillion: 0.05,  outputPerMillion: 0.1                                                           }],
+  // ── Cohere ────────────────────────────────────────────────────────
+  ["command-a",          { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
+  ["command-r-plus",     { inputPerMillion: 2.5,   outputPerMillion: 10                                                            }],
+  ["command-r",          { inputPerMillion: 0.15,  outputPerMillion: 0.6                                                           }],
+  // ── Perplexity ───────────────────────────────────────────────────
+  ["sonar-pro",          { inputPerMillion: 3,     outputPerMillion: 15                                                            }],
+  ["sonar-reasoning",    { inputPerMillion: 1,     outputPerMillion: 5,    reasoningInputPerMillion: 1,   reasoningOutputPerMillion: 5    }],
+  ["sonar",              { inputPerMillion: 1,     outputPerMillion: 1                                                             }],
+];
+
+// Sorted once at module load — longest prefix wins
+const SORTED_STATIC = STATIC_PRICING.slice().sort((a, b) => b[0].length - a[0].length);
+
+/**
+ * Resolve static pricing for a model ID by longest-prefix match.
+ * Strips date suffixes (e.g. "-20250514") before matching.
+ */
+function staticPricing(modelId: string): FullPricing | null {
+  const id = modelId.toLowerCase().replace(/-\d{8}$/, "");
+  for (const [prefix, pricing] of SORTED_STATIC) {
+    if (id.startsWith(prefix)) return pricing;
+  }
+  return null;
+}
+
+// ─── PricingService ──────────────────────────────────────────────────
+
+/** Cached pricing lookup: modelId → FullPricing or null. */
 export class PricingService {
-  private cache = new Map<string, ModelPricing | null>();
-  private kosha: any = null;
+  private cache = new Map<string, FullPricing | null>();
+  private registry: any = null;
   private initialized = false;
   private cacheDir?: string;
+
+  /** True if kosha-discovery failed to load (e.g. not installed). */
+  public pricingUnavailable = false;
 
   constructor(cacheDir?: string) {
     this.cacheDir = cacheDir;
   }
 
-  /** Initialize the kosha-discovery registry. */
+  /** Initialize the kosha-discovery registry (idempotent). */
   async init(): Promise<void> {
     if (this.initialized) return;
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
-      this.kosha = await createKosha();
+      this.registry = await createKosha(
+        this.cacheDir ? { cacheDir: this.cacheDir } : undefined,
+      );
     } catch {
-      // kosha-discovery not available — pricing will be unavailable
-      this.kosha = null;
+      this.registry = null;
+      this.pricingUnavailable = true;
     }
     this.initialized = true;
   }
 
-  /** Get pricing for a model. Returns null if not found. */
-  async getPricing(modelId: string): Promise<ModelPricing | null> {
+  /**
+   * Get pricing for a model.
+   *
+   * Resolution order:
+   * 1. In-memory cache
+   * 2. Static table — accurate direct-API rates; avoids proxy markup on known models
+   * 3. kosha direct — `registry.model(id)` resolves canonical IDs since 0.6.0;
+   *    prefers `card.originPricing` (direct-provider rate) over `card.pricing`
+   * 4. kosha fuzzy — exact-first search across 300+ discovered models
+   * 5. null
+   */
+  async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
 
-    if (!this.kosha) {
-      this.cache.set(modelId, null);
-      return null;
+    // Tier 2: static table (accurate direct-API pricing)
+    const stat = staticPricing(modelId);
+    if (stat) {
+      this.cache.set(modelId, stat);
+      return stat;
     }
 
-    try {
-      const card = await this.kosha.model(modelId);
-      if (card?.pricing) {
-        this.cache.set(modelId, card.pricing);
-        return card.pricing;
+    if (this.registry) {
+      // Tier 3: kosha canonical lookup (works for all major models since 0.6.0)
+      try {
+        const card = this.registry.model(modelId) as {
+          pricing?: ModelPricing;
+          originPricing?: ModelPricing;
+        } | undefined;
+        // originPricing = direct-provider rate on proxied routes (preferred)
+        const raw = card?.originPricing ?? card?.pricing;
+        if (raw) {
+          const p = this.roundPricing(raw);
+          this.cache.set(modelId, p);
+          return p;
+        }
+      } catch {
+        // not found
       }
-    } catch {
-      // model not found
+
+      // Tier 4: fuzzy search for long-tail models not in static table
+      try {
+        const fuzzy = this.koshaFuzzySearch(modelId);
+        if (fuzzy) {
+          this.cache.set(modelId, fuzzy);
+          return fuzzy;
+        }
+      } catch {
+        // fuzzy search failed
+      }
     }
 
     this.cache.set(modelId, null);
     return null;
   }
 
-  /** Calculate cost for a given token usage. */
+  /**
+   * Calculate the USD cost for a token usage breakdown.
+   *
+   * Handles both `reasoningInputPerMillion`/`reasoningOutputPerMillion` (kosha 0.6.0)
+   * and falls back to `outputPerMillion` when no dedicated reasoning rate exists.
+   *
+   * @param modelId          - Model identifier (e.g. "claude-sonnet-4-6-20250514").
+   * @param inputTokens      - Standard input tokens.
+   * @param outputTokens     - Output tokens generated.
+   * @param cacheReadTokens  - Tokens served from prompt cache.
+   * @param cacheWriteTokens - Tokens written to prompt cache.
+   * @param reasoningTokens  - Thinking/reasoning tokens (input + output combined).
+   * @returns Cost in USD, or 0 if no pricing is available.
+   */
   async calculateCost(
     modelId: string,
     inputTokens: number,
@@ -76,16 +257,83 @@ export class PricingService {
     if (pricing.cacheWritePerMillion && cacheWriteTokens) {
       cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);
     }
-    // Use dedicated reasoning pricing if available, otherwise bill as output tokens
     if (reasoningTokens) {
-      const reasoningPerMillion = (pricing as Record<string, unknown>).reasoningPerMillion as number | undefined;
-      cost += reasoningTokens * perToken(reasoningPerMillion ?? pricing.outputPerMillion);
+      // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate
+      const reasoningRate =
+        pricing.reasoningOutputPerMillion ??
+        pricing.reasoningInputPerMillion ??
+        pricing.outputPerMillion;
+      cost += reasoningTokens * perToken(reasoningRate);
     }
     return cost;
   }
 
-  /** Clear the pricing cache. */
+  /** Clear the in-memory pricing cache. */
   clearCache(): void {
     this.cache.clear();
+  }
+
+  // ── Private ───────────────────────────────────────────────────────
+
+  /**
+   * Fuzzy-search kosha's discovered models for the best match.
+   *
+   * Scoring (best first):
+   * - Skips :free / :exacto variants and zero-priced models
+   * - Prefers `originPricing` (direct-provider rate) over `pricing`
+   * - Exact base-ID match beats prefix match beats substring
+   * - Shorter base IDs preferred (less decorated)
+   * - Normalizes hyphens↔dots, strips date and "-latest" suffixes
+   */
+  private koshaFuzzySearch(modelId: string): FullPricing | null {
+    const normalized = modelId
+      .toLowerCase()
+      .replace(/-\d{8}$/, "")
+      .replace(/-latest$/, "")
+      .replace(/\./g, "-");
+
+    interface KoshaModel {
+      id: string;
+      pricing?: ModelPricing;
+      originPricing?: ModelPricing;
+      provider?: string;
+    }
+    const all: KoshaModel[] = this.registry.models();
+
+
+    const best = all
+      .filter(m => {
+        const eff = m.originPricing ?? m.pricing;
+        if (!eff || eff.inputPerMillion <= 0 || eff.outputPerMillion <= 0) return false;
+        const lower = m.id.toLowerCase();
+        if (lower.includes(":free") || lower.includes(":exacto")) return false;
+        const mNorm = lower.replace(/\./g, "-");
+        return mNorm.includes(normalized) || mNorm.split("/").pop()?.includes(normalized) === true;
+      })
+      .sort((a, b) => {
+        const aBase = a.id.toLowerCase().replace(/\./g, "-").split("/").pop() ?? "";
+        const bBase = b.id.toLowerCase().replace(/\./g, "-").split("/").pop() ?? "";
+        const score = (base: string) =>
+          base === normalized ? 2 : base.startsWith(normalized) ? 1 : 0;
+        const diff = score(bBase) - score(aBase);
+        if (diff !== 0) return diff;
+        return aBase.length - bBase.length;
+      })[0];
+
+    const eff = best?.originPricing ?? best?.pricing;
+    return eff ? this.roundPricing(eff) : null;
+  }
+
+  /** Round all pricing fields to 6 decimal places to eliminate float noise. */
+  private roundPricing(p: ModelPricing): FullPricing {
+    const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+    return {
+      inputPerMillion:  r(p.inputPerMillion),
+      outputPerMillion: r(p.outputPerMillion),
+      ...(p.cacheReadPerMillion          ? { cacheReadPerMillion:          r(p.cacheReadPerMillion)          } : {}),
+      ...(p.cacheWritePerMillion         ? { cacheWritePerMillion:         r(p.cacheWritePerMillion)         } : {}),
+      ...(p.reasoningInputPerMillion     ? { reasoningInputPerMillion:     r(p.reasoningInputPerMillion)     } : {}),
+      ...(p.reasoningOutputPerMillion    ? { reasoningOutputPerMillion:    r(p.reasoningOutputPerMillion)    } : {}),
+    };
   }
 }

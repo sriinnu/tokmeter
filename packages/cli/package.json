@@ -20,7 +20,7 @@
     "chalk": "^5.3.0"
   },
   "devDependencies": {
-    "@types/cli-table3": "^0.6.0",
+    "@types/node": "^25.5.0",
     "typescript": "^5.7.0"
   }
 }
