@@ -197,7 +197,7 @@ export class TokmeterCore {
     projects: ProjectSummary[];
     models: ModelSummary[];
     daily: DailyEntry[];
-    stats: ReturnType<typeof this.getStats>;
+    stats: ReturnType<TokmeterCore["getStats"]>;
   } {
     return {
       records: this.records,
