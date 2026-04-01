@@ -3,11 +3,15 @@
  *
  * Innovative, animated statusline with particle effects, gradients,
  * and real-time visualizations for the "wow" factor.
+ *
+ * Now supports cross-provider aggregation via the Drishti Daemon!
  */
 
 import { execSync } from "node:child_process";
 import { TokmeterCore } from "@tokmeter/core";
 import { C, formatCost, formatNumber } from "./formatter.js";
+import { syncUpdate } from "./daemon/client.js";
+import type { TokenUsage } from "./daemon/protocol.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -234,6 +238,13 @@ export async function runStatusline(): Promise<void> {
 
   // ── Token Flow with Animation ──
   const tc = input.token_counts;
+  const tokens: TokenUsage = {
+    inputTokens: tc?.input_tokens ?? 0,
+    outputTokens: tc?.output_tokens ?? 0,
+    cacheReadTokens: tc?.cache_read_tokens ?? 0,
+    cacheWriteTokens: tc?.cache_write_tokens ?? 0,
+  };
+
   if (tc) {
     const tokenParts: string[] = [];
 
@@ -268,48 +279,85 @@ export async function runStatusline(): Promise<void> {
     parts.push(animBurnRate(costPerHour));
   }
 
-  // ── Today's Totals ──
-  try {
-    const core = new TokmeterCore();
-    const todayRecords = await core.scan({ today: true });
-    if (todayRecords.length > 0) {
-      let todayCost = 0;
-      let todayIn = 0;
-      let todayOut = 0;
-      const byModel = new Map<string, { cost: number; in: number; out: number }>();
+  // ── Daemon: Cross-Provider Aggregation ──
+  const sessionId = input.session_id ?? `session-${Date.now()}`;
+  const daemonResponse = syncUpdate(
+    {
+      provider: "claude-code",
+      sessionId,
+      model: modelId ?? "unknown",
+      project: projectName,
+      cwd: projectDir,
+    },
+    sessionCost,
+    tokens,
+    durationMs
+  );
 
-      for (const r of todayRecords) {
-        todayCost += r.cost;
-        todayIn += r.inputTokens;
-        todayOut += r.outputTokens;
+  // ── Display Aggregated Stats (if daemon connected) ──
+  if (daemonResponse.connected && daemonResponse.aggregated) {
+    const agg = daemonResponse.aggregated;
 
-        const shortModel = r.model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
-        const entry = byModel.get(shortModel) ?? { cost: 0, in: 0, out: 0 };
-        entry.cost += r.cost;
-        entry.in += r.inputTokens;
-        entry.out += r.outputTokens;
-        byModel.set(shortModel, entry);
-      }
-
-      // Animated today summary
-      const todayIcon = f % 2 === 0 ? "📊" : "📈";
-      const todayStr = `${C.accent(`${todayIcon} today ${formatCost(todayCost)}`)} ${C.dim("│")} ${C.input(`↑${formatNumber(todayIn)}`)} ${C.output(`↓${formatNumber(todayOut)}`)}`;
-      parts.push(todayStr);
-
-      // Per-model breakdown
-      const activeModels = [...byModel.entries()]
-        .filter(([, m]) => m.in + m.out > 0)
-        .sort((a, b) => b[1].cost - a[1].cost);
-
-      if (activeModels.length > 1) {
-        const modelSegment = activeModels
-          .slice(0, 3)
-          .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
-          .join(C.dim(" · "));
-        parts.push(modelSegment);
-      }
+    // Show aggregated totals from all providers
+    if (agg.sessions > 1) {
+      const aggIcon = f % 2 === 0 ? "🌐" : "🔗";
+      const allTokens = `${C.input(`↑${formatNumber(agg.totalInputTokens)}`)} ${C.output(`↓${formatNumber(agg.totalOutputTokens)}`)}`;
+      const providers = agg.providers.length > 1 ? `${C.dim("│")}${agg.providers.length} providers` : "";
+      parts.push(`${C.title(`${aggIcon} All:`)}${C.cost(formatCost(agg.totalCost))} ${allTokens} ${providers}`);
     }
-  } catch {}
+
+    // Show per-model breakdown from all sessions
+    if (agg.byModel.length > 1) {
+      const modelSegment = agg.byModel
+        .slice(0, 4)
+        .map((m) => `${C.think(m.model)} ${C.cost(formatCost(m.cost))}`)
+        .join(C.dim(" · "));
+      parts.push(modelSegment);
+    }
+  } else {
+    // ── Fallback: Today's Totals from disk scan ──
+    try {
+      const core = new TokmeterCore();
+      const todayRecords = await core.scan({ today: true });
+      if (todayRecords.length > 0) {
+        let todayCost = 0;
+        let todayIn = 0;
+        let todayOut = 0;
+        const byModel = new Map<string, { cost: number; in: number; out: number }>();
+
+        for (const r of todayRecords) {
+          todayCost += r.cost;
+          todayIn += r.inputTokens;
+          todayOut += r.outputTokens;
+
+          const shortModel = r.model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+          const entry = byModel.get(shortModel) ?? { cost: 0, in: 0, out: 0 };
+          entry.cost += r.cost;
+          entry.in += r.inputTokens;
+          entry.out += r.outputTokens;
+          byModel.set(shortModel, entry);
+        }
+
+        // Animated today summary
+        const todayIcon = f % 2 === 0 ? "📊" : "📈";
+        const todayStr = `${C.accent(`${todayIcon} today ${formatCost(todayCost)}`)} ${C.dim("│")} ${C.input(`↑${formatNumber(todayIn)}`)} ${C.output(`↓${formatNumber(todayOut)}`)}`;
+        parts.push(todayStr);
+
+        // Per-model breakdown
+        const activeModels = [...byModel.entries()]
+          .filter(([, m]) => m.in + m.out > 0)
+          .sort((a, b) => b[1].cost - a[1].cost);
+
+        if (activeModels.length > 1) {
+          const modelSegment = activeModels
+            .slice(0, 3)
+            .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
+            .join(C.dim(" · "));
+          parts.push(modelSegment);
+        }
+      }
+    } catch {}
+  }
 
   // ── Output ──
   process.stdout.write(parts.join(sep));
