@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Pi session parser.
+ * @sriinnu/tokmeter-core — Pi session parser.
  *
  * Reads from ~/.pi/agent/sessions/<encoded-cwd>/*.jsonl
  */

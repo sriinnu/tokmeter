@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Amp (AmpCode) session parser.
+ * @sriinnu/tokmeter-core — Amp (AmpCode) session parser.
  *
  * Reads from ~/.local/share/amp/threads/
  */

@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Roo Code session parser.
+ * @sriinnu/tokmeter-core — Roo Code session parser.
  *
  * Reads from VS Code globalStorage task directories.
  */

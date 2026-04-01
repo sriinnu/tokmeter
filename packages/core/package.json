@@ -1,5 +1,5 @@
 {
-  "name": "@tokmeter/core",
+  "name": "@sriinnu/tokmeter-core",
   "version": "0.1.0",
   "description": "Token usage tracking core — session parsers, aggregation, and pricing",
   "type": "module",

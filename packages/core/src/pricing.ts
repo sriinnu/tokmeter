@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Pricing bridge using @sriinnu/kosha-discovery with static fallback.
+ * @sriinnu/tokmeter-core — Pricing bridge using @sriinnu/kosha-discovery with static fallback.
  *
  * Resolves model pricing across 20+ AI providers. Resolution order:
  *

@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Kimi CLI session parser.
+ * @sriinnu/tokmeter-core — Kimi CLI session parser.
  *
  * Reads from ~/.kimi/sessions/{GROUP_ID}/{SESSION_UUID}/wire.jsonl
  */

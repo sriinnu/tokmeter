@@ -1,5 +1,5 @@
 {
-  "name": "@tokmeter/drishti",
+  "name": "@sriinnu/drishti",
   "version": "0.1.0",
   "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
   "type": "module",
@@ -39,7 +39,7 @@
     "statusline": "bun src/cli.ts statusline"
   },
   "dependencies": {
-    "@tokmeter/core": "workspace:*",
+    "@sriinnu/tokmeter-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "zod": "^3.24.0",
     "chalk": "^5.3.0",

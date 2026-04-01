@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Droid (Factory Droid) session parser.
+ * @sriinnu/tokmeter-core — Droid (Factory Droid) session parser.
  *
  * Reads from ~/.factory/sessions/
  */

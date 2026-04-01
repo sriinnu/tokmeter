@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — OpenCode session parser.
+ * @sriinnu/tokmeter-core — OpenCode session parser.
  *
  * Reads from ~/.local/share/opencode/opencode.db (SQLite, v1.2+)
  * or ~/.local/share/opencode/storage/message/ (legacy JSON).

@@ -1,5 +1,5 @@
 /**
- * @tokmeter/drishti — Claude Code statusline hook handler.
+ * @sriinnu/drishti — Claude Code statusline hook handler.
  *
  * Innovative, animated statusline with particle effects, gradients,
  * and real-time visualizations for the "wow" factor.
@@ -8,7 +8,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { TokmeterCore } from "@tokmeter/core";
+import { TokmeterCore } from "@sriinnu/tokmeter-core";
 import { C, formatCost, formatNumber } from "./formatter.js";
 import { syncUpdate } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";

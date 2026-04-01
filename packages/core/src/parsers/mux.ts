@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Mux session parser.
+ * @sriinnu/tokmeter-core — Mux session parser.
  *
  * Reads from ~/.mux/sessions/{WORKSPACE_ID}/session-usage.json
  */

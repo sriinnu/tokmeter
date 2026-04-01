@@ -1,5 +1,5 @@
 {
-  "name": "@tokmeter/tui",
+  "name": "@sriinnu/tokmeter-tui",
   "version": "0.1.0",
   "description": "Token usage tracking TUI — interactive terminal UI with charts",
   "type": "module",
@@ -12,7 +12,7 @@
     "dev": "bun src/index.tsx"
   },
   "dependencies": {
-    "@tokmeter/core": "workspace:*",
+    "@sriinnu/tokmeter-core": "workspace:*",
     "ink": "^5.0.0",
     "react": "^18.3.0"
   },

@@ -14,7 +14,7 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { TokmeterCore } from "@tokmeter/core";
+import { TokmeterCore } from "@sriinnu/tokmeter-core";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
 import { DailyView } from "./views/DailyView.js";

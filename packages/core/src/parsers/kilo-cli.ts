@@ -1,5 +1,5 @@
 /**
- * @tokmeter/core — Kilo CLI session parser.
+ * @sriinnu/tokmeter-core — Kilo CLI session parser.
  *
  * Reads from ~/.local/share/kilo/kilo.db (SQLite, fork of OpenCode).
  */
