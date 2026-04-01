@@ -7,10 +7,10 @@
 <p align="center"><strong>Token Usage Tracker for AI Coding Agents</strong></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@tokmeter/core"><img src="https://img.shields.io/badge/npm-@tokmeter/core-39d353?style=flat-square&logo=npm" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/@sriinnu/tokmeter-core"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter--core-39d353?style=flat-square&logo=npm" alt="npm" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-0e4429?style=flat-square&logo=node.js" alt="node" />
   <img src="https://img.shields.io/badge/license-MIT-26a641?style=flat-square" alt="license" />
-  <img src="https://img.shields.io/badge/bun-monorepo-39d353?style=flat-square" alt="bun" />
+  <img src="https://img.shields.io/badge/bun-monorepo-39d353?style=flat-square&logo=npm" alt="bun" />
 </p>
 
 ---
@@ -34,10 +34,10 @@ No social features. No leaderboard. Just your data, locally.
 
 ```bash
 # Run directly
-npx @tokmeter/cli
+npx @sriinnu/tokmeter-cli
 
 # Or install globally
-npm install -g @tokmeter/cli
+npm install -g @sriinnu/tokmeter-cli
 tokmeter
 ```
 
@@ -45,12 +45,11 @@ tokmeter
 
 | Package | What | Install |
 |---------|------|---------|
-| [`@tokmeter/core`](packages/core/) | Session parsers, aggregator, pricing, public API | `npm install @tokmeter/core` |
-| [`@tokmeter/cli`](packages/cli/) | CLI -- table + JSON output | `npx @tokmeter/cli` |
-| [`@tokmeter/tui`](packages/tui/) | Interactive terminal UI with charts | `npx @tokmeter/tui` |
-| [`@tokmeter/web`](packages/web/) | React + Plotly web dashboard | See [Web App](#web-app) |
-| [`@tokmeter/drishti`](packages/mcp/) | MCP server + live TUI + statusline hook | `npx @tokmeter/drishti` |
-| `macos-bar` | Native Swift menu bar app | See [macOS Bar](#macos-menu-bar) |
+| [`@sriinnu/tokmeter-core`](packages/core/) | Session parsers, aggregator, pricing, public API | `npm install @sriinnu/tokmeter-core` |
+| [`@sriinnu/tokmeter-cli`](packages/cli/) | CLI -- table + JSON output | `npx @sriinnu/tokmeter-cli` |
+| [`@sriinnu/tokmeter-tui`](packages/tui/) | Interactive terminal UI with charts | `npx @sriinnu/tokmeter-tui` |
+| [`@sriinnu/tokmeter-web`](packages/web/) | React + Plotly web dashboard | See [Web App](#web-app) |
+| [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + daemon | `npx @sriinnu/drishti` |
 
 ## CLI Usage
 
@@ -61,6 +60,18 @@ tokmeter daily                    # daily usage over time
 tokmeter projects                 # per-project summary
 tokmeter stats                    # overall statistics
 tokmeter pricing sonnet           # lookup model pricing
+
+# Live & Daemon
+tokmeter live                     # TUI dashboard
+tokmeter statusline               # Statusline mode
+tokmeter daemon start             # Start aggregation daemon
+tokmeter daemon stop              # Stop daemon
+tokmeter daemon status            # Check daemon status
+
+# Installer (all editors)
+tokmeter install-statusline       # Install statusline for ALL editors
+tokmeter install-mcp              # Install MCP for ALL editors
+tokmeter editors                  # List supported editors
 
 # Filters
 tokmeter --project my-app         # specific project
@@ -89,21 +100,21 @@ tokmeter --light                  # skip pricing (faster)
 Total: 3.3M tokens | $34.14 | 24 active days
 ```
 
-## Drishti -- MCP Server + Live Observatory
+## Drishti — MCP Server + Live Observatory + Daemon
 
-[`@tokmeter/drishti`](packages/mcp/) is the observability layer. It provides:
+[`@sriinnu/drishti`](packages/mcp/) is the observability layer. It provides:
 
 ### MCP Server
 
 Exposes token usage tools to Claude Code, Codex, Cursor, and any MCP client.
 
 ```json
-// ~/.claude/.mcp.json
+// ~/.claude/settings.json
 {
   "mcpServers": {
     "drishti": {
       "command": "npx",
-      "args": ["@tokmeter/drishti", "mcp"]
+      "args": ["-y", "@sriinnu/drishti", "mcp"]
     }
   }
 }
@@ -113,36 +124,84 @@ Exposes token usage tools to Claude Code, Codex, Cursor, and any MCP client.
 
 ### Statusline Hook
 
-Live cost bar inside Claude Code:
+Live animated status bar inside Claude Code:
 
 ```json
 // ~/.claude/settings.json
 {
   "statusLine": {
     "type": "command",
-    "command": "npx @tokmeter/drishti statusline"
+    "command": "npx -y @sriinnu/drishti statusline"
   }
 }
 ```
 
 ```
-【♾️】 myproject │ ⚡$5.97 │ sonnet-4-6 │ ↑42.5K ↓18.2K ⟳12.0K │ ███░░░░░░░ 25% │ 🔥$4.55/hr │ today:$37.8
+【♾️】 ○ ❯ 📂myproject ❯ 🌿main ❯ ⚡$5.97 ❯ sonnet-4 ❯ ↑42.5K▄▄ ↓18.2K▃ ❯ 🔥$4.55/hr ❯ 📈 today $37.8
 ```
+
+Features:
+- 🌈 Rainbow animated infinity logo
+- 📊 Real-time token counts with sparklines
+- 💰 Live cost tracking with hourly burn rate
+- 📈 Today's total across all providers
+
+### Cross-Provider Aggregation Daemon
+
+The daemon aggregates token usage across **multiple AI coding assistants running simultaneously**:
+
+```bash
+# Start the daemon
+tokmeter daemon start
+
+# Check status
+tokmeter daemon status
+
+# Stop the daemon
+tokmeter daemon stop
+```
+
+When multiple Claude Code, Codex, or OpenCode instances are running, the statusline shows **aggregated totals** across all of them in real-time via WebSocket.
 
 ### Live TUI
 
 ```bash
-npx @tokmeter/drishti live
+npx @sriinnu/drishti live
+# or
+tokmeter live
 ```
 
 Real-time terminal dashboard with 2-second refresh.
+
+## Universal Installer
+
+Install statusline and MCP across **all supported editors** at once:
+
+```bash
+# Install statusline for Claude Code, OpenCode, Codex
+tokmeter install-statusline
+
+# Install MCP server for all editors
+tokmeter install-mcp
+
+# List supported editors
+tokmeter editors
+```
+
+Supported editors:
+- **Claude Code** — statusline ✓ MCP ✓
+- **OpenCode** — statusline ✓ MCP ✓
+- **Codex** — statusline ✓ MCP ✓
+- **Cursor** — MCP ✓
+- **Windsurf** — MCP ✓
+- **Zed** — MCP ✓
 
 ## TUI
 
 Interactive terminal UI with bar charts, sparklines, and contribution heatmaps.
 
 ```bash
-npx @tokmeter/tui
+npx @sriinnu/tokmeter-tui
 ```
 
 | View | Key | Description |
@@ -175,17 +234,6 @@ Open http://localhost:3000
 
 Export data: `tokmeter --json > packages/web/public/data.json`
 
-## macOS Menu Bar
-
-Native Swift app that lives in your menu bar.
-
-- Today's cost in the menu bar title
-- Popup panel with top 3 models bar chart
-- 7-day cost sparkline
-- Quick stats (projects, active days, streak)
-
-Data bridge: `tokmeter --json > ~/.tokmeter/live.json`
-
 ## Supported Providers
 
 | Provider | Data Location |
@@ -211,10 +259,10 @@ Data bridge: `tokmeter --json > ~/.tokmeter/live.json`
 
 Pricing is resolved via [`@sriinnu/kosha-discovery`](https://github.com/sriinnu/kosha-discovery):
 
-1. **kosha direct** -- authenticated API calls to Anthropic, OpenAI, Google, etc.
-2. **Static table** -- 50+ models with accurate direct-API rates
-3. **kosha fuzzy** -- 300+ OpenRouter models for the long tail
-4. **Reasoning tokens** -- dedicated rates for o1/o3/gemini-thinking/deepseek-r1
+1. **kosha direct** — authenticated API calls to Anthropic, OpenAI, Google, etc.
+2. **Static table** — 50+ models with accurate direct-api rates
+3. **kosha fuzzy** — 300+ OpenRouter models for the long tail
+4. **Reasoning tokens** — dedicated rates for o1/o3/gemini-thinking/deepseek-r1
 
 Covers: Anthropic, OpenAI, Google, DeepSeek, xAI (Grok), Mistral, Meta (Llama), Moonshot/Kimi, Cohere, Perplexity, Qwen, and more.
 
@@ -223,11 +271,11 @@ Covers: Anthropic, OpenAI, Google, DeepSeek, xAI (Grok), Mistral, Meta (Llama), 
 ```
 Session Files (local disk)
     |
-@tokmeter/core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
+@sriinnu/tokmeter-core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
     |
 +----------+----------+----------+----------+-----------+
-|  CLI     |  TUI     |  Web App | Drishti  | macOS Bar |
-| (table)  | (Ink)    | (Plotly) | (MCP)    | (Swift)   |
+|  CLI     |  TUI     |  Web App | Drishti  | Daemon    |
+| (table)  | (Ink)    | (Plotly) | (MCP)    | (WebSocket)|
 +----------+----------+----------+----------+-----------+
 ```
 
@@ -249,4 +297,4 @@ bun run drishti:serve      # MCP server
 
 ## License
 
-MIT &copy; Srinivas Pendela
+MIT © Srinivas Pendela

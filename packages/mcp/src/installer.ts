@@ -99,13 +99,8 @@ function writeJSON<T>(path: string, data: T): void {
 
 // ─── Statusline Installer ───────────────────────────────────────────────────
 
-interface StatusLineHook {
-  matcher: string;
-  hooks: Array<{ type: string; command: string }>;
-}
-
 interface SettingsWithStatusLine {
-  StatusLine?: StatusLineHook[];
+  statusLine?: { type: string; command: string };
 }
 
 export function installStatusline(editors?: string[]): void {
@@ -113,7 +108,7 @@ export function installStatusline(editors?: string[]): void {
     ? EDITORS.filter((e) => editors.some((t) => e.name.toLowerCase().includes(t.toLowerCase())))
     : EDITORS.filter((e) => e.supportsStatusline);
 
-  console.log(C.title("\n【♾️】 Installing Statusline Hook\n"));
+  console.log(C.title("\n【♾️】 Installing Statusline\n"));
 
   const command = "npx -y @sriinnu/drishti statusline";
   let installed = 0;
@@ -127,22 +122,15 @@ export function installStatusline(editors?: string[]): void {
     }
 
     const settings = readJSON<SettingsWithStatusLine>(editor.settingsPath) ?? {};
-    const existingHooks = settings.StatusLine ?? [];
 
     // Check if already installed
-    if (existingHooks.some((h) => h.hooks?.some((hook) => hook.command.includes("@sriinnu/drishti")))) {
+    if (settings.statusLine?.command?.includes("@sriinnu/drishti")) {
       console.log(C.accent(`  ✓ ${editor.name} — already installed`));
       continue;
     }
 
-    // Add the hook (top-level StatusLine key with matcher/hooks structure)
-    settings.StatusLine = [
-      ...existingHooks,
-      {
-        matcher: "*",
-        hooks: [{ type: "command", command }],
-      },
-    ];
+    // Add the statusline (top-level statusLine key)
+    settings.statusLine = { type: "command", command };
     writeJSON(editor.settingsPath, settings);
 
     console.log(C.success(`  ✓ ${editor.name} — installed`));
@@ -237,26 +225,19 @@ export function uninstallStatusline(editors?: string[]): void {
     ? EDITORS.filter((e) => editors.some((t) => e.name.toLowerCase().includes(t.toLowerCase())))
     : EDITORS.filter((e) => e.supportsStatusline);
 
-  console.log(C.title("\n【♾️】 Uninstalling Statusline Hook\n"));
+  console.log(C.title("\n【♾️】 Uninstalling Statusline\n"));
 
   for (const editor of targetEditors) {
     if (!editor.supportsStatusline) continue;
 
     const settings = readJSON<SettingsWithStatusLine>(editor.settingsPath);
-    if (!settings?.StatusLine) {
+    if (!settings?.statusLine) {
       console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
       continue;
     }
 
-    settings.StatusLine = settings.StatusLine.filter(
-      (h) => !h.hooks?.some((hook) => hook.command.includes("@sriinnu/drishti"))
-    );
-
-    if (settings.StatusLine.length === 0) {
-      // biome-ignore lint/performance/noDelete: required to remove property from object
-      delete settings.StatusLine;
-    }
-
+    // biome-ignore lint/performance/noDelete: required to remove property from object
+    delete settings.statusLine;
     writeJSON(editor.settingsPath, settings);
     console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
   }
