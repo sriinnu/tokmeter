@@ -117,4 +117,6 @@ export const C = {
   header: chalk.bold.hex("#c9d1d9"),
   /** Border gray — separators and rules. */
   separator: chalk.hex("#30363d"),
+  /** Bright cyan — chevron separators in statusline. */
+  chevron: chalk.hex("#00e5ff"),
 };
