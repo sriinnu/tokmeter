@@ -22,6 +22,8 @@ interface EditorConfig {
   name: string;
   settingsPath: string;
   mcpPath?: string;
+  configPath?: string; // For editors that use a different config file for MCP (e.g., Codex uses config.toml)
+  configFormat?: "json" | "toml";
   supportsStatusline: boolean;
   supportsMCP: boolean;
 }
@@ -42,7 +44,9 @@ const EDITORS: EditorConfig[] = [
   {
     name: "Codex",
     settingsPath: `${homedir()}/.codex/settings.json`,
-    supportsStatusline: true,
+    configPath: `${homedir()}/.codex/config.toml`,
+    configFormat: "toml",
+    supportsStatusline: false, // Codex Rust doesn't support custom statusline hooks
     supportsMCP: true,
   },
   {
@@ -95,6 +99,119 @@ function readJSON<T>(path: string): T | null {
 function writeJSON<T>(path: string, data: T): void {
   ensureDir(path);
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+}
+
+// ─── TOML Helpers (for Codex) ───────────────────────────────────────────────
+
+/**
+ * Simple TOML parser for the subset we need (mcp_servers section).
+ * This is NOT a full TOML parser - it only handles the format Codex uses.
+ */
+function parseTomlMcpServers(content: string): Record<string, { command: string; args?: string[] }> {
+  const servers: Record<string, { command: string; args?: string[] }> = {};
+  const lines = content.split("\n");
+  let currentServer: string | null = null;
+  let inMcpServers = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Check for [mcp_servers.server_name]
+    const mcpMatch = trimmed.match(/^\[mcp_servers\.([^\]]+)\]$/);
+    if (mcpMatch) {
+      inMcpServers = true;
+      currentServer = mcpMatch[1];
+      servers[currentServer] = {} as { command: string; args?: string[] };
+      continue;
+    }
+
+    // Check if we're leaving the mcp_servers section (new section)
+    if (trimmed.startsWith("[") && !trimmed.startsWith("[mcp_servers.")) {
+      inMcpServers = false;
+      currentServer = null;
+      continue;
+    }
+
+    // Parse key = value within mcp_servers
+    if (currentServer && inMcpServers) {
+      const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
+      if (kvMatch) {
+        const [, key, value] = kvMatch;
+        if (key === "command") {
+          servers[currentServer].command = value.replace(/^["']|["']$/g, "");
+        } else if (key === "args") {
+          // Parse array like ["-y", "@sriinnu/drishti", "mcp"]
+          const argsMatch = value.match(/\[(.*)\]/);
+          if (argsMatch) {
+            const argsStr = argsMatch[1];
+            const args = argsStr
+              .split(",")
+              .map((a) => a.trim().replace(/^["']|["']$/g, ""))
+              .filter(Boolean);
+            if (args.length > 0) {
+              servers[currentServer].args = args;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return servers;
+}
+
+/**
+ * Generate TOML config for MCP server.
+ * Returns the content to append or the full config if file doesn't exist.
+ */
+function generateMcpToml(
+  existingContent: string | null,
+  serverName: string,
+  config: { command: string; args?: string[] }
+): string {
+  const serverBlock = `\n[mcp_servers.${serverName}]\ncommand = "${config.command}"${config.args ? `\nargs = ${JSON.stringify(config.args)}` : ""}\n`;
+
+  if (!existingContent) {
+    return `# MCP Servers\n${serverBlock}`;
+  }
+
+  // Check if server already exists
+  if (existingContent.includes(`[mcp_servers.${serverName}]`)) {
+    return existingContent; // Already exists, don't modify
+  }
+
+  // Append to existing content
+  return existingContent.trimEnd() + "\n" + serverBlock;
+}
+
+/**
+ * Remove MCP server from TOML config.
+ */
+function removeMcpFromToml(content: string, serverName: string): string {
+  const lines = content.split("\n");
+  const result: string[] = [];
+  let skipUntilNextSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Check for the server we want to remove
+    if (trimmed === `[mcp_servers.${serverName}]`) {
+      skipUntilNextSection = true;
+      continue;
+    }
+
+    // Check for new section (stop skipping)
+    if (skipUntilNextSection && trimmed.startsWith("[") && !trimmed.startsWith("[mcp_servers.")) {
+      skipUntilNextSection = false;
+    }
+
+    if (!skipUntilNextSection) {
+      result.push(line);
+    }
+  }
+
+  return result.join("\n").trimEnd() + "\n";
 }
 
 // ─── Statusline Installer ───────────────────────────────────────────────────
@@ -171,6 +288,33 @@ export function installMCP(editors?: string[]): void {
       continue;
     }
 
+    // Handle TOML-based configs (Codex)
+    if (editor.configFormat === "toml") {
+      const configPath = editor.configPath ?? editor.settingsPath;
+      const existingContent = existsSync(configPath) ? readFileSync(configPath, "utf-8") : null;
+
+      // Check if already installed
+      if (existingContent?.includes(`[mcp_servers.${serverName}]`)) {
+        console.log(C.accent(`  ✓ ${editor.name} — already installed`));
+        continue;
+      }
+
+      // Generate and write TOML config
+      const newContent = generateMcpToml(existingContent, serverName, {
+        command: "npx",
+        args: ["-y", "@sriinnu/drishti", "mcp"],
+      });
+
+      ensureDir(configPath);
+      writeFileSync(configPath, newContent, "utf-8");
+
+      console.log(C.success(`  ✓ ${editor.name} — installed`));
+      console.log(C.dim(`    ${configPath}`));
+      installed++;
+      continue;
+    }
+
+    // Handle JSON-based configs (other editors)
     // Some editors use a separate mcp.json file
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
 
@@ -255,6 +399,29 @@ export function uninstallMCP(editors?: string[]): void {
   for (const editor of targetEditors) {
     if (!editor.supportsMCP) continue;
 
+    // Handle TOML-based configs (Codex)
+    if (editor.configFormat === "toml") {
+      const configPath = editor.configPath ?? editor.settingsPath;
+
+      if (!existsSync(configPath)) {
+        console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
+        continue;
+      }
+
+      const content = readFileSync(configPath, "utf-8");
+
+      if (!content.includes("[mcp_servers.drishti]")) {
+        console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
+        continue;
+      }
+
+      const newContent = removeMcpFromToml(content, "drishti");
+      writeFileSync(configPath, newContent, "utf-8");
+      console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
+      continue;
+    }
+
+    // Handle JSON-based configs (other editors)
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
     const config = editor.mcpPath
       ? readJSON<MCPConfig>(mcpPath)
