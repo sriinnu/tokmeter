@@ -165,7 +165,7 @@ async function readStdin(): Promise<string> {
     }, 100); // 100ms timeout
 
     process.stdin.on("data", (chunk) => {
-      chunks.push(chunk);
+      chunks.push(chunk as Buffer);
     });
 
     process.stdin.on("end", () => {
