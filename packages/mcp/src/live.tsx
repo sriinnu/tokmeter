@@ -64,7 +64,7 @@ function Header({ tab, lastUpdated }: { tab: TabId; lastUpdated: number }) {
       <Box justifyContent="space-between">
         <Text>
           <Text color="magenta" bold>
-            {"【♾️】 DRISHTI"}
+            {"【∞】 DRISHTI"}
           </Text>
           <Text color="gray">{" · Live Token Observatory"}</Text>
         </Text>
@@ -548,7 +548,7 @@ function LoadingScreen() {
       paddingY={2}
     >
       <Text bold color="magenta">
-        {"【♾️】 DRISHTI"}
+        {"【∞】 DRISHTI"}
       </Text>
       <Text color="gray">{"Live Token Observatory"}</Text>
       <Box marginTop={1}>
