@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["packages/core", "packages/cli", "packages/tui", "packages/web", "packages/mcp"],
   "scripts": {
-    "build": "bun run build:core && bun run build:cli && bun run build:tui && bun run build:web && bun run build:mcp",
+    "build": "bun run build:core && bun run build:mcp && bun run build:cli && bun run build:tui && bun run build:web",
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
     "build:tui": "cd packages/tui && bun run build",
