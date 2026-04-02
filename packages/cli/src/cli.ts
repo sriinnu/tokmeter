@@ -23,7 +23,22 @@ import Table from "cli-table3";
 interface CliArgs extends ScanOptions {
   json: boolean;
   light: boolean;
-  command?: "models" | "daily" | "projects" | "pricing" | "tui" | "serve" | "stats" | "live" | "statusline" | "daemon" | "install-statusline" | "install-mcp" | "uninstall-statusline" | "uninstall-mcp" | "editors";
+  command?:
+    | "models"
+    | "daily"
+    | "projects"
+    | "pricing"
+    | "tui"
+    | "serve"
+    | "stats"
+    | "live"
+    | "statusline"
+    | "daemon"
+    | "install-statusline"
+    | "install-mcp"
+    | "uninstall-statusline"
+    | "uninstall-mcp"
+    | "editors";
   pricingModel?: string;
   daemonCmd?: string;
 }

@@ -43,6 +43,7 @@ export function DailyView({ daily }: DailyViewProps) {
       <Box marginTop={1} flexDirection="column">
         <Text bold>Recent Days</Text>
         {daily.slice(-14).map((d, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
             <Text color="gray">{d.date}</Text>
             <Text>

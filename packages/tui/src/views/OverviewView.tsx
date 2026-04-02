@@ -79,6 +79,7 @@ export function OverviewView({ core }: OverviewViewProps) {
       <Box flexDirection="column">
         <Text bold>Providers</Text>
         {core.getProviderBreakdown().map((p, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
             <Text color="gray">{p.provider.padEnd(12)}</Text>
             <Text>

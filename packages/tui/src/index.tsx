@@ -92,9 +92,12 @@ function App() {
     );
   }
 
-  const stats = useMemo(() => core.getStats(), [loading]);
-  const models = useMemo(() => core.getModelCosts(), [loading]);
-  const daily = useMemo(() => core.getDailyBreakdown(), [loading]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
+  const stats = useMemo(() => core.getStats(), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
+  const models = useMemo(() => core.getModelCosts(), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
+  const daily = useMemo(() => core.getDailyBreakdown(), []);
 
   return (
     <Box flexDirection="column" height="100%">
