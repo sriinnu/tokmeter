@@ -9,9 +9,9 @@
 
 import { execSync } from "node:child_process";
 import { TokmeterCore } from "@sriinnu/tokmeter-core";
-import { C, formatCost, formatNumber } from "./formatter.js";
 import { syncUpdate } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
+import { C, formatCost, formatNumber } from "./formatter.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -52,9 +52,9 @@ function rainbow(text: string, offset = 0): string {
     "\x1b[38;5;196m", // red
     "\x1b[38;5;208m", // orange
     "\x1b[38;5;226m", // yellow
-    "\x1b[38;5;46m",  // green
-    "\x1b[38;5;51m",  // cyan
-    "\x1b[38;5;21m",  // blue
+    "\x1b[38;5;46m", // green
+    "\x1b[38;5;51m", // cyan
+    "\x1b[38;5;21m", // blue
     "\x1b[38;5;129m", // purple
     "\x1b[38;5;201m", // magenta
   ];
@@ -62,23 +62,16 @@ function rainbow(text: string, offset = 0): string {
   return `${colors[f]}${text}\x1b[0m`;
 }
 
-/** Animated spinner with glow effect */
-function animatedSpinner(): string {
-  const f = frame();
-  const spinners = ["◜", "◠", "◝", ";top", "◞", "◡", "◟", "⊲"];
-  const glows = ["", "", "✨", "", "", "", "✨", ""];
-  const s = spinners[f];
-  const g = glows[f];
-  return `${C.chevron(g)}${C.accent(s)}`;
-}
-
 /** Token flow visualization with animated arrows and intensity */
-function animTokenFlow(value: number, type: "in" | "out" | "cache"): { arrow: string; intensity: string } {
+function animTokenFlow(
+  value: number,
+  type: "in" | "out" | "cache"
+): { arrow: string; intensity: string } {
   const f = frame();
 
   // Animated arrows
   const arrows = {
-    in:  ["↗", "↑", "⬆", "↑", "↗", "↑", "⬆", "↑"],
+    in: ["↗", "↑", "⬆", "↑", "↗", "↑", "⬆", "↑"],
     out: ["↘", "↓", "⬇", "↓", "↘", "↓", "⬇", "↓"],
     cache: ["↺", "⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳"],
   };
@@ -86,7 +79,9 @@ function animTokenFlow(value: number, type: "in" | "out" | "cache"): { arrow: st
   // Intensity bar (grows/shrinks based on value)
   const logScale = Math.min(4, Math.floor(Math.log10(value + 1) / 1.5));
   const intensityChars = ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"];
-  const intensity = intensityChars[(f + logScale) % intensityChars.length].repeat(Math.max(1, logScale));
+  const intensity = intensityChars[(f + logScale) % intensityChars.length].repeat(
+    Math.max(1, logScale)
+  );
 
   return { arrow: arrows[type][f], intensity };
 }
@@ -218,8 +213,10 @@ export async function runStatusline(): Promise<void> {
   } catch {
     // Animated waiting state
     const f = frame();
-    const dots = ".".repeat((f % 4));
-    process.stdout.write(`${C.title("【♾️】")} ${C.accent(PARTICLES.pulse[f])}${C.dim(`waiting${dots}`)}`);
+    const dots = ".".repeat(f % 4);
+    process.stdout.write(
+      `${C.title("【♾️】")} ${C.accent(PARTICLES.pulse[f])}${C.dim(`waiting${dots}`)}`
+    );
     return;
   }
 
@@ -228,7 +225,7 @@ export async function runStatusline(): Promise<void> {
 
   // ── Animated Logo with particle effect ──
   const f = frame();
-  const particle = PARTICLES.spark[f];
+  const _particle = PARTICLES.spark[f];
   const pulse = PARTICLES.pulse[f];
   const logo = `${C.title("【")}${rainbow("♾️")}${C.title("】")}${C.chevron(pulse)}`;
   parts.push(logo);
@@ -324,8 +321,11 @@ export async function runStatusline(): Promise<void> {
     if (agg.sessions > 1) {
       const aggIcon = f % 2 === 0 ? "🌐" : "🔗";
       const allTokens = `${C.input(`↑${formatNumber(agg.totalInputTokens)}`)} ${C.output(`↓${formatNumber(agg.totalOutputTokens)}`)}`;
-      const providers = agg.providers.length > 1 ? `${C.dim("│")}${agg.providers.length} providers` : "";
-      parts.push(`${C.title(`${aggIcon} All:`)}${C.cost(formatCost(agg.totalCost))} ${allTokens} ${providers}`);
+      const providers =
+        agg.providers.length > 1 ? `${C.dim("│")}${agg.providers.length} providers` : "";
+      parts.push(
+        `${C.title(`${aggIcon} All:`)}${C.cost(formatCost(agg.totalCost))} ${allTokens} ${providers}`
+      );
     }
 
     // Show per-model breakdown from all sessions

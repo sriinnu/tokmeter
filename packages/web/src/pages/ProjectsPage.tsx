@@ -52,6 +52,7 @@ export function ProjectsPage() {
           </thead>
           <tbody>
             {project.models.map((m: TokmeterModelSummary, i: number) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static data order
               <tr key={i} style={{ borderBottom: "1px solid #21262d" }}>
                 <td style={{ padding: 8, color: "#c9d1d9" }}>{m.model}</td>
                 <td style={{ padding: 8, color: "#8b949e" }}>{m.provider}</td>

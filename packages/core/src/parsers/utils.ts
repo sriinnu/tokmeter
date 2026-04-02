@@ -4,6 +4,7 @@
  * Shared helpers for session file discovery, reading, and record creation.
  */
 
+import type { Dirent } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TokenRecord } from "../types.js";
@@ -37,7 +38,7 @@ export async function findFiles(
   const results: string[] = [];
   if (maxDepth <= 0 || results.length >= maxFiles) return results;
 
-  let entries;
+  let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {

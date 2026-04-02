@@ -23,6 +23,7 @@ export function BarChart({ data, width = 30, barChar = "█" }: BarChartProps) {
           item.maxValue > 0 ? ((item.value / item.maxValue) * 100).toFixed(1) : "0.0";
 
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static data order doesn't change
           <Box key={i} flexDirection="row">
             <Box width={20}>
               <Text color="gray">{item.label.slice(0, 20).padEnd(20)}</Text>

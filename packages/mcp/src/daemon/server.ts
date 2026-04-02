@@ -6,11 +6,16 @@
  * aggregated totals from all active sessions.
  */
 
-import { WebSocketServer, WebSocket } from "ws";
-import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
-import type { ClientMessage, ServerMessage, SessionUpdate, BroadcastMessage } from "./protocol.js";
-import { DAEMON_PORT, DAEMON_HOST, DAEMON_URL, DAEMON_PID_FILE, DAEMON_STATE_FILE } from "./protocol.js";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { WebSocket, WebSocketServer } from "ws";
+import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
+import {
+  DAEMON_HOST,
+  DAEMON_PID_FILE,
+  DAEMON_PORT,
+  DAEMON_STATE_FILE,
+  DAEMON_URL,
+} from "./protocol.js";
 import { SessionManager } from "./session.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
@@ -61,7 +66,7 @@ export function startDaemon(): void {
       try {
         const msg = JSON.parse(data.toString()) as ClientMessage;
         handleMessage(ws, msg);
-      } catch (err) {
+      } catch (_err) {
         send(ws, { type: "error", message: "Invalid message format" });
       }
     });
@@ -114,7 +119,10 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
       );
 
       if (session) {
-        clientSessions.set(ws, { provider: msg.session.provider, sessionId: msg.session.sessionId });
+        clientSessions.set(ws, {
+          provider: msg.session.provider,
+          sessionId: msg.session.sessionId,
+        });
 
         // Send broadcast to all clients with aggregated data
         broadcast();
@@ -158,7 +166,10 @@ function broadcast(): void {
       totalCost: aggregated.totalCost + session.cost,
       totalInputTokens: aggregated.totalInputTokens + session.tokens.inputTokens,
       totalOutputTokens: aggregated.totalOutputTokens + session.tokens.outputTokens,
-      totalCacheTokens: aggregated.totalCacheTokens + session.tokens.cacheReadTokens + session.tokens.cacheWriteTokens,
+      totalCacheTokens:
+        aggregated.totalCacheTokens +
+        session.tokens.cacheReadTokens +
+        session.tokens.cacheWriteTokens,
       sessions: aggregated.sessions + 1,
     };
 
@@ -240,7 +251,7 @@ export function isDaemonRunning(): boolean {
   if (!existsSync(DAEMON_PID_FILE)) return false;
 
   try {
-    const pid = parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
+    const pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
     // Check if process is running
     process.kill(pid, 0);
     return true;
@@ -259,7 +270,7 @@ export function getDaemonStatus(): { running: boolean; pid?: number; port: numbe
   }
 
   try {
-    const pid = parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
+    const pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
     process.kill(pid, 0);
     return { running: true, pid, port: DAEMON_PORT };
   } catch {
@@ -320,6 +331,6 @@ export function runDaemonCLI(command: string): void {
       break;
 
     default:
-      console.log(`Usage: drishti daemon [start|stop|status|restart]`);
+      console.log("Usage: drishti daemon [start|stop|status|restart]");
   }
 }

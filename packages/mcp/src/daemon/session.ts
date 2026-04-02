@@ -2,7 +2,7 @@
  * Drishti Daemon — Session management
  */
 
-import type { SessionInfo, TokenUsage, AggregatedStats, ModelBreakdown, ProviderBreakdown } from "./protocol.js";
+import type { AggregatedStats, SessionInfo, TokenUsage } from "./protocol.js";
 
 // ─── Session State ─────────────────────────────────────────────────────
 
@@ -45,7 +45,13 @@ export class SessionManager {
     }
   }
 
-  update(provider: string, sessionId: string, cost: number, tokens: TokenUsage, durationMs?: number): Session | null {
+  update(
+    provider: string,
+    sessionId: string,
+    cost: number,
+    tokens: TokenUsage,
+    durationMs?: number
+  ): Session | null {
     const key = this.key(provider, sessionId);
     const session = this.sessions.get(key);
 
@@ -110,7 +116,11 @@ export class SessionManager {
 
     for (const session of sessions) {
       // Skip excluded session (the one asking)
-      if (excludeSession && session.provider === excludeSession.provider && session.sessionId === excludeSession.sessionId) {
+      if (
+        excludeSession &&
+        session.provider === excludeSession.provider &&
+        session.sessionId === excludeSession.sessionId
+      ) {
         continue;
       }
 

@@ -34,6 +34,7 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
 
       <Box marginTop={1} flexDirection="column">
         {models.map((m, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
             <Text color="gray">{m.model.padEnd(28)}</Text>
             <Text color="blue">{m.provider.padEnd(12)}</Text>

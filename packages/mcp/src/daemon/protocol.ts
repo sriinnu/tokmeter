@@ -5,11 +5,11 @@
 // ─── Message Types ─────────────────────────────────────────────────────
 
 export interface SessionInfo {
-  provider: string;        // "claude-code" | "cursor" | "codex" | "opencode" | ...
-  sessionId: string;       // Unique session identifier
-  model: string;           // Model being used
-  project?: string;        // Project name
-  cwd?: string;            // Working directory
+  provider: string; // "claude-code" | "cursor" | "codex" | "opencode" | ...
+  sessionId: string; // Unique session identifier
+  model: string; // Model being used
+  project?: string; // Project name
+  cwd?: string; // Working directory
 }
 
 export interface TokenUsage {
@@ -73,7 +73,10 @@ export interface ProviderBreakdown {
 }
 
 export type ClientMessage = SessionRegister | SessionUpdate | SessionUnregister;
-export type ServerMessage = BroadcastMessage | { type: "ack"; success: boolean } | { type: "error"; message: string };
+export type ServerMessage =
+  | BroadcastMessage
+  | { type: "ack"; success: boolean }
+  | { type: "error"; message: string };
 
 // ─── Daemon Config ─────────────────────────────────────────────────────
 

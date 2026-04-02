@@ -7,8 +7,8 @@
  */
 
 import WebSocket from "ws";
-import type { SessionInfo, TokenUsage, AggregatedStats, BroadcastMessage } from "./protocol.js";
-import { DAEMON_URL, DAEMON_PORT, DAEMON_HOST } from "./protocol.js";
+import type { AggregatedStats, BroadcastMessage, SessionInfo, TokenUsage } from "./protocol.js";
+import { DAEMON_URL } from "./protocol.js";
 
 // ─── Response Types ─────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ export function syncUpdate(
  */
 export function isDaemonReachable(): boolean {
   try {
-    const ws = new WebSocket(DAEMON_URL);
+    const _ws = new WebSocket(DAEMON_URL);
     return true;
   } catch {
     return false;
@@ -120,7 +120,11 @@ export class DaemonClient {
     });
   }
 
-  async update(cost: number, tokens: TokenUsage, durationMs?: number): Promise<BroadcastMessage | null> {
+  async update(
+    cost: number,
+    tokens: TokenUsage,
+    durationMs?: number
+  ): Promise<BroadcastMessage | null> {
     return new Promise((resolve) => {
       if (!this.ws || !this.session) {
         resolve(null);
