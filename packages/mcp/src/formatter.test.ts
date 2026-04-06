@@ -25,9 +25,9 @@ describe("formatNumber", () => {
   });
 
   it("should handle NaN and Infinity", () => {
-    expect(formatNumber(NaN)).toBe("0");
-    expect(formatNumber(Infinity)).toBe("0");
-    expect(formatNumber(-Infinity)).toBe("0");
+    expect(formatNumber(Number.NaN)).toBe("0");
+    expect(formatNumber(Number.POSITIVE_INFINITY)).toBe("0");
+    expect(formatNumber(Number.NEGATIVE_INFINITY)).toBe("0");
   });
 });
 
@@ -48,9 +48,9 @@ describe("formatCost", () => {
   });
 
   it("should handle NaN and Infinity", () => {
-    expect(formatCost(NaN)).toBe("$0.00");
-    expect(formatCost(Infinity)).toBe("$0.00");
-    expect(formatCost(-Infinity)).toBe("$0.00");
+    expect(formatCost(Number.NaN)).toBe("$0.00");
+    expect(formatCost(Number.POSITIVE_INFINITY)).toBe("$0.00");
+    expect(formatCost(Number.NEGATIVE_INFINITY)).toBe("$0.00");
   });
 });
 
@@ -66,8 +66,8 @@ describe("formatPercent", () => {
   });
 
   it("should handle NaN and Infinity", () => {
-    expect(formatPercent(NaN)).toBe("0.00%");
-    expect(formatPercent(Infinity)).toBe("0.00%");
+    expect(formatPercent(Number.NaN)).toBe("0.00%");
+    expect(formatPercent(Number.POSITIVE_INFINITY)).toBe("0.00%");
   });
 });
 
@@ -89,9 +89,9 @@ describe("formatBar", () => {
   });
 
   it("should handle NaN and Infinity", () => {
-    expect(formatBar(NaN, 100)).toBe("░░░░░░░░░░");
-    expect(formatBar(50, NaN)).toBe("░░░░░░░░░░");
-    expect(formatBar(Infinity, 100)).toBe("░░░░░░░░░░");
+    expect(formatBar(Number.NaN, 100)).toBe("░░░░░░░░░░");
+    expect(formatBar(50, Number.NaN)).toBe("░░░░░░░░░░");
+    expect(formatBar(Number.POSITIVE_INFINITY, 100)).toBe("░░░░░░░░░░");
   });
 });
 
@@ -113,9 +113,9 @@ describe("formatDuration", () => {
   });
 
   it("should handle NaN and negative values", () => {
-    expect(formatDuration(NaN)).toBe("0s");
+    expect(formatDuration(Number.NaN)).toBe("0s");
     expect(formatDuration(-1000)).toBe("0s");
-    expect(formatDuration(Infinity)).toBe("0s");
+    expect(formatDuration(Number.POSITIVE_INFINITY)).toBe("0s");
   });
 });
 
@@ -141,7 +141,7 @@ describe("sparkline", () => {
   });
 
   it("should handle NaN values", () => {
-    expect(sparkline([NaN, NaN])).toBe("");
-    expect(sparkline([1, NaN, 3])).toBe("▁█"); // filters out NaN, renders finite values
+    expect(sparkline([Number.NaN, Number.NaN])).toBe("");
+    expect(sparkline([1, Number.NaN, 3])).toBe("▁█"); // filters out NaN, renders finite values
   });
 });

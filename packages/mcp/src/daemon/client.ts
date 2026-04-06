@@ -42,7 +42,9 @@ export async function syncUpdate(
       const finish = (result: DaemonResponse) => {
         if (settled) return;
         settled = true;
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch {}
         resolve(result);
       };
 
@@ -93,7 +95,9 @@ export async function isDaemonReachable(timeoutMs = 500): Promise<boolean> {
     try {
       const ws = new WebSocket(DAEMON_URL);
       const timer = setTimeout(() => {
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch {}
         resolve(false);
       }, timeoutMs);
 

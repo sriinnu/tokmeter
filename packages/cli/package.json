@@ -30,6 +30,6 @@
     "directory": "packages/cli"
   },
   "keywords": ["tokens", "ai", "llm", "usage-tracking", "pricing", "cli", "claude", "anthropic"],
-  "engines": { "node": ">=22.0.0" },
+  "engines": { "node": ">=18.0.0" },
   "publishConfig": { "access": "public" }
 }

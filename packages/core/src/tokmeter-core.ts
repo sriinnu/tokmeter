@@ -15,6 +15,7 @@ import {
   filterByProject,
 } from "./aggregator.js";
 import { getParsers } from "./parsers/index.js";
+import { saveRecordCacheToDisk } from "./parsers/utils.js";
 import { PricingService } from "./pricing.js";
 import type {
   DailyEntry,
@@ -78,6 +79,10 @@ export class TokmeterCore {
     }
 
     this.records = records;
+
+    // Persist record cache to disk so subsequent scans skip unchanged files
+    saveRecordCacheToDisk();
+
     return records;
   }
 

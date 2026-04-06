@@ -5,9 +5,175 @@
  */
 
 import type { Dirent } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TokenRecord } from "../types.js";
+
+// ─── Record Cache (append-aware, disk-persisted) ───────────────────
+//
+// Caches parsed TokenRecord[] per source file. Three modes:
+//
+// 1. EXACT HIT: mtime + size unchanged → return cached records (instant)
+// 2. APPEND:    mtime changed but size grew → only parse new bytes from
+//              the old offset (JSONL files are append-only)
+// 3. MISS:      new file, or file shrunk/rewritten → full re-parse
+//
+// Persists to ~/.cache/tokmeter/scan-cache.json with metadata.
+// Old files (from last month, last year) never need re-parsing again.
+
+interface RecordCacheEntry {
+  mtimeMs: number;
+  sizeBytes: number;
+  records: TokenRecord[];
+}
+
+interface CacheFile {
+  version: number;
+  createdAt: string;
+  lastScanAt: string;
+  stats: {
+    files: number;
+    records: number;
+    cacheHits: number;
+    cacheMisses: number;
+    appends: number;
+  };
+  files: Record<string, RecordCacheEntry>;
+}
+
+let recordCache: Map<string, RecordCacheEntry> | null = null;
+let cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+let cacheCreatedAt: string | null = null;
+const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
+const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
+
+function loadRecordCache(): Map<string, RecordCacheEntry> {
+  if (recordCache) return recordCache;
+  recordCache = new Map();
+  cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  try {
+    if (existsSync(CACHE_FILE)) {
+      const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
+      cacheCreatedAt = data.createdAt;
+      for (const [k, v] of Object.entries(data.files)) {
+        recordCache.set(k, v);
+      }
+    }
+  } catch {}
+  return recordCache;
+}
+
+function saveRecordCache(): void {
+  if (!recordCache) return;
+  try {
+    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+    const data: CacheFile = {
+      version: 1,
+      createdAt: cacheCreatedAt || new Date().toISOString(),
+      lastScanAt: new Date().toISOString(),
+      stats: {
+        ...cacheStats,
+        files: recordCache.size,
+        records: [...recordCache.values()].reduce((s, e) => s + e.records.length, 0),
+      },
+      files: Object.fromEntries(recordCache),
+    };
+    // Atomic write: tmp file + rename prevents corruption from concurrent processes
+    const tmpFile = `${CACHE_FILE}.tmp`;
+    writeFileSync(tmpFile, JSON.stringify(data));
+    renameSync(tmpFile, CACHE_FILE);
+  } catch {}
+}
+
+/**
+ * Check cache for a file. Returns one of:
+ * - { hit: true, records } — exact match, skip parsing entirely
+ * - { hit: false, appendOffset } — file grew, only parse from offset
+ * - { hit: false, appendOffset: 0 } — full re-parse needed
+ */
+export async function getCachedRecords(
+  path: string
+): Promise<
+  | { hit: true; records: TokenRecord[] }
+  | { hit: false; appendOffset: number; cachedRecords: TokenRecord[] }
+> {
+  const cache = loadRecordCache();
+  const entry = cache.get(path);
+  if (!entry) {
+    cacheStats.cacheMisses++;
+    return { hit: false, appendOffset: 0, cachedRecords: [] };
+  }
+  try {
+    const s = await stat(path);
+    // Exact hit: nothing changed
+    if (s.mtimeMs === entry.mtimeMs && s.size === entry.sizeBytes) {
+      cacheStats.cacheHits++;
+      return { hit: true, records: entry.records };
+    }
+    // File grew: append-only parse from where we left off
+    if (s.size > entry.sizeBytes) {
+      cacheStats.appends++;
+      return { hit: false, appendOffset: entry.sizeBytes, cachedRecords: entry.records };
+    }
+    // File shrunk or rewritten: full re-parse
+    cacheStats.cacheMisses++;
+    return { hit: false, appendOffset: 0, cachedRecords: [] };
+  } catch {
+    cacheStats.cacheMisses++;
+    return { hit: false, appendOffset: 0, cachedRecords: [] };
+  }
+}
+
+/**
+ * Cache parsed records for a file, recording current mtime and size.
+ */
+export async function setCachedRecords(path: string, records: TokenRecord[]): Promise<void> {
+  const cache = loadRecordCache();
+  try {
+    const s = await stat(path);
+    cache.set(path, { mtimeMs: s.mtimeMs, sizeBytes: s.size, records });
+  } catch {}
+}
+
+/** Flush the in-memory record cache to disk. */
+export function saveRecordCacheToDisk(): void {
+  saveRecordCache();
+}
+
+/** Read only the tail of a file from a byte offset (for append-only parsing). */
+export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: number): Promise<T[]> {
+  try {
+    const fd = await import("node:fs/promises").then((m) => m.open(path, "r"));
+    const fileStat = await fd.stat();
+    const tailSize = fileStat.size - offsetBytes;
+    if (tailSize <= 0) {
+      await fd.close();
+      return [];
+    }
+    const buf = Buffer.alloc(tailSize);
+    await fd.read(buf, 0, tailSize, offsetBytes);
+    await fd.close();
+
+    const raw = buf.toString("utf-8");
+    let lines = raw.split("\n").filter((l: string) => l.trim());
+
+    // If offset landed mid-line, the first chunk is a partial JSON line — discard it
+    if (lines.length > 0 && !raw.startsWith("\n") && !raw.startsWith("{") && !raw.startsWith("[")) {
+      lines = lines.slice(1);
+    }
+
+    const results: T[] = [];
+    for (const line of lines) {
+      try {
+        results.push(JSON.parse(line) as T);
+      } catch {}
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
 
 /** Default maximum number of files returned by findFiles. */
 const DEFAULT_MAX_FILES = 10_000;

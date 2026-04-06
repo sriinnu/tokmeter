@@ -104,63 +104,6 @@ function writeJSON<T>(path: string, data: T): void {
 // ─── TOML Helpers (for Codex) ───────────────────────────────────────────────
 
 /**
- * Simple TOML parser for the subset we need (mcp_servers section).
- * This is NOT a full TOML parser - it only handles the format Codex uses.
- */
-function parseTomlMcpServers(content: string): Record<string, { command: string; args?: string[] }> {
-  const servers: Record<string, { command: string; args?: string[] }> = {};
-  const lines = content.split("\n");
-  let currentServer: string | null = null;
-  let inMcpServers = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Check for [mcp_servers.server_name]
-    const mcpMatch = trimmed.match(/^\[mcp_servers\.([^\]]+)\]$/);
-    if (mcpMatch) {
-      inMcpServers = true;
-      currentServer = mcpMatch[1];
-      servers[currentServer] = {} as { command: string; args?: string[] };
-      continue;
-    }
-
-    // Check if we're leaving the mcp_servers section (new section)
-    if (trimmed.startsWith("[") && !trimmed.startsWith("[mcp_servers.")) {
-      inMcpServers = false;
-      currentServer = null;
-      continue;
-    }
-
-    // Parse key = value within mcp_servers
-    if (currentServer && inMcpServers) {
-      const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-      if (kvMatch) {
-        const [, key, value] = kvMatch;
-        if (key === "command") {
-          servers[currentServer].command = value.replace(/^["']|["']$/g, "");
-        } else if (key === "args") {
-          // Parse array like ["-y", "@sriinnu/drishti", "mcp"]
-          const argsMatch = value.match(/\[(.*)\]/);
-          if (argsMatch) {
-            const argsStr = argsMatch[1];
-            const args = argsStr
-              .split(",")
-              .map((a) => a.trim().replace(/^["']|["']$/g, ""))
-              .filter(Boolean);
-            if (args.length > 0) {
-              servers[currentServer].args = args;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return servers;
-}
-
-/**
  * Generate TOML config for MCP server.
  * Returns the content to append or the full config if file doesn't exist.
  */
@@ -181,7 +124,7 @@ function generateMcpToml(
   }
 
   // Append to existing content
-  return existingContent.trimEnd() + "\n" + serverBlock;
+  return `${existingContent.trimEnd()}\n${serverBlock}`;
 }
 
 /**
@@ -201,8 +144,8 @@ function removeMcpFromToml(content: string, serverName: string): string {
       continue;
     }
 
-    // Check for new section (stop skipping)
-    if (skipUntilNextSection && trimmed.startsWith("[") && !trimmed.startsWith("[mcp_servers.")) {
+    // Check for any new section header (stop skipping)
+    if (skipUntilNextSection && trimmed.startsWith("[")) {
       skipUntilNextSection = false;
     }
 
@@ -211,7 +154,7 @@ function removeMcpFromToml(content: string, serverName: string): string {
     }
   }
 
-  return result.join("\n").trimEnd() + "\n";
+  return `${result.join("\n").trimEnd()}\n`;
 }
 
 // ─── Statusline Installer ───────────────────────────────────────────────────

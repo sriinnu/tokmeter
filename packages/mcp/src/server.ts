@@ -3,7 +3,7 @@
  *
  * दृष्टि (Drishti) — "Vision" — Token usage observatory for AI coding agents.
  *
- * Exposes 16 tools via the Model Context Protocol that let AI agents and CLIs
+ * Exposes 20 tools via the Model Context Protocol that let AI agents and CLIs
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
@@ -254,7 +254,7 @@ const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for cust
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Create and configure the दृष्टि MCP server with all 16 tools.
+ * Create and configure the दृष्टि MCP server with all 20 tools.
  *
  * Each tool call uses {@link getCore} which caches the TokmeterCore instance
  * for 5 seconds to avoid rescanning the filesystem on rapid successive calls.
@@ -2164,6 +2164,647 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+    }
+  );
+
+  // ────────────────────────────────────────────
+  // 17. cache_efficiency — Cache hit/miss analysis
+  // ────────────────────────────────────────────
+  server.tool(
+    "cache_efficiency",
+    "Analyze cache hit/miss patterns across sessions. Shows overall cache hit rate, dollar savings from caching, " +
+      "cache write waste, and per-model breakdown. Use this to understand how effectively prompt caching is reducing your costs.",
+    {
+      period: z
+        .enum(["today", "week", "month"])
+        .optional()
+        .describe("Time period to analyze: today, week, or month"),
+      provider: z.string().optional().describe("Filter to a specific provider"),
+      project: ProjectFilter,
+    },
+    async (params) => {
+      const opts = buildScanOptions({
+        scope: params.period,
+        project: params.project,
+        providers: params.provider ? [params.provider] : undefined,
+      });
+      const core = await getCore(opts);
+      const records = core.getRecords();
+
+      if (records.length === 0) {
+        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+      }
+
+      // Aggregate totals
+      let totalCacheRead = 0;
+      let totalCacheWrite = 0;
+      let totalInputTokens = 0;
+
+      // Per-model aggregation
+      const modelMap = new Map<
+        string,
+        {
+          cacheRead: number;
+          cacheWrite: number;
+          inputTokens: number;
+          cost: number;
+          count: number;
+        }
+      >();
+
+      for (const r of records) {
+        totalCacheRead += r.cacheReadTokens;
+        totalCacheWrite += r.cacheWriteTokens;
+        totalInputTokens += r.inputTokens;
+
+        const existing = modelMap.get(r.model) ?? {
+          cacheRead: 0,
+          cacheWrite: 0,
+          inputTokens: 0,
+          cost: 0,
+          count: 0,
+        };
+        existing.cacheRead += r.cacheReadTokens;
+        existing.cacheWrite += r.cacheWriteTokens;
+        existing.inputTokens += r.inputTokens;
+        existing.cost += r.cost;
+        existing.count++;
+        modelMap.set(r.model, existing);
+      }
+
+      // Cache hit rate: reads / (reads + writes). If no cache activity, 0%.
+      const totalCacheTokens = totalCacheRead + totalCacheWrite;
+      const hitRate = totalCacheTokens > 0 ? (totalCacheRead / totalCacheTokens) * 100 : 0;
+
+      // Estimate savings: cache reads cost ~10% of input price, so you save ~90% per cached token.
+      // We approximate by looking at average input cost per token across the dataset.
+      const totalCost = records.reduce((sum, r) => sum + r.cost, 0);
+      const avgCostPerInputToken = totalInputTokens > 0 ? (totalCost * 0.4) / totalInputTokens : 0; // ~40% of cost is input
+      const cacheSavings = totalCacheRead * avgCostPerInputToken * 0.9; // saved 90% of input price
+      const cacheWaste = totalCacheWrite * avgCostPerInputToken * 0.25; // cache write premium ~25%
+
+      // Period label
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
+
+      const lines = [
+        header("CACHE EFFICIENCY"),
+        `  Period: ${periodLabel}${params.provider ? ` │ Provider: ${params.provider}` : ""}${params.project ? ` │ Project: ${params.project}` : ""}`,
+        separator(),
+        "",
+        `  📊 Overall Cache Hit Rate:  ${fmtPct(hitRate)}`,
+        `     ├─ Cache Reads:   ${fmtNum(totalCacheRead)} tokens`,
+        `     ├─ Cache Writes:  ${fmtNum(totalCacheWrite)} tokens`,
+        `     └─ Input Tokens:  ${fmtNum(totalInputTokens)} tokens`,
+        "",
+        `  💰 Cache Savings:   ~${fmtCost(cacheSavings)}  (what you saved vs full input price)`,
+        `  🗑️  Cache Waste:     ~${fmtCost(cacheWaste)}  (premium paid on writes never amortized)`,
+        `  📈 Net Benefit:     ~${fmtCost(cacheSavings - cacheWaste)}`,
+        "",
+      ];
+
+      // Per-model breakdown
+      const modelEntries = [...modelMap.entries()]
+        .filter(([, v]) => v.cacheRead + v.cacheWrite > 0)
+        .sort((a, b) => b[1].cacheRead - a[1].cacheRead);
+
+      if (modelEntries.length > 0) {
+        lines.push("  Per-Model Cache Breakdown", separator(), "");
+        const tableHeaders = ["Model", "Hit Rate", "Reads", "Writes", "Calls"];
+        const tableRows = modelEntries.map(([model, v]) => {
+          const mTotal = v.cacheRead + v.cacheWrite;
+          const mHitRate = mTotal > 0 ? (v.cacheRead / mTotal) * 100 : 0;
+          return [
+            model,
+            fmtPct(mHitRate),
+            fmtNum(v.cacheRead),
+            fmtNum(v.cacheWrite),
+            String(v.count),
+          ];
+        });
+        lines.push(formatTable(tableHeaders, tableRows, [false, true, true, true, true]));
+        lines.push("");
+      }
+
+      // Recommendation
+      lines.push(separator(), "");
+      if (hitRate >= 90) {
+        lines.push(
+          `  ✅ Excellent! Your cache hit rate is ${fmtPct(hitRate)} — caching saves you ~${fmtCost(cacheSavings)}/period.`,
+          "     Keep conversations going to maintain high cache utilization."
+        );
+      } else if (hitRate >= 70) {
+        lines.push(
+          `  💡 Good cache usage at ${fmtPct(hitRate)}. Consider longer conversations to improve hit rates.`,
+          `     Potential additional savings if you reach 90%+: ~${fmtCost(cacheSavings * 0.3)}/period.`
+        );
+      } else if (totalCacheTokens > 0) {
+        lines.push(
+          `  ⚠️  Low cache hit rate: ${fmtPct(hitRate)}. You're paying for cache writes but not reusing them.`,
+          "     Try: longer conversations, fewer new sessions, and keeping context warm."
+        );
+      } else {
+        lines.push(
+          "  ℹ️  No cache activity detected. Your providers may not support prompt caching,",
+          "     or caching stats aren't being reported."
+        );
+      }
+      lines.push("");
+
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+    }
+  );
+
+  // ────────────────────────────────────────────
+  // 18. model_advisor — Cheaper model suggestions
+  // ────────────────────────────────────────────
+
+  /** Known pricing table (per million tokens). */
+  const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+    opus: { input: 15, output: 75 },
+    sonnet: { input: 3, output: 15 },
+    haiku: { input: 0.8, output: 4 },
+    "gpt-5": { input: 10, output: 30 },
+    "gpt-4o": { input: 2.5, output: 10 },
+    "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  };
+
+  /** Match a model name to a pricing tier key. */
+  function matchPricingTier(model: string): string | null {
+    const lower = model.toLowerCase();
+    if (lower.includes("opus")) return "opus";
+    if (lower.includes("sonnet")) return "sonnet";
+    if (lower.includes("haiku")) return "haiku";
+    if (lower.includes("gpt-5")) return "gpt-5";
+    if (lower.includes("gpt-4o-mini")) return "gpt-4o-mini";
+    if (lower.includes("gpt-4o")) return "gpt-4o";
+    return null;
+  }
+
+  /** Get the cheaper alternative for a model tier. */
+  function cheaperAlternative(tier: string): string | null {
+    const downgrades: Record<string, string> = {
+      opus: "sonnet",
+      sonnet: "haiku",
+      "gpt-5": "gpt-4o",
+      "gpt-4o": "gpt-4o-mini",
+    };
+    return downgrades[tier] ?? null;
+  }
+
+  server.tool(
+    "model_advisor",
+    "Compare what you actually spent vs what cheaper models would have cost. " +
+      "Shows current spending by model and estimates savings if you downgraded expensive models " +
+      "(e.g., Opus → Sonnet, GPT-5 → GPT-4o). Includes a reference pricing table.",
+    {
+      period: z
+        .enum(["today", "week", "month"])
+        .optional()
+        .describe("Time period to analyze: today, week, or month"),
+      project: ProjectFilter,
+    },
+    async (params) => {
+      const opts = buildScanOptions({ scope: params.period, project: params.project });
+      const core = await getCore(opts);
+      const models = core.getModelCosts({ project: params.project });
+
+      if (models.length === 0) {
+        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+      }
+
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
+
+      const lines = [
+        header("MODEL ADVISOR"),
+        `  Period: ${periodLabel}${params.project ? ` │ Project: ${params.project}` : ""}`,
+        separator(),
+        "",
+        "  Current Spending by Model",
+        separator(),
+        "",
+      ];
+
+      // Current spend table
+      const currentHeaders = ["Model", "Cost", "Share", "Input Tok", "Output Tok"];
+      const currentRows = models
+        .slice(0, 15)
+        .map((m) => [
+          m.model,
+          fmtCost(m.cost),
+          fmtPct(m.percentageOfTotal),
+          fmtNum(m.inputTokens),
+          fmtNum(m.outputTokens),
+        ]);
+      lines.push(formatTable(currentHeaders, currentRows, [false, true, true, true, true]));
+      lines.push("");
+
+      // Calculate what-if scenarios
+      let totalActual = 0;
+      let totalAlternative = 0;
+      const scenarios: { model: string; actual: number; alternative: number; altTier: string }[] =
+        [];
+
+      for (const m of models) {
+        totalActual += m.cost;
+        const tier = matchPricingTier(m.model);
+        if (!tier) continue;
+
+        const altTier = cheaperAlternative(tier);
+        if (!altTier) continue;
+
+        const altPricing = MODEL_PRICING[altTier];
+        if (!altPricing) continue;
+
+        // Re-estimate cost with cheaper model pricing
+        const altCost =
+          (m.inputTokens / 1_000_000) * altPricing.input +
+          (m.outputTokens / 1_000_000) * altPricing.output;
+
+        totalAlternative += altCost;
+        scenarios.push({ model: m.model, actual: m.cost, alternative: altCost, altTier });
+      }
+
+      // Models without a cheaper alternative still count toward the total
+      const unmatched = models.filter((m) => {
+        const tier = matchPricingTier(m.model);
+        return !tier || !cheaperAlternative(tier);
+      });
+      const unmatchedCost = unmatched.reduce((s, m) => s + m.cost, 0);
+      totalAlternative += unmatchedCost;
+
+      if (scenarios.length > 0) {
+        lines.push("", "  💡 What If You Downgraded?", separator(), "");
+
+        const whatIfHeaders = ["Model", "Current", "If Downgraded", "Alt Model", "Savings"];
+        const whatIfRows = scenarios.map((s) => [
+          s.model,
+          fmtCost(s.actual),
+          fmtCost(s.alternative),
+          s.altTier,
+          fmtCost(s.actual - s.alternative),
+        ]);
+        lines.push(formatTable(whatIfHeaders, whatIfRows, [false, true, true, false, true]));
+
+        const totalSavings = totalActual - totalAlternative;
+        const savingsPct = totalActual > 0 ? (totalSavings / totalActual) * 100 : 0;
+
+        lines.push(
+          "",
+          separator(),
+          `  📊 Total Current Spend:     ${fmtCost(totalActual)}`,
+          `  📉 Estimated w/ Downgrades: ${fmtCost(totalAlternative)}`,
+          `  💰 Potential Savings:       ${fmtCost(totalSavings)} (${fmtPct(savingsPct)})`,
+          ""
+        );
+      } else {
+        lines.push(
+          "",
+          "  ℹ️  No downgrade scenarios available for your current models.",
+          `  📊 Total Spend: ${fmtCost(totalActual)}`,
+          ""
+        );
+      }
+
+      // Reference pricing table
+      lines.push("", "  📋 Reference Pricing (per million tokens)", separator(), "");
+      const pricingHeaders = ["Model", "Input $/MTok", "Output $/MTok"];
+      const pricingRows = Object.entries(MODEL_PRICING).map(([name, p]) => [
+        name,
+        `$${p.input.toFixed(2)}`,
+        `$${p.output.toFixed(2)}`,
+      ]);
+      lines.push(formatTable(pricingHeaders, pricingRows, [false, true, true]));
+      lines.push("");
+
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+    }
+  );
+
+  // ────────────────────────────────────────────
+  // 19. budget_alert — Proactive budget monitoring
+  // ────────────────────────────────────────────
+  server.tool(
+    "budget_alert",
+    "Proactive budget monitoring with configurable daily/weekly/monthly thresholds. " +
+      "Shows current spend, percentage of budget used, projected end-of-period spend, and " +
+      "hours remaining until budget is exceeded. Gives green/yellow/red status indicators.",
+    {
+      daily_budget: z.number().describe("Daily budget in USD"),
+      weekly_budget: z.number().optional().describe("Weekly budget in USD"),
+      monthly_budget: z.number().optional().describe("Monthly budget in USD"),
+    },
+    async (params) => {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+
+      // Fetch records for each period
+      const coreToday = await getCore({ today: true });
+      const todayRecords = coreToday.getRecords();
+      const todaySpend = todayRecords.reduce((s, r) => s + r.cost, 0);
+
+      const coreWeek = await getCore({ week: true });
+      const weekRecords = coreWeek.getRecords();
+      const weekSpend = weekRecords.reduce((s, r) => s + r.cost, 0);
+
+      const coreMonth = await getCore({ month: true });
+      const monthRecords = coreMonth.getRecords();
+      const monthSpend = monthRecords.reduce((s, r) => s + r.cost, 0);
+
+      /** Determine status color based on usage percentage. */
+      function budgetStatus(pct: number): string {
+        if (pct >= 100) return "🔴 OVER BUDGET";
+        if (pct >= 80) return "🟡 WARNING";
+        return "🟢 OK";
+      }
+
+      /** Calculate hours remaining at current burn rate. */
+      function hoursRemaining(
+        spent: number,
+        budget: number,
+        _hoursInPeriod: number,
+        hoursElapsed: number
+      ): string {
+        if (spent === 0) return "∞";
+        const burnRate = spent / Math.max(hoursElapsed, 1); // $/hour
+        const remaining = budget - spent;
+        if (remaining <= 0) return "0.0";
+        return (remaining / burnRate).toFixed(1);
+      }
+
+      // Hours elapsed today
+      const hoursElapsedToday = now.getHours() + now.getMinutes() / 60;
+      const hoursInDay = 24;
+
+      // Hours elapsed this week (day of week: 0=Sun)
+      const dayOfWeek = now.getDay();
+      const hoursElapsedWeek = dayOfWeek * 24 + hoursElapsedToday;
+      const hoursInWeek = 7 * 24;
+
+      // Hours elapsed this month
+      const dayOfMonth = now.getDate();
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const hoursElapsedMonth = (dayOfMonth - 1) * 24 + hoursElapsedToday;
+      const hoursInMonth = daysInMonth * 24;
+
+      // Projections based on burn rate
+      const projectedDaily =
+        hoursElapsedToday > 0 ? (todaySpend / hoursElapsedToday) * hoursInDay : 0;
+      const projectedWeekly =
+        hoursElapsedWeek > 0 ? (weekSpend / hoursElapsedWeek) * hoursInWeek : 0;
+      const projectedMonthly =
+        hoursElapsedMonth > 0 ? (monthSpend / hoursElapsedMonth) * hoursInMonth : 0;
+
+      const dailyPct = (todaySpend / params.daily_budget) * 100;
+
+      const lines = [
+        header("BUDGET ALERT"),
+        `  Date: ${todayStr}  │  Time: ${now.toTimeString().slice(0, 8)}`,
+        separator(),
+        "",
+        "  📅 Daily Budget",
+        `     Budget:     ${fmtCost(params.daily_budget)}`,
+        `     Spent:      ${fmtCost(todaySpend)}`,
+        `     Used:       ${fmtPct(dailyPct)}  ${progressBar(todaySpend, params.daily_budget)}`,
+        `     Projected:  ${fmtCost(projectedDaily)} by end of day`,
+        `     Status:     ${budgetStatus(dailyPct)}`,
+        `     Remaining:  ${hoursRemaining(todaySpend, params.daily_budget, hoursInDay, hoursElapsedToday)} hours until budget exceeded`,
+        "",
+      ];
+
+      if (params.weekly_budget) {
+        const weeklyPct = (weekSpend / params.weekly_budget) * 100;
+        lines.push(
+          "  📅 Weekly Budget",
+          `     Budget:     ${fmtCost(params.weekly_budget)}`,
+          `     Spent:      ${fmtCost(weekSpend)}`,
+          `     Used:       ${fmtPct(weeklyPct)}  ${progressBar(weekSpend, params.weekly_budget)}`,
+          `     Projected:  ${fmtCost(projectedWeekly)} by end of week`,
+          `     Status:     ${budgetStatus(weeklyPct)}`,
+          `     Remaining:  ${hoursRemaining(weekSpend, params.weekly_budget, hoursInWeek, hoursElapsedWeek)} hours until budget exceeded`,
+          ""
+        );
+      }
+
+      if (params.monthly_budget) {
+        const monthlyPct = (monthSpend / params.monthly_budget) * 100;
+        lines.push(
+          "  📅 Monthly Budget",
+          `     Budget:     ${fmtCost(params.monthly_budget)}`,
+          `     Spent:      ${fmtCost(monthSpend)}`,
+          `     Used:       ${fmtPct(monthlyPct)}  ${progressBar(monthSpend, params.monthly_budget)}`,
+          `     Projected:  ${fmtCost(projectedMonthly)} by end of month`,
+          `     Status:     ${budgetStatus(monthlyPct)}`,
+          `     Remaining:  ${hoursRemaining(monthSpend, params.monthly_budget, hoursInMonth, hoursElapsedMonth)} hours until budget exceeded`,
+          ""
+        );
+      }
+
+      // Cost drivers — top models from today if over budget
+      if (dailyPct >= 80) {
+        const modelCosts = coreToday.getModelCosts();
+        if (modelCosts.length > 0) {
+          lines.push(separator(), "", "  ⚡ Cost Drivers (Today)", "");
+          const driverHeaders = ["Model", "Cost", "Share"];
+          const driverRows = modelCosts
+            .slice(0, 5)
+            .map((m) => [m.model, fmtCost(m.cost), fmtPct(m.percentageOfTotal)]);
+          lines.push(formatTable(driverHeaders, driverRows, [false, true, true]));
+          lines.push("");
+        }
+      }
+
+      lines.push("");
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+    }
+  );
+
+  // ────────────────────────────────────────────
+  // 20. cost_optimization_tips — Actionable recommendations
+  // ────────────────────────────────────────────
+  server.tool(
+    "cost_optimization_tips",
+    "Analyze usage patterns and provide actionable cost optimization recommendations. " +
+      "Generates tips based on actual data — cache efficiency, model selection, conversation length, " +
+      "and spending distribution. Each tip includes category, severity, and estimated savings.",
+    {
+      period: z
+        .enum(["today", "week", "month"])
+        .optional()
+        .describe("Time period to analyze: today, week, or month"),
+    },
+    async (params) => {
+      const opts = buildScanOptions({ scope: params.period });
+      const core = await getCore(opts);
+      const records = core.getRecords();
+      const models = core.getModelCosts();
+      const stats = core.getStats();
+
+      if (records.length === 0) {
+        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+      }
+
+      const totalCost = stats.totalCost;
+
+      interface Tip {
+        category: string;
+        severity: "info" | "warning" | "critical";
+        tip: string;
+        estimatedSavings: number;
+      }
+
+      const tips: Tip[] = [];
+
+      // ── Tip 1: Cache efficiency ──
+      const totalCacheRead = records.reduce((s, r) => s + r.cacheReadTokens, 0);
+      const totalCacheWrite = records.reduce((s, r) => s + r.cacheWriteTokens, 0);
+      const totalCacheTokens = totalCacheRead + totalCacheWrite;
+      const cacheHitRate = totalCacheTokens > 0 ? (totalCacheRead / totalCacheTokens) * 100 : -1;
+
+      if (cacheHitRate >= 0 && cacheHitRate < 80) {
+        const potentialSavings = totalCost * 0.1; // ~10% savings from better caching
+        tips.push({
+          category: "caching",
+          severity: cacheHitRate < 50 ? "critical" : "warning",
+          tip: `Cache hit rate is only ${fmtPct(cacheHitRate)}. Try longer conversations instead of starting fresh sessions. Each new session discards cached context and re-sends the full prompt.`,
+          estimatedSavings: potentialSavings,
+        });
+      }
+
+      // ── Tip 2: Expensive model overuse ──
+      const expensiveModels = models.filter((m) => {
+        const tier = matchPricingTier(m.model);
+        return tier === "opus" || tier === "gpt-5";
+      });
+      const expensiveSpend = expensiveModels.reduce((s, m) => s + m.cost, 0);
+      const expensivePct = totalCost > 0 ? (expensiveSpend / totalCost) * 100 : 0;
+
+      if (expensivePct > 50) {
+        // Estimate savings by downgrading: Opus is 5x Sonnet, so ~80% savings on that portion
+        const potentialSavings = expensiveSpend * 0.8;
+        tips.push({
+          category: "model_selection",
+          severity: expensivePct > 80 ? "critical" : "warning",
+          tip: `${fmtPct(expensivePct)} of your spend is on premium models (Opus/GPT-5). Consider using Sonnet or GPT-4o for routine tasks like code review, refactoring, and simple questions. Reserve Opus for complex architecture and reasoning tasks.`,
+          estimatedSavings: potentialSavings,
+        });
+      }
+
+      // ── Tip 3: Large input tokens (conversation bloat) ──
+      const avgInputPerCall =
+        records.length > 0 ? records.reduce((s, r) => s + r.inputTokens, 0) / records.length : 0;
+
+      if (avgInputPerCall > 100_000) {
+        const potentialSavings = totalCost * 0.15;
+        tips.push({
+          category: "conversation_length",
+          severity: avgInputPerCall > 200_000 ? "critical" : "warning",
+          tip: `Average input tokens per call is ${fmtNum(avgInputPerCall)} — that's large. Consider compacting conversations, using /clear or /compact, or starting fresh sessions when context gets too long. Long contexts inflate every subsequent request.`,
+          estimatedSavings: potentialSavings,
+        });
+      }
+
+      // ── Tip 4: Disproportionate project spending ──
+      const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
+      if (projects.length >= 2) {
+        const topProject = projects[0];
+        const topPct = totalCost > 0 ? (topProject.totalCost / totalCost) * 100 : 0;
+        if (topPct > 60) {
+          tips.push({
+            category: "time_of_day",
+            severity: "info",
+            tip: `Project "${topProject.project}" accounts for ${fmtPct(topPct)} of total spend (${fmtCost(topProject.totalCost)}). Consider whether all that usage is necessary, or if some tasks could use cheaper models or be batched more efficiently.`,
+            estimatedSavings: topProject.totalCost * 0.2,
+          });
+        }
+      }
+
+      // ── Tip 5: No caching at all ──
+      if (cacheHitRate === -1) {
+        tips.push({
+          category: "caching",
+          severity: "info",
+          tip:
+            "No prompt caching activity detected. If your provider supports caching " +
+            "(Claude, GPT-4o), ensure it's enabled. Prompt caching can save 80-90% on repeated context.",
+          estimatedSavings: totalCost * 0.2,
+        });
+      }
+
+      // ── Tip 6: High reasoning token usage ──
+      const totalReasoning = records.reduce((s, r) => s + r.reasoningTokens, 0);
+      const totalOutput = records.reduce((s, r) => s + r.outputTokens, 0);
+      const reasoningPct = totalOutput > 0 ? (totalReasoning / totalOutput) * 100 : 0;
+      if (reasoningPct > 50) {
+        tips.push({
+          category: "model_selection",
+          severity: "info",
+          tip: `${fmtPct(reasoningPct)} of output tokens are reasoning tokens. If you don't need extended thinking for every task, consider disabling it for straightforward requests to reduce output token costs.`,
+          estimatedSavings: totalCost * 0.1,
+        });
+      }
+
+      // Sort tips by severity, then estimated savings
+      const severityOrder = { critical: 0, warning: 1, info: 2 };
+      tips.sort((a, b) => {
+        const sevDiff = severityOrder[a.severity] - severityOrder[b.severity];
+        if (sevDiff !== 0) return sevDiff;
+        return b.estimatedSavings - a.estimatedSavings;
+      });
+
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
+      const totalPotentialSavings = tips.reduce((s, t) => s + t.estimatedSavings, 0);
+
+      const lines = [
+        header("COST OPTIMIZATION TIPS"),
+        `  Period: ${periodLabel}  │  Total Spend: ${fmtCost(totalCost)}`,
+        separator(),
+        "",
+      ];
+
+      if (tips.length === 0) {
+        lines.push("  ✅ No optimization issues found! Your usage patterns look efficient.", "");
+      } else {
+        const severityIcon = { critical: "🔴", warning: "🟡", info: "🔵" };
+
+        for (let i = 0; i < tips.length; i++) {
+          const t = tips[i];
+          lines.push(
+            `  ${severityIcon[t.severity]} [${t.severity.toUpperCase()}] ${t.category}`,
+            `     ${t.tip}`,
+            `     💰 Estimated savings: ~${fmtCost(t.estimatedSavings)}`,
+            ""
+          );
+        }
+
+        lines.push(
+          separator(),
+          `  📊 Total Potential Savings: ~${fmtCost(totalPotentialSavings)} (${fmtPct(totalCost > 0 ? (totalPotentialSavings / totalCost) * 100 : 0)} of spend)`,
+          ""
+        );
+      }
+
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
     }
   );
