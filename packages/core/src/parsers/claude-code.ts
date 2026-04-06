@@ -4,7 +4,10 @@ import {
   expandHome,
   extractProjectFromPath,
   findFiles,
+  getCachedRecords,
   readJsonlFile,
+  readJsonlFileFromOffset,
+  setCachedRecords,
 } from "./utils.js";
 
 interface ClaudeMessage {
@@ -31,14 +34,28 @@ export class ClaudeCodeParser implements SessionParser {
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const project = extractProjectFromPath(file);
-      const lines = await readJsonlFile<ClaudeMessage>(file);
+      const cacheResult = await getCachedRecords(file);
 
+      // Exact cache hit — file unchanged, skip entirely
+      if (cacheResult.hit) {
+        records.push(...cacheResult.records);
+        continue;
+      }
+
+      const project = extractProjectFromPath(file);
+
+      // Append mode: only parse new bytes from where we left off
+      const lines =
+        cacheResult.appendOffset > 0
+          ? await readJsonlFileFromOffset<ClaudeMessage>(file, cacheResult.appendOffset)
+          : await readJsonlFile<ClaudeMessage>(file);
+
+      const newRecords: TokenRecord[] = [];
       for (const msg of lines) {
         if (msg.type !== "assistant" || !msg.message?.usage) continue;
 
         const usage = msg.message.usage;
-        records.push(
+        newRecords.push(
           createRecord({
             timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
             provider: "claude-code",
@@ -53,6 +70,11 @@ export class ClaudeCodeParser implements SessionParser {
           })
         );
       }
+
+      // Merge cached records with newly parsed ones
+      const allFileRecords = [...cacheResult.cachedRecords, ...newRecords];
+      await setCachedRecords(file, allFileRecords);
+      records.push(...allFileRecords);
     }
     return records;
   }

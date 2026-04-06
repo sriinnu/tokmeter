@@ -41,6 +41,6 @@
     "claude",
     "anthropic"
   ],
-  "engines": { "node": ">=22.0.0" },
+  "engines": { "node": ">=18.0.0" },
   "publishConfig": { "access": "public" }
 }

@@ -159,15 +159,29 @@ export class LiveTracker extends EventEmitter {
   /** Start polling. Performs an immediate refresh on start. */
   async start(): Promise<void> {
     await this.refresh();
-    this.timer = setInterval(() => {
-      this.refresh().catch((err) => this.emit("error", err));
+    // Schedule next refresh only after the current one completes,
+    // preventing overlapping scans when parsing is slow
+    this.scheduleNext();
+  }
+
+  /** Schedule the next refresh after the configured interval. */
+  private scheduleNext(): void {
+    if (this.timer) return;
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      try {
+        await this.refresh();
+      } catch (err) {
+        this.emit("error", err);
+      }
+      this.scheduleNext();
     }, this.refreshMs);
   }
 
   /** Stop polling. */
   stop(): void {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }

@@ -25,7 +25,9 @@ const FALLBACK_LINE = "【♾️】 drishti";
 
 process.on("unhandledRejection", (reason) => {
   if (isStatusline) {
-    try { process.stdout.write(FALLBACK_LINE); } catch {}
+    try {
+      process.stdout.write(FALLBACK_LINE);
+    } catch {}
     process.exit(0);
   }
   console.error("Unhandled rejection:", reason);
@@ -34,7 +36,9 @@ process.on("unhandledRejection", (reason) => {
 
 process.on("uncaughtException", (error) => {
   if (isStatusline) {
-    try { process.stdout.write(FALLBACK_LINE); } catch {}
+    try {
+      process.stdout.write(FALLBACK_LINE);
+    } catch {}
     process.exit(0);
   }
   console.error("Uncaught exception:", error);
@@ -70,7 +74,9 @@ switch (command) {
       const { runStatusline } = await import("./statusline.js");
       await runStatusline();
     } catch {
-      try { process.stdout.write(FALLBACK_LINE); } catch {}
+      try {
+        process.stdout.write(FALLBACK_LINE);
+      } catch {}
     }
     break;
   }

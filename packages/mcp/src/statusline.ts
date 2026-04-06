@@ -10,7 +10,7 @@
 import { execSync } from "node:child_process";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
-import { C, FALLBACK_STATUSLINE, formatCost, formatNumber } from "./formatter.js";
+import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent } from "./formatter.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -134,6 +134,23 @@ function animBurnRate(costPerHour: number): string {
   const flames = ["🔥", "🔥", "🔥", "🔥"];
   const flame = flames[f % flames.length];
   return `${C.warn(flame)}${C.cost(`${formatCost(costPerHour)}/hr`)}`;
+}
+
+/** Cache hit rate with color-coded efficiency indicator */
+function animCacheRate(cacheRead: number, cacheWrite: number): string {
+  const total = cacheRead + cacheWrite;
+  if (total <= 0) return "";
+
+  const rate = (cacheRead / total) * 100;
+  if (!Number.isFinite(rate)) return "";
+
+  const f = frame();
+  const icons = ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"];
+  const icon = icons[f];
+
+  // Green >80%, yellow 50-80%, red <50%
+  const colorFn = rate > 80 ? C.accent : rate >= 50 ? C.warn : C.danger;
+  return colorFn(`${icon}${formatPercent(rate)}`);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -282,6 +299,10 @@ export async function runStatusline(): Promise<void> {
       }
 
       if (tokenParts.length > 0) parts.push(tokenParts.join(" "));
+
+      // ── Cache Hit Rate ──
+      const cacheRate = animCacheRate(tc.cache_read_tokens ?? 0, tc.cache_write_tokens ?? 0);
+      if (cacheRate) parts.push(cacheRate);
     }
 
     // ── Animated Context Bar ──
@@ -390,6 +411,8 @@ export async function runStatusline(): Promise<void> {
     process.stdout.write(parts.join(sep));
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
-    try { process.stdout.write(FALLBACK_STATUSLINE); } catch {}
+    try {
+      process.stdout.write(FALLBACK_STATUSLINE);
+    } catch {}
   }
 }
