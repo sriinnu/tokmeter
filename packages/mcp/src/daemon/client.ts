@@ -21,74 +21,96 @@ export interface DaemonResponse {
   aggregated?: AggregatedStats;
 }
 
-// ─── Sync Client (for statusline hooks) ─────────────────────────────────
+// ─── Async Client (for statusline hooks) ────────────────────────────────
 
 /**
  * Connect to daemon, send update, receive aggregated stats.
- * Uses a timeout to avoid blocking the statusline.
+ * Races the WebSocket round-trip against a timeout so the statusline stays fast.
  */
-export function syncUpdate(
+export async function syncUpdate(
   session: SessionInfo,
   cost: number,
   tokens: TokenUsage,
   durationMs?: number,
   timeoutMs = 200
-): DaemonResponse {
-  let result: DaemonResponse = { connected: false };
+): Promise<DaemonResponse> {
+  return new Promise<DaemonResponse>((resolve) => {
+    try {
+      const ws = new WebSocket(DAEMON_URL);
+      let settled = false;
 
-  try {
-    const ws = new WebSocket(DAEMON_URL);
+      const finish = (result: DaemonResponse) => {
+        if (settled) return;
+        settled = true;
+        try { ws.close(); } catch {}
+        resolve(result);
+      };
 
-    // Synchronous-like behavior with timeout
-    const startTime = Date.now();
+      // Timeout — if daemon doesn't respond in time, move on
+      const timer = setTimeout(() => finish({ connected: false }), timeoutMs);
 
-    ws.on("open", () => {
-      ws.send(
-        JSON.stringify({
-          type: "update",
-          session,
-          cost,
-          tokens,
-          durationMs,
-        })
-      );
-    });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        finish({ connected: false });
+      });
 
-    ws.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString()) as BroadcastMessage;
-        if (msg.type === "broadcast") {
-          result = {
-            connected: true,
-            yourSession: msg.yourSession,
-            aggregated: msg.aggregated,
-          };
-          ws.close();
-        }
-      } catch {}
-    });
+      ws.on("open", () => {
+        ws.send(
+          JSON.stringify({
+            type: "update",
+            session,
+            cost,
+            tokens,
+            durationMs,
+          })
+        );
+      });
 
-    // Busy wait with timeout (statusline must be fast)
-    while (!result.connected && Date.now() - startTime < timeoutMs) {
-      // Allow event loop to process
+      ws.on("message", (data) => {
+        try {
+          const msg = JSON.parse(data.toString()) as BroadcastMessage;
+          if (msg.type === "broadcast") {
+            clearTimeout(timer);
+            finish({
+              connected: true,
+              yourSession: msg.yourSession,
+              aggregated: msg.aggregated,
+            });
+          }
+        } catch {}
+      });
+    } catch {
+      resolve({ connected: false });
     }
-  } catch {
-    // Daemon not running
-  }
-
-  return result;
+  });
 }
 
 /**
- * Quick check if daemon is running
+ * Quick check if daemon is running (waits for actual connection).
  */
-export function isDaemonReachable(): boolean {
-  try {
-    const _ws = new WebSocket(DAEMON_URL);
-    return true;
-  } catch {
-    return false;
-  }
+export async function isDaemonReachable(timeoutMs = 500): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const ws = new WebSocket(DAEMON_URL);
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch {}
+        resolve(false);
+      }, timeoutMs);
+
+      ws.on("open", () => {
+        clearTimeout(timer);
+        ws.close();
+        resolve(true);
+      });
+
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 // ─── Async Client (for MCP server) ──────────────────────────────────────

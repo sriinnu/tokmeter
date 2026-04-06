@@ -18,13 +18,25 @@
  *   drishti help                   Show usage instructions
  */
 
-// Process-level error handlers
+// Process-level error handlers — statusline must fail silently since editors
+// expect stdout output, not stderr crashes. Other commands can be noisy.
+const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
+const FALLBACK_LINE = "【♾️】 drishti";
+
 process.on("unhandledRejection", (reason) => {
+  if (isStatusline) {
+    try { process.stdout.write(FALLBACK_LINE); } catch {}
+    process.exit(0);
+  }
   console.error("Unhandled rejection:", reason);
   process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
+  if (isStatusline) {
+    try { process.stdout.write(FALLBACK_LINE); } catch {}
+    process.exit(0);
+  }
   console.error("Uncaught exception:", error);
   process.exit(1);
 });
@@ -54,8 +66,12 @@ switch (command) {
 
   case "statusline":
   case "status": {
-    const { runStatusline } = await import("./statusline.js");
-    await runStatusline();
+    try {
+      const { runStatusline } = await import("./statusline.js");
+      await runStatusline();
+    } catch {
+      try { process.stdout.write(FALLBACK_LINE); } catch {}
+    }
     break;
   }
 
