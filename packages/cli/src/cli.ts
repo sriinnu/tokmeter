@@ -38,9 +38,11 @@ interface CliArgs extends ScanOptions {
     | "install-mcp"
     | "uninstall-statusline"
     | "uninstall-mcp"
-    | "editors";
+    | "editors"
+    | "digest";
   pricingModel?: string;
   daemonCmd?: string;
+  digestPeriod?: "today" | "week" | "month";
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -153,6 +155,8 @@ Commands:
   daily           Show daily usage over time
   stats           Show overall statistics
   pricing         Show pricing for a model
+  digest          Weekly cost digest with trends and tips
+                  (aliases: weekly, report)
 
 Live & Daemon:
   live            Start live TUI dashboard (from drishti)
@@ -175,6 +179,10 @@ Date Filters:
   --year N        Specific year
   --since D       From date (YYYY-MM-DD or ISO)
   --until D       To date (inclusive)
+
+Digest Options:
+  --period P      Period for digest: today, week (default), month
+  --project NAME  Filter digest by project
 
 Other Filters:
   --project NAME  Filter by project name substring
@@ -201,6 +209,15 @@ Output:
 `);
         process.exit(0);
         break;
+      case "--period": {
+        const val = rest[++i];
+        if (val !== "today" && val !== "week" && val !== "month") {
+          console.error("Error: --period must be today, week, or month");
+          process.exit(1);
+        }
+        args.digestPeriod = val;
+        break;
+      }
       case "models":
       case "daily":
       case "projects":
@@ -216,7 +233,12 @@ Output:
       case "uninstall-statusline":
       case "uninstall-mcp":
       case "editors":
+      case "digest":
         args.command = arg;
+        break;
+      case "weekly":
+      case "report":
+        args.command = "digest";
         break;
       default:
         if (!arg.startsWith("-") && !args.pricingModel && args.command === "pricing") {
@@ -430,6 +452,19 @@ async function main() {
       console.log(`Pricing for: ${modelId}`);
       console.log(table.toString());
     }
+    return;
+  }
+
+  // Digest command — delegates to separate module
+  if (args.command === "digest") {
+    const { runDigest } = await import("./digest.js");
+    await runDigest({
+      period: args.digestPeriod,
+      project: args.project,
+      json: args.json,
+      light: args.light,
+      scanOptions: args,
+    });
     return;
   }
 

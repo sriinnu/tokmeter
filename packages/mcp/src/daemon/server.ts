@@ -60,8 +60,6 @@ export function startDaemon(): void {
   });
 
   wss.on("connection", (ws) => {
-    console.log("Client connected");
-
     ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString()) as ClientMessage;
@@ -75,7 +73,6 @@ export function startDaemon(): void {
       const session = clientSessions.get(ws);
       if (session && sessionManager) {
         sessionManager.disconnect(session.provider, session.sessionId);
-        console.log(`Client disconnected: ${session.provider}/${session.sessionId}`);
       }
       clientSessions.delete(ws);
       broadcast();
@@ -101,15 +98,25 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
 
   switch (msg.type) {
     case "register": {
+      const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
       sessionManager.register(msg.session);
       clientSessions.set(ws, { provider: msg.session.provider, sessionId: msg.session.sessionId });
-      console.log(`Registered: ${msg.session.provider}/${msg.session.sessionId}`);
+      if (!existing) {
+        console.log(`Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`);
+      } else if (existing.model !== msg.session.model) {
+        console.log(`Model switch: ${msg.session.provider}/${msg.session.sessionId} ${existing.model} → ${msg.session.model}`);
+      }
       send(ws, { type: "ack", success: true });
       broadcast();
       break;
     }
 
     case "update": {
+      const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
+      if (!existing) {
+        console.log(`Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`);
+      }
+
       const session = sessionManager.update(
         msg.session.provider,
         msg.session.sessionId,
@@ -123,8 +130,6 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
           provider: msg.session.provider,
           sessionId: msg.session.sessionId,
         });
-
-        // Send broadcast to all clients with aggregated data
         broadcast();
       }
       break;

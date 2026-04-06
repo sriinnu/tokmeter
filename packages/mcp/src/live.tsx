@@ -171,6 +171,10 @@ function ModelBarRow({
     <Box gap={1}>
       <Text color="gray">{`${rank}.`}</Text>
       <Text bold>{padRight(truncate(model.model, 22), 22)}</Text>
+      <Text color="gray">{padRight(model.provider, 10)}</Text>
+      <Text color="blue">{padLeft(`↑${fmtNum(model.inputTokens)}`, 9)}</Text>
+      <Text color="red">{padLeft(`↓${fmtNum(model.outputTokens)}`, 9)}</Text>
+      <Text color="gray">{padLeft(`⟳${fmtNum(model.cacheReadTokens + model.cacheWriteTokens)}`, 9)}</Text>
       <Text color="green">{barStr(cost, maxCost, barWidth)}</Text>
       <Text bold color="yellow">
         {padLeft(fmtCost(cost), 7)}
@@ -290,7 +294,7 @@ function OverviewTab({ snapshot }: { snapshot: Snapshot }) {
 
   const todayRecords = daily.length > 0 ? daily[daily.length - 1] : null;
   const maxCost = models.length > 0 ? models[0].cost : 1;
-  const topModels = models.slice(0, 5);
+  const topModels = models.slice(0, 10);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -537,6 +541,17 @@ function ProvidersTab({ snapshot }: { snapshot: Snapshot }) {
 // ─── Loading Screen ──────────────────────────────────────────────
 
 function LoadingScreen() {
+  const [elapsed, setElapsed] = useState(0);
+  const [dots, setDots] = useState("");
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsed((e) => e + 1);
+      setDots((d) => (d.length >= 3 ? "" : `${d}.`));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <Box
       flexDirection="column"
@@ -552,7 +567,10 @@ function LoadingScreen() {
       </Text>
       <Text color="gray">{"Live Token Observatory"}</Text>
       <Box marginTop={1}>
-        <Text color="cyan">{"⟳ Scanning token usage..."}</Text>
+        <Text color="cyan">{`⟳ Scanning token usage${dots}`}</Text>
+      </Box>
+      <Box marginTop={0}>
+        <Text color="gray">{`${elapsed}s — first scan parses all session files`}</Text>
       </Box>
     </Box>
   );
@@ -623,6 +641,7 @@ function App() {
     if (input === "q" || key.escape) {
       tracker.stop();
       exit();
+      process.exit(0);
       return;
     }
 
@@ -679,6 +698,13 @@ function App() {
         {tab === 0 && <OverviewTab snapshot={snapshot} />}
         {tab === 1 && <ModelsTab snapshot={snapshot} />}
         {tab === 2 && <ProvidersTab snapshot={snapshot} />}
+      </Box>
+
+      <Box paddingX={1} gap={2}>
+        <Text color="gray">{"cache: ~/.cache/tokmeter/scan-cache.json"}</Text>
+        <Text color="gray">{"│ mtime+append strategy"}</Text>
+        <Text color="gray">{"│ refresh: 2s"}</Text>
+        <Text color="gray">{`│ ${snapshot.records.length} records`}</Text>
       </Box>
     </Box>
   );
