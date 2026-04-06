@@ -6,15 +6,28 @@
  * JSON output for programmatic consumption.
  */
 
-import type { TokenRecord, ScanOptions } from "@sriinnu/tokmeter-core";
+import type { ScanOptions, TokenRecord } from "@sriinnu/tokmeter-core";
 import { TokmeterCore } from "@sriinnu/tokmeter-core";
-import Table from "cli-table3";
 import chalk from "chalk";
+import Table from "cli-table3";
 
 // ---- Constants ----
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 // ---- Formatting helpers ----
 
@@ -48,11 +61,16 @@ function letterGrade(score: number): string {
 /** Color a grade string with appropriate severity. */
 function colorGrade(grade: string): string {
   switch (grade) {
-    case "A": return chalk.green.bold(grade);
-    case "B": return chalk.greenBright(grade);
-    case "C": return chalk.yellow(grade);
-    case "D": return chalk.hex("#FFA500")(grade);
-    default: return chalk.red.bold(grade);
+    case "A":
+      return chalk.green.bold(grade);
+    case "B":
+      return chalk.greenBright(grade);
+    case "C":
+      return chalk.yellow(grade);
+    case "D":
+      return chalk.hex("#FFA500")(grade);
+    default:
+      return chalk.red.bold(grade);
   }
 }
 
@@ -65,8 +83,13 @@ function isExpensiveModel(model: string): boolean {
 /** Is this model in the cheaper tier? */
 function isCheapModel(model: string): boolean {
   const lower = model.toLowerCase();
-  return lower.includes("sonnet") || lower.includes("haiku") || lower.includes("gpt-4o-mini")
-    || lower.includes("flash") || lower.includes("gemini-2.0");
+  return (
+    lower.includes("sonnet") ||
+    lower.includes("haiku") ||
+    lower.includes("gpt-4o-mini") ||
+    lower.includes("flash") ||
+    lower.includes("gemini-2.0")
+  );
 }
 
 // ---- Date range logic ----
@@ -134,7 +157,7 @@ function renderDigest(
   period: "today" | "week" | "month",
   currentStart: Date,
   currentEnd: Date,
-  projectFilter?: string,
+  projectFilter?: string
 ) {
   const totalCost = currentRecords.reduce((s, r) => s + r.cost, 0);
   const prevTotalCost = prevRecords.reduce((s, r) => s + r.cost, 0);
@@ -156,7 +179,7 @@ function renderDigest(
   for (const [dateStr, cost] of dailyMap) {
     if (cost > busiestDayCost) {
       busiestDayCost = cost;
-      const d = new Date(dateStr + "T12:00:00");
+      const d = new Date(`${dateStr}T12:00:00`);
       busiestDayLabel = `${DAY_NAMES[d.getDay()]} (${formatCost(cost)})`;
     }
   }
@@ -168,10 +191,16 @@ function renderDigest(
 
   console.log("");
   console.log(chalk.cyan(`\u2554${border}\u2557`));
-  console.log(chalk.cyan("\u2551") + chalk.white.bold(`  ${title}`.padEnd(titlePad - 2)) + chalk.cyan("\u2551"));
+  console.log(
+    chalk.cyan("\u2551") +
+      chalk.white.bold(`  ${title}`.padEnd(titlePad - 2)) +
+      chalk.cyan("\u2551")
+  );
   if (projectFilter) {
     const projLine = `  Project: ${projectFilter}`;
-    console.log(chalk.cyan("\u2551") + chalk.dim(projLine.padEnd(titlePad - 2)) + chalk.cyan("\u2551"));
+    console.log(
+      chalk.cyan("\u2551") + chalk.dim(projLine.padEnd(titlePad - 2)) + chalk.cyan("\u2551")
+    );
   }
   console.log(chalk.cyan(`\u255A${border}\u255D`));
   console.log("");
@@ -179,7 +208,9 @@ function renderDigest(
   console.log(`  ${chalk.dim("Total Spend:")}     ${chalk.white.bold(formatCost(totalCost))}`);
   if (prevRecords.length > 0) {
     const pctChange = prevTotalCost > 0 ? ((totalCost - prevTotalCost) / prevTotalCost) * 100 : 0;
-    console.log(`  ${chalk.dim("vs Last Period:")}  ${formatCost(prevTotalCost)} (${colorDelta(pctChange)})`);
+    console.log(
+      `  ${chalk.dim("vs Last Period:")}  ${formatCost(prevTotalCost)} (${colorDelta(pctChange)})`
+    );
   }
   console.log(`  ${chalk.dim("Daily Average:")}   ${formatCost(dailyAvg)}`);
   if (period !== "today") {
@@ -189,12 +220,13 @@ function renderDigest(
 
   // ====== Section 2: Model Breakdown ======
   console.log(chalk.cyan.bold("  Model Breakdown"));
-  console.log(chalk.dim("  " + "\u2500".repeat(42)));
+  console.log(chalk.dim(`  ${"\u2500".repeat(42)}`));
 
   const modelMap = new Map<string, { tokens: number; cost: number; model: string }>();
   for (const r of currentRecords) {
     const existing = modelMap.get(r.model) || { tokens: 0, cost: 0, model: r.model };
-    existing.tokens += r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
+    existing.tokens +=
+      r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
     existing.cost += r.cost;
     modelMap.set(r.model, existing);
   }
@@ -219,30 +251,32 @@ function renderDigest(
 
   // ====== Section 3: Cache Efficiency ======
   console.log(chalk.cyan.bold("  Cache Efficiency"));
-  console.log(chalk.dim("  " + "\u2500".repeat(42)));
+  console.log(chalk.dim(`  ${"\u2500".repeat(42)}`));
 
   const totalReadable = totalInput + totalCacheRead;
   const cacheHitRate = totalReadable > 0 ? (totalCacheRead / totalReadable) * 100 : 0;
 
   // Estimate savings: cache reads are ~90% cheaper than regular input
-  const avgInputCostPerToken = totalInput > 0
-    ? currentRecords.reduce((s, r) => {
-        const totalTok = r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens;
-        return totalTok > 0 ? s + (r.cost * r.inputTokens / totalTok) : s;
-      }, 0) / totalInput
-    : 0;
+  const avgInputCostPerToken =
+    totalInput > 0
+      ? currentRecords.reduce((s, r) => {
+          const totalTok = r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens;
+          return totalTok > 0 ? s + (r.cost * r.inputTokens) / totalTok : s;
+        }, 0) / totalInput
+      : 0;
   const estimatedSavings = totalCacheRead * avgInputCostPerToken * 0.9;
 
-  const writeReadRatio = totalCacheWrite > 0 && totalCacheRead > 0
-    ? totalCacheWrite / totalCacheRead
-    : 0;
-  const cacheWriteWaste = writeReadRatio > 1
-    ? "High \u2014 writes exceed reads"
-    : writeReadRatio > 0.5
-    ? "Moderate"
-    : "Low \u2014 reads outpace writes";
+  const writeReadRatio =
+    totalCacheWrite > 0 && totalCacheRead > 0 ? totalCacheWrite / totalCacheRead : 0;
+  const cacheWriteWaste =
+    writeReadRatio > 1
+      ? "High \u2014 writes exceed reads"
+      : writeReadRatio > 0.5
+        ? "Moderate"
+        : "Low \u2014 reads outpace writes";
 
-  const cacheColor = cacheHitRate >= 80 ? chalk.green : cacheHitRate >= 50 ? chalk.yellow : chalk.red;
+  const cacheColor =
+    cacheHitRate >= 80 ? chalk.green : cacheHitRate >= 50 ? chalk.yellow : chalk.red;
   console.log(`  ${chalk.dim("Cache Hit Rate:")}  ${cacheColor(`${cacheHitRate.toFixed(1)}%`)}`);
   console.log(`  ${chalk.dim("Est. Savings:")}    ${chalk.green(formatCost(estimatedSavings))}`);
   console.log(`  ${chalk.dim("Write Waste:")}     ${cacheWriteWaste}`);
@@ -252,59 +286,68 @@ function renderDigest(
 
   // ====== Section 4: Cost Optimization Score ======
   console.log(chalk.cyan.bold("  Cost Optimization Score"));
-  console.log(chalk.dim("  " + "\u2500".repeat(42)));
+  console.log(chalk.dim(`  ${"\u2500".repeat(42)}`));
 
   // Cache hit rate (40% weight)
-  const cacheScore = Math.min(cacheHitRate / 90 * 100, 100);
+  const cacheScore = Math.min((cacheHitRate / 90) * 100, 100);
 
   // Model selection efficiency (35% weight) — penalize heavy premium usage
-  const expensiveCost = modelEntries.filter((m) => isExpensiveModel(m.model)).reduce((s, m) => s + m.cost, 0);
-  const cheapCost = modelEntries.filter((m) => isCheapModel(m.model)).reduce((s, m) => s + m.cost, 0);
+  const expensiveCost = modelEntries
+    .filter((m) => isExpensiveModel(m.model))
+    .reduce((s, m) => s + m.cost, 0);
+  const cheapCost = modelEntries
+    .filter((m) => isCheapModel(m.model))
+    .reduce((s, m) => s + m.cost, 0);
   const expensiveRatio = totalCost > 0 ? expensiveCost / totalCost : 0;
   const modelScore = Math.max(0, Math.min(100, (1 - expensiveRatio) * 100));
 
   // Conversation discipline (25% weight) — ideal: 5-30 records/day
   const recordsPerDay = currentRecords.length / days;
-  const disciplineScore = recordsPerDay <= 30
-    ? Math.min(100, recordsPerDay / 5 * 100)
-    : Math.max(40, 100 - (recordsPerDay - 30) * 2);
+  const disciplineScore =
+    recordsPerDay <= 30
+      ? Math.min(100, (recordsPerDay / 5) * 100)
+      : Math.max(40, 100 - (recordsPerDay - 30) * 2);
 
   const overallScore = cacheScore * 0.4 + modelScore * 0.35 + disciplineScore * 0.25;
   const grade = letterGrade(overallScore);
 
-  console.log(`  ${chalk.dim("Overall Grade:")}   ${colorGrade(grade)} ${chalk.dim(`(${overallScore.toFixed(0)}/100)`)}`);
-  console.log(`  ${chalk.dim("Cache:")}           ${letterGrade(cacheScore)} ${chalk.dim(`(${cacheScore.toFixed(0)})`)}`);
-  console.log(`  ${chalk.dim("Model Selection:")} ${letterGrade(modelScore)} ${chalk.dim(`(${modelScore.toFixed(0)})`)}`);
-  console.log(`  ${chalk.dim("Discipline:")}      ${letterGrade(disciplineScore)} ${chalk.dim(`(${disciplineScore.toFixed(0)})`)}`);
+  console.log(
+    `  ${chalk.dim("Overall Grade:")}   ${colorGrade(grade)} ${chalk.dim(`(${overallScore.toFixed(0)}/100)`)}`
+  );
+  console.log(
+    `  ${chalk.dim("Cache:")}           ${letterGrade(cacheScore)} ${chalk.dim(`(${cacheScore.toFixed(0)})`)}`
+  );
+  console.log(
+    `  ${chalk.dim("Model Selection:")} ${letterGrade(modelScore)} ${chalk.dim(`(${modelScore.toFixed(0)})`)}`
+  );
+  console.log(
+    `  ${chalk.dim("Discipline:")}      ${letterGrade(disciplineScore)} ${chalk.dim(`(${disciplineScore.toFixed(0)})`)}`
+  );
   console.log("");
 
   // ====== Section 5: Actionable Tips ======
   console.log(chalk.cyan.bold("  Actionable Tips"));
-  console.log(chalk.dim("  " + "\u2500".repeat(42)));
+  console.log(chalk.dim(`  ${"\u2500".repeat(42)}`));
 
   const tips: string[] = [];
 
   if (expensiveCost > 0 && cheapCost > 0) {
     tips.push(
-      `You spent ${chalk.yellow(formatCost(expensiveCost))} on premium models (Opus/GPT-4). ` +
-      `Consider using Sonnet/Haiku/Flash for routine tasks.`
+      `You spent ${chalk.yellow(formatCost(expensiveCost))} on premium models (Opus/GPT-4). Consider using Sonnet/Haiku/Flash for routine tasks.`
     );
   } else if (expensiveCost > 0 && cheapCost === 0) {
     tips.push(
-      `All ${chalk.yellow(formatCost(expensiveCost))} went to premium models. ` +
-      `Cheaper models can handle many coding tasks at a fraction of the cost.`
+      `All ${chalk.yellow(formatCost(expensiveCost))} went to premium models. Cheaper models can handle many coding tasks at a fraction of the cost.`
     );
   }
 
   if (cacheHitRate < 50) {
     tips.push(
-      `Cache hit rate is ${chalk.red(`${cacheHitRate.toFixed(0)}%`)} \u2014 long gaps between messages ` +
-      `can evict context. Try keeping conversations tighter.`
+      `Cache hit rate is ${chalk.red(`${cacheHitRate.toFixed(0)}%`)} \u2014 long gaps between messages can evict context. Try keeping conversations tighter.`
     );
   } else if (cacheHitRate < 80) {
     tips.push(
-      `Cache hit rate is ${chalk.yellow(`${cacheHitRate.toFixed(0)}%`)}. ` +
-      `Shorter intervals between messages help keep context cached.`
+      `Cache hit rate is ${chalk.yellow(`${cacheHitRate.toFixed(0)}%`)}. Shorter intervals between messages help keep context cached.`
     );
   }
 
@@ -320,7 +363,7 @@ function renderDigest(
     if (topPct > 50) {
       tips.push(
         `Project ${chalk.bold(topProject)} accounts for ${chalk.yellow(`${topPct.toFixed(0)}%`)} of spend ` +
-        `(${formatCost(topCost)}). Consider scoping conversations tighter.`
+          `(${formatCost(topCost)}). Consider scoping conversations tighter.`
       );
     }
   }
@@ -329,16 +372,14 @@ function renderDigest(
     const pctChange = ((totalCost - prevTotalCost) / prevTotalCost) * 100;
     if (pctChange > 30) {
       tips.push(
-        `Spending is up ${chalk.red(`${pctChange.toFixed(0)}%`)} from last period. ` +
-        `Review whether the increase reflects actual work or drift.`
+        `Spending is up ${chalk.red(`${pctChange.toFixed(0)}%`)} from last period. Review whether the increase reflects actual work or drift.`
       );
     }
   }
 
   if (writeReadRatio > 1) {
     tips.push(
-      `Cache writes (${formatNumber(totalCacheWrite)}) exceed reads (${formatNumber(totalCacheRead)}). ` +
-      `This means context is being written but evicted before reuse.`
+      `Cache writes (${formatNumber(totalCacheWrite)}) exceed reads (${formatNumber(totalCacheRead)}). This means context is being written but evicted before reuse.`
     );
   }
 
@@ -361,7 +402,7 @@ function buildDigestJSON(
   period: string,
   currentStart: Date,
   currentEnd: Date,
-  projectFilter?: string,
+  projectFilter?: string
 ) {
   const totalCost = currentRecords.reduce((s, r) => s + r.cost, 0);
   const prevTotalCost = prevRecords.reduce((s, r) => s + r.cost, 0);
@@ -374,7 +415,8 @@ function buildDigestJSON(
   const modelMap = new Map<string, { tokens: number; cost: number; model: string }>();
   for (const r of currentRecords) {
     const existing = modelMap.get(r.model) || { tokens: 0, cost: 0, model: r.model };
-    existing.tokens += r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
+    existing.tokens +=
+      r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
     existing.cost += r.cost;
     modelMap.set(r.model, existing);
   }
@@ -473,11 +515,20 @@ export async function runDigest(opts: {
   }
 
   if (opts.json) {
-    console.log(JSON.stringify(
-      buildDigestJSON(currentRecords, prevRecords, period, currentStart, currentEnd, opts.project),
-      null,
-      2,
-    ));
+    console.log(
+      JSON.stringify(
+        buildDigestJSON(
+          currentRecords,
+          prevRecords,
+          period,
+          currentStart,
+          currentEnd,
+          opts.project
+        ),
+        null,
+        2
+      )
+    );
   } else {
     renderDigest(currentRecords, prevRecords, period, currentStart, currentEnd, opts.project);
   }

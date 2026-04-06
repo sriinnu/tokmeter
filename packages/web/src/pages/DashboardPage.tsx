@@ -200,9 +200,7 @@ function LiveSessionPanel({
       {/* Provider breakdown */}
       {aggregated.byProvider.length > 0 && (
         <div>
-          <div style={{ color: "#8b949e", fontSize: 12, marginBottom: 8 }}>
-            Active providers
-          </div>
+          <div style={{ color: "#8b949e", fontSize: 12, marginBottom: 8 }}>Active providers</div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {aggregated.byProvider.map((p) => (
               <div
@@ -216,9 +214,7 @@ function LiveSessionPanel({
                 }}
               >
                 <span style={{ color: "#c9d1d9" }}>{p.provider}</span>
-                <span style={{ color: "#8b949e", marginLeft: 8 }}>
-                  ${p.cost.toFixed(4)}
-                </span>
+                <span style={{ color: "#8b949e", marginLeft: 8 }}>${p.cost.toFixed(4)}</span>
                 <span style={{ color: "#484f58", marginLeft: 8 }}>
                   {p.sessions} {p.sessions === 1 ? "session" : "sessions"}
                 </span>

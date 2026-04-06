@@ -102,9 +102,13 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
       sessionManager.register(msg.session);
       clientSessions.set(ws, { provider: msg.session.provider, sessionId: msg.session.sessionId });
       if (!existing) {
-        console.log(`Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`);
+        console.log(
+          `Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`
+        );
       } else if (existing.model !== msg.session.model) {
-        console.log(`Model switch: ${msg.session.provider}/${msg.session.sessionId} ${existing.model} → ${msg.session.model}`);
+        console.log(
+          `Model switch: ${msg.session.provider}/${msg.session.sessionId} ${existing.model} → ${msg.session.model}`
+        );
       }
       send(ws, { type: "ack", success: true });
       broadcast();
@@ -114,7 +118,9 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
     case "update": {
       const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
       if (!existing) {
-        console.log(`Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`);
+        console.log(
+          `Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`
+        );
       }
 
       const session = sessionManager.update(

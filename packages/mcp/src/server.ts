@@ -2240,13 +2240,19 @@ export function createServer(): McpServer {
       // Estimate savings: cache reads cost ~10% of input price, so you save ~90% per cached token.
       // We approximate by looking at average input cost per token across the dataset.
       const totalCost = records.reduce((sum, r) => sum + r.cost, 0);
-      const avgCostPerInputToken =
-        totalInputTokens > 0 ? (totalCost * 0.4) / totalInputTokens : 0; // ~40% of cost is input
+      const avgCostPerInputToken = totalInputTokens > 0 ? (totalCost * 0.4) / totalInputTokens : 0; // ~40% of cost is input
       const cacheSavings = totalCacheRead * avgCostPerInputToken * 0.9; // saved 90% of input price
       const cacheWaste = totalCacheWrite * avgCostPerInputToken * 0.25; // cache write premium ~25%
 
       // Period label
-      const periodLabel = params.period === "today" ? "Today" : params.period === "week" ? "Last 7 Days" : params.period === "month" ? "This Month" : "All Time";
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
 
       const lines = [
         header("CACHE EFFICIENCY"),
@@ -2275,7 +2281,13 @@ export function createServer(): McpServer {
         const tableRows = modelEntries.map(([model, v]) => {
           const mTotal = v.cacheRead + v.cacheWrite;
           const mHitRate = mTotal > 0 ? (v.cacheRead / mTotal) * 100 : 0;
-          return [model, fmtPct(mHitRate), fmtNum(v.cacheRead), fmtNum(v.cacheWrite), String(v.count)];
+          return [
+            model,
+            fmtPct(mHitRate),
+            fmtNum(v.cacheRead),
+            fmtNum(v.cacheWrite),
+            String(v.count),
+          ];
         });
         lines.push(formatTable(tableHeaders, tableRows, [false, true, true, true, true]));
         lines.push("");
@@ -2368,7 +2380,14 @@ export function createServer(): McpServer {
         return { content: [{ type: "text", text: noDataMessage(params.period) }] };
       }
 
-      const periodLabel = params.period === "today" ? "Today" : params.period === "week" ? "Last 7 Days" : params.period === "month" ? "This Month" : "All Time";
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
 
       const lines = [
         header("MODEL ADVISOR"),
@@ -2382,20 +2401,23 @@ export function createServer(): McpServer {
 
       // Current spend table
       const currentHeaders = ["Model", "Cost", "Share", "Input Tok", "Output Tok"];
-      const currentRows = models.slice(0, 15).map((m) => [
-        m.model,
-        fmtCost(m.cost),
-        fmtPct(m.percentageOfTotal),
-        fmtNum(m.inputTokens),
-        fmtNum(m.outputTokens),
-      ]);
+      const currentRows = models
+        .slice(0, 15)
+        .map((m) => [
+          m.model,
+          fmtCost(m.cost),
+          fmtPct(m.percentageOfTotal),
+          fmtNum(m.inputTokens),
+          fmtNum(m.outputTokens),
+        ]);
       lines.push(formatTable(currentHeaders, currentRows, [false, true, true, true, true]));
       lines.push("");
 
       // Calculate what-if scenarios
       let totalActual = 0;
       let totalAlternative = 0;
-      const scenarios: { model: string; actual: number; alternative: number; altTier: string }[] = [];
+      const scenarios: { model: string; actual: number; alternative: number; altTier: string }[] =
+        [];
 
       for (const m of models) {
         totalActual += m.cost;
@@ -2511,7 +2533,12 @@ export function createServer(): McpServer {
       }
 
       /** Calculate hours remaining at current burn rate. */
-      function hoursRemaining(spent: number, budget: number, hoursInPeriod: number, hoursElapsed: number): string {
+      function hoursRemaining(
+        spent: number,
+        budget: number,
+        _hoursInPeriod: number,
+        hoursElapsed: number
+      ): string {
         if (spent === 0) return "∞";
         const burnRate = spent / Math.max(hoursElapsed, 1); // $/hour
         const remaining = budget - spent;
@@ -2535,9 +2562,12 @@ export function createServer(): McpServer {
       const hoursInMonth = daysInMonth * 24;
 
       // Projections based on burn rate
-      const projectedDaily = hoursElapsedToday > 0 ? (todaySpend / hoursElapsedToday) * hoursInDay : 0;
-      const projectedWeekly = hoursElapsedWeek > 0 ? (weekSpend / hoursElapsedWeek) * hoursInWeek : 0;
-      const projectedMonthly = hoursElapsedMonth > 0 ? (monthSpend / hoursElapsedMonth) * hoursInMonth : 0;
+      const projectedDaily =
+        hoursElapsedToday > 0 ? (todaySpend / hoursElapsedToday) * hoursInDay : 0;
+      const projectedWeekly =
+        hoursElapsedWeek > 0 ? (weekSpend / hoursElapsedWeek) * hoursInWeek : 0;
+      const projectedMonthly =
+        hoursElapsedMonth > 0 ? (monthSpend / hoursElapsedMonth) * hoursInMonth : 0;
 
       const dailyPct = (todaySpend / params.daily_budget) * 100;
 
@@ -2590,11 +2620,9 @@ export function createServer(): McpServer {
         if (modelCosts.length > 0) {
           lines.push(separator(), "", "  ⚡ Cost Drivers (Today)", "");
           const driverHeaders = ["Model", "Cost", "Share"];
-          const driverRows = modelCosts.slice(0, 5).map((m) => [
-            m.model,
-            fmtCost(m.cost),
-            fmtPct(m.percentageOfTotal),
-          ]);
+          const driverRows = modelCosts
+            .slice(0, 5)
+            .map((m) => [m.model, fmtCost(m.cost), fmtPct(m.percentageOfTotal)]);
           lines.push(formatTable(driverHeaders, driverRows, [false, true, true]));
           lines.push("");
         }
@@ -2652,10 +2680,7 @@ export function createServer(): McpServer {
         tips.push({
           category: "caching",
           severity: cacheHitRate < 50 ? "critical" : "warning",
-          tip:
-            `Cache hit rate is only ${fmtPct(cacheHitRate)}. ` +
-            "Try longer conversations instead of starting fresh sessions. " +
-            "Each new session discards cached context and re-sends the full prompt.",
+          tip: `Cache hit rate is only ${fmtPct(cacheHitRate)}. Try longer conversations instead of starting fresh sessions. Each new session discards cached context and re-sends the full prompt.`,
           estimatedSavings: potentialSavings,
         });
       }
@@ -2674,29 +2699,21 @@ export function createServer(): McpServer {
         tips.push({
           category: "model_selection",
           severity: expensivePct > 80 ? "critical" : "warning",
-          tip:
-            `${fmtPct(expensivePct)} of your spend is on premium models (Opus/GPT-5). ` +
-            "Consider using Sonnet or GPT-4o for routine tasks like code review, refactoring, " +
-            "and simple questions. Reserve Opus for complex architecture and reasoning tasks.",
+          tip: `${fmtPct(expensivePct)} of your spend is on premium models (Opus/GPT-5). Consider using Sonnet or GPT-4o for routine tasks like code review, refactoring, and simple questions. Reserve Opus for complex architecture and reasoning tasks.`,
           estimatedSavings: potentialSavings,
         });
       }
 
       // ── Tip 3: Large input tokens (conversation bloat) ──
       const avgInputPerCall =
-        records.length > 0
-          ? records.reduce((s, r) => s + r.inputTokens, 0) / records.length
-          : 0;
+        records.length > 0 ? records.reduce((s, r) => s + r.inputTokens, 0) / records.length : 0;
 
       if (avgInputPerCall > 100_000) {
         const potentialSavings = totalCost * 0.15;
         tips.push({
           category: "conversation_length",
           severity: avgInputPerCall > 200_000 ? "critical" : "warning",
-          tip:
-            `Average input tokens per call is ${fmtNum(avgInputPerCall)} — that's large. ` +
-            "Consider compacting conversations, using /clear or /compact, or starting fresh " +
-            "sessions when context gets too long. Long contexts inflate every subsequent request.",
+          tip: `Average input tokens per call is ${fmtNum(avgInputPerCall)} — that's large. Consider compacting conversations, using /clear or /compact, or starting fresh sessions when context gets too long. Long contexts inflate every subsequent request.`,
           estimatedSavings: potentialSavings,
         });
       }
@@ -2710,10 +2727,7 @@ export function createServer(): McpServer {
           tips.push({
             category: "time_of_day",
             severity: "info",
-            tip:
-              `Project "${topProject.project}" accounts for ${fmtPct(topPct)} of total spend ` +
-              `(${fmtCost(topProject.totalCost)}). Consider whether all that usage is necessary, ` +
-              "or if some tasks could use cheaper models or be batched more efficiently.",
+            tip: `Project "${topProject.project}" accounts for ${fmtPct(topPct)} of total spend (${fmtCost(topProject.totalCost)}). Consider whether all that usage is necessary, or if some tasks could use cheaper models or be batched more efficiently.`,
             estimatedSavings: topProject.totalCost * 0.2,
           });
         }
@@ -2739,10 +2753,7 @@ export function createServer(): McpServer {
         tips.push({
           category: "model_selection",
           severity: "info",
-          tip:
-            `${fmtPct(reasoningPct)} of output tokens are reasoning tokens. ` +
-            "If you don't need extended thinking for every task, consider disabling it " +
-            "for straightforward requests to reduce output token costs.",
+          tip: `${fmtPct(reasoningPct)} of output tokens are reasoning tokens. If you don't need extended thinking for every task, consider disabling it for straightforward requests to reduce output token costs.`,
           estimatedSavings: totalCost * 0.1,
         });
       }
@@ -2755,7 +2766,14 @@ export function createServer(): McpServer {
         return b.estimatedSavings - a.estimatedSavings;
       });
 
-      const periodLabel = params.period === "today" ? "Today" : params.period === "week" ? "Last 7 Days" : params.period === "month" ? "This Month" : "All Time";
+      const periodLabel =
+        params.period === "today"
+          ? "Today"
+          : params.period === "week"
+            ? "Last 7 Days"
+            : params.period === "month"
+              ? "This Month"
+              : "All Time";
       const totalPotentialSavings = tips.reduce((s, t) => s + t.estimatedSavings, 0);
 
       const lines = [
@@ -2766,10 +2784,7 @@ export function createServer(): McpServer {
       ];
 
       if (tips.length === 0) {
-        lines.push(
-          "  ✅ No optimization issues found! Your usage patterns look efficient.",
-          ""
-        );
+        lines.push("  ✅ No optimization issues found! Your usage patterns look efficient.", "");
       } else {
         const severityIcon = { critical: "🔴", warning: "🟡", info: "🔵" };
 

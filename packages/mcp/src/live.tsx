@@ -174,7 +174,9 @@ function ModelBarRow({
       <Text color="gray">{padRight(model.provider, 10)}</Text>
       <Text color="blue">{padLeft(`↑${fmtNum(model.inputTokens)}`, 9)}</Text>
       <Text color="red">{padLeft(`↓${fmtNum(model.outputTokens)}`, 9)}</Text>
-      <Text color="gray">{padLeft(`⟳${fmtNum(model.cacheReadTokens + model.cacheWriteTokens)}`, 9)}</Text>
+      <Text color="gray">
+        {padLeft(`⟳${fmtNum(model.cacheReadTokens + model.cacheWriteTokens)}`, 9)}
+      </Text>
       <Text color="green">{barStr(cost, maxCost, barWidth)}</Text>
       <Text bold color="yellow">
         {padLeft(fmtCost(cost), 7)}

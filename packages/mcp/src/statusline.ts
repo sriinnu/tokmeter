@@ -411,6 +411,8 @@ export async function runStatusline(): Promise<void> {
     process.stdout.write(parts.join(sep));
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
-    try { process.stdout.write(FALLBACK_STATUSLINE); } catch {}
+    try {
+      process.stdout.write(FALLBACK_STATUSLINE);
+    } catch {}
   }
 }

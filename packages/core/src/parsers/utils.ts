@@ -32,7 +32,13 @@ interface CacheFile {
   version: number;
   createdAt: string;
   lastScanAt: string;
-  stats: { files: number; records: number; cacheHits: number; cacheMisses: number; appends: number };
+  stats: {
+    files: number;
+    records: number;
+    cacheHits: number;
+    cacheMisses: number;
+    appends: number;
+  };
   files: Record<string, RecordCacheEntry>;
 }
 
@@ -88,7 +94,10 @@ function saveRecordCache(): void {
  */
 export async function getCachedRecords(
   path: string
-): Promise<{ hit: true; records: TokenRecord[] } | { hit: false; appendOffset: number; cachedRecords: TokenRecord[] }> {
+): Promise<
+  | { hit: true; records: TokenRecord[] }
+  | { hit: false; appendOffset: number; cachedRecords: TokenRecord[] }
+> {
   const cache = loadRecordCache();
   const entry = cache.get(path);
   if (!entry) {
