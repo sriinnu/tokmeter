@@ -23,6 +23,12 @@ describe("formatNumber", () => {
     expect(formatNumber(42)).toBe("42");
     expect(formatNumber(0)).toBe("0");
   });
+
+  it("should handle NaN and Infinity", () => {
+    expect(formatNumber(NaN)).toBe("0");
+    expect(formatNumber(Infinity)).toBe("0");
+    expect(formatNumber(-Infinity)).toBe("0");
+  });
 });
 
 describe("formatCost", () => {
@@ -40,6 +46,12 @@ describe("formatCost", () => {
     expect(formatCost(1.5)).toBe("$1.50");
     expect(formatCost(0.05)).toBe("$0.05");
   });
+
+  it("should handle NaN and Infinity", () => {
+    expect(formatCost(NaN)).toBe("$0.00");
+    expect(formatCost(Infinity)).toBe("$0.00");
+    expect(formatCost(-Infinity)).toBe("$0.00");
+  });
 });
 
 describe("formatPercent", () => {
@@ -51,6 +63,11 @@ describe("formatPercent", () => {
   it("should format small percentages", () => {
     expect(formatPercent(0.5)).toBe("0.50%");
     expect(formatPercent(5)).toBe("5.0%");
+  });
+
+  it("should handle NaN and Infinity", () => {
+    expect(formatPercent(NaN)).toBe("0.00%");
+    expect(formatPercent(Infinity)).toBe("0.00%");
   });
 });
 
@@ -70,6 +87,12 @@ describe("formatBar", () => {
   it("should handle custom width", () => {
     expect(formatBar(50, 100, 4)).toBe("██░░");
   });
+
+  it("should handle NaN and Infinity", () => {
+    expect(formatBar(NaN, 100)).toBe("░░░░░░░░░░");
+    expect(formatBar(50, NaN)).toBe("░░░░░░░░░░");
+    expect(formatBar(Infinity, 100)).toBe("░░░░░░░░░░");
+  });
 });
 
 describe("formatDuration", () => {
@@ -87,6 +110,12 @@ describe("formatDuration", () => {
 
   it("should handle zero", () => {
     expect(formatDuration(0)).toBe("0s");
+  });
+
+  it("should handle NaN and negative values", () => {
+    expect(formatDuration(NaN)).toBe("0s");
+    expect(formatDuration(-1000)).toBe("0s");
+    expect(formatDuration(Infinity)).toBe("0s");
   });
 });
 
@@ -109,5 +138,10 @@ describe("sparkline", () => {
     const result = sparkline([0, 5, 10]);
     expect(result[0]).toBe("▁"); // min
     expect(result[2]).toBe("█"); // max
+  });
+
+  it("should handle NaN values", () => {
+    expect(sparkline([NaN, NaN])).toBe("");
+    expect(sparkline([1, NaN, 3])).toBe("▁█"); // filters out NaN, renders finite values
   });
 });
