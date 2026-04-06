@@ -7,6 +7,9 @@
 
 import chalk, { type Chalk } from "chalk";
 
+/** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
+export const FALLBACK_STATUSLINE = "【♾️】 drishti";
+
 // Force TrueColor (level 3) regardless of TTY detection.
 // In subprocess contexts (Claude Code statusline hook), stdout is not a TTY
 // and chalk auto-detects level 0 (no color). ESM import hoisting means
@@ -18,6 +21,7 @@ chalk.level = 3 as typeof Chalk.prototype.level;
 
 /** Format a number compactly: 1.2M, 45.3K, 890 */
 export function formatNumber(n: number): string {
+  if (!Number.isFinite(n)) return "0";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(Math.round(n));
@@ -25,6 +29,7 @@ export function formatNumber(n: number): string {
 
 /** Format a cost in USD: $0.47, $12.3, $123 */
 export function formatCost(n: number): string {
+  if (!Number.isFinite(n)) return "$0.00";
   if (n >= 100) return `$${n.toFixed(0)}`;
   if (n >= 10) return `$${n.toFixed(1)}`;
   return `$${n.toFixed(2)}`;
@@ -32,6 +37,7 @@ export function formatCost(n: number): string {
 
 /** Format a percentage: 75.2%, 5% */
 export function formatPercent(n: number): string {
+  if (!Number.isFinite(n)) return "0.00%";
   if (n >= 10) return `${n.toFixed(1)}%`;
   if (n >= 1) return `${n.toFixed(1)}%`;
   return `${n.toFixed(2)}%`;
@@ -46,7 +52,7 @@ export function formatPercent(n: number): string {
  * @returns A string like "████░░░░░░"
  */
 export function formatBar(value: number, max: number, width = 10): string {
-  if (max <= 0) return "░".repeat(width);
+  if (!(max > 0) || !Number.isFinite(value)) return "░".repeat(width);
   const ratio = Math.min(value / max, 1);
   const filled = Math.round(ratio * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
@@ -63,6 +69,7 @@ export function formatBurnRate(costPerHour: number): string {
  * Examples: "2h 15m", "45m 12s", "45s", "0s"
  */
 export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -82,10 +89,12 @@ export function formatDuration(ms: number): string {
 export function sparkline(values: number[]): string {
   const chars = "▁▂▃▄▅▆▇█";
   if (values.length === 0) return "";
-  const max = Math.max(...values);
-  const min = Math.min(...values);
+  const finite = values.filter(Number.isFinite);
+  if (finite.length === 0) return "";
+  const max = Math.max(...finite);
+  const min = Math.min(...finite);
   const range = max - min || 1;
-  return values.map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))]).join("");
+  return finite.map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))]).join("");
 }
 
 // ─── Color Constants ────────────────────────────────────────────────
