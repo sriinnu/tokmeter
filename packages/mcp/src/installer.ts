@@ -389,6 +389,104 @@ export function uninstallMCP(editors?: string[]): void {
   console.log();
 }
 
+// ─── Hooks Installer (Claude Code only) ─────────────────────────────────────
+
+interface HookEntry {
+  type: string;
+  command: string;
+}
+
+interface HookMatcher {
+  matcher: string;
+  hooks: HookEntry[];
+}
+
+interface SettingsWithHooks {
+  hooks?: Record<string, HookMatcher[]>;
+}
+
+/** Guard hooks config — references ~/Sriinnu/Personal/script-helpers/ */
+function getGuardHooks(): Record<string, HookMatcher[]> {
+  const dir = `${homedir()}/Sriinnu/Personal/script-helpers`;
+  return {
+    PreToolUse: [
+      {
+        matcher: "Bash",
+        hooks: [
+          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"` },
+          { type: "command", command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"` },
+        ],
+      },
+      {
+        matcher: "",
+        hooks: [
+          {
+            type: "command",
+            command: `bash ${dir}/sensitive-guard.sh "$CLAUDE_TOOL_NAME" "$CLAUDE_TOOL_INPUT"`,
+          },
+          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"` },
+        ],
+      },
+    ],
+  };
+}
+
+export function installHooks(): void {
+  console.log(C.title("\n【♾️】 Installing Guard Hooks\n"));
+
+  const editor = EDITORS.find((e) => e.name === "Claude Code")!;
+  const settings = readJSON<Record<string, unknown>>(editor.settingsPath) ?? {};
+  const expected = getGuardHooks();
+
+  // Check if already up to date
+  if (settings.hooks && JSON.stringify(settings.hooks) === JSON.stringify(expected)) {
+    console.log(C.accent("  ✓ Claude Code — hooks already installed and up to date"));
+    console.log();
+    return;
+  }
+
+  settings.hooks = expected;
+  writeJSON(editor.settingsPath, settings);
+
+  console.log(C.success("  ✓ Claude Code — guard hooks installed"));
+  console.log(C.dim(`    ${editor.settingsPath}`));
+  console.log();
+  console.log(C.dim("Hooks installed:"));
+  console.log(C.dim("  • danger-guard.sh  — blocks destructive commands"));
+  console.log(C.dim("  • network-guard.sh — blocks unauthorized network access"));
+  console.log(C.dim("  • sensitive-guard.sh — guards sensitive file access\n"));
+}
+
+export function uninstallHooks(): void {
+  console.log(C.title("\n【♾️】 Uninstalling Guard Hooks\n"));
+
+  const editor = EDITORS.find((e) => e.name === "Claude Code")!;
+  const settings = readJSON<SettingsWithHooks>(editor.settingsPath);
+
+  if (!settings?.hooks) {
+    console.log(C.dim("  ⊘ Claude Code — no hooks installed"));
+    console.log();
+    return;
+  }
+
+  // biome-ignore lint/performance/noDelete: required to remove property from object
+  delete settings.hooks;
+  writeJSON(editor.settingsPath, settings);
+
+  console.log(C.success("  ✓ Claude Code — hooks removed"));
+  console.log();
+}
+
+// ─── Install All ────────────────────────────────────────────────────────────
+
+export function installAll(): void {
+  console.log(C.title("\n【♾️】 Full Restore — Statusline + MCP + Hooks\n"));
+  installStatusline();
+  installMCP();
+  installHooks();
+  console.log(C.accent("Done. Restart your editor(s) to activate everything.\n"));
+}
+
 // ─── List Editors ───────────────────────────────────────────────────────────
 
 export function listEditors(): void {

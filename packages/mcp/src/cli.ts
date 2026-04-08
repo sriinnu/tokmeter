@@ -12,8 +12,11 @@
  *   drishti daemon status          Check daemon status
  *   drishti install-statusline     Install statusline hook for ALL editors
  *   drishti install-mcp            Install MCP server for ALL editors
+ *   drishti install-hooks          Install guard hooks (Claude Code)
+ *   drishti install-all|restore    Restore everything — statusline + MCP + hooks
  *   drishti uninstall-statusline   Remove statusline hook from all editors
  *   drishti uninstall-mcp          Remove MCP server from all editors
+ *   drishti uninstall-hooks        Remove guard hooks (Claude Code)
  *   drishti editors                List all supported editors
  *   drishti help                   Show usage instructions
  */
@@ -113,6 +116,27 @@ switch (command) {
     break;
   }
 
+  case "install-hooks":
+  case "hooks-install": {
+    const { installHooks } = await import("./installer.js");
+    installHooks();
+    break;
+  }
+
+  case "uninstall-hooks":
+  case "hooks-uninstall": {
+    const { uninstallHooks } = await import("./installer.js");
+    uninstallHooks();
+    break;
+  }
+
+  case "install-all":
+  case "restore": {
+    const { installAll } = await import("./installer.js");
+    installAll();
+    break;
+  }
+
   case "editors": {
     const { listEditors } = await import("./installer.js");
     listEditors();
@@ -162,8 +186,11 @@ ${b("COMMANDS")}
   ${a("daemon status")}     Check daemon status
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
+  ${a("install-hooks")}     Install guard hooks (Claude Code)
+  ${a("install-all")}       Restore everything — statusline + MCP + hooks
   ${a("uninstall-statusline")} Remove statusline hook from all editors
   ${a("uninstall-mcp")}     Remove MCP server from all editors
+  ${a("uninstall-hooks")}   Remove guard hooks (Claude Code)
   ${a("editors")}           List all supported editors
   ${a("help")}              Show this help message
 
