@@ -214,26 +214,26 @@ const solarizedDark: Theme = {
 const highContrast: Theme = {
   id: "high-contrast",
   name: "High Contrast",
-  description: "Maximum readability for accessibility",
+  description: "Maximum readability for accessibility (colorblind-safe)",
   variant: "dark",
   colors: {
     primary: "#ffffff",
-    secondary: "#00ffff",
-    success: "#00ff00",
-    warning: "#ffff00",
-    danger: "#ff0000",
-    muted: "#808080",
+    secondary: "#00ddff",
+    success: "#00bbff",    // blue — distinguishable from danger for all CVD types
+    warning: "#ffcc00",    // yellow
+    danger: "#ff8800",     // orange — not red, safe for deuteranopia
+    muted: "#999999",
     text: "#ffffff",
     bg: "#000000",
-    cost: "#ffff00",
-    input: "#00ffff",
-    output: "#ff00ff",
-    cache: "#808080",
-    thinking: "#00ffff",
+    cost: "#ffcc00",
+    input: "#00ddff",      // cyan
+    output: "#ff88cc",     // pink — distinct from cyan for all CVD types
+    cache: "#999999",
+    thinking: "#00ddff",
     segProject: "#333333",
     segModel: "#004488",
-    segContext: "#008800",
-    segGit: "#880000",
+    segContext: "#006688",  // teal, not green
+    segGit: "#884400",     // dark orange, not red
     segCost: "#886600",
   },
 };

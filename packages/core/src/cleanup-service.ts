@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   filterByDate,
   filterByProject,
@@ -244,8 +244,8 @@ export class CleanupService {
     const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
     const archivePath = meta.path;
 
-    // Validate archive path is within backup directory
-    if (!archivePath.startsWith(dir)) {
+    // Validate archive path is within backup directory (resolve to catch symlinks / ..)
+    if (!resolve(archivePath).startsWith(resolve(dir))) {
       return { restoredCount: 0, errors: [{ file: archivePath, error: "Archive path outside backup directory" }] };
     }
 

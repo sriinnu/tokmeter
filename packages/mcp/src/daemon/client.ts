@@ -123,13 +123,19 @@ export class DaemonClient {
   private ws: WebSocket | null = null;
   private session: SessionInfo | null = null;
 
-  async connect(session: SessionInfo): Promise<boolean> {
+  async connect(session: SessionInfo, timeoutMs = 3000): Promise<boolean> {
     return new Promise((resolve) => {
       try {
         this.ws = new WebSocket(DAEMON_URL);
         this.session = session;
 
+        const timer = setTimeout(() => {
+          try { this.ws?.close(); } catch {}
+          resolve(false);
+        }, timeoutMs);
+
         this.ws.on("open", () => {
+          clearTimeout(timer);
           this.ws?.send(
             JSON.stringify({
               type: "register",
@@ -139,7 +145,10 @@ export class DaemonClient {
           resolve(true);
         });
 
-        this.ws.on("error", () => resolve(false));
+        this.ws.on("error", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
       } catch {
         resolve(false);
       }
