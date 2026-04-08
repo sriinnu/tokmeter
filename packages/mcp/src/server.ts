@@ -115,6 +115,25 @@ function buildScanOptions(params: {
   return opts;
 }
 
+/** Build a CleanupFilter from tool params (shared by preview + execute). */
+function buildCleanupFilter(params: {
+  project?: string;
+  providers?: string[];
+  since?: string;
+  until?: string;
+  scope?: string;
+}): import("@sriinnu/tokmeter-core").CleanupFilter {
+  const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
+  if (params.project) filter.project = params.project;
+  if (params.providers?.length) filter.providers = params.providers as ProviderId[];
+  if (params.since) filter.since = params.since;
+  if (params.until) filter.until = params.until;
+  if (params.scope === "today") filter.today = true;
+  else if (params.scope === "week") filter.week = true;
+  else if (params.scope === "month") filter.month = true;
+  return filter;
+}
+
 // ── Formatting ──────────────────────────────────────────────
 // These formatters are MCP-server-specific (plain text, no chalk colors).
 // The shared chalk-colored formatters live in formatter.ts.
@@ -2172,7 +2191,7 @@ export function createServer(): McpServer {
   // 17. cache_efficiency — Cache hit/miss analysis
   // ────────────────────────────────────────────
   server.tool(
-    "cache_efficiency",
+    "drishti_cache_efficiency",
     "Analyze cache hit/miss patterns across sessions. Shows overall cache hit rate, dollar savings from caching, " +
       "cache write waste, and per-model breakdown. Use this to understand how effectively prompt caching is reducing your costs.",
     {
@@ -2360,7 +2379,7 @@ export function createServer(): McpServer {
   }
 
   server.tool(
-    "model_advisor",
+    "drishti_model_advisor",
     "Compare what you actually spent vs what cheaper models would have cost. " +
       "Shows current spending by model and estimates savings if you downgraded expensive models " +
       "(e.g., Opus → Sonnet, GPT-5 → GPT-4o). Includes a reference pricing table.",
@@ -2499,7 +2518,7 @@ export function createServer(): McpServer {
   // 19. budget_alert — Proactive budget monitoring
   // ────────────────────────────────────────────
   server.tool(
-    "budget_alert",
+    "drishti_budget_alert",
     "Proactive budget monitoring with configurable daily/weekly/monthly thresholds. " +
       "Shows current spend, percentage of budget used, projected end-of-period spend, and " +
       "hours remaining until budget is exceeded. Gives green/yellow/red status indicators.",
@@ -2637,7 +2656,7 @@ export function createServer(): McpServer {
   // 20. cost_optimization_tips — Actionable recommendations
   // ────────────────────────────────────────────
   server.tool(
-    "cost_optimization_tips",
+    "drishti_cost_optimization_tips",
     "Analyze usage patterns and provide actionable cost optimization recommendations. " +
       "Generates tips based on actual data — cache efficiency, model selection, conversation length, " +
       "and spending distribution. Each tip includes category, severity, and estimated savings.",
@@ -2824,19 +2843,13 @@ export function createServer(): McpServer {
       scope: ScopeEnum,
     },
     async (params) => {
+      try {
       const { CleanupService } = await import("@sriinnu/tokmeter-core");
       const opts = buildScanOptions(params);
       const core = await getCore(opts);
       const service = new CleanupService(core);
 
-      const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
-      if (params.project) filter.project = params.project;
-      if (params.providers?.length) filter.providers = params.providers as import("@sriinnu/tokmeter-core").ProviderId[];
-      if (params.since) filter.since = params.since;
-      if (params.until) filter.until = params.until;
-      if (params.scope === "today") filter.today = true;
-      else if (params.scope === "week") filter.week = true;
-      else if (params.scope === "month") filter.month = true;
+      const filter = buildCleanupFilter(params);
 
       const preview = await service.preview(filter);
 
@@ -2894,6 +2907,9 @@ export function createServer(): McpServer {
       lines.push("  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'");
 
       return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+      }
     },
   );
 
@@ -2919,22 +2935,17 @@ export function createServer(): McpServer {
             type: "text",
             text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call drishti_cleanup_preview first to review what will be deleted.\n`,
           }],
+          isError: true,
         };
       }
 
+      try {
       const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
       // Fresh core for destructive ops — never use stale cache
       const core = new Core();
       const service = new CleanupService(core);
 
-      const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
-      if (params.project) filter.project = params.project;
-      if (params.providers?.length) filter.providers = params.providers as import("@sriinnu/tokmeter-core").ProviderId[];
-      if (params.since) filter.since = params.since;
-      if (params.until) filter.until = params.until;
-      if (params.scope === "today") filter.today = true;
-      else if (params.scope === "week") filter.week = true;
-      else if (params.scope === "month") filter.month = true;
+      const filter = buildCleanupFilter(params);
 
       const result = await service.execute(filter, { backup: params.backup });
 
@@ -2958,6 +2969,9 @@ export function createServer(): McpServer {
       lines.push("");
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+      }
     },
   );
 
@@ -3003,9 +3017,11 @@ export function createServer(): McpServer {
             type: "text",
             text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'RESTORE' to proceed.\n`,
           }],
+          isError: true,
         };
       }
 
+      try {
       const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
       const core = new Core({ skipPricing: true });
       const service = new CleanupService(core);
@@ -3026,6 +3042,9 @@ export function createServer(): McpServer {
       lines.push("");
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+      }
     },
   );
 

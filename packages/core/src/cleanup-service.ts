@@ -11,6 +11,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -157,7 +159,7 @@ export class CleanupService {
     let backupPath: string | undefined;
     if (backup) {
       const projectNames = preview.byProject.map((p) => p.project);
-      const path = this.createBackup(preview.targets, filter, backupDir, projectNames);
+      const path = await this.createBackup(preview.targets, filter, backupDir, projectNames);
       if (!path) {
         return {
           deletedCount: 0,
@@ -428,15 +430,15 @@ export class CleanupService {
   }
 
   /**
-   * Create a tar.gz backup of all file/directory targets.
+   * Create a tar.gz backup of all targets (files + SQLite row exports).
    * Writes both the archive and a .meta.json sidecar.
    */
-  private createBackup(
+  private async createBackup(
     targets: CleanupTarget[],
     filter: CleanupFilter,
     backupDir?: string,
     projectNames: string[] = [],
-  ): string {
+  ): Promise<string> {
     const dir = backupDir || DEFAULT_BACKUP_DIR;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
@@ -447,23 +449,51 @@ export class CleanupService {
     const id = timestamp;
     const archivePath = join(dir, `${id}.tar.gz`);
 
-    // Collect file paths to archive (skip sqlite-rows and index-entry)
+    // Collect file paths to archive
     const filePaths = targets
       .filter((t) => t.type === "file" || t.type === "directory")
       .map((t) => t.path)
       .filter((p) => existsSync(p));
 
-    if (filePaths.length > 0) {
+    // Export SQLite rows to JSON dump files so they're included in the backup
+    const sqliteTargets = targets.filter((t) => t.type === "sqlite-rows");
+    const sqlDumpDir = join(dir, `${id}-sql-dumps`);
+    const sqlDumpFiles: string[] = [];
+
+    if (sqliteTargets.length > 0) {
+      const { SqliteCleaner } = await import("./cleaners/sqlite-cleaner.js");
+      const cleaners = getCleaners(
+        [...new Set(sqliteTargets.map((t) => t.provider))],
+      );
+
+      for (const cleaner of cleaners) {
+        if (!(cleaner instanceof SqliteCleaner)) continue;
+        for (const t of sqliteTargets.filter((st) => st.provider === cleaner.providerId)) {
+          const dumpFile = await cleaner.exportRows(t, sqlDumpDir);
+          if (dumpFile) sqlDumpFiles.push(dumpFile);
+        }
+      }
+    }
+
+    const allPaths = [...filePaths, ...sqlDumpFiles];
+
+    if (allPaths.length > 0) {
       try {
-        execFileSync("tar", ["czf", archivePath, "--no-absolute-names", ...filePaths], {
+        execFileSync("tar", ["czf", archivePath, "--no-absolute-names", ...allPaths], {
           timeout: 120_000,
         });
       } catch {
         // If tar fails, abort — don't delete without a backup
         return "";
       }
+
+      // Clean up temp SQL dump files (they're now in the archive)
+      for (const f of sqlDumpFiles) {
+        try { rmSync(f); } catch {}
+      }
+      try { rmdirSync(sqlDumpDir); } catch {}
     } else {
-      // No archivable files (all targets are sqlite-rows / index-entry) — skip backup
+      // Nothing to back up
       return "";
     }
 

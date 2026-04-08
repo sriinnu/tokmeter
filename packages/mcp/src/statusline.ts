@@ -36,105 +36,10 @@ function frame(): number {
   return Math.floor((Date.now() / 200) % 8);
 }
 
-/** Particle effects using braille patterns for fine-grained animation */
+/** Particle effects — only pulse is used (agent activity dot). */
 const PARTICLES = {
-  spark: ["✦", "✧", "✶", "✷", "✸", "✹", "✺", "✻"],
   pulse: ["○", "◐", "◑", "●", "◑", "◐", "○", "◌"],
-  wave: ["░", "▒", "▓", "█", "▓", "▒", "░", " "],
-  orbit: ["◌", " ○", "  ●", "   ◉", "  ●", " ○", "◌", ""],
-  dots: ["⠁", "⠃", "⠇", "⡇", "⣇", "⣧", "⣷", "⣿"],
 };
-
-/** Rainbow color cycle */
-function rainbow(text: string, offset = 0): string {
-  const colors = [
-    "\x1b[38;5;196m", // red
-    "\x1b[38;5;208m", // orange
-    "\x1b[38;5;226m", // yellow
-    "\x1b[38;5;46m", // green
-    "\x1b[38;5;51m", // cyan
-    "\x1b[38;5;21m", // blue
-    "\x1b[38;5;129m", // purple
-    "\x1b[38;5;201m", // magenta
-  ];
-  const f = (frame() + offset) % colors.length;
-  return `${colors[f]}${text}\x1b[0m`;
-}
-
-/** Token flow visualization with animated arrows and intensity */
-function animTokenFlow(
-  value: number,
-  type: "in" | "out" | "cache"
-): { arrow: string; intensity: string } {
-  const f = frame();
-  const v = Math.max(0, value || 0);
-
-  // Animated arrows
-  const arrows = {
-    in: ["↗", "↑", "⬆", "↑", "↗", "↑", "⬆", "↑"],
-    out: ["↘", "↓", "⬇", "↓", "↘", "↓", "⬇", "↓"],
-    cache: ["↺", "⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳"],
-  };
-
-  // Intensity bar (grows/shrinks based on value)
-  const logScale = Math.min(4, Math.floor(Math.log10(v + 1) / 1.5));
-  const intensityChars = ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"];
-  const intensity = intensityChars[(f + logScale) % intensityChars.length].repeat(
-    Math.max(1, logScale)
-  );
-
-  return { arrow: arrows[type][f], intensity };
-}
-
-/** Animated cost display with pulsing effect */
-function animCost(cost: number): string {
-  const f = frame();
-  const icons = ["⚡", "✨", "⚡", "💫", "⚡", "✨", "⚡", "🌟"];
-  const icon = icons[f];
-
-  // Color based on cost intensity
-  if (cost > 10) return `${C.danger(icon)}${C.cost(formatCost(cost))}`;
-  if (cost > 5) return `${C.warn(icon)}${C.cost(formatCost(cost))}`;
-  return `${C.accent(icon)}${C.cost(formatCost(cost))}`;
-}
-
-/** Context window as animated progress bar with wave effect */
-function animContextBar(used: number, max: number): string {
-  if (!(max > 0)) return "";
-  const pct = (used / max) * 100;
-  const f = frame();
-
-  // Animated wave inside the bar
-  const width = 6;
-  const filled = Math.round((pct / 100) * width);
-
-  // Color gradient based on usage
-  let barColor: (s: string) => string;
-  if (pct > 80) barColor = C.danger;
-  else if (pct > 50) barColor = C.warn;
-  else barColor = C.accent;
-
-  // Wave animation in filled portion
-  const waveChars = ["▓", "▒", "░", "▒", "▓", "█", "▓", "▒"];
-  let bar = "";
-  for (let i = 0; i < width; i++) {
-    if (i < filled) {
-      bar += barColor(waveChars[(f + i) % waveChars.length]);
-    } else {
-      bar += C.muted("░");
-    }
-  }
-
-  return `${bar} ${barColor(`${pct.toFixed(0)}%`)}${C.dim(`/${formatNumber(max)}`)}`;
-}
-
-/** Burn rate with fire animation */
-function animBurnRate(costPerHour: number): string {
-  const f = frame();
-  const flames = ["🔥", "🔥", "🔥", "🔥"];
-  const flame = flames[f % flames.length];
-  return `${C.warn(flame)}${C.cost(`${formatCost(costPerHour)}/hr`)}`;
-}
 
 /** Cache hit rate with color-coded efficiency indicator */
 function animCacheRate(cacheRead: number, cacheWrite: number): string {
