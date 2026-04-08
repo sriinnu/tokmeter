@@ -5,8 +5,7 @@
  * Covers: codex, gemini, amp, droid, pi, kimi, qwen, mux, cursor.
  */
 
-import { rm } from "node:fs/promises";
-import { stat } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import type { CleanupResult, CleanupTarget, ProviderId, SessionCleaner } from "../types.js";
 
 export class SimpleFileCleaner implements SessionCleaner {
@@ -22,7 +21,7 @@ export class SimpleFileCleaner implements SessionCleaner {
     for (const file of sourceFiles) {
       let sizeBytes = 0;
       try {
-        const s = await stat(file);
+        const s = await lstat(file);
         sizeBytes = s.size;
       } catch {
         // File may already be gone — skip
