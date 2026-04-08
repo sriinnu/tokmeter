@@ -25,7 +25,28 @@ let wss: WebSocketServer | null = null;
 let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let sessionManager: SessionManager | null = null;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 const HTTP_PORT = DAEMON_PORT + 1;
+
+// ─── Auth Token ────────────────────────────────────────────────────────
+// Generate a random bearer token on daemon start. Written to a file (mode 0600)
+// so only the owning user can read it. All HTTP POST requests must include it.
+import { randomBytes } from "node:crypto";
+import { chmodSync } from "node:fs";
+
+const DAEMON_TOKEN_FILE = DAEMON_PID_FILE.replace(".pid", ".token");
+let _authToken: string | null = null;
+
+function initAuthToken(): void {
+  _authToken = randomBytes(32).toString("hex");
+  writeFileSync(DAEMON_TOKEN_FILE, _authToken, { mode: 0o600 });
+}
+
+function checkAuth(req: IncomingMessage): boolean {
+  if (!_authToken) return true; // no token = dev mode
+  const header = req.headers.authorization ?? "";
+  return header === `Bearer ${_authToken}`;
+}
 
 // Client tracking: WebSocket -> { provider, sessionId }
 const clientSessions = new Map<WebSocket, { provider: string; sessionId: string }>();
@@ -39,6 +60,7 @@ export function startDaemon(): void {
   }
 
   sessionManager = new SessionManager();
+  initAuthToken();
 
   wss = new WebSocketServer({ port: DAEMON_PORT, host: DAEMON_HOST });
 
@@ -57,7 +79,7 @@ export function startDaemon(): void {
     }, 30_000);
 
     // Save state periodically
-    setInterval(() => {
+    saveStateInterval = setInterval(() => {
       saveState();
     }, 10_000);
 
@@ -245,9 +267,16 @@ function loadState(): void {
 // ─── Daemon Management ──────────────────────────────────────────────────
 
 export function stopDaemon(): void {
+  // Save state one final time before stopping
+  saveState();
+
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
     cleanupInterval = null;
+  }
+  if (saveStateInterval) {
+    clearInterval(saveStateInterval);
+    saveStateInterval = null;
   }
 
   if (wss) {
@@ -260,12 +289,13 @@ export function stopDaemon(): void {
     httpServer = null;
   }
 
-  try {
-    unlinkSync(DAEMON_PID_FILE);
-  } catch {
-    // Ignore
+  // Clean up PID and token files
+  for (const f of [DAEMON_PID_FILE, DAEMON_TOKEN_FILE]) {
+    try { unlinkSync(f); } catch { /* ignore */ }
   }
 
+  _authToken = null;
+  sessionManager = null;
   console.log("Daemon stopped");
 }
 
@@ -368,8 +398,13 @@ function startHttpApi(): void {
         return;
       }
 
-      // POST endpoints (fresh core for mutations)
+      // POST endpoints (fresh core for mutations) — require auth token
       if (req.method === "POST") {
+        if (!checkAuth(req)) {
+          res.writeHead(401);
+          json(res, { error: "Unauthorized — include Authorization: Bearer <token> from " + DAEMON_TOKEN_FILE });
+          return;
+        }
         const body = await readBody(req);
 
         if (url === "/api/cleanup/preview") {
@@ -421,8 +456,17 @@ function startHttpApi(): void {
     }
   });
 
+  httpServer.on("error", (err: Error & { code?: string }) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`HTTP API port ${HTTP_PORT} already in use — API disabled`);
+    } else {
+      console.error("HTTP API error:", err.message);
+    }
+  });
+
   httpServer.listen(HTTP_PORT, DAEMON_HOST, () => {
     console.log(`【♾️】 HTTP API listening on http://${DAEMON_HOST}:${HTTP_PORT}`);
+    console.log(`   Auth token: ${DAEMON_TOKEN_FILE}`);
   });
 }
 

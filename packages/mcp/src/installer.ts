@@ -18,21 +18,24 @@ import { fileURLToPath } from "node:url";
 import { C } from "./formatter.js";
 
 // ─── CLI Command Resolution ────────────────────────────────────────────────
-// Prefer the local source tree (bun run). Fall back to npx @sriinnu/tokmeter.
+// Prefer the local compiled dist (node). Fall back to npx @sriinnu/drishti.
+// We always use node + dist/cli.js for installed commands because:
+//  1. node is always in PATH (bun may not be in Claude Code's subprocess env)
+//  2. dist/cli.js works without a TypeScript runtime
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOCAL_CLI = resolve(__dirname, "cli.ts");
-const IS_LOCAL = existsSync(LOCAL_CLI);
+const LOCAL_DIST_CLI = resolve(__dirname, "..", "dist", "cli.js");
+const IS_LOCAL = existsSync(LOCAL_DIST_CLI);
 
 function cliCommand(subcommand: string): { command: string; args?: string[] } {
   if (IS_LOCAL) {
-    return { command: "bun", args: [LOCAL_CLI, subcommand] };
+    return { command: "node", args: [LOCAL_DIST_CLI, subcommand] };
   }
-  return { command: "npx", args: ["-y", "@sriinnu/tokmeter", subcommand] };
+  return { command: "npx", args: ["-y", "@sriinnu/drishti", subcommand] };
 }
 
 function cliCommandString(subcommand: string): string {
-  if (IS_LOCAL) return `bun ${LOCAL_CLI} ${subcommand}`;
-  return `npx -y @sriinnu/tokmeter ${subcommand}`;
+  if (IS_LOCAL) return `node ${LOCAL_DIST_CLI} ${subcommand}`;
+  return `npx -y @sriinnu/drishti ${subcommand}`;
 }
 
 // ─── Editor Configurations ───────────────────────────────────────────────────
@@ -105,14 +108,31 @@ function ensureDir(path: string): void {
   }
 }
 
+/**
+ * Read a JSON config file. Returns null if missing or corrupt.
+ * If corrupt, prints a warning and sets `_lastReadCorrupt` so callers can skip.
+ */
+let _lastReadCorrupt = false;
+
 function readJSON<T>(path: string): T | null {
+  _lastReadCorrupt = false;
   if (!existsSync(path)) return null;
   try {
     const content = readFileSync(path, "utf-8");
     return JSON.parse(content) as T;
   } catch {
+    _lastReadCorrupt = true;
     return null;
   }
+}
+
+/** Returns true (and prints a warning) if the last readJSON hit a corrupt file. */
+function wasCorrupt(filePath: string, editorName: string): boolean {
+  if (_lastReadCorrupt) {
+    console.log(C.danger(`  ✗ ${editorName} — ${filePath} has a JSON syntax error, refusing to modify`));
+    return true;
+  }
+  return false;
 }
 
 function writeJSON<T>(path: string, data: T): void {
@@ -200,7 +220,9 @@ export function installStatusline(editors?: string[]): void {
       continue;
     }
 
-    const settings = readJSON<SettingsWithStatusLine>(editor.settingsPath) ?? {};
+    const raw = readJSON<SettingsWithStatusLine>(editor.settingsPath);
+    if (wasCorrupt(editor.settingsPath, editor.name)) { skipped++; continue; }
+    const settings = raw ?? {};
 
     // Check if already installed with the LOCAL command
     if (settings.statusLine?.command === command) {
@@ -278,11 +300,11 @@ export function installMCP(editors?: string[]): void {
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
 
     // For editors with separate MCP files, read that; otherwise read settings
-    const config = editor.mcpPath
-      ? (readJSON<MCPConfig>(editor.mcpPath) ?? { mcpServers: {} })
-      : ((readJSON<SettingsWithMCP>(editor.settingsPath) as SettingsWithMCP | null) ?? {
-          mcpServers: {},
-        });
+    const rawMcp = editor.mcpPath
+      ? readJSON<MCPConfig>(editor.mcpPath)
+      : readJSON<SettingsWithMCP>(editor.settingsPath);
+    if (wasCorrupt(mcpPath, editor.name)) { skipped++; continue; }
+    const config = rawMcp ?? { mcpServers: {} };
 
     const existingServers = config.mcpServers ?? {};
 
@@ -448,17 +470,35 @@ export function installHooks(): void {
   console.log(C.title("\n【♾️】 Installing Guard Hooks\n"));
 
   const editor = EDITORS.find((e) => e.name === "Claude Code")!;
-  const settings = readJSON<Record<string, unknown>>(editor.settingsPath) ?? {};
+  const rawSettings = readJSON<Record<string, unknown>>(editor.settingsPath);
+  if (wasCorrupt(editor.settingsPath, "Claude Code")) { console.log(); return; }
+  const settings = rawSettings ?? {};
   const expected = getGuardHooks();
 
-  // Check if already up to date
-  if (settings.hooks && JSON.stringify(settings.hooks) === JSON.stringify(expected)) {
+  // Check if guard hooks are already present and up to date
+  const existing = (settings.hooks ?? {}) as Record<string, unknown[]>;
+  const guardMatchers = expected.PreToolUse;
+  const existingPre = (existing.PreToolUse ?? []) as HookMatcher[];
+
+  // Check if our guard matchers are already in PreToolUse
+  const guardJson = JSON.stringify(guardMatchers);
+  const hasGuards = existingPre.length >= guardMatchers.length
+    && JSON.stringify(existingPre.slice(0, guardMatchers.length)) === guardJson;
+
+  if (hasGuards) {
     console.log(C.accent("  ✓ Claude Code — hooks already installed and up to date"));
     console.log();
     return;
   }
 
-  settings.hooks = expected;
+  // Merge: replace our guard matchers at the start, preserve any user-added hooks
+  const userHooks = existingPre.filter((m) =>
+    !guardMatchers.some((g) => JSON.stringify(g) === JSON.stringify(m))
+  );
+  settings.hooks = {
+    ...existing,
+    PreToolUse: [...guardMatchers, ...userHooks],
+  };
   writeJSON(editor.settingsPath, settings);
 
   console.log(C.success("  ✓ Claude Code — guard hooks installed"));
