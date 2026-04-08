@@ -141,6 +141,22 @@ export function saveRecordCacheToDisk(): void {
   saveRecordCache();
 }
 
+/** Remove specific entries from both in-memory and disk cache (used after cleanup). */
+export function invalidateRecordCache(paths: string[]): void {
+  const cache = loadRecordCache();
+  for (const p of paths) {
+    cache.delete(p);
+  }
+  saveRecordCache();
+}
+
+/** Clear the entire record cache, forcing a full rescan. */
+export function clearRecordCache(): void {
+  if (recordCache) recordCache.clear();
+  cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  saveRecordCache();
+}
+
 /** Read only the tail of a file from a byte offset (for append-only parsing). */
 export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: number): Promise<T[]> {
   try {

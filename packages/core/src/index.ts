@@ -7,12 +7,18 @@
 
 export { TokmeterCore } from "./tokmeter-core.js";
 export { PricingService } from "./pricing.js";
+export { CleanupService } from "./cleanup-service.js";
 export {
   ALL_PARSERS,
   ALL_PROVIDER_IDS,
   getParser,
   getParsers,
 } from "./parsers/index.js";
+export {
+  ALL_CLEANERS,
+  getCleaner,
+  getCleaners,
+} from "./cleaners/index.js";
 export {
   aggregateByProject,
   aggregateByModel,
@@ -22,6 +28,19 @@ export {
   filterByProvider,
   filterByProject,
 } from "./aggregator.js";
+export {
+  invalidateRecordCache,
+  clearRecordCache,
+} from "./parsers/utils.js";
+export {
+  BUILT_IN_THEMES,
+  getTheme,
+  listThemeIds,
+  listThemes,
+  loadUserTheme,
+  getConfigPath,
+} from "./themes.js";
+export type { Theme, ThemeColors } from "./themes.js";
 
 export type {
   TokenRecord,
@@ -33,4 +52,13 @@ export type {
   TokmeterConfig,
   SessionParser,
   ProviderId,
+  SessionCleaner,
+  CleanupTarget,
+  CleanupFilter,
+  CleanupPreview,
+  CleanupResult,
+  CleanupOptions,
+  BackupInfo,
+  RestoreResult,
+  PartialFileWarning,
 } from "./types.js";

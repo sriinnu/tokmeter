@@ -13,8 +13,27 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { C } from "./formatter.js";
+
+// ─── CLI Command Resolution ────────────────────────────────────────────────
+// Prefer the local source tree (bun run). Fall back to npx @sriinnu/tokmeter.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOCAL_CLI = resolve(__dirname, "cli.ts");
+const IS_LOCAL = existsSync(LOCAL_CLI);
+
+function cliCommand(subcommand: string): { command: string; args?: string[] } {
+  if (IS_LOCAL) {
+    return { command: "bun", args: [LOCAL_CLI, subcommand] };
+  }
+  return { command: "npx", args: ["-y", "@sriinnu/tokmeter", subcommand] };
+}
+
+function cliCommandString(subcommand: string): string {
+  if (IS_LOCAL) return `bun ${LOCAL_CLI} ${subcommand}`;
+  return `npx -y @sriinnu/tokmeter ${subcommand}`;
+}
 
 // ─── Editor Configurations ───────────────────────────────────────────────────
 
@@ -170,7 +189,7 @@ export function installStatusline(editors?: string[]): void {
 
   console.log(C.title("\n【♾️】 Installing Statusline\n"));
 
-  const command = "npx -y @sriinnu/drishti statusline";
+  const command = cliCommandString("statusline");
   let installed = 0;
   let skipped = 0;
 
@@ -183,8 +202,8 @@ export function installStatusline(editors?: string[]): void {
 
     const settings = readJSON<SettingsWithStatusLine>(editor.settingsPath) ?? {};
 
-    // Check if already installed
-    if (settings.statusLine?.command?.includes("@sriinnu/drishti")) {
+    // Check if already installed with the LOCAL command
+    if (settings.statusLine?.command === command) {
       console.log(C.accent(`  ✓ ${editor.name} — already installed`));
       continue;
     }
@@ -243,10 +262,7 @@ export function installMCP(editors?: string[]): void {
       }
 
       // Generate and write TOML config
-      const newContent = generateMcpToml(existingContent, serverName, {
-        command: "npx",
-        args: ["-y", "@sriinnu/drishti", "mcp"],
-      });
+      const newContent = generateMcpToml(existingContent, serverName, cliCommand("mcp"));
 
       ensureDir(configPath);
       writeFileSync(configPath, newContent, "utf-8");
@@ -279,10 +295,7 @@ export function installMCP(editors?: string[]): void {
     // Add the MCP server
     config.mcpServers = {
       ...existingServers,
-      [serverName]: {
-        command: "npx",
-        args: ["-y", "@sriinnu/drishti", "mcp"],
-      },
+      [serverName]: cliCommand("mcp"),
     };
 
     writeJSON(mcpPath, config);

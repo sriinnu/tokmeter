@@ -6,6 +6,7 @@
  * aggregated totals from all active sessions.
  */
 
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
@@ -21,8 +22,10 @@ import { SessionManager } from "./session.js";
 // ─── Server State ───────────────────────────────────────────────────────
 
 let wss: WebSocketServer | null = null;
+let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let sessionManager: SessionManager | null = null;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+const HTTP_PORT = DAEMON_PORT + 1;
 
 // Client tracking: WebSocket -> { provider, sessionId }
 const clientSessions = new Map<WebSocket, { provider: string; sessionId: string }>();
@@ -57,6 +60,9 @@ export function startDaemon(): void {
     setInterval(() => {
       saveState();
     }, 10_000);
+
+    // Start HTTP API server alongside WebSocket
+    startHttpApi();
   });
 
   wss.on("connection", (ws) => {
@@ -249,6 +255,11 @@ export function stopDaemon(): void {
     wss = null;
   }
 
+  if (httpServer) {
+    httpServer.close();
+    httpServer = null;
+  }
+
   try {
     unlinkSync(DAEMON_PID_FILE);
   } catch {
@@ -287,6 +298,160 @@ export function getDaemonStatus(): { running: boolean; pid?: number; port: numbe
   } catch {
     return { running: false, port: DAEMON_PORT };
   }
+}
+
+// ─── HTTP REST API ──────────────────────────────────────────────────────
+
+/** Cached core for HTTP API (same 5s TTL pattern as MCP server). */
+let _httpCore: { core: any; ts: number } | null = null;
+const HTTP_CACHE_TTL = 5_000;
+const MAX_BODY_BYTES = 1_048_576; // 1MB
+
+async function getHttpCore(): Promise<any> {
+  const now = Date.now();
+  if (_httpCore && now - _httpCore.ts < HTTP_CACHE_TTL) return _httpCore.core;
+  const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+  const core = new TokmeterCore();
+  await core.scan();
+  _httpCore = { core, ts: now };
+  return core;
+}
+
+function startHttpApi(): void {
+  httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // CORS: localhost only — prevents malicious websites from hitting the API
+    const origin = req.headers.origin ?? "";
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/.test(origin);
+    res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Content-Type", "application/json");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = req.url ?? "/";
+
+    try {
+      const { CleanupService } = await import("@sriinnu/tokmeter-core");
+
+      // GET endpoints (use cached core)
+      if (req.method === "GET") {
+        const core = await getHttpCore();
+
+        if (url === "/api/projects") {
+          json(res, core.getAllProjects());
+        } else if (url.startsWith("/api/projects/")) {
+          const name = decodeURIComponent(url.slice("/api/projects/".length));
+          json(res, core.getProjectSummary(name) ?? { error: "Not found" });
+        } else if (url === "/api/stats") {
+          json(res, core.getStats());
+        } else if (url === "/api/models") {
+          json(res, core.getModelCosts());
+        } else if (url === "/api/daily") {
+          json(res, core.getDailyBreakdown());
+        } else if (url === "/api/providers") {
+          json(res, core.getProviderBreakdown());
+        } else if (url === "/api/backups") {
+          const service = new CleanupService(core);
+          json(res, service.listBackups());
+        } else if (url === "/api/themes") {
+          const { listThemes } = await import("@sriinnu/tokmeter-core");
+          json(res, listThemes());
+        } else {
+          res.writeHead(404);
+          json(res, { error: "Not found", endpoints: ["/api/projects", "/api/stats", "/api/models", "/api/daily", "/api/providers", "/api/backups", "/api/themes", "/api/cleanup/preview", "/api/cleanup/execute", "/api/restore"] });
+        }
+        return;
+      }
+
+      // POST endpoints (fresh core for mutations)
+      if (req.method === "POST") {
+        const body = await readBody(req);
+
+        if (url === "/api/cleanup/preview") {
+          const core = await getHttpCore();
+          const service = new CleanupService(core);
+          const { project, providers, since, until, today, week, month } = body;
+          const preview = await service.preview({ project, providers, since, until, today, week, month });
+          json(res, preview);
+        } else if (url === "/api/cleanup/execute") {
+          if (body.confirm !== "DELETE") {
+            res.writeHead(403);
+            json(res, { error: "confirm must be 'DELETE'" });
+            return;
+          }
+          const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+          const core = new TokmeterCore();
+          const service = new CleanupService(core);
+          const { project, providers, since, until, today, week, month, backup } = body;
+          const result = await service.execute(
+            { project, providers, since, until, today, week, month },
+            { backup: backup ?? true },
+          );
+          _httpCore = null; // Invalidate cache after mutation
+          json(res, result);
+        } else if (url === "/api/restore") {
+          if (body.confirm !== "RESTORE") {
+            res.writeHead(403);
+            json(res, { error: "confirm must be 'RESTORE'" });
+            return;
+          }
+          const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+          const core = new TokmeterCore({ skipPricing: true });
+          const service = new CleanupService(core);
+          const result = service.restore(body.backup_id);
+          _httpCore = null; // Invalidate cache after mutation
+          json(res, result);
+        } else {
+          res.writeHead(404);
+          json(res, { error: "Not found" });
+        }
+        return;
+      }
+
+      res.writeHead(405);
+      json(res, { error: "Method not allowed" });
+    } catch (err) {
+      res.writeHead(500);
+      json(res, { error: "Internal server error" });
+    }
+  });
+
+  httpServer.listen(HTTP_PORT, DAEMON_HOST, () => {
+    console.log(`【♾️】 HTTP API listening on http://${DAEMON_HOST}:${HTTP_PORT}`);
+  });
+}
+
+function json(res: ServerResponse, data: unknown): void {
+  res.end(JSON.stringify(data));
+}
+
+async function readBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+    req.on("data", (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
+      } catch {
+        resolve({});
+      }
+    });
+    req.on("error", () => resolve({}));
+  });
 }
 
 // ─── CLI Entry Point ────────────────────────────────────────────────────
