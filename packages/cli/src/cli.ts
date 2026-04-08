@@ -39,10 +39,17 @@ interface CliArgs extends ScanOptions {
     | "uninstall-statusline"
     | "uninstall-mcp"
     | "editors"
-    | "digest";
+    | "digest"
+    | "cleanup"
+    | "restore";
   pricingModel?: string;
   daemonCmd?: string;
   digestPeriod?: "today" | "week" | "month";
+  dryRun?: boolean;
+  backup?: boolean;
+  force?: boolean;
+  restoreId?: string;
+  restoreLatest?: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -143,6 +150,21 @@ function parseArgs(argv: string[]): CliArgs {
       case "--synthetic":
         args.providers = [...(args.providers || []), "synthetic" as ProviderId];
         break;
+      case "--dry-run":
+        args.dryRun = true;
+        break;
+      case "--backup":
+        args.backup = true;
+        break;
+      case "--force":
+        args.force = true;
+        break;
+      case "--latest":
+        args.restoreLatest = true;
+        break;
+      case "--id":
+        args.restoreId = rest[++i];
+        break;
       case "--help":
       case "-h":
         console.log(`tokmeter — Token usage tracking for AI coding agents
@@ -164,6 +186,15 @@ Live & Daemon:
   daemon start    Start cross-provider aggregation daemon
   daemon stop     Stop the daemon
   daemon status   Check daemon status
+
+Cleanup:
+  cleanup         Delete session data by project/date/provider
+  restore         Restore from a cleanup backup
+  --dry-run       Preview what would be deleted (no deletion)
+  --backup        Create tar.gz backup before deleting
+  --force         Skip confirmation prompt
+  --id ID         Restore specific backup by ID
+  --latest        Restore most recent backup
 
 Installer:
   install-statusline   Install statusline hook for ALL editors
@@ -234,6 +265,8 @@ Output:
       case "uninstall-mcp":
       case "editors":
       case "digest":
+      case "cleanup":
+      case "restore":
         args.command = arg;
         break;
       case "weekly":
@@ -452,6 +485,38 @@ async function main() {
       console.log(`Pricing for: ${modelId}`);
       console.log(table.toString());
     }
+    return;
+  }
+
+  // Cleanup command — delegates to separate module
+  if (args.command === "cleanup") {
+    const { runCleanup } = await import("./cleanup.js");
+    await runCleanup({
+      project: args.project,
+      providers: args.providers,
+      since: args.since,
+      until: args.until,
+      today: args.today,
+      week: args.week,
+      month: args.month,
+      dryRun: args.dryRun,
+      backup: args.backup,
+      force: args.force,
+      json: args.json,
+      light: args.light,
+      scanOptions: args,
+    });
+    return;
+  }
+
+  // Restore command
+  if (args.command === "restore") {
+    const { runRestore } = await import("./restore.js");
+    await runRestore({
+      id: args.restoreId,
+      latest: args.restoreLatest,
+      json: args.json,
+    });
     return;
   }
 

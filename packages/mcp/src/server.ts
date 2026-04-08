@@ -2809,6 +2809,226 @@ export function createServer(): McpServer {
     }
   );
 
+  // ─── Cleanup Tools ──────────────────────────────────────────
+
+  server.tool(
+    "drishti_cleanup_preview",
+    "Preview what session data would be deleted for the given filters. " +
+      "Shows affected files, directories, database rows, total bytes, and per-project/provider breakdown. " +
+      "ALWAYS call this before drishti_cleanup_execute to understand the impact.",
+    {
+      project: ProjectFilter,
+      providers: ProvidersArray,
+      since: SinceDate,
+      until: UntilDate,
+      scope: ScopeEnum,
+    },
+    async (params) => {
+      const { CleanupService } = await import("@sriinnu/tokmeter-core");
+      const opts = buildScanOptions(params);
+      const core = await getCore(opts);
+      const service = new CleanupService(core);
+
+      const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
+      if (params.project) filter.project = params.project;
+      if (params.providers?.length) filter.providers = params.providers as import("@sriinnu/tokmeter-core").ProviderId[];
+      if (params.since) filter.since = params.since;
+      if (params.until) filter.until = params.until;
+      if (params.scope === "today") filter.today = true;
+      else if (params.scope === "week") filter.week = true;
+      else if (params.scope === "month") filter.month = true;
+
+      const preview = await service.preview(filter);
+
+      if (preview.recordCount === 0) {
+        return { content: [{ type: "text", text: `${header("CLEANUP PREVIEW")}\n\n  No records match the filter. Nothing to clean up.\n` }] };
+      }
+
+      const lines: string[] = [header("CLEANUP PREVIEW"), ""];
+
+      // Summary
+      lines.push(
+        `  Records: ${fmtNum(preview.recordCount)}`,
+        `  Source Files: ${preview.sourceFileCount}`,
+        `  Targets: ${preview.targets.length}`,
+        `  Disk Space: ${fmtNum(preview.totalBytes)} bytes`,
+        "",
+      );
+
+      // By provider
+      if (preview.byProvider.length > 0) {
+        lines.push("  BY PROVIDER:", separator());
+        const rows = preview.byProvider.map((p) => [
+          p.provider,
+          p.targets.toString(),
+          fmtNum(p.bytes),
+          p.records.toString(),
+        ]);
+        lines.push(formatTable(["Provider", "Targets", "Bytes", "Records"], rows, [false, true, true, true]));
+        lines.push("");
+      }
+
+      // By project
+      if (preview.byProject.length > 0) {
+        lines.push("  BY PROJECT:", separator());
+        const rows = preview.byProject.map((p) => [
+          p.project.slice(0, 30),
+          p.records.toString(),
+          fmtNum(p.tokens),
+          fmtCost(p.cost),
+        ]);
+        lines.push(formatTable(["Project", "Records", "Tokens", "Cost"], rows, [false, true, true, true]));
+        lines.push("");
+      }
+
+      // Partial file warnings
+      if (preview.partialFileWarnings.length > 0) {
+        lines.push("  ⚠️  PARTIAL FILE WARNINGS:", separator());
+        for (const w of preview.partialFileWarnings) {
+          const shortFile = w.file.split("/").slice(-2).join("/");
+          lines.push(`  ${shortFile}: ${w.matchedRecords} matched, ${w.otherRecords} other records (${w.otherDateRange}) will ALSO be deleted`);
+        }
+        lines.push("");
+      }
+
+      lines.push("  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'");
+
+      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+    },
+  );
+
+  server.tool(
+    "drishti_cleanup_execute",
+    "DESTRUCTIVE: Permanently delete session data matching the given filters. " +
+      "Creates a backup by default before deleting. " +
+      "ALWAYS call drishti_cleanup_preview first. " +
+      "Requires confirm='DELETE' as a safety guard.",
+    {
+      project: ProjectFilter,
+      providers: ProvidersArray,
+      since: SinceDate,
+      until: UntilDate,
+      scope: ScopeEnum,
+      backup: z.boolean().default(true).describe("Create tar.gz backup before deleting (default: true)"),
+      confirm: z.string().describe("Must be exactly 'DELETE' to proceed with deletion"),
+    },
+    async (params) => {
+      if (params.confirm !== "DELETE") {
+        return {
+          content: [{
+            type: "text",
+            text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call drishti_cleanup_preview first to review what will be deleted.\n`,
+          }],
+        };
+      }
+
+      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+      // Fresh core for destructive ops — never use stale cache
+      const core = new Core();
+      const service = new CleanupService(core);
+
+      const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
+      if (params.project) filter.project = params.project;
+      if (params.providers?.length) filter.providers = params.providers as import("@sriinnu/tokmeter-core").ProviderId[];
+      if (params.since) filter.since = params.since;
+      if (params.until) filter.until = params.until;
+      if (params.scope === "today") filter.today = true;
+      else if (params.scope === "week") filter.week = true;
+      else if (params.scope === "month") filter.month = true;
+
+      const result = await service.execute(filter, { backup: params.backup });
+
+      // Invalidate cached core so next tool call rescans
+      _cachedCore = null;
+
+      const lines: string[] = [header("CLEANUP RESULT"), ""];
+      lines.push(
+        `  ✅ Deleted: ${result.deletedCount} targets`,
+        `  💾 Freed: ${fmtNum(result.bytesFreed)} bytes`,
+      );
+      if (result.backupPath) {
+        lines.push(`  📦 Backup: ${result.backupPath}`);
+      }
+      if (result.failedCount > 0) {
+        lines.push(`  ❌ Failed: ${result.failedCount}`);
+        for (const e of result.errors.slice(0, 5)) {
+          lines.push(`     ${e.target}: ${e.error}`);
+        }
+      }
+      lines.push("");
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    },
+  );
+
+  server.tool(
+    "drishti_backups",
+    "List available cleanup backups with metadata (date, size, providers, projects).",
+    {},
+    async () => {
+      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+      const core = new Core({ skipPricing: true });
+      const service = new CleanupService(core);
+      const backups = service.listBackups();
+
+      if (backups.length === 0) {
+        return { content: [{ type: "text", text: `${header("BACKUPS")}\n\n  No backups found.\n` }] };
+      }
+
+      const lines: string[] = [header("BACKUPS"), ""];
+      const rows = backups.map((b) => [
+        b.id,
+        fmtDate(new Date(b.createdAt).getTime()),
+        fmtNum(b.sizeBytes),
+        b.providers.join(", "),
+      ]);
+      lines.push(formatTable(["ID", "Created", "Size", "Providers"], rows));
+      lines.push("");
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    },
+  );
+
+  server.tool(
+    "drishti_restore",
+    "Restore session data from a cleanup backup. Requires confirm='RESTORE' as a safety guard.",
+    {
+      backup_id: z.string().describe("Backup ID to restore (from drishti_backups)"),
+      confirm: z.string().describe("Must be exactly 'RESTORE' to proceed"),
+    },
+    async (params) => {
+      if (params.confirm !== "RESTORE") {
+        return {
+          content: [{
+            type: "text",
+            text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'RESTORE' to proceed.\n`,
+          }],
+        };
+      }
+
+      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+      const core = new Core({ skipPricing: true });
+      const service = new CleanupService(core);
+      const result = service.restore(params.backup_id);
+
+      // Invalidate cached core
+      _cachedCore = null;
+
+      const lines: string[] = [header("RESTORE RESULT"), ""];
+      if (result.errors.length > 0) {
+        lines.push("  ❌ Restore failed:");
+        for (const e of result.errors) {
+          lines.push(`     ${e.file}: ${e.error}`);
+        }
+      } else {
+        lines.push(`  ✅ Restored ${result.restoredCount} items.`);
+      }
+      lines.push("");
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    },
+  );
+
   return server;
 }
 

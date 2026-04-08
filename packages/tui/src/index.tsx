@@ -21,14 +21,16 @@ import { DailyView } from "./views/DailyView.js";
 import { ModelsView } from "./views/ModelsView.js";
 import { OverviewView } from "./views/OverviewView.js";
 import { StatsView } from "./views/StatsView.js";
+import { CleanupView } from "./views/CleanupView.js";
 
-type TabId = "overview" | "models" | "daily" | "stats";
+type TabId = "overview" | "models" | "daily" | "stats" | "cleanup";
 
 const TABS: { id: TabId; label: string; key: string }[] = [
   { id: "overview", label: "Overview", key: "1" },
   { id: "models", label: "Models", key: "2" },
   { id: "daily", label: "Daily", key: "3" },
   { id: "stats", label: "Stats", key: "4" },
+  { id: "cleanup", label: "Cleanup", key: "5" },
 ];
 
 function App() {
@@ -125,6 +127,7 @@ function App() {
         {activeTab === "models" && <ModelsView models={models} totalCost={stats.totalCost} />}
         {activeTab === "daily" && <DailyView daily={daily} />}
         {activeTab === "stats" && <StatsView stats={stats} daily={daily} />}
+        {activeTab === "cleanup" && <CleanupView core={core} />}
       </Box>
     </Box>
   );

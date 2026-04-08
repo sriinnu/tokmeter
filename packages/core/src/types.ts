@@ -138,3 +138,147 @@ export interface SessionParser {
   /** Scan local session files and return token records. */
   scan(homeDir: string): Promise<TokenRecord[]>;
 }
+
+// ─── Cleanup Types ──────────────────────────────────────────────────────────
+
+/** The interface every provider cleaner must implement. */
+export interface SessionCleaner {
+  /** Provider this cleaner handles. */
+  readonly providerId: ProviderId;
+  /**
+   * Given source files (from TokenRecord.sourceFile), resolve the full set
+   * of filesystem targets to delete. For Claude Code this expands a .jsonl
+   * to its 7 associated paths. For SQLite providers this returns row counts.
+   */
+  resolveTargets(sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]>;
+  /** Execute deletion of the resolved targets. */
+  executeCleanup(targets: CleanupTarget[]): Promise<CleanupResult>;
+}
+
+/** A single filesystem or database target to delete. */
+export interface CleanupTarget {
+  /** Absolute path to the file/directory, or DB path for SQLite providers. */
+  path: string;
+  /** Kind of target. */
+  type: "file" | "directory" | "sqlite-rows" | "index-entry";
+  /** Size in bytes (0 for sqlite-rows and index-entry). */
+  sizeBytes: number;
+  /** Provider this target belongs to. */
+  provider: ProviderId;
+  /** Human-readable label (e.g. "session transcript", "subagent dir"). */
+  description: string;
+  /** For sqlite-rows: details about the DELETE operation. */
+  sqlDetail?: { table: string; whereClause: string; rowCount: number };
+}
+
+/** Filter criteria for cleanup operations. */
+export interface CleanupFilter {
+  /** Filter by project name/path substring. */
+  project?: string;
+  /** Filter by provider(s). */
+  providers?: ProviderId[];
+  /** Only records from this date onward (inclusive, YYYY-MM-DD or ISO). */
+  since?: string;
+  /** Only records up to this date (inclusive). */
+  until?: string;
+  /** Shortcut: today only. */
+  today?: boolean;
+  /** Shortcut: last 7 days. */
+  week?: boolean;
+  /** Shortcut: current calendar month. */
+  month?: boolean;
+}
+
+/** Warning about a source file that has records both inside and outside the filter. */
+export interface PartialFileWarning {
+  /** The source file path. */
+  file: string;
+  /** Records matching the filter (will be deleted). */
+  matchedRecords: number;
+  /** Records outside the filter (will ALSO be lost). */
+  otherRecords: number;
+  /** Date range of the "other" records that will be collateral damage. */
+  otherDateRange: string;
+}
+
+/** Result of a dry-run preview. */
+export interface CleanupPreview {
+  /** Number of records matching the filter. */
+  recordCount: number;
+  /** Unique source files that will be deleted or modified. */
+  sourceFileCount: number;
+  /** All resolved targets (files, dirs, DB rows). */
+  targets: CleanupTarget[];
+  /** Total bytes that will be freed. */
+  totalBytes: number;
+  /** Breakdown by provider. */
+  byProvider: {
+    provider: ProviderId;
+    targets: number;
+    bytes: number;
+    records: number;
+  }[];
+  /** Breakdown by project. */
+  byProject: {
+    project: string;
+    records: number;
+    cost: number;
+    tokens: number;
+  }[];
+  /** Transparency: files with records outside the filter that will also be lost. */
+  partialFileWarnings: PartialFileWarning[];
+}
+
+/** Result after executing cleanup. */
+export interface CleanupResult {
+  /** Targets successfully deleted. */
+  deletedCount: number;
+  /** Targets that failed. */
+  failedCount: number;
+  /** Errors encountered during deletion. */
+  errors: { target: string; error: string }[];
+  /** Total bytes freed. */
+  bytesFreed: number;
+  /** Path to backup archive, if backup was requested. */
+  backupPath?: string;
+}
+
+/** Options controlling cleanup execution. */
+export interface CleanupOptions {
+  /** Only preview — do not delete. */
+  dryRun?: boolean;
+  /** Create tar.gz backup before deleting (default: true). */
+  backup?: boolean;
+  /** Custom backup directory (default: ~/.cache/tokmeter/backups/). */
+  backupDir?: string;
+  /** Skip confirmation prompts (CLI). */
+  force?: boolean;
+}
+
+/** Metadata stored alongside a backup archive. */
+export interface BackupInfo {
+  /** Unique backup identifier (timestamp-based). */
+  id: string;
+  /** Absolute path to the tar.gz file. */
+  path: string;
+  /** When the backup was created. */
+  createdAt: string;
+  /** Size of the archive in bytes. */
+  sizeBytes: number;
+  /** The filter used to create this backup. */
+  filter: CleanupFilter;
+  /** Number of records that were deleted. */
+  recordCount: number;
+  /** Providers affected. */
+  providers: ProviderId[];
+  /** Projects affected. */
+  projects: string[];
+}
+
+/** Result of a restore operation. */
+export interface RestoreResult {
+  /** Number of files restored. */
+  restoredCount: number;
+  /** Errors encountered during restore. */
+  errors: { file: string; error: string }[];
+}

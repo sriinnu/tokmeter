@@ -10,7 +10,7 @@
 import { execSync } from "node:child_process";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
-import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent } from "./formatter.js";
+import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors } from "./formatter.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -155,6 +155,15 @@ function animCacheRate(cacheRead: number, cacheWrite: number): string {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
+/** Compact context bar for powerline segment: ▓▓▓▓░░░░ */
+function formatContextMini(used: number, max: number): string {
+  if (!(max > 0)) return "";
+  const pct = used / max;
+  const w = 8;
+  const filled = Math.round(pct * w);
+  return "▓".repeat(filled) + "░".repeat(w - filled);
+}
+
 function shortModelName(id: string | undefined): string {
   if (!id) return "?";
   let name = id;
@@ -238,42 +247,18 @@ export async function runStatusline(): Promise<void> {
       return;
     }
 
-    const parts: string[] = [];
-    const sep = ` ${C.chevron("❯")} `;
-
-    // ── Animated Logo with particle effect ──
+    // ── Gather data ──
     const f = frame();
-    const pulse = PARTICLES.pulse[f];
-    const logo = `${C.title("【")}${rainbow("♾️")}${C.title("】")}${C.chevron(pulse)}`;
-    parts.push(logo);
-
-    // ── Project + Git with animated indicators ──
     const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
     const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
     const git = projectDir ? getGitInfo(projectDir) : null;
-
-    if (projectName) {
-      parts.push(`${C.accent(`📂${projectName}`)}`);
-      if (git) {
-        parts.push(`${C.input(`🌿${git.branch}`)}`);
-        if (git.dirty > 0) {
-          const dirtyIcon = f % 2 === 0 ? "✎" : "✏";
-          parts.push(`${C.warn(`${dirtyIcon}${git.dirty}`)}`);
-        }
-      }
-    }
-
-    // ── Model with activity indicator ──
     const modelId = input.model?.id ?? input.model?.display_name;
-    const modelIcon = PARTICLES.dots[f];
-    parts.push(`${C.think(`${modelIcon} ${shortModelName(modelId)}`)}`);
-
-    // ── Animated Cost ──
     const sessionCost = input.cost?.total_cost_usd ?? 0;
-    parts.push(animCost(sessionCost));
-
-    // ── Token Flow with Animation ──
+    const durationMs = input.cost?.total_duration_ms ?? 0;
     const tc = input.token_counts;
+    const ctxUsed = input.context_window?.total_input_tokens ?? 0;
+    const ctxMax = input.context_window?.context_window_size ?? 0;
+
     const tokens: TokenUsage = {
       inputTokens: tc?.input_tokens ?? 0,
       outputTokens: tc?.output_tokens ?? 0,
@@ -281,134 +266,124 @@ export async function runStatusline(): Promise<void> {
       cacheWriteTokens: tc?.cache_write_tokens ?? 0,
     };
 
-    if (tc) {
-      const tokenParts: string[] = [];
-
-      if (tc.input_tokens) {
-        const { arrow, intensity } = animTokenFlow(tc.input_tokens, "in");
-        tokenParts.push(`${C.input(`${arrow}${formatNumber(tc.input_tokens)}${intensity}`)}`);
-      }
-      if (tc.output_tokens) {
-        const { arrow, intensity } = animTokenFlow(tc.output_tokens, "out");
-        tokenParts.push(`${C.output(`${arrow}${formatNumber(tc.output_tokens)}${intensity}`)}`);
-      }
-      const cacheTotal = (tc.cache_read_tokens ?? 0) + (tc.cache_write_tokens ?? 0);
-      if (cacheTotal > 0) {
-        const { arrow, intensity } = animTokenFlow(cacheTotal, "cache");
-        tokenParts.push(`${C.cache(`${arrow}${formatNumber(cacheTotal)}${intensity}`)}`);
-      }
-
-      if (tokenParts.length > 0) parts.push(tokenParts.join(" "));
-
-      // ── Cache Hit Rate ──
-      const cacheRate = animCacheRate(tc.cache_read_tokens ?? 0, tc.cache_write_tokens ?? 0);
-      if (cacheRate) parts.push(cacheRate);
-    }
-
-    // ── Animated Context Bar ──
-    const ctxUsed = input.context_window?.total_input_tokens ?? 0;
-    const ctxMax = input.context_window?.context_window_size ?? 0;
-    if (ctxMax > 0) {
-      parts.push(animContextBar(ctxUsed, ctxMax));
-    }
-
-    // ── Burn Rate (after 1+ min) ──
-    const durationMs = input.cost?.total_duration_ms ?? 0;
-    if (durationMs > 60_000) {
-      const costPerHour = sessionCost / (durationMs / 3_600_000);
-      parts.push(animBurnRate(costPerHour));
-    }
-
-    // ── Daemon: Cross-Provider Aggregation (lazy import — ws may not be available) ──
+    // ── Daemon sync (background, non-blocking) ──
     const sessionId = input.session_id ?? `session-${Date.now()}`;
     let daemonResponse: DaemonResponse = { connected: false };
     try {
       const { syncUpdate } = await import("./daemon/client.js");
       daemonResponse = await syncUpdate(
-        {
-          provider: "claude-code",
-          sessionId,
-          model: modelId ?? "unknown",
-          project: projectName,
-          cwd: projectDir,
-        },
-        sessionCost,
-        tokens,
-        durationMs
+        { provider: "claude-code", sessionId, model: modelId ?? "unknown", project: projectName, cwd: projectDir },
+        sessionCost, tokens, durationMs,
       );
     } catch {}
 
-    // ── Display Aggregated Stats (if daemon connected) ──
+    // ── Build Powerline Segments ──
+    // One clean bar — no duplication. Each segment = one piece of info.
+    const seg = segmentColors();
+    const pl: { text: string; bg: string }[] = [];
+
+    // Nerd Font glyphs — crisp SVG-like icons in patched fonts
+    const ICON = {
+      infinity: "【♾️】",
+      agent:    "\uDB83\uDD70",  // 󰍰 nf-md-robot (agent/AI)
+      git:      "\uF113",        //  nf-fa-git
+      turn:     "\uF148",        //  nf-fa-level_up (turn/cycle)
+      context:  "\uDB80\uDF5B",  // 󰍛 nf-md-memory (context/memory)
+      folder:   "\uDB82\uDCDE",   // 󰳞 nf-md-folder
+      dollar:   "\uF155",        //  nf-fa-dollar
+      flame:    "\uF490",        //  nf-oct-flame
+      up:       "\uF062",        //  nf-fa-arrow_up
+      down:     "\uF063",        //  nf-fa-arrow_down
+      refresh:  "\uF021",        //  nf-fa-refresh (cache)
+      bolt:     "\uF0E7",        //  nf-fa-bolt
+      calendar: "\uF073",        //  nf-fa-calendar
+    };
+
+    // 1. Logo — 【♾️】
+    pl.push({ text: ICON.infinity, bg: seg.project });
+
+    // 2. Project
+    if (projectName) {
+      pl.push({ text: `${ICON.folder} ${projectName}`, bg: seg.project });
+    }
+
+    // 3. Model / Agent — 󰍰 robot icon
+    if (modelId) {
+      pl.push({ text: `${ICON.agent} ${shortModelName(modelId)}`, bg: seg.model });
+    }
+
+    // 4. Context — 󰍛 memory icon + bar + "% left"
+    if (ctxMax > 0) {
+      const pctLeft = Math.max(0, 100 - (ctxUsed / ctxMax) * 100);
+      const ctxBar = formatContextMini(ctxUsed, ctxMax);
+      pl.push({ text: `${ICON.context} Context ${ctxBar} ${pctLeft.toFixed(1)}% left`, bg: seg.context });
+    }
+
+    // 5. Git —  git icon (like Codex)
+    if (git) {
+      const dirty = git.dirty > 0 ? ` ${ICON.turn}${git.dirty}` : "";
+      pl.push({ text: `${ICON.git} ${git.branch}${dirty}`, bg: seg.git });
+    }
+
+    // 6. Cost
+    if (sessionCost > 0) {
+      pl.push({ text: `${ICON.dollar} ${formatCost(sessionCost)}`, bg: seg.cost });
+    }
+
+    // ── Suffix: token flow + extras (plain text after powerline) ──
+    const suffix: string[] = [];
+
+    // Token flow with Nerd Font arrows
+    if (tc) {
+      const tParts: string[] = [];
+      if (tc.input_tokens) tParts.push(C.input(`${ICON.up}${formatNumber(tc.input_tokens)}`));
+      if (tc.output_tokens) tParts.push(C.output(`${ICON.down}${formatNumber(tc.output_tokens)}`));
+      const cacheTotal = (tc.cache_read_tokens ?? 0) + (tc.cache_write_tokens ?? 0);
+      if (cacheTotal > 0) tParts.push(C.cache(`${ICON.refresh}${formatNumber(cacheTotal)}`));
+      if (tParts.length > 0) suffix.push(tParts.join(" "));
+
+      // Cache hit rate
+      const cacheRate = animCacheRate(tc.cache_read_tokens ?? 0, tc.cache_write_tokens ?? 0);
+      if (cacheRate) suffix.push(cacheRate);
+    }
+
+    // Burn rate
+    if (durationMs > 60_000 && sessionCost > 0) {
+      const rate = sessionCost / (durationMs / 3_600_000);
+      suffix.push(C.warn(`${ICON.flame}${formatCost(rate)}/hr`));
+    }
+
+    // Daemon aggregated stats or today's totals
     if (daemonResponse.connected && daemonResponse.aggregated) {
       const agg = daemonResponse.aggregated;
-
-      // Show aggregated totals from all providers
       if (agg.sessions > 1) {
-        const aggIcon = f % 2 === 0 ? "🌐" : "🔗";
-        const allTokens = `${C.input(`↑${formatNumber(agg.totalInputTokens)}`)} ${C.output(`↓${formatNumber(agg.totalOutputTokens)}`)}`;
-        const providers =
-          agg.providers.length > 1 ? `${C.dim("│")}${agg.providers.length} providers` : "";
-        parts.push(
-          `${C.title(`${aggIcon} All:`)}${C.cost(formatCost(agg.totalCost))} ${allTokens} ${providers}`
+        suffix.push(
+          `${C.title("⊕")}${C.cost(formatCost(agg.totalCost))} ${C.input(`${ICON.up}${formatNumber(agg.totalInputTokens)}`)} ${C.output(`${ICON.down}${formatNumber(agg.totalOutputTokens)}`)}`
         );
       }
-
-      // Show per-model breakdown from all sessions
-      if (agg.byModel.length > 1) {
-        const modelSegment = agg.byModel
-          .slice(0, 4)
-          .map((m) => `${C.think(m.model)} ${C.cost(formatCost(m.cost))}`)
-          .join(C.dim(" · "));
-        parts.push(modelSegment);
-      }
     } else {
-      // ── Fallback: Today's Totals from disk scan (lazy import) ──
       try {
         const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
         const core = new TokmeterCore();
         const todayRecords = await core.scan({ today: true });
         if (todayRecords.length > 0) {
-          let todayCost = 0;
-          let todayIn = 0;
-          let todayOut = 0;
-          const byModel = new Map<string, { cost: number; in: number; out: number }>();
-
+          let todayCost = 0, todayIn = 0, todayOut = 0;
           for (const r of todayRecords) {
             todayCost += r.cost;
             todayIn += r.inputTokens;
             todayOut += r.outputTokens;
-
-            const shortModel = r.model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
-            const entry = byModel.get(shortModel) ?? { cost: 0, in: 0, out: 0 };
-            entry.cost += r.cost;
-            entry.in += r.inputTokens;
-            entry.out += r.outputTokens;
-            byModel.set(shortModel, entry);
           }
-
-          // Animated today summary
-          const todayIcon = f % 2 === 0 ? "📊" : "📈";
-          const todayStr = `${C.accent(`${todayIcon} today ${formatCost(todayCost)}`)} ${C.dim("│")} ${C.input(`↑${formatNumber(todayIn)}`)} ${C.output(`↓${formatNumber(todayOut)}`)}`;
-          parts.push(todayStr);
-
-          // Per-model breakdown
-          const activeModels = [...byModel.entries()]
-            .filter(([, m]) => m.in + m.out > 0)
-            .sort((a, b) => b[1].cost - a[1].cost);
-
-          if (activeModels.length > 1) {
-            const modelSegment = activeModels
-              .slice(0, 3)
-              .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
-              .join(C.dim(" · "));
-            parts.push(modelSegment);
-          }
+          suffix.push(
+            `${C.accent(`${ICON.calendar}today`)} ${C.cost(formatCost(todayCost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(todayIn)}`)} ${C.output(`${ICON.down}${formatNumber(todayOut)}`)}`
+          );
         }
       } catch {}
     }
 
-    // ── Output ──
-    process.stdout.write(parts.join(sep));
+    // ── Output: powerline bar + suffix ──
+    const bar = powerline(pl);
+    const trail = suffix.length > 0 ? ` ${suffix.join(` ${C.dim("│")} `)}` : "";
+    process.stdout.write(bar + trail);
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
     try {

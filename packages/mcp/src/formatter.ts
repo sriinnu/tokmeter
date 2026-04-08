@@ -6,6 +6,7 @@
  */
 
 import chalk, { type Chalk } from "chalk";
+import { loadUserTheme, type ThemeColors } from "@sriinnu/tokmeter-core";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
 export const FALLBACK_STATUSLINE = "【♾️】 drishti";
@@ -16,6 +17,21 @@ export const FALLBACK_STATUSLINE = "【♾️】 drishti";
 // process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads.
 // Explicit level assignment fixes this.
 chalk.level = 3 as typeof Chalk.prototype.level;
+
+// ─── Active Theme ──────────────────────────────────────────────────
+// Load once at module init from ~/.config/tokmeter/config.json.
+// Falls back to the default Drishti theme if no config exists.
+const _theme = loadUserTheme();
+
+/** Get the active theme's colors. */
+export function themeColors(): ThemeColors {
+  return _theme.colors;
+}
+
+/** Get the active theme ID. */
+export function activeThemeId(): string {
+  return _theme.id;
+}
 
 // ─── Number Formatting ─────────────────────────────────────────────
 
@@ -97,40 +113,84 @@ export function sparkline(values: number[]): string {
   return finite.map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))]).join("");
 }
 
-// ─── Color Constants ────────────────────────────────────────────────
+// ─── Color Constants (theme-aware) ──────────────────────────────────
 
-/** Chalk color palette used across all drishti output. */
-export const C = {
-  /** Purple — titles and headings. */
-  title: chalk.bold.hex("#a78bfa"),
-  /** Green — accents and highlights. */
-  accent: chalk.hex("#39d353"),
-  /** Gold — cost values. */
-  cost: chalk.bold.hex("#f0b429"),
-  /** Blue — input tokens. */
-  input: chalk.hex("#58a6ff"),
-  /** Pink/Red — output tokens. */
-  output: chalk.hex("#f97583"),
-  /** Gray — cache tokens. */
-  cache: chalk.hex("#8b949e"),
-  /** Light purple — thinking/reasoning tokens. */
-  think: chalk.hex("#d2a8ff"),
-  /** Dim text. */
-  dim: chalk.dim,
-  /** Bold text. */
-  bold: chalk.bold,
-  /** Yellow — warnings. */
-  warn: chalk.hex("#e3b341"),
-  /** Red — danger / errors. */
-  danger: chalk.hex("#f85149"),
-  /** Green — success indicators. */
-  success: chalk.hex("#39d353"),
-  /** Dark gray — muted/background text. */
-  muted: chalk.hex("#484f58"),
-  /** Light gray — column headers. */
-  header: chalk.bold.hex("#c9d1d9"),
-  /** Border gray — separators and rules. */
-  separator: chalk.hex("#30363d"),
-  /** Bright cyan — chevron separators in statusline. */
-  chevron: chalk.hex("#00e5ff"),
-};
+/** Build chalk palette from active theme. */
+function buildPalette(tc: ThemeColors) {
+  return {
+    /** Primary — titles and headings. */
+    title: chalk.bold.hex(tc.primary),
+    /** Green — accents and highlights. */
+    accent: chalk.hex(tc.success),
+    /** Gold — cost values. */
+    cost: chalk.bold.hex(tc.cost),
+    /** Blue — input tokens. */
+    input: chalk.hex(tc.input),
+    /** Pink/Red — output tokens. */
+    output: chalk.hex(tc.output),
+    /** Gray — cache tokens. */
+    cache: chalk.hex(tc.cache),
+    /** Light purple — thinking/reasoning tokens. */
+    think: chalk.hex(tc.thinking),
+    /** Dim text. */
+    dim: chalk.dim,
+    /** Bold text. */
+    bold: chalk.bold,
+    /** Yellow — warnings. */
+    warn: chalk.hex(tc.warning),
+    /** Red — danger / errors. */
+    danger: chalk.hex(tc.danger),
+    /** Green — success indicators. */
+    success: chalk.hex(tc.success),
+    /** Dark gray — muted/background text. */
+    muted: chalk.hex(tc.muted),
+    /** Light gray — column headers. */
+    header: chalk.bold.hex(tc.text),
+    /** Border gray — separators and rules. */
+    separator: chalk.hex(tc.muted),
+    /** Bright cyan — chevron separators in statusline. */
+    chevron: chalk.hex(tc.secondary),
+  };
+}
+
+/** Chalk color palette — driven by the active theme. */
+export const C = buildPalette(_theme.colors);
+
+// ─── Powerline Segment Helpers ──────────────────────────────────────
+
+/** Powerline arrow separator character. */
+const PL_RIGHT = "\uE0B0"; //
+
+/** Render a powerline segment: colored bg + white text + arrow separator. */
+export function plSegment(text: string, bgHex: string, nextBgHex?: string): string {
+  const fg = chalk.hex("#ffffff");
+  const bg = chalk.bgHex(bgHex);
+  const segment = bg(fg(` ${text} `));
+  // Arrow: foreground = current bg color, background = next segment's bg (or reset)
+  const arrow = nextBgHex
+    ? chalk.bgHex(nextBgHex).hex(bgHex)(PL_RIGHT)
+    : chalk.hex(bgHex)(PL_RIGHT);
+  return segment + arrow;
+}
+
+/** Build a powerline bar from an array of { text, bg } segments. */
+export function powerline(segments: { text: string; bg: string }[]): string {
+  return segments
+    .map((seg, i) => {
+      const nextBg = segments[i + 1]?.bg;
+      return plSegment(seg.text, seg.bg, nextBg);
+    })
+    .join("");
+}
+
+/** Get the segment background colors from the active theme. */
+export function segmentColors() {
+  const tc = _theme.colors;
+  return {
+    project: tc.segProject,
+    model: tc.segModel,
+    context: tc.segContext,
+    git: tc.segGit,
+    cost: tc.segCost,
+  };
+}
