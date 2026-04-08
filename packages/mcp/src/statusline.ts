@@ -10,7 +10,7 @@
 import { execSync } from "node:child_process";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
-import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors } from "./formatter.js";
+import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors, useNerdFont } from "./formatter.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -282,41 +282,65 @@ export async function runStatusline(): Promise<void> {
     const seg = segmentColors();
     const pl: { text: string; bg: string }[] = [];
 
-    // Nerd Font glyphs — crisp SVG-like icons in patched fonts
-    const ICON = {
+    // Icon sets — Nerd Font (opt-in) or animated Unicode (default, works everywhere)
+    // Each icon is an 8-frame animation array. frame() cycles 0-7 at ~200ms, so
+    // each statusline invocation picks a different frame — creating the shimmer.
+    const nf = useNerdFont();
+    const af = frame(); // animation frame for icon cycling
+
+    const ICON = nf ? {
       infinity: "【♾️】",
-      agent:    "\uDB83\uDD70",  // 󰍰 nf-md-robot (agent/AI)
+      agent:    "\uDB83\uDD70",  // 󰍰 nf-md-robot
       git:      "\uF113",        //  nf-fa-git
-      turn:     "\uF148",        //  nf-fa-level_up (turn/cycle)
-      context:  "\uDB80\uDF5B",  // 󰍛 nf-md-memory (context/memory)
-      folder:   "\uDB82\uDCDE",   // 󰳞 nf-md-folder
+      turn:     "\uF148",        //  nf-fa-level_up
+      context:  "\uDB80\uDF5B",  // 󰍛 nf-md-memory
+      folder:   "\uDB82\uDCDE",  // 󰳞 nf-md-folder
       dollar:   "\uF155",        //  nf-fa-dollar
       flame:    "\uF490",        //  nf-oct-flame
       up:       "\uF062",        //  nf-fa-arrow_up
       down:     "\uF063",        //  nf-fa-arrow_down
-      refresh:  "\uF021",        //  nf-fa-refresh (cache)
+      refresh:  "\uF021",        //  nf-fa-refresh
       bolt:     "\uF0E7",        //  nf-fa-bolt
       calendar: "\uF073",        //  nf-fa-calendar
+    } : {
+      // Animated Unicode — works on every modern terminal, no patched font needed.
+      // Clean, readable icons. Animate where it adds life, stay still where it's noise.
+      infinity: ["⟐", "⟐", "✦", "⟐", "⟐", "⟐", "✧", "⟐"][af],
+      agent:    PARTICLES.pulse[af],       // ○ ◐ ◑ ● — pulsing activity dot
+      git:      "⎇",                       // standard branch glyph
+      turn:     ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
+      context:  "",                         // the bar IS the icon — no glyph needed
+      folder:   "",                         // segment bg color already shows "project"
+      dollar:   "$",                        // clean, universal
+      flame:    ["🔥", "✦", "🔥", "✧", "🔥", "✦", "🔥", "✧"][af],
+      up:       ["↑", "⬆", "↑", "↗", "↑", "⬆", "↑", "↗"][af],
+      down:     ["↓", "⬇", "↓", "↘", "↓", "⬇", "↓", "↘"][af],
+      refresh:  ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
+      bolt:     ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
+      calendar: ["◉", "◎", "◉", "●", "◉", "◎", "◉", "●"][af],
     };
 
-    // 1. Logo — 【♾️】
+    // Helper: prefix icon only if non-empty
+    const ic = (icon: string, text: string) => icon ? `${icon} ${text}` : text;
+
+    // 1. Logo
     pl.push({ text: ICON.infinity, bg: seg.project });
 
     // 2. Project
     if (projectName) {
-      pl.push({ text: `${ICON.folder} ${projectName}`, bg: seg.project });
+      pl.push({ text: ic(ICON.folder, projectName), bg: seg.project });
     }
 
-    // 3. Model / Agent — 󰍰 robot icon
+    // 3. Model / Agent — pulsing activity indicator
     if (modelId) {
       pl.push({ text: `${ICON.agent} ${shortModelName(modelId)}`, bg: seg.model });
     }
 
-    // 4. Context — 󰍛 memory icon + bar + "% left"
+    // 4. Context — bar speaks for itself, no redundant icon needed
     if (ctxMax > 0) {
       const pctLeft = Math.max(0, 100 - (ctxUsed / ctxMax) * 100);
       const ctxBar = formatContextMini(ctxUsed, ctxMax);
-      pl.push({ text: `${ICON.context} Context ${ctxBar} ${pctLeft.toFixed(1)}% left`, bg: seg.context });
+      pl.push({ text: ic(ICON.context, `${ctxBar} ${pctLeft.toFixed(1)}% left`), bg: seg.context });
     }
 
     // 5. Git —  git icon (like Codex)

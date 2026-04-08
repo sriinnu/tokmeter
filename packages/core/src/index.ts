@@ -38,6 +38,7 @@ export {
   listThemeIds,
   listThemes,
   loadUserTheme,
+  isNerdFontEnabled,
   getConfigPath,
 } from "./themes.js";
 export type { Theme, ThemeColors } from "./themes.js";

@@ -6,7 +6,7 @@
  */
 
 import chalk, { type Chalk } from "chalk";
-import { loadUserTheme, type ThemeColors } from "@sriinnu/tokmeter-core";
+import { loadUserTheme, isNerdFontEnabled, type ThemeColors } from "@sriinnu/tokmeter-core";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
 export const FALLBACK_STATUSLINE = "【♾️】 drishti";
@@ -22,6 +22,7 @@ chalk.level = 3 as typeof Chalk.prototype.level;
 // Load once at module init from ~/.config/tokmeter/config.json.
 // Falls back to the default Drishti theme if no config exists.
 const _theme = loadUserTheme();
+const _nerdFont = isNerdFontEnabled();
 
 /** Get the active theme's colors. */
 export function themeColors(): ThemeColors {
@@ -158,19 +159,45 @@ export const C = buildPalette(_theme.colors);
 
 // ─── Powerline Segment Helpers ──────────────────────────────────────
 
-/** Powerline arrow separator character. */
-const PL_RIGHT = "\uE0B0"; //
+/** Whether Nerd Font glyphs are available (config or env). */
+export function useNerdFont(): boolean {
+  return _nerdFont;
+}
 
-/** Render a powerline segment: colored bg + white text + arrow separator. */
+/** Powerline arrow separator — Nerd Font  or gradient fade ░▒. */
+const PL_ARROW = "\uE0B0"; //  (Nerd Font only)
+
+/** Relative luminance of a hex color (0 = black, 1 = white). */
+function luminance(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Render a powerline segment with transition to next segment. */
 export function plSegment(text: string, bgHex: string, nextBgHex?: string): string {
-  const fg = chalk.hex("#ffffff");
+  // Adaptive text color — white on dark, black on bright
+  const fgColor = luminance(bgHex) > 0.45 ? "#1a1a2e" : "#ffffff";
+  const fg = chalk.hex(fgColor);
   const bg = chalk.bgHex(bgHex);
   const segment = bg(fg(` ${text} `));
-  // Arrow: foreground = current bg color, background = next segment's bg (or reset)
-  const arrow = nextBgHex
-    ? chalk.bgHex(nextBgHex).hex(bgHex)(PL_RIGHT)
-    : chalk.hex(bgHex)(PL_RIGHT);
-  return segment + arrow;
+
+  if (_nerdFont) {
+    // Classic powerline: sharp arrow separator
+    const arrow = nextBgHex
+      ? chalk.bgHex(nextBgHex).hex(bgHex)(PL_ARROW)
+      : chalk.hex(bgHex)(PL_ARROW);
+    return segment + arrow;
+  }
+
+  // Unicode mode: ❯ chevron separator — current color "flows into" next
+  if (nextBgHex) {
+    const chevron = chalk.bgHex(nextBgHex).hex(bgHex)("❯");
+    return segment + chevron;
+  }
+  // Last segment: chevron fades to terminal background
+  return segment + chalk.hex(bgHex)("❯");
 }
 
 /** Build a powerline bar from an array of { text, bg } segments. */

@@ -252,7 +252,19 @@ export class CleanupService {
     }
 
     try {
-      // --no-absolute-names prevents path traversal in archive contents
+      // Validate archive contents — reject if any entry contains ".." (path traversal)
+      const listing = execFileSync("tar", ["tzf", archivePath], {
+        timeout: 30_000,
+      }).toString();
+      const hasTraversal = listing.split("\n").some((entry) => entry.includes(".."));
+      if (hasTraversal) {
+        return {
+          restoredCount: 0,
+          errors: [{ file: archivePath, error: "Archive contains path traversal entries — refusing to extract" }],
+        };
+      }
+
+      // --no-absolute-names strips leading / from archive entries
       execFileSync("tar", ["xzf", archivePath, "--no-absolute-names", "-C", "/"], {
         timeout: 60_000,
       });
@@ -443,13 +455,16 @@ export class CleanupService {
 
     if (filePaths.length > 0) {
       try {
-        execFileSync("tar", ["czf", archivePath, ...filePaths], {
+        execFileSync("tar", ["czf", archivePath, "--no-absolute-names", ...filePaths], {
           timeout: 120_000,
         });
       } catch {
-        // If tar fails, continue without backup
+        // If tar fails, abort — don't delete without a backup
         return "";
       }
+    } else {
+      // No archivable files (all targets are sqlite-rows / index-entry) — skip backup
+      return "";
     }
 
     // Write metadata sidecar

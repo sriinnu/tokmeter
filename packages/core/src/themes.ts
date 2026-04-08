@@ -93,11 +93,13 @@ const defaultTheme: Theme = {
     output: "#f97583",
     cache: "#8b949e",
     thinking: "#d2a8ff",
-    segProject: "#7c3aed",
-    segModel: "#1f6feb",
-    segContext: "#238636",
-    segGit: "#da3633",
-    segCost: "#9e6a03",
+    // Twilight flow: cool indigo → blue → teal → muted slate → warm amber
+    // Reads like a gradient, not a rainbow. Cost is the warm "hero" accent.
+    segProject: "#4338ca",  // deep indigo — identity, grounding
+    segModel: "#2563eb",    // royal blue — intelligence, clarity
+    segContext: "#0f766e",  // deep teal — health, organic
+    segGit: "#475569",      // slate — quiet, supporting detail
+    segCost: "#b45309",     // warm amber — draws the eye to money
   },
 };
 
@@ -274,6 +276,8 @@ export function listThemes(): Pick<Theme, "id" | "name" | "description" | "varia
 /** Tokmeter user config shape (subset — only what we need). */
 interface UserConfig {
   theme?: string;
+  /** Enable Nerd Font glyphs in statusline (requires a patched font). Default: false. */
+  nerdFont?: boolean;
 }
 
 const CONFIG_PATH = join(homedir(), ".config", "tokmeter", "config.json");
@@ -287,6 +291,19 @@ export function loadUserTheme(): Theme {
     return getTheme(config.theme);
   } catch {
     return defaultTheme;
+  }
+}
+
+/** Check if the user opted into Nerd Font glyphs via config or env. */
+export function isNerdFontEnabled(): boolean {
+  if (process.env.NERD_FONT === "1" || process.env.NERD_FONTS === "1") return true;
+  try {
+    if (!existsSync(CONFIG_PATH)) return false;
+    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const config = JSON.parse(raw) as UserConfig;
+    return config.nerdFont === true;
+  } catch {
+    return false;
   }
 }
 
