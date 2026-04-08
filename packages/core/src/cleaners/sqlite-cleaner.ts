@@ -6,6 +6,8 @@
  * Deletes matching rows via DELETE + VACUUM.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CleanupResult, CleanupTarget, ProviderId, SessionCleaner } from "../types.js";
 
 interface SqliteCleanerConfig {
@@ -66,6 +68,34 @@ export class SqliteCleaner implements SessionCleaner {
     }
 
     return targets;
+  }
+
+  /**
+   * Export matching rows to a JSON file before deletion so they can be backed up.
+   * Returns the path to the dump file, or null if export fails or no rows.
+   */
+  async exportRows(target: CleanupTarget, backupDir: string): Promise<string | null> {
+    if (target.type !== "sqlite-rows" || !target.sqlDetail) return null;
+
+    try {
+      const Database = await this.loadSqlite();
+      if (!Database) return null;
+
+      const db = new Database(target.path, { readonly: true });
+      const rows = db.prepare(
+        `SELECT * FROM ${target.sqlDetail.table} WHERE ${target.sqlDetail.whereClause}`,
+      ).all();
+      db.close();
+
+      if (rows.length === 0) return null;
+
+      if (!existsSync(backupDir)) mkdirSync(backupDir, { recursive: true });
+      const dumpFile = join(backupDir, `${this.providerId}-${target.sqlDetail.table}.json`);
+      writeFileSync(dumpFile, JSON.stringify(rows, null, 2), "utf-8");
+      return dumpFile;
+    } catch {
+      return null;
+    }
   }
 
   async executeCleanup(targets: CleanupTarget[]): Promise<CleanupResult> {

@@ -44,6 +44,7 @@ interface EditorConfig {
   name: string;
   settingsPath: string;
   mcpPath?: string;
+  mcpKey?: string; // JSON key for MCP servers (default: "mcpServers", Zed uses "context_servers")
   configPath?: string; // For editors that use a different config file for MCP (e.g., Codex uses config.toml)
   configFormat?: "json" | "toml";
   supportsStatusline: boolean;
@@ -88,6 +89,7 @@ const EDITORS: EditorConfig[] = [
   {
     name: "Zed",
     settingsPath: `${homedir()}/.config/zed/settings.json`,
+    mcpKey: "context_servers", // Zed uses context_servers, not mcpServers
     supportsStatusline: false,
     supportsMCP: true,
   },
@@ -298,15 +300,14 @@ export function installMCP(editors?: string[]): void {
     // Handle JSON-based configs (other editors)
     // Some editors use a separate mcp.json file
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
+    const mcpKey = editor.mcpKey ?? "mcpServers";
 
     // For editors with separate MCP files, read that; otherwise read settings
-    const rawMcp = editor.mcpPath
-      ? readJSON<MCPConfig>(editor.mcpPath)
-      : readJSON<SettingsWithMCP>(editor.settingsPath);
+    const rawMcp = readJSON<Record<string, unknown>>(mcpPath);
     if (wasCorrupt(mcpPath, editor.name)) { skipped++; continue; }
-    const config = rawMcp ?? { mcpServers: {} };
+    const config = rawMcp ?? {};
 
-    const existingServers = config.mcpServers ?? {};
+    const existingServers = (config[mcpKey] ?? {}) as Record<string, unknown>;
 
     // Check if already installed
     if (existingServers[serverName]) {
@@ -314,8 +315,8 @@ export function installMCP(editors?: string[]): void {
       continue;
     }
 
-    // Add the MCP server
-    config.mcpServers = {
+    // Add the MCP server under the correct key for this editor
+    config[mcpKey] = {
       ...existingServers,
       [serverName]: cliCommand("mcp"),
     };
@@ -401,23 +402,26 @@ export function uninstallMCP(editors?: string[]): void {
 
     // Handle JSON-based configs (other editors)
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
-    const config = editor.mcpPath
-      ? readJSON<MCPConfig>(mcpPath)
-      : readJSON<SettingsWithMCP>(mcpPath);
+    const mcpKey = editor.mcpKey ?? "mcpServers";
+    const config = readJSON<Record<string, unknown>>(mcpPath);
 
-    if (!config?.mcpServers?.drishti) {
+    const servers = (config?.[mcpKey] ?? {}) as Record<string, unknown>;
+    if (!servers.drishti) {
       console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
       continue;
     }
 
     // biome-ignore lint/performance/noDelete: required to remove property from object
-    delete config.mcpServers!.drishti;
+    delete servers.drishti;
 
-    if (Object.keys(config.mcpServers!).length === 0) {
-      config.mcpServers = undefined;
+    if (Object.keys(servers).length === 0) {
+      // biome-ignore lint/performance/noDelete: required to remove property from object
+      delete config![mcpKey];
+    } else {
+      config![mcpKey] = servers;
     }
 
-    writeJSON(mcpPath, config);
+    writeJSON(mcpPath, config!);
     console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
   }
 
