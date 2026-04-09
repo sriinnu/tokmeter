@@ -337,6 +337,16 @@ let _httpCore: { core: any; ts: number } | null = null;
 const HTTP_CACHE_TTL = 5_000;
 const MAX_BODY_BYTES = 1_048_576; // 1MB
 
+/**
+ * API version sent on every response as `X-Drishti-API: drishti-api/N`.
+ * Native clients (TokmeterBar.app) check the MAJOR version on every request
+ * and surface a clear "incompatible daemon" error if they disagree.
+ *
+ * Bump this whenever the response shape of any GET endpoint changes in a
+ * non-backward-compatible way (renamed field, removed field, type change).
+ */
+const DRISHTI_API_VERSION = 1;
+
 async function getHttpCore(): Promise<any> {
   const now = Date.now();
   if (_httpCore && now - _httpCore.ts < HTTP_CACHE_TTL) return _httpCore.core;
@@ -354,8 +364,13 @@ function startHttpApi(): void {
     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/.test(origin);
     res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Expose-Headers", "X-Drishti-API");
     res.setHeader("Content-Type", "application/json");
+    res.setHeader("X-Drishti-API", `drishti-api/${DRISHTI_API_VERSION}`);
+    // Hardening headers
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);

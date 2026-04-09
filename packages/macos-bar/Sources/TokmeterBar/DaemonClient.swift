@@ -10,7 +10,7 @@ import Foundation
 
 enum DaemonError: Error, LocalizedError {
     case daemonNotRunning
-    case missingToken
+    case versionMismatch(Int)
     case httpError(Int)
     case decodingError(String)
     case networkError(String)
@@ -19,8 +19,8 @@ enum DaemonError: Error, LocalizedError {
         switch self {
         case .daemonNotRunning:
             return "Drishti daemon is not running. Start it with: drishti daemon start"
-        case .missingToken:
-            return "Auth token missing — restart the daemon"
+        case .versionMismatch(let daemonMajor):
+            return "Daemon API v\(daemonMajor) is incompatible with this app (expected v\(DaemonClient.expectedApiMajor)). Update either the daemon or this app."
         case .httpError(let code):
             return "HTTP \(code) from daemon API"
         case .decodingError(let msg):
@@ -34,8 +34,13 @@ enum DaemonError: Error, LocalizedError {
 final class DaemonClient {
     static let shared = DaemonClient()
 
+    /// API version this client expects from the daemon. If the daemon's
+    /// X-Drishti-API header reports a different MAJOR version, we surface a
+    /// clear "incompatible daemon" error instead of failing with a confusing
+    /// JSON decode crash.
+    static let expectedApiMajor = 1
+
     private let baseURL = URL(string: "http://127.0.0.1:9877")!
-    private let tokenPath = "/tmp/drishti-daemon.token"
     private let pidPath = "/tmp/drishti-daemon.pid"
     private let session: URLSession
 
@@ -43,6 +48,8 @@ final class DaemonClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 5
         config.timeoutIntervalForResource = 10
+        // No persistent caches: every request is fresh telemetry.
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
     }
 
@@ -55,15 +62,6 @@ final class DaemonClient {
         }
         // kill(pid, 0) succeeds if process exists
         return kill(pid, 0) == 0
-    }
-
-    /// Read the current bearer token (refreshes on each call so daemon
-    /// restarts are picked up automatically).
-    private func readToken() -> String? {
-        guard let raw = try? String(contentsOfFile: tokenPath, encoding: .utf8) else {
-            return nil
-        }
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - GET endpoints (read-only, no auth needed)
@@ -89,12 +87,24 @@ final class DaemonClient {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await session.data(for: req)
             guard let http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
             }
+
+            // API version check — header looks like "drishti-api/1" (we only
+            // care about MAJOR for breakage). If absent, daemon is old/unknown
+            // and we proceed (best-effort) since adding the header is recent.
+            if let apiHeader = http.value(forHTTPHeaderField: "X-Drishti-API"),
+               let majorStr = apiHeader.split(separator: "/").last,
+               let major = Int(majorStr),
+               major != Self.expectedApiMajor {
+                throw DaemonError.versionMismatch(major)
+            }
+
             guard (200..<300).contains(http.statusCode) else {
                 throw DaemonError.httpError(http.statusCode)
             }

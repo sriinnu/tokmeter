@@ -67,9 +67,12 @@ cat > "${CONTENTS}/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# 6. Ad-hoc sign so macOS Gatekeeper allows the app to run locally
+# 6. Ad-hoc sign so macOS Gatekeeper allows the app to run locally.
+# --deep is deprecated since Big Sur in favor of signing nested components
+# explicitly, but we have no nested frameworks so a single sign at the .app
+# level is correct.
 echo "==> Signing (ad-hoc)"
-codesign --force --deep --sign - "${APP_DIR}"
+codesign --force --sign - "${APP_DIR}"
 
 echo "==> Built ${APP_DIR}"
 echo "    Size: $(du -sh "${APP_DIR}" | cut -f1)"
