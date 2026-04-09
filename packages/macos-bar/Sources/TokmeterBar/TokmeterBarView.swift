@@ -43,15 +43,13 @@ struct TokmeterBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Hero is flush with the popover edges and "hangs" from the top
+            // like a macOS notch widget — rounded only on the bottom corners.
             heroHeader
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
 
             errorBanner
                 .padding(.horizontal, 16)
-
-            Divider().opacity(0.3)
+                .padding(.top, 12)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -66,9 +64,11 @@ struct TokmeterBarView: View {
                         sessionsSection
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 16)
             }
-            .frame(maxHeight: 460)
+            .frame(maxHeight: 440)
 
             Divider().opacity(0.3)
 
@@ -95,13 +95,28 @@ struct TokmeterBarView: View {
         }
     }
 
-    // MARK: - Hero header
+    // MARK: - Hero header (macOS notch-widget aesthetic)
+
+    /// The notch shape: top edges flush with the popover top, deeply rounded
+    /// bottom corners. Visually "hangs" from the top of the window like
+    /// macOS's Dynamic Island / top-notch widgets.
+    private var notchShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            cornerRadii: .init(
+                topLeading: 0,
+                bottomLeading: 24,
+                bottomTrailing: 24,
+                topTrailing: 0
+            ),
+            style: .continuous
+        )
+    }
 
     private var heroHeader: some View {
         ZStack(alignment: .topLeading) {
             // Breathing twilight gradient — the entire app's color story
-            // distilled into one block. This is the focal point.
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            // distilled into one block. The notch shape is its container.
+            notchShape
                 .fill(
                     LinearGradient(
                         colors: [
@@ -114,11 +129,13 @@ struct TokmeterBarView: View {
                     )
                 )
                 .overlay(
-                    // Subtle inner highlight for depth
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    // Hairline inner stroke at the bottom curve — gives the
+                    // notch a subtle "lit edge" without competing with the gradient
+                    notchShape
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
-                .shadow(color: Palette.twilightViolet.opacity(0.35), radius: 12, x: 0, y: 6)
+                // Soft drop shadow below — sells the "hanging" depth
+                .shadow(color: Palette.twilightViolet.opacity(0.45), radius: 14, x: 0, y: 8)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
@@ -151,7 +168,9 @@ struct TokmeterBarView: View {
                         .foregroundColor(.white.opacity(0.7))
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 22)
         }
     }
 
@@ -413,9 +432,10 @@ struct TokmeterBarView: View {
                 .fill(Palette.twilightViolet)
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.project)
+                Text(projectBasename(session.project))
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .lineLimit(1)
+                    .help(session.project)  // tooltip shows full path on hover
                 Text("\(session.activeDays)d  ·  \(formatNumber(session.totalTokens)) tokens")
                     .font(.system(size: 10, design: .rounded))
                     .foregroundColor(.secondary)
@@ -431,6 +451,16 @@ struct TokmeterBarView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.gray.opacity(0.06))
         )
+    }
+
+    /// Strip the directory path from a project identifier — show just the
+    /// last meaningful segment. Works for both Unix (/) and Windows (\)
+    /// paths and trims trailing separators. Hover over the row to see the
+    /// full path via the .help() tooltip.
+    private func projectBasename(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\ "))
+        let segments = trimmed.split { $0 == "/" || $0 == "\\" }
+        return segments.last.map(String.init) ?? path
     }
 
     // MARK: - Footer
