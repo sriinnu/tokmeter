@@ -1,6 +1,7 @@
 import type { DailyEntry } from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { Heatmap } from "../components/Heatmap.js";
+import { T } from "../theme.js";
 
 interface StatsSummary {
   totalCost: number;
@@ -31,7 +32,7 @@ export function StatsView({ stats, daily }: StatsViewProps) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">
+        <Text bold color={T.accent}>
           ━━ Stats ━━
         </Text>
       </Box>
@@ -40,23 +41,23 @@ export function StatsView({ stats, daily }: StatsViewProps) {
         <Box flexDirection="column" width={30}>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Total Cost</Text>
-              <Text bold color="green">
+              <Text color={T.muted}>Total Cost</Text>
+              <Text bold color={T.success}>
                 ${stats.totalCost.toFixed(2)}
               </Text>
             </Box>
           </Box>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Total Tokens</Text>
-              <Text bold color="yellow">
+              <Text color={T.muted}>Total Tokens</Text>
+              <Text bold color={T.warn}>
                 {formatNum(stats.totalTokens)}
               </Text>
             </Box>
           </Box>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Input / Output</Text>
+              <Text color={T.muted}>Input / Output</Text>
               <Text>
                 {formatNum(stats.inputTokens)} / {formatNum(stats.outputTokens)}
               </Text>
@@ -67,20 +68,20 @@ export function StatsView({ stats, daily }: StatsViewProps) {
         <Box flexDirection="column" width={30}>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Projects</Text>
+              <Text color={T.muted}>Projects</Text>
               <Text bold>{stats.projects}</Text>
             </Box>
           </Box>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Models Used</Text>
+              <Text color={T.muted}>Models Used</Text>
               <Text bold>{stats.models}</Text>
             </Box>
           </Box>
           <Box borderStyle="round" paddingX={1} marginBottom={1}>
             <Box flexDirection="column">
-              <Text color="gray">Longest Streak</Text>
-              <Text bold color="magenta">
+              <Text color={T.muted}>Longest Streak</Text>
+              <Text bold color={T.secondary}>
                 {stats.longestStreak} days
               </Text>
             </Box>
