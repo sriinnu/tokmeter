@@ -423,12 +423,16 @@ export class PricingService {
     cost += outputTokens * perToken(pricing.outputPerMillion);
     if (cacheReadTokens) {
       // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
-      // If the resolver didn't supply an explicit cache rate, fall back to that.
+      // Fall back to that ratio if the resolver didn't supply an explicit rate.
       const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
       cost += cacheReadTokens * perToken(cacheRate);
     }
-    if (pricing.cacheWritePerMillion && cacheWriteTokens) {
-      cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);
+    if (cacheWriteTokens) {
+      // Anthropic charges cache writes at 1.25× input rate (25% premium for the
+      // request that creates the cache). OpenAI doesn't expose cache writes —
+      // its parser doesn't pass them, so this branch only fires for Anthropic.
+      const writeRate = pricing.cacheWritePerMillion ?? pricing.inputPerMillion * 1.25;
+      cost += cacheWriteTokens * perToken(writeRate);
     }
     if (reasoningTokens) {
       // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate

@@ -175,39 +175,51 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-/** Render a powerline segment with transition to next segment. */
-export function plSegment(text: string, bgHex: string, nextBgHex?: string): string {
-  // Adaptive text color — white on dark, black on bright
+/** Render the body of a powerline segment (no caps, no separator). */
+function segmentBody(text: string, bgHex: string): string {
+  // Adaptive text color — white on dark, near-black on bright
   const fgColor = luminance(bgHex) > 0.45 ? "#1a1a2e" : "#ffffff";
   const fg = chalk.hex(fgColor);
   const bg = chalk.bgHex(bgHex);
-  const segment = bg(fg(` ${text} `));
-
-  if (_nerdFont) {
-    // Classic powerline: sharp arrow separator
-    const arrow = nextBgHex
-      ? chalk.bgHex(nextBgHex).hex(bgHex)(PL_ARROW)
-      : chalk.hex(bgHex)(PL_ARROW);
-    return segment + arrow;
-  }
-
-  // Unicode mode: ❯ chevron separator — current color "flows into" next
-  if (nextBgHex) {
-    const chevron = chalk.bgHex(nextBgHex).hex(bgHex)("❯");
-    return segment + chevron;
-  }
-  // Last segment: chevron fades to terminal background
-  return segment + chalk.hex(bgHex)("❯");
+  // Bold ensures glyphs pop on colored backgrounds across all terminal fonts
+  return bg(chalk.bold(fg(` ${text} `)));
 }
 
-/** Build a powerline bar from an array of { text, bg } segments. */
+/**
+ * Build a powerline bar from an array of { text, bg } segments.
+ * Renders with rounded pill caps (◖ ◗) and chevron transitions inside.
+ * If Nerd Font is enabled, uses the patched powerline arrow + half-circles.
+ */
 export function powerline(segments: { text: string; bg: string }[]): string {
-  return segments
-    .map((seg, i) => {
-      const nextBg = segments[i + 1]?.bg;
-      return plSegment(seg.text, seg.bg, nextBg);
-    })
-    .join("");
+  if (segments.length === 0) return "";
+
+  const leftCap = _nerdFont ? "\uE0B6" : "◖";   // rounded left half-circle
+  const rightCap = _nerdFont ? "\uE0B4" : "◗";  // rounded right half-circle
+  const sep = _nerdFont ? "\uE0B0" : "❯";       // sharp arrow or chevron
+
+  const parts: string[] = [];
+
+  // Rounded left cap — first segment's color, no bg
+  parts.push(chalk.hex(segments[0].bg)(leftCap));
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const nextSeg = segments[i + 1];
+    parts.push(segmentBody(seg.text, seg.bg));
+    if (nextSeg) {
+      parts.push(chalk.bgHex(nextSeg.bg).hex(seg.bg)(sep));
+    }
+  }
+
+  // Rounded right cap — last segment's color, no bg
+  parts.push(chalk.hex(segments[segments.length - 1].bg)(rightCap));
+
+  return parts.join("");
+}
+
+/** Legacy single-segment renderer (kept for any external callers). */
+export function plSegment(text: string, bgHex: string, nextBgHex?: string): string {
+  return powerline([{ text, bg: bgHex }, ...(nextBgHex ? [{ text: "", bg: nextBgHex }] : [])]);
 }
 
 /** Get the segment background colors from the active theme. */
