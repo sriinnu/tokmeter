@@ -146,7 +146,9 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
   ["claude-3-sonnet", { inputPerMillion: 3, outputPerMillion: 15 }],
   ["claude-3-haiku", { inputPerMillion: 0.25, outputPerMillion: 1.25 }],
   // ── OpenAI GPT / O-series ────────────────────────────────────────
-  ["gpt-5", { inputPerMillion: 10, outputPerMillion: 40 }],
+  // GPT-5 family resolves through kosha-discovery (OpenRouter mirror).
+  // The 10% cache-read fallback in calculateCost() handles cache pricing
+  // until kosha exposes cacheReadPerMillion natively.
   ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6 }],
   ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10 }],
   ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30 }],
@@ -419,8 +421,11 @@ export class PricingService {
     let cost = 0;
     cost += inputTokens * perToken(pricing.inputPerMillion);
     cost += outputTokens * perToken(pricing.outputPerMillion);
-    if (pricing.cacheReadPerMillion && cacheReadTokens) {
-      cost += cacheReadTokens * perToken(pricing.cacheReadPerMillion);
+    if (cacheReadTokens) {
+      // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
+      // If the resolver didn't supply an explicit cache rate, fall back to that.
+      const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
+      cost += cacheReadTokens * perToken(cacheRate);
     }
     if (pricing.cacheWritePerMillion && cacheWriteTokens) {
       cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);

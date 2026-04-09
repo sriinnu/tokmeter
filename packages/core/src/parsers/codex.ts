@@ -147,9 +147,15 @@ export class CodexParser implements SessionParser {
           continue;
         }
 
-        const inputTokens = usage.input_tokens ?? 0;
+        // OpenAI reports input_tokens as TOTAL (including cached). Subtract the
+        // cached portion so we match Anthropic semantics: inputTokens = uncached,
+        // cacheReadTokens = cached. This prevents the cost calculator from double-
+        // charging cached tokens (once at full rate, once at cache rate).
+        const totalInput = usage.input_tokens ?? 0;
+        const cached = usage.cached_input_tokens ?? 0;
+        const inputTokens = Math.max(0, totalInput - cached);
         const outputTokens = usage.output_tokens ?? 0;
-        if (inputTokens === 0 && outputTokens === 0) continue;
+        if (inputTokens === 0 && outputTokens === 0 && cached === 0) continue;
 
         records.push(
           createRecord({
@@ -160,7 +166,7 @@ export class CodexParser implements SessionParser {
             sourceFile: file,
             inputTokens,
             outputTokens,
-            cacheReadTokens: usage.cached_input_tokens ?? 0,
+            cacheReadTokens: cached,
             reasoningTokens: usage.reasoning_output_tokens ?? 0,
           })
         );
