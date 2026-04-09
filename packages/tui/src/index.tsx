@@ -3,15 +3,17 @@
  * tokmeter-tui — Interactive terminal UI for token usage tracking.
  */
 
-// Process-level error handlers
+// Process-level error handlers — log only. Hard-exiting in the middle of an
+// Ink render leaves the terminal in alt-screen mode with no cursor restored.
+// We let Ink unmount cleanly via the in-app exit() path instead.
 process.on("unhandledRejection", (reason) => {
+  // biome-ignore lint/suspicious/noConsole: error path
   console.error("Unhandled rejection:", reason);
-  process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
+  // biome-ignore lint/suspicious/noConsole: error path
   console.error("Uncaught exception:", error);
-  process.exit(1);
 });
 
 import { TokmeterCore } from "@sriinnu/tokmeter-core";
@@ -76,6 +78,16 @@ function App() {
     }
   });
 
+  // Hooks must run unconditionally — never after early returns.
+  // We compute these even during loading so React's hook order is stable.
+  // The values are only consumed after `loading` flips false.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recompute when scan completes
+  const stats = useMemo(() => (loading ? null : core.getStats()), [loading]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recompute when scan completes
+  const models = useMemo(() => (loading ? [] : core.getModelCosts()), [loading]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recompute when scan completes
+  const daily = useMemo(() => (loading ? [] : core.getDailyBreakdown()), [loading]);
+
   if (loading) {
     return (
       <Box padding={2}>
@@ -95,12 +107,8 @@ function App() {
     );
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
-  const stats = useMemo(() => core.getStats(), []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
-  const models = useMemo(() => core.getModelCosts(), []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: core is stable, only recompute on load
-  const daily = useMemo(() => core.getDailyBreakdown(), []);
+  // After this point, stats/models/daily are guaranteed non-null/non-empty.
+  if (!stats) return null;
 
   return (
     <Box flexDirection="column" height="100%">

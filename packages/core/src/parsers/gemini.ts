@@ -46,6 +46,14 @@ export class GeminiParser implements SessionParser {
         // Prefer per-message timestamp, fall back to session timestamp, then Date.now()
         const ts = msg.timestamp ? new Date(msg.timestamp).getTime() : (sessionTs ?? Date.now());
 
+        // Gemini CLI mirrors Google's API: tokens.input is the TOTAL prompt
+        // (including cached). Subtract the cached portion so inputTokens =
+        // uncached only, matching Anthropic semantics and preventing double-
+        // charge in the cost calculator.
+        const totalInput = msg.tokens.input ?? 0;
+        const cached = msg.tokens.cached ?? 0;
+        const inputTokens = Math.max(0, totalInput - cached);
+
         records.push(
           createRecord({
             timestamp: ts,
@@ -53,9 +61,9 @@ export class GeminiParser implements SessionParser {
             model: msg.model || "gemini-pro",
             project: "gemini",
             sourceFile: file,
-            inputTokens: msg.tokens.input ?? 0,
+            inputTokens,
             outputTokens: msg.tokens.output ?? 0,
-            cacheReadTokens: msg.tokens.cached ?? 0,
+            cacheReadTokens: cached,
             reasoningTokens: msg.tokens.thoughts ?? 0,
           })
         );

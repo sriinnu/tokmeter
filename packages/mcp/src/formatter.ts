@@ -11,12 +11,25 @@ import { loadUserTheme, isNerdFontEnabled, type ThemeColors } from "@sriinnu/tok
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
 export const FALLBACK_STATUSLINE = "【♾️】 drishti";
 
-// Force TrueColor (level 3) regardless of TTY detection.
-// In subprocess contexts (Claude Code statusline hook), stdout is not a TTY
-// and chalk auto-detects level 0 (no color). ESM import hoisting means
-// process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads.
-// Explicit level assignment fixes this.
-chalk.level = 3 as typeof Chalk.prototype.level;
+// Force color output even when stdout is not a TTY (Claude Code statusline runs
+// as a subprocess hook, so chalk's auto-detection picks level 0). ESM import
+// hoisting means process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads,
+// so we set the level explicitly.
+//
+// Respect COLORTERM: if it's "truecolor"/"24bit", use level 3 (16M colors).
+// Otherwise drop to level 2 (256 colors) so terminals without truecolor get
+// reasonable approximations instead of muddy 24bit output mapped at the
+// terminal level. NO_COLOR completely disables color (respects nocolor.org).
+function detectColorLevel(): 0 | 1 | 2 | 3 {
+  if (process.env.NO_COLOR) return 0;
+  const colorterm = process.env.COLORTERM?.toLowerCase() ?? "";
+  if (colorterm === "truecolor" || colorterm === "24bit") return 3;
+  // Most modern terminals (Terminal.app, iTerm2, kitty, alacritty, Warp) set
+  // COLORTERM=truecolor. Anything else, fall back to 256-color which is
+  // universally supported.
+  return 2;
+}
+chalk.level = detectColorLevel() as typeof Chalk.prototype.level;
 
 // ─── Active Theme ──────────────────────────────────────────────────
 // Load once at module init from ~/.config/tokmeter/config.json.
@@ -164,8 +177,8 @@ export function useNerdFont(): boolean {
   return _nerdFont;
 }
 
-/** Powerline arrow separator — Nerd Font  or gradient fade ░▒. */
-const PL_ARROW = "\uE0B0"; //  (Nerd Font only)
+/** Powerline arrow separator — Nerd Font  (only used in nerdFont mode). */
+const PL_ARROW = "\uE0B0"; //
 
 /** Relative luminance of a hex color (0 = black, 1 = white). */
 function luminance(hex: string): number {
@@ -175,51 +188,63 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/**
+ * Pick a foreground that contrasts cleanly with the given background.
+ * WCAG-style: pivot at luminance 0.5 (more accurate than 0.45 which never
+ * fired for any twilight palette color since they're all < 0.25).
+ */
+function fgFor(bgHex: string): string {
+  return luminance(bgHex) > 0.5 ? "#1a1a2e" : "#ffffff";
+}
+
 /** Render the body of a powerline segment (no caps, no separator). */
 function segmentBody(text: string, bgHex: string): string {
-  // Adaptive text color — white on dark, near-black on bright
-  const fgColor = luminance(bgHex) > 0.45 ? "#1a1a2e" : "#ffffff";
-  const fg = chalk.hex(fgColor);
+  const fg = chalk.hex(fgFor(bgHex));
   const bg = chalk.bgHex(bgHex);
-  // Bold ensures glyphs pop on colored backgrounds across all terminal fonts
+  // Bold ensures glyphs pop on colored backgrounds across all terminal fonts.
   return bg(chalk.bold(fg(` ${text} `)));
 }
 
 /**
  * Build a powerline bar from an array of { text, bg } segments.
- * Renders with rounded pill caps (◖ ◗) and chevron transitions inside.
- * If Nerd Font is enabled, uses the patched powerline arrow + half-circles.
+ *
+ * Two render modes:
+ *   - Nerd Font: classic powerline arrows  between segments, half-circle
+ *     caps   on the ends.
+ *   - Unicode (default): rounded pill caps ◖ ◗ on the ends, NO chevron
+ *     between segments. The color transition between adjacent segments
+ *     is enough visual separation — adding a chevron inside a pill creates
+ *     a contradiction (pill with teeth). Adjacent colored cells, no
+ *     glyphs between them.
  */
 export function powerline(segments: { text: string; bg: string }[]): string {
   if (segments.length === 0) return "";
 
-  const leftCap = _nerdFont ? "\uE0B6" : "◖";   // rounded left half-circle
-  const rightCap = _nerdFont ? "\uE0B4" : "◗";  // rounded right half-circle
-  const sep = _nerdFont ? "\uE0B0" : "❯";       // sharp arrow or chevron
-
   const parts: string[] = [];
 
-  // Rounded left cap — first segment's color, no bg
-  parts.push(chalk.hex(segments[0].bg)(leftCap));
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    const nextSeg = segments[i + 1];
-    parts.push(segmentBody(seg.text, seg.bg));
-    if (nextSeg) {
-      parts.push(chalk.bgHex(nextSeg.bg).hex(seg.bg)(sep));
+  if (_nerdFont) {
+    // Classic powerline mode
+    parts.push(chalk.hex(segments[0].bg)("\uE0B6")); // rounded left
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const nextSeg = segments[i + 1];
+      parts.push(segmentBody(seg.text, seg.bg));
+      if (nextSeg) {
+        parts.push(chalk.bgHex(nextSeg.bg).hex(seg.bg)(PL_ARROW));
+      }
     }
+    parts.push(chalk.hex(segments[segments.length - 1].bg)("\uE0B4")); // rounded right
+    return parts.join("");
   }
 
-  // Rounded right cap — last segment's color, no bg
-  parts.push(chalk.hex(segments[segments.length - 1].bg)(rightCap));
+  // Unicode pill mode — clean color flow, no separator glyphs inside.
+  parts.push(chalk.hex(segments[0].bg)("◖"));
+  for (const seg of segments) {
+    parts.push(segmentBody(seg.text, seg.bg));
+  }
+  parts.push(chalk.hex(segments[segments.length - 1].bg)("◗"));
 
   return parts.join("");
-}
-
-/** Legacy single-segment renderer (kept for any external callers). */
-export function plSegment(text: string, bgHex: string, nextBgHex?: string): string {
-  return powerline([{ text, bg: bgHex }, ...(nextBgHex ? [{ text: "", bg: nextBgHex }] : [])]);
 }
 
 /** Get the segment background colors from the active theme. */

@@ -200,26 +200,48 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     },
   ],
   // ── Google Gemini ─────────────────────────────────────────────────
-  ["gemini-2.5-pro", { inputPerMillion: 1.25, outputPerMillion: 10 }],
+  // Gemini caches at ~25% of input rate (NOT 10% like OpenAI/Anthropic).
+  // Explicit cacheReadPerMillion entries prevent the universal 10% fallback
+  // from undercharging Gemini sessions.
+  [
+    "gemini-2.5-pro",
+    {
+      inputPerMillion: 1.25,
+      outputPerMillion: 10,
+      cacheReadPerMillion: 0.31, // 25% of input
+    },
+  ],
   [
     "gemini-2.5-flash",
     {
       inputPerMillion: 0.15,
       outputPerMillion: 0.6,
+      cacheReadPerMillion: 0.0375, // 25% of input
       reasoningInputPerMillion: 3.5,
       reasoningOutputPerMillion: 3.5,
     },
   ],
-  ["gemini-2.0-flash", { inputPerMillion: 0.1, outputPerMillion: 0.4 }],
-  ["gemini-1.5-pro", { inputPerMillion: 1.25, outputPerMillion: 5 }],
-  ["gemini-1.5-flash", { inputPerMillion: 0.075, outputPerMillion: 0.3 }],
+  [
+    "gemini-2.0-flash",
+    { inputPerMillion: 0.1, outputPerMillion: 0.4, cacheReadPerMillion: 0.025 },
+  ],
+  [
+    "gemini-1.5-pro",
+    { inputPerMillion: 1.25, outputPerMillion: 5, cacheReadPerMillion: 0.3125 },
+  ],
+  [
+    "gemini-1.5-flash",
+    { inputPerMillion: 0.075, outputPerMillion: 0.3, cacheReadPerMillion: 0.01875 },
+  ],
   ["gemini-pro", { inputPerMillion: 0.125, outputPerMillion: 0.375 }],
   // ── DeepSeek ──────────────────────────────────────────────────────
+  // DeepSeek caches at ~26% of input rate ($0.07/M cached vs $0.27/M input).
   [
     "deepseek-reasoner",
     {
       inputPerMillion: 0.55,
       outputPerMillion: 2.19,
+      cacheReadPerMillion: 0.14,
       reasoningInputPerMillion: 0.55,
       reasoningOutputPerMillion: 2.19,
     },
@@ -229,13 +251,14 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 0.55,
       outputPerMillion: 2.19,
+      cacheReadPerMillion: 0.14,
       reasoningInputPerMillion: 0.55,
       reasoningOutputPerMillion: 2.19,
     },
   ],
-  ["deepseek-v3", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
-  ["deepseek-chat", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
-  ["deepseek-coder", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
+  ["deepseek-v3", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
+  ["deepseek-chat", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
+  ["deepseek-coder", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
   // ── xAI Grok ─────────────────────────────────────────────────────
   ["grok-4", { inputPerMillion: 3, outputPerMillion: 15 }],
   [
@@ -424,15 +447,17 @@ export class PricingService {
     if (cacheReadTokens) {
       // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
       // Fall back to that ratio if the resolver didn't supply an explicit rate.
+      // Gemini and DeepSeek have explicit ~25% rates in the static table — they
+      // don't fall back here so they aren't undercharged.
       const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
       cost += cacheReadTokens * perToken(cacheRate);
     }
-    if (cacheWriteTokens) {
-      // Anthropic charges cache writes at 1.25× input rate (25% premium for the
-      // request that creates the cache). OpenAI doesn't expose cache writes —
-      // its parser doesn't pass them, so this branch only fires for Anthropic.
-      const writeRate = pricing.cacheWritePerMillion ?? pricing.inputPerMillion * 1.25;
-      cost += cacheWriteTokens * perToken(writeRate);
+    if (cacheWriteTokens && pricing.cacheWritePerMillion) {
+      // Cache writes only fire when an explicit rate exists. Anthropic has them
+      // (1.25× input). OpenAI/Gemini don't charge for cache writes — caching is
+      // free or implicit, only reads are discounted. We don't synthesize a
+      // fallback because the wrong default would silently overcharge.
+      cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);
     }
     if (reasoningTokens) {
       // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate

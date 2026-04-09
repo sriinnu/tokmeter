@@ -48,6 +48,18 @@ let cacheCreatedAt: string | null = null;
 const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
 const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 
+/**
+ * Cache schema version. Bump this whenever a parser changes how it derives
+ * tokens or cost from the source files — old cached records will become
+ * invalid and we want to force a fresh scan instead of serving stale data.
+ *
+ * Version history:
+ *  1 — initial
+ *  2 — codex/qwen/gemini parsers now subtract cached_input from input_tokens
+ *      to match Anthropic semantics (was double-counting cached tokens)
+ */
+const CACHE_VERSION = 2;
+
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
   recordCache = new Map();
@@ -55,6 +67,12 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
   try {
     if (existsSync(CACHE_FILE)) {
       const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
+      // Reject old cache versions — fall through to empty map so all files
+      // get re-parsed with the current parser semantics.
+      if (data.version !== CACHE_VERSION) {
+        cacheCreatedAt = new Date().toISOString();
+        return recordCache;
+      }
       cacheCreatedAt = data.createdAt;
       for (const [k, v] of Object.entries(data.files)) {
         recordCache.set(k, v);
@@ -69,7 +87,7 @@ function saveRecordCache(): void {
   try {
     if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
     const data: CacheFile = {
-      version: 1,
+      version: CACHE_VERSION,
       createdAt: cacheCreatedAt || new Date().toISOString(),
       lastScanAt: new Date().toISOString(),
       stats: {

@@ -37,8 +37,8 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
         {models.map((m, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
-            <Text color={T.muted}>{m.model.padEnd(28)}</Text>
-            <Text color={T.input}>{m.provider.padEnd(12)}</Text>
+            <Text color={T.text}>{m.model.padEnd(28)}</Text>
+            <Text color={T.secondary}>{m.provider.padEnd(12)}</Text>
             <Text>In: {formatNum(m.inputTokens).padStart(8)}</Text>
             <Text> Out: {formatNum(m.outputTokens).padStart(8)}</Text>
             <Text color={T.success}> ${m.cost.toFixed(2).padStart(8)}</Text>

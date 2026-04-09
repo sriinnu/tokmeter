@@ -17,8 +17,10 @@ struct TokmeterBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            errorBanner
             Divider()
             statsGrid
+                .opacity(loader.lastError != nil && loader.hasFreshData ? 0.5 : 1.0)
 
             if !loader.topModels.isEmpty {
                 Divider()
@@ -55,16 +57,21 @@ struct TokmeterBarView: View {
             Text("【♾️】 Tokmeter")
                 .font(.headline)
                 .foregroundColor(Color(red: 0.55, green: 0.36, blue: 0.96)) // twilight violet
+                .accessibilityLabel("Tokmeter")
+
+            if loader.lastError != nil && loader.hasFreshData {
+                // We have stale numbers visible — flag them
+                Text("STALE")
+                    .font(.caption2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(3)
+                    .accessibilityLabel("Data is stale")
+            }
 
             Spacer()
-
-            if let error = loader.lastError {
-                Text(error)
-                    .font(.caption2)
-                    .foregroundColor(.red)
-                    .lineLimit(1)
-                    .help(error)
-            }
 
             Button(action: { Task { await loader.loadData() } }) {
                 Image(systemName: loader.isLoading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
@@ -72,6 +79,27 @@ struct TokmeterBarView: View {
             .buttonStyle(.borderless)
             .font(.caption)
             .disabled(loader.isLoading)
+            .accessibilityLabel("Refresh")
+        }
+    }
+
+    /// Full error block — shown below the header when offline so the user
+    /// can actually read it (the old .help() tooltip was undiscoverable).
+    @ViewBuilder
+    private var errorBanner: some View {
+        if let error = loader.lastError {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .background(Color.orange.opacity(0.1))
+            .cornerRadius(6)
+            .accessibilityElement(children: .combine)
         }
     }
 
