@@ -14,20 +14,25 @@ export const FALLBACK_STATUSLINE = "【♾️】 drishti";
 // Force color output even when stdout is not a TTY (Claude Code statusline runs
 // as a subprocess hook, so chalk's auto-detection picks level 0). ESM import
 // hoisting means process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads,
-// so we set the level explicitly.
+// so we set the level explicitly here.
 //
-// Respect COLORTERM: if it's "truecolor"/"24bit", use level 3 (16M colors).
-// Otherwise drop to level 2 (256 colors) so terminals without truecolor get
-// reasonable approximations instead of muddy 24bit output mapped at the
-// terminal level. NO_COLOR completely disables color (respects nocolor.org).
+// Default: level 3 (truecolor / 16M colors). The twilight palette is designed
+// for truecolor and looks noticeably worse when downsampled to 256 colors.
+// We trust the terminal to handle truecolor correctly — every modern macOS
+// terminal does (Terminal.app, iTerm2, Warp, kitty, alacritty, ghostty).
+//
+// Opt-outs:
+//   NO_COLOR=1   → no color at all (respects nocolor.org standard)
+//   TERM=dumb    → no color (legacy terminal compatibility)
+//   FORCE_COLOR=2/1/0 → explicit user override
 function detectColorLevel(): 0 | 1 | 2 | 3 {
   if (process.env.NO_COLOR) return 0;
-  const colorterm = process.env.COLORTERM?.toLowerCase() ?? "";
-  if (colorterm === "truecolor" || colorterm === "24bit") return 3;
-  // Most modern terminals (Terminal.app, iTerm2, kitty, alacritty, Warp) set
-  // COLORTERM=truecolor. Anything else, fall back to 256-color which is
-  // universally supported.
-  return 2;
+  if (process.env.TERM === "dumb") return 0;
+  const force = process.env.FORCE_COLOR;
+  if (force === "0") return 0;
+  if (force === "1") return 1;
+  if (force === "2") return 2;
+  return 3;
 }
 chalk.level = detectColorLevel() as typeof Chalk.prototype.level;
 
@@ -237,10 +242,20 @@ export function powerline(segments: { text: string; bg: string }[]): string {
     return parts.join("");
   }
 
-  // Unicode pill mode — clean color flow, no separator glyphs inside.
+  // Unicode pill mode — adjacent colored cells with a hairline separator
+  // between them. The hairline is a single ▏ left-eighth-block character
+  // colored with the *next* segment's bg, sitting on the *current* segment's
+  // bg. This creates a 1-pixel-thick "pixel rule" line that respects the
+  // pill metaphor (no chevron teeth) while still defining the boundary.
   parts.push(chalk.hex(segments[0].bg)("◖"));
-  for (const seg of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const nextSeg = segments[i + 1];
     parts.push(segmentBody(seg.text, seg.bg));
+    if (nextSeg) {
+      // Hairline rule: ▏ in next color, on current bg.
+      parts.push(chalk.bgHex(seg.bg).hex(nextSeg.bg)("▏"));
+    }
   }
   parts.push(chalk.hex(segments[segments.length - 1].bg)("◗"));
 

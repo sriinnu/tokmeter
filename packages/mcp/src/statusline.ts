@@ -8,41 +8,82 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
 import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors, useNerdFont } from "./formatter.js";
+import { italicMath, smallCaps } from "./typography.js";
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
 // The statusline runs as a fresh subprocess every ~200ms. To avoid
 // re-doing expensive work (git execSync, full disk scan), we persist
-// short-lived results to /tmp and read them back if fresh enough.
+// short-lived results to a per-user cache dir and read them back if fresh.
+//
+// Per-user dir is critical: a shared /tmp file would leak one user's
+// totals to another on multi-user systems. Mode 0700 on the dir.
 
-const CACHE_DIR = tmpdir();
+function getCacheDir(): string {
+  let uid = "unknown";
+  try {
+    uid = String(userInfo().uid);
+  } catch {}
+  const dir = join(tmpdir(), `drishti-${uid}`);
+  if (!existsSync(dir)) {
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch {}
+  }
+  return dir;
+}
 
-function readCache<T>(path: string, ttlMs: number): T | null {
+const CACHE_DIR = getCacheDir();
+
+interface CacheWrapper<T> {
+  ts: number;
+  data: T;
+  /** Optional invalidation key — e.g. file mtime — for content-aware caches. */
+  key?: string;
+}
+
+function readCache<T>(path: string, ttlMs: number, expectedKey?: string): T | null {
   if (!existsSync(path)) return null;
   try {
     const raw = readFileSync(path, "utf-8");
-    const wrapper = JSON.parse(raw) as { ts: number; data: T };
+    const wrapper = JSON.parse(raw) as CacheWrapper<T>;
+    // Content-aware invalidation: if the key changed (e.g. .git/HEAD mtime),
+    // discard immediately even if within TTL.
+    if (expectedKey !== undefined && wrapper.key !== expectedKey) return null;
     if (Date.now() - wrapper.ts > ttlMs) return null;
     return wrapper.data;
   } catch {
+    // Corrupt cache file — delete it so it doesn't keep failing.
+    try { unlinkSync(path); } catch {}
     return null;
   }
 }
 
-function writeCache<T>(path: string, data: T): void {
+function writeCache<T>(path: string, data: T, key?: string): void {
   try {
-    writeFileSync(path, JSON.stringify({ ts: Date.now(), data }), "utf-8");
+    const wrapper: CacheWrapper<T> = { ts: Date.now(), data };
+    if (key !== undefined) wrapper.key = key;
+    writeFileSync(path, JSON.stringify(wrapper), { encoding: "utf-8", mode: 0o600 });
   } catch {}
 }
 
 function cwdHash(cwd: string): string {
   return createHash("sha1").update(cwd).digest("hex").slice(0, 12);
+}
+
+/** mtime of a file as a string, or "" if it doesn't exist. */
+function safeMtimeKey(path: string): string {
+  try {
+    return String(statSync(path).mtimeMs);
+  } catch {
+    return "";
+  }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -149,13 +190,24 @@ interface GitInfo {
 }
 
 /**
- * Get git branch + dirty count for a repo. Cached for 5 seconds per cwd.
- * Two execSync calls would block the statusline ~50-300ms on a busy repo;
- * the cache cuts that to a single fs read on the hot path.
+ * Get git branch + dirty count for a repo.
+ *
+ * Cache invalidation is content-aware: we key on the mtime of `.git/HEAD`,
+ * which changes on every checkout/commit/rebase. This means a branch
+ * switch is reflected instantly (no polling delay) AND we still get the
+ * cache hit benefit when nothing changed. TTL is a safety net at 10s.
+ *
+ * Two execSync calls would otherwise block the statusline ~50–300ms on a
+ * busy repo; the cache cuts that to a single fs read on the hot path.
  */
 function getGitInfo(cwd: string): GitInfo | null {
-  const cachePath = join(CACHE_DIR, `drishti-statusline-git-${cwdHash(cwd)}.json`);
-  const cached = readCache<GitInfo>(cachePath, 5_000);
+  const headPath = join(cwd, ".git", "HEAD");
+  // If .git/HEAD doesn't exist, we're not in a git repo. Skip the cache.
+  if (!existsSync(headPath)) return null;
+
+  const headKey = safeMtimeKey(headPath);
+  const cachePath = join(CACHE_DIR, `git-${cwdHash(cwd)}.json`);
+  const cached = readCache<GitInfo>(cachePath, 10_000, headKey);
   if (cached) return cached;
 
   try {
@@ -178,7 +230,7 @@ function getGitInfo(cwd: string): GitInfo | null {
       if (status) dirty = status.split("\n").length;
     } catch {}
     const info = { branch, dirty };
-    writeCache(cachePath, info);
+    writeCache(cachePath, info, headKey);
     return info;
   } catch {
     return null;
@@ -189,29 +241,36 @@ interface TodayTotals {
   cost: number;
   in: number;
   out: number;
+  /** YYYY-MM-DD of when this was computed — invalidates after midnight. */
+  day: string;
+}
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 /**
  * Today's totals across all providers, cached for 60s.
+ *
+ * Cache key is the YYYY-MM-DD date — at midnight rollover the cache is
+ * invalidated automatically so yesterday's number doesn't linger as
+ * "today's." TTL is the secondary defense for intra-day refresh.
+ *
  * Fetching fresh requires a full disk scan which costs hundreds of ms on
  * power users — utterly unacceptable for a 200ms hot path. The 60s TTL
  * means today's number lags reality by up to a minute, which is fine
  * for an at-a-glance display.
  */
 async function getTodayTotalsCached(): Promise<TodayTotals | null> {
-  const cachePath = join(CACHE_DIR, "drishti-statusline-today.json");
-  const cached = readCache<TodayTotals>(cachePath, 60_000);
+  const cachePath = join(CACHE_DIR, "today.json");
+  const dayKey = todayKey();
+  const cached = readCache<TodayTotals>(cachePath, 60_000, dayKey);
   if (cached) return cached;
 
   try {
     const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
     const core = new TokmeterCore();
     const records = await core.scan({ today: true });
-    if (records.length === 0) {
-      const empty = { cost: 0, in: 0, out: 0 };
-      writeCache(cachePath, empty);
-      return empty;
-    }
     let cost = 0;
     let inT = 0;
     let outT = 0;
@@ -220,8 +279,8 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
       inT += r.inputTokens;
       outT += r.outputTokens;
     }
-    const totals = { cost, in: inT, out: outT };
-    writeCache(cachePath, totals);
+    const totals: TodayTotals = { cost, in: inT, out: outT, day: dayKey };
+    writeCache(cachePath, totals, dayKey);
     return totals;
   } catch {
     return null;
@@ -355,12 +414,13 @@ export async function runStatusline(): Promise<void> {
     // 1. Logo — its own segment with breathing purple bg cycle
     pl.push({ text: ICON.infinity, bg: logoBg });
 
-    // 2. Project — truncate long names so the bar doesn't wrap on 80-col terms.
+    // 2. Project — small caps typography (Pixar-magazine type system).
+    // Truncate long names so the bar doesn't wrap on 80-col terms.
     if (projectName) {
       const trunc = projectName.length > 24
         ? `${projectName.slice(0, 23)}…`
         : projectName;
-      pl.push({ text: ic(ICON.folder, trunc), bg: seg.project });
+      pl.push({ text: ic(ICON.folder, smallCaps(trunc)), bg: seg.project });
     }
 
     // 3. Model / Agent — pulsing activity indicator
@@ -426,8 +486,9 @@ export async function runStatusline(): Promise<void> {
     if (!showedAggregated) {
       const today = await getTodayTotalsCached();
       if (today && today.cost > 0) {
+        // "today" in italic math — ephemeral typography for transient data
         suffix.push(
-          `${C.accent("today")} ${C.cost(formatCost(today.cost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+          `${C.accent(italicMath("today"))} ${C.cost(formatCost(today.cost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
         );
       }
     }
