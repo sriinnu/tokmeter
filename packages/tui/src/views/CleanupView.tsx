@@ -13,7 +13,7 @@ import {
   type ProjectSummary,
 } from "@sriinnu/tokmeter-core";
 import { Box, Text, useInput } from "ink";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { T } from "../theme.js";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
@@ -66,7 +66,11 @@ export function CleanupView({ core }: CleanupViewProps) {
     setProjects(core.getAllProjects());
   }, [core]);
 
-  const selectedProjects = projects.filter((_, i) => selected.has(i));
+  // Stable identity for selectedProjects so useCallback deps don't churn.
+  const selectedProjects = useMemo(
+    () => projects.filter((_, i) => selected.has(i)),
+    [projects, selected],
+  );
   const totalCost = selectedProjects.reduce((s, p) => s + p.totalCost, 0);
   const totalTokens = selectedProjects.reduce((s, p) => s + p.totalTokens, 0);
 
@@ -74,20 +78,26 @@ export function CleanupView({ core }: CleanupViewProps) {
     if (selectedProjects.length === 0) return;
     try {
       const service = new CleanupService(core);
-      let merged: CleanupPreview | null = null;
+      // Build a fresh accumulator instead of mutating the first preview's
+      // returned object — CleanupService may cache or reuse it later.
+      const merged: CleanupPreview = {
+        recordCount: 0,
+        sourceFileCount: 0,
+        targets: [],
+        totalBytes: 0,
+        byProvider: [],
+        byProject: [],
+        partialFileWarnings: [],
+      };
       for (const proj of selectedProjects) {
         const p = await service.preview({ project: proj.project });
-        if (!merged) {
-          merged = p;
-        } else {
-          merged.recordCount += p.recordCount;
-          merged.sourceFileCount += p.sourceFileCount;
-          merged.targets.push(...p.targets);
-          merged.totalBytes += p.totalBytes;
-          merged.byProvider.push(...p.byProvider);
-          merged.byProject.push(...p.byProject);
-          merged.partialFileWarnings.push(...p.partialFileWarnings);
-        }
+        merged.recordCount += p.recordCount;
+        merged.sourceFileCount += p.sourceFileCount;
+        merged.targets.push(...p.targets);
+        merged.totalBytes += p.totalBytes;
+        merged.byProvider.push(...p.byProvider);
+        merged.byProject.push(...p.byProject);
+        merged.partialFileWarnings.push(...p.partialFileWarnings);
       }
       setPreview(merged);
       setPhase("preview");
@@ -119,10 +129,11 @@ export function CleanupView({ core }: CleanupViewProps) {
   }, [core, selectedProjects, doBackup]);
 
   // Scroll cursor into view
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollOffset is read but only as the previous value
   useEffect(() => {
     if (cursor < scrollOffset) setScrollOffset(cursor);
     else if (cursor >= scrollOffset + MAX_VISIBLE) setScrollOffset(cursor - MAX_VISIBLE + 1);
-  }, [cursor]);
+  }, [cursor, scrollOffset]);
 
   useInput((input, key) => {
     if (phase === "browse") {
@@ -171,7 +182,17 @@ export function CleanupView({ core }: CleanupViewProps) {
         setResult(null);
         setConfirmText("");
         setErrorMsg("");
-        core.scan().then(() => setProjects(core.getAllProjects()));
+        // Reset cursor + scroll so we never point past the (likely smaller) list.
+        setCursor(0);
+        setScrollOffset(0);
+        // Re-scan; surface failure to the error phase instead of swallowing.
+        core
+          .scan()
+          .then(() => setProjects(core.getAllProjects()))
+          .catch((err: Error) => {
+            setErrorMsg(`Re-scan failed: ${err.message}`);
+            setPhase("error");
+          });
       }
     }
   });
@@ -216,7 +237,7 @@ export function CleanupView({ core }: CleanupViewProps) {
 
           return (
             <Box key={p.project} flexDirection="row">
-              <Text color={isCursor ? "cyan" : undefined} inverse={isCursor}>
+              <Text color={isCursor ? T.accent : undefined} inverse={isCursor}>
                 {isSelected ? " [✓] " : " [ ] "}
                 {p.project.slice(0, 22).padEnd(22)}
                 {providers.slice(0, 12).padEnd(14)}
@@ -289,7 +310,7 @@ export function CleanupView({ core }: CleanupViewProps) {
         {doBackup && <Text color={T.success}>  📦 Backup will be created first.</Text>}
         <Text> </Text>
         <Text>  Type DELETE to confirm: <Text color={T.accent} bold>{confirmText}</Text><Text color={T.muted}>█</Text></Text>
-        <Text color={T.muted}>  (Esc to go back)</Text>
+        <Text color={T.muted}>  (case-sensitive · Esc to go back)</Text>
       </Box>
     );
   }

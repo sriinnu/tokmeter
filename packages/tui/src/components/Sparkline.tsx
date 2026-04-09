@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { T } from "../theme.js";
 
 interface SparklineProps {
   data: number[];
@@ -11,7 +12,7 @@ const SPARK_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 /** Sparkline chart component for Ink TUI. */
 export function Sparkline({ data, width = 50, label }: SparklineProps) {
   if (data.length === 0) {
-    return <Text color="gray">No data</Text>;
+    return <Text color={T.muted}>No data</Text>;
   }
 
   const max = Math.max(...data);
@@ -36,12 +37,12 @@ export function Sparkline({ data, width = 50, label }: SparklineProps) {
     <Box flexDirection="row">
       {label && (
         <Box width={12}>
-          <Text color="gray">{label}</Text>
+          <Text color={T.muted}>{label}</Text>
         </Box>
       )}
-      <Text color="green">{spark}</Text>
+      <Text color={T.success}>{spark}</Text>
       <Box marginLeft={1}>
-        <Text color="gray">
+        <Text color={T.muted}>
           {formatNum(min)}–{formatNum(max)}
         </Text>
       </Box>

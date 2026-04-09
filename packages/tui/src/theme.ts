@@ -30,8 +30,10 @@ export const T = {
   danger: c.danger,
   /** Muted text — labels, secondary info, separators */
   muted: c.muted,
-  /** Default body text */
+  /** Default body text — high-contrast neutral */
   text: c.text,
+  /** Default theme background — rarely needed in TUI but available */
+  bg: c.bg,
   /** Cost / monetary values */
   cost: c.cost,
   /** Input tokens */

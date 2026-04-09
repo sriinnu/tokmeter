@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { T } from "../theme.js";
 
 interface BarChartProps {
   data: { label: string; value: number; maxValue: number }[];
@@ -9,7 +10,7 @@ interface BarChartProps {
 /** Horizontal bar chart component for Ink TUI. */
 export function BarChart({ data, width = 30, barChar = "█" }: BarChartProps) {
   if (data.length === 0) {
-    return <Text color="gray">No data</Text>;
+    return <Text color={T.muted}>No data</Text>;
   }
 
   const max = Math.max(...data.map((d) => d.value), 1);
@@ -26,16 +27,16 @@ export function BarChart({ data, width = 30, barChar = "█" }: BarChartProps) {
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order doesn't change
           <Box key={i} flexDirection="row">
             <Box width={20}>
-              <Text color="gray">{item.label.slice(0, 20).padEnd(20)}</Text>
+              <Text color={T.muted}>{item.label.slice(0, 20).padEnd(20)}</Text>
             </Box>
             <Box width={width + 2}>
-              <Text color="green">{bar}</Text>
+              <Text color={T.success}>{bar}</Text>
             </Box>
             <Box width={12}>
-              <Text color="white">{formatNumber(item.value)}</Text>
+              <Text color={T.text}>{formatNumber(item.value)}</Text>
             </Box>
             <Box>
-              <Text color="gray">{percentage}%</Text>
+              <Text color={T.muted}>{percentage}%</Text>
             </Box>
           </Box>
         );

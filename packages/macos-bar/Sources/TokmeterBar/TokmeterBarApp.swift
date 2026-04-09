@@ -14,6 +14,7 @@ struct TokmeterBarApp: App {
             TokmeterBarView(loader: loader)
         } label: {
             Text(menuBarLabel)
+                .accessibilityLabel(accessibilityLabel)
         }
         .menuBarExtraStyle(.window)
     }
@@ -25,5 +26,13 @@ struct TokmeterBarApp: App {
             return "♾️ ?"
         }
         return String(format: "♾️ $%.2f", loader.todayCost)
+    }
+
+    /// VoiceOver-friendly description of the menu bar label.
+    private var accessibilityLabel: String {
+        if loader.lastError != nil {
+            return "Tokmeter: daemon offline"
+        }
+        return String(format: "Tokmeter: today's cost is $%.2f", loader.todayCost)
     }
 }

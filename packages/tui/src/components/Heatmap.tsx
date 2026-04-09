@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type React from "react";
+import { T } from "../theme.js";
 
 interface HeatmapProps {
   data: { date: string; value: number }[];
@@ -9,7 +10,7 @@ interface HeatmapProps {
 /** GitHub-style contribution heatmap for Ink TUI. */
 export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
   if (data.length === 0) {
-    return <Text color="gray">No activity data</Text>;
+    return <Text color={T.muted}>No activity data</Text>;
   }
 
   const max = Math.max(...data.map((d) => d.value), 1);
@@ -54,7 +55,7 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
     rows.push(
       <Box key={dayOfWeek} flexDirection="row">
         <Box width={3}>
-          <Text color="gray">{dayLabels[dayOfWeek]}</Text>
+          <Text color={T.muted}>{dayLabels[dayOfWeek]}</Text>
         </Box>
         {row}
       </Box>
@@ -63,20 +64,20 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
 
   return (
     <Box flexDirection="column">
-      <Text color="white" bold>
+      <Text color={T.text} bold>
         Contribution Heatmap
       </Text>
       <Box flexDirection="column" marginTop={1}>
         {rows}
       </Box>
       <Box flexDirection="row" marginTop={1}>
-        <Text color="gray">Less </Text>
+        <Text color={T.muted}>Less </Text>
         <Text color={colors[0]}>██</Text>
         <Text color={colors[1]}>██</Text>
         <Text color={colors[2]}>██</Text>
         <Text color={colors[3]}>██</Text>
         <Text color={colors[4]}>██</Text>
-        <Text color="gray"> More</Text>
+        <Text color={T.muted}> More</Text>
       </Box>
     </Box>
   );

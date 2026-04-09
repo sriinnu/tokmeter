@@ -23,13 +23,14 @@
 
 // Process-level error handlers — statusline must fail silently since editors
 // expect stdout output, not stderr crashes. Other commands can be noisy.
+// NOTE: import the constant from formatter so we don't drift two copies.
+import { FALLBACK_STATUSLINE } from "./formatter.js";
 const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
-const FALLBACK_LINE = "【♾️】 drishti";
 
 process.on("unhandledRejection", (reason) => {
   if (isStatusline) {
     try {
-      process.stdout.write(FALLBACK_LINE);
+      process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
   }
@@ -40,7 +41,7 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   if (isStatusline) {
     try {
-      process.stdout.write(FALLBACK_LINE);
+      process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
   }
@@ -78,7 +79,7 @@ switch (command) {
       await runStatusline();
     } catch {
       try {
-        process.stdout.write(FALLBACK_LINE);
+        process.stdout.write(FALLBACK_STATUSLINE);
       } catch {}
     }
     break;

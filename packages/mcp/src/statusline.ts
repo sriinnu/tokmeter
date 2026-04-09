@@ -8,9 +8,42 @@
  */
 
 import { execSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
 import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors, useNerdFont } from "./formatter.js";
+
+// ─── Hot-path caches ────────────────────────────────────────────────────
+// The statusline runs as a fresh subprocess every ~200ms. To avoid
+// re-doing expensive work (git execSync, full disk scan), we persist
+// short-lived results to /tmp and read them back if fresh enough.
+
+const CACHE_DIR = tmpdir();
+
+function readCache<T>(path: string, ttlMs: number): T | null {
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const wrapper = JSON.parse(raw) as { ts: number; data: T };
+    if (Date.now() - wrapper.ts > ttlMs) return null;
+    return wrapper.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache<T>(path: string, data: T): void {
+  try {
+    writeFileSync(path, JSON.stringify({ ts: Date.now(), data }), "utf-8");
+  } catch {}
+}
+
+function cwdHash(cwd: string): string {
+  return createHash("sha1").update(cwd).digest("hex").slice(0, 12);
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -63,8 +96,11 @@ function animCacheRate(cacheRead: number, cacheWrite: number): string {
 /** Compact context bar for powerline segment: ▓▓▓▓░░░░ */
 function formatContextMini(used: number, max: number): string {
   if (!(max > 0)) return "";
-  const pct = used / max;
   const w = 8;
+  // Clamp pct to [0, 1] so over-budget contexts don't crash .repeat() with a
+  // negative count. This happens when a tool reports more used than the
+  // window size (e.g. mid-conversation context measurement).
+  const pct = Math.max(0, Math.min(1, used / max));
   const filled = Math.round(pct * w);
   return "▓".repeat(filled) + "░".repeat(w - filled);
 }
@@ -107,11 +143,25 @@ async function readStdin(): Promise<string> {
   });
 }
 
-function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
+interface GitInfo {
+  branch: string;
+  dirty: number;
+}
+
+/**
+ * Get git branch + dirty count for a repo. Cached for 5 seconds per cwd.
+ * Two execSync calls would block the statusline ~50-300ms on a busy repo;
+ * the cache cuts that to a single fs read on the hot path.
+ */
+function getGitInfo(cwd: string): GitInfo | null {
+  const cachePath = join(CACHE_DIR, `drishti-statusline-git-${cwdHash(cwd)}.json`);
+  const cached = readCache<GitInfo>(cachePath, 5_000);
+  if (cached) return cached;
+
   try {
     const branch = execSync("git rev-parse --abbrev-ref HEAD", {
       cwd,
-      timeout: 2000,
+      timeout: 1500,
       stdio: ["ignore", "pipe", "ignore"],
     })
       .toString()
@@ -120,14 +170,59 @@ function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
     try {
       const status = execSync("git status --porcelain", {
         cwd,
-        timeout: 2000,
+        timeout: 1500,
         stdio: ["ignore", "pipe", "ignore"],
       })
         .toString()
         .trim();
       if (status) dirty = status.split("\n").length;
     } catch {}
-    return { branch, dirty };
+    const info = { branch, dirty };
+    writeCache(cachePath, info);
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+interface TodayTotals {
+  cost: number;
+  in: number;
+  out: number;
+}
+
+/**
+ * Today's totals across all providers, cached for 60s.
+ * Fetching fresh requires a full disk scan which costs hundreds of ms on
+ * power users — utterly unacceptable for a 200ms hot path. The 60s TTL
+ * means today's number lags reality by up to a minute, which is fine
+ * for an at-a-glance display.
+ */
+async function getTodayTotalsCached(): Promise<TodayTotals | null> {
+  const cachePath = join(CACHE_DIR, "drishti-statusline-today.json");
+  const cached = readCache<TodayTotals>(cachePath, 60_000);
+  if (cached) return cached;
+
+  try {
+    const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+    const core = new TokmeterCore();
+    const records = await core.scan({ today: true });
+    if (records.length === 0) {
+      const empty = { cost: 0, in: 0, out: 0 };
+      writeCache(cachePath, empty);
+      return empty;
+    }
+    let cost = 0;
+    let inT = 0;
+    let outT = 0;
+    for (const r of records) {
+      cost += r.cost;
+      inT += r.inputTokens;
+      outT += r.outputTokens;
+    }
+    const totals = { cost, in: inT, out: outT };
+    writeCache(cachePath, totals);
+    return totals;
   } catch {
     return null;
   }
@@ -208,27 +303,36 @@ export async function runStatusline(): Promise<void> {
       bolt:     "\uF0E7",        //  nf-fa-bolt
       calendar: "\uF073",        //  nf-fa-calendar
     } : {
-      // Disney pixel animation: hero element with orbiting accent + breathing bg.
-      // Logo cycle (8 frames @ 200ms = 1.6s loop):
-      //   star orbits the infinity (right → none → left → none → repeat)
-      //   creating visible coordinated motion. The infinity itself stays put —
-      //   the eye tracks the moving star, which makes the whole logo feel alive.
-      infinity: ["♾️ ⭐", "♾️ ✨", "♾️    ", " ⭐♾️", " ✨♾️", "♾️    ", "♾️ ⭐", "♾️ ✨"][af],
-      // The Genie — Disney Aladdin signature. AI as wish-granter:
-      // you ask, it delivers. Periodic sparkle = magical action moment.
-      // Width-locked (genie + 1-cell sparkle slot) so the segment doesn't jitter.
-      agent:    ["🧞 ", "🧞✨", "🧞 ", "🧞 ", "🧞✨", "🧞 ", "🧞 ", "🧞✨"][af],
-      git:      "🌿",                       // branch (herb)
+      // Disney pixel animation: width-stable, anchored, no horizontal jitter.
+      //
+      // Width-stability rules:
+      //   - Every animation frame must occupy the same number of terminal cells.
+      //   - Emoji are width-2 (sometimes 1 on legacy terminals); when paired
+      //     with text characters, the total width can shift. We avoid mixing.
+      //   - Sparkle accents use the same emoji-style chars as the base so the
+      //     trailing slot stays width-2 in every frame.
+      //
+      // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
+      // emoji. The infinity NEVER shifts position — only the trailing accent
+      // changes. (No more leading-space frames that shift the whole logo.)
+      infinity: ["♾️✨", "♾️⭐", "♾️✨", "♾️🌟", "♾️✨", "♾️⭐", "♾️✨", "♾️🌟"][af],
+      // The Genie — both frames are width-stable (genie + sparkle emoji slot).
+      // Frame 0: genie + invisible joiner (width 2 + 1)
+      // Frame 1: genie + sparkle (width 2 + 1)
+      // Both slots are exactly 1 visual cell wide.
+      agent:    ["🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨"][af],
+      git:      "🌿",
       turn:     ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
-      context:  "🪟",                       // literal pun — "context WINDOW"
-      folder:   "",                         // segment color IS the project marker
-      dollar:   "💰",                       // money bag
+      context:  "🪟",
+      folder:   "",
+      dollar:   "💰",
       flame:    "🔥",
-      up:       ["↑", "⬆", "↑", "↗", "↑", "⬆", "↑", "↗"][af],
-      down:     ["↓", "⬇", "↓", "↘", "↓", "⬇", "↓", "↘"][af],
+      // Token arrows: stick to 1-cell text chars (no emoji ⬆⬇ which cause jitter).
+      up:       ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
+      down:     ["↓", "↓", "↓", "↘", "↓", "↓", "↓", "↘"][af],
       refresh:  ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
       bolt:     ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
-      calendar: "",                         // just the word "today" speaks for itself
+      calendar: "",
     };
 
     // Hero logo bg: breathes through purple shades (indigo → violet → magenta → back).
@@ -251,9 +355,12 @@ export async function runStatusline(): Promise<void> {
     // 1. Logo — its own segment with breathing purple bg cycle
     pl.push({ text: ICON.infinity, bg: logoBg });
 
-    // 2. Project
+    // 2. Project — truncate long names so the bar doesn't wrap on 80-col terms.
     if (projectName) {
-      pl.push({ text: ic(ICON.folder, projectName), bg: seg.project });
+      const trunc = projectName.length > 24
+        ? `${projectName.slice(0, 23)}…`
+        : projectName;
+      pl.push({ text: ic(ICON.folder, trunc), bg: seg.project });
     }
 
     // 3. Model / Agent — pulsing activity indicator
@@ -302,31 +409,27 @@ export async function runStatusline(): Promise<void> {
       suffix.push(C.warn(`${ICON.flame}${formatCost(rate)}/hr`));
     }
 
-    // Daemon aggregated stats or today's totals
+    // Daemon aggregated stats — only if daemon is reachable AND has data.
+    let showedAggregated = false;
     if (daemonResponse.connected && daemonResponse.aggregated) {
       const agg = daemonResponse.aggregated;
       if (agg.sessions > 1) {
         suffix.push(
           `${C.title("⊕")}${C.cost(formatCost(agg.totalCost))} ${C.input(`${ICON.up}${formatNumber(agg.totalInputTokens)}`)} ${C.output(`${ICON.down}${formatNumber(agg.totalOutputTokens)}`)}`
         );
+        showedAggregated = true;
       }
-    } else {
-      try {
-        const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
-        const core = new TokmeterCore();
-        const todayRecords = await core.scan({ today: true });
-        if (todayRecords.length > 0) {
-          let todayCost = 0, todayIn = 0, todayOut = 0;
-          for (const r of todayRecords) {
-            todayCost += r.cost;
-            todayIn += r.inputTokens;
-            todayOut += r.outputTokens;
-          }
-          suffix.push(
-            `${C.accent("today")} ${C.cost(formatCost(todayCost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(todayIn)}`)} ${C.output(`${ICON.down}${formatNumber(todayOut)}`)}`
-          );
-        }
-      } catch {}
+    }
+
+    // Today's totals — cached for 60s so we don't full-scan every 200ms.
+    // Only fetch when we didn't already show aggregated multi-session data.
+    if (!showedAggregated) {
+      const today = await getTodayTotalsCached();
+      if (today && today.cost > 0) {
+        suffix.push(
+          `${C.accent("today")} ${C.cost(formatCost(today.cost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+        );
+      }
     }
 
     // ── Output: powerline bar + suffix ──
