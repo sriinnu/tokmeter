@@ -2,6 +2,7 @@ import type { DailyEntry } from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { Heatmap } from "../components/Heatmap.js";
 import { Sparkline } from "../components/Sparkline.js";
+import { T } from "../theme.js";
 
 interface DailyViewProps {
   daily: DailyEntry[];
@@ -11,7 +12,7 @@ export function DailyView({ daily }: DailyViewProps) {
   if (daily.length === 0) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="gray">No daily data available.</Text>
+        <Text color={T.muted}>No daily data available.</Text>
       </Box>
     );
   }
@@ -23,7 +24,7 @@ export function DailyView({ daily }: DailyViewProps) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">
+        <Text bold color={T.accent}>
           ━━ Daily Summary ━━
         </Text>
       </Box>
@@ -45,7 +46,7 @@ export function DailyView({ daily }: DailyViewProps) {
         {daily.slice(-14).map((d, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
-            <Text color="gray">{d.date}</Text>
+            <Text color={T.muted}>{d.date}</Text>
             <Text>
               {" "}
               {formatNum(d.totalTokens)} tokens | ${d.cost.toFixed(2)} | {d.records} records

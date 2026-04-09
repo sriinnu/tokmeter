@@ -17,6 +17,7 @@ process.on("uncaughtException", (error) => {
 import { TokmeterCore } from "@sriinnu/tokmeter-core";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
+import { T } from "./theme.js";
 import { DailyView } from "./views/DailyView.js";
 import { ModelsView } from "./views/ModelsView.js";
 import { OverviewView } from "./views/OverviewView.js";
@@ -78,7 +79,7 @@ function App() {
   if (loading) {
     return (
       <Box padding={2}>
-        <Text color="cyan">Scanning session files...</Text>
+        <Text color={T.accent}>Scanning session files...</Text>
       </Box>
     );
   }
@@ -86,10 +87,10 @@ function App() {
   if (error) {
     return (
       <Box padding={2} flexDirection="column">
-        <Text color="red" bold>
+        <Text color={T.danger} bold>
           Error:
         </Text>
-        <Text color="red">{error}</Text>
+        <Text color={T.danger}>{error}</Text>
       </Box>
     );
   }
@@ -108,7 +109,7 @@ function App() {
         {TABS.map((tab) => (
           <Box key={tab.id} paddingX={2}>
             <Text
-              color={activeTab === tab.id ? "cyan" : "gray"}
+              color={activeTab === tab.id ? T.accent : T.muted}
               bold={activeTab === tab.id}
               inverse={activeTab === tab.id}
             >
@@ -118,7 +119,7 @@ function App() {
           </Box>
         ))}
         <Box flexGrow={1} />
-        <Text color="gray"> q:quit </Text>
+        <Text color={T.muted}> q:quit </Text>
       </Box>
 
       {/* Content area */}

@@ -14,6 +14,7 @@ import {
 } from "@sriinnu/tokmeter-core";
 import { Box, Text, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
+import { T } from "../theme.js";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
 
@@ -181,8 +182,8 @@ export function CleanupView({ core }: CleanupViewProps) {
     if (projects.length === 0) {
       return (
         <Box flexDirection="column" padding={1}>
-          <Text bold color="cyan">━━ Cleanup ━━</Text>
-          <Text color="gray">  No projects found. Use an AI coding agent first.</Text>
+          <Text bold color={T.accent}>━━ Cleanup ━━</Text>
+          <Text color={T.muted}>  No projects found. Use an AI coding agent first.</Text>
         </Box>
       );
     }
@@ -194,17 +195,17 @@ export function CleanupView({ core }: CleanupViewProps) {
     return (
       <Box flexDirection="column" padding={1}>
         <Box marginBottom={1}>
-          <Text bold color="cyan">━━ Cleanup ━━</Text>
-          <Text color="gray">  Space:toggle  a:all  Enter:preview</Text>
+          <Text bold color={T.accent}>━━ Cleanup ━━</Text>
+          <Text color={T.muted}>  Space:toggle  a:all  Enter:preview</Text>
         </Box>
 
         <Box flexDirection="row" marginBottom={1}>
-          <Text color="gray">
+          <Text color={T.muted}>
             {"  Project".padEnd(26)}{"Provider".padEnd(14)}{"Tokens".padEnd(10)}{"Cost".padEnd(10)}{"Days".padEnd(6)}{"Last Used"}
           </Text>
         </Box>
 
-        {showScrollUp && <Text color="gray">  ↑ {scrollOffset} more above</Text>}
+        {showScrollUp && <Text color={T.muted}>  ↑ {scrollOffset} more above</Text>}
 
         {visible.map((p, vi) => {
           const i = vi + scrollOffset; // Real index
@@ -228,11 +229,11 @@ export function CleanupView({ core }: CleanupViewProps) {
           );
         })}
 
-        {showScrollDown && <Text color="gray">  ↓ {projects.length - scrollOffset - MAX_VISIBLE} more below</Text>}
+        {showScrollDown && <Text color={T.muted}>  ↓ {projects.length - scrollOffset - MAX_VISIBLE} more below</Text>}
 
         {selected.size > 0 && (
           <Box marginTop={1}>
-            <Text color="yellow">
+            <Text color={T.warn}>
               {selected.size} selected — {fmtCost(totalCost)} — {fmtNum(totalTokens)} tokens
             </Text>
           </Box>
@@ -247,8 +248,8 @@ export function CleanupView({ core }: CleanupViewProps) {
     return (
       <Box flexDirection="column" padding={1}>
         <Box marginBottom={1}>
-          <Text bold color="cyan">━━ Cleanup Preview ━━</Text>
-          <Text color="gray">  Enter:confirm  b:backup({doBackup ? "on" : "off"})  Esc:back</Text>
+          <Text bold color={T.accent}>━━ Cleanup Preview ━━</Text>
+          <Text color={T.muted}>  Enter:confirm  b:backup({doBackup ? "on" : "off"})  Esc:back</Text>
         </Box>
 
         <Text>  Records: {fmtNum(preview.recordCount)}  |  Files: {preview.sourceFileCount}  |  Size: {fmtBytes(preview.totalBytes)}</Text>
@@ -262,14 +263,14 @@ export function CleanupView({ core }: CleanupViewProps) {
 
         {preview.partialFileWarnings.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
-            <Text color="red" bold>  ⚠ PARTIAL FILE WARNINGS:</Text>
+            <Text color={T.danger} bold>  ⚠ PARTIAL FILE WARNINGS:</Text>
             {preview.partialFileWarnings.slice(0, 5).map((w) => (
-              <Text key={w.file} color="yellow">
+              <Text key={w.file} color={T.warn}>
                 {"    "}{w.file.split("/").slice(-2).join("/")}: {w.matchedRecords} matched, {w.otherRecords} others ({w.otherDateRange}) will also go
               </Text>
             ))}
             {preview.partialFileWarnings.length > 5 && (
-              <Text color="gray">    ... and {preview.partialFileWarnings.length - 5} more</Text>
+              <Text color={T.muted}>    ... and {preview.partialFileWarnings.length - 5} more</Text>
             )}
           </Box>
         )}
@@ -282,13 +283,13 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "confirm") {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="red">
+        <Text bold color={T.danger}>
           ⚠ This will permanently delete {preview?.targets.length ?? 0} files ({fmtBytes(preview?.totalBytes ?? 0)}).
         </Text>
-        {doBackup && <Text color="green">  📦 Backup will be created first.</Text>}
+        {doBackup && <Text color={T.success}>  📦 Backup will be created first.</Text>}
         <Text> </Text>
-        <Text>  Type DELETE to confirm: <Text color="cyan" bold>{confirmText}</Text><Text color="gray">█</Text></Text>
-        <Text color="gray">  (Esc to go back)</Text>
+        <Text>  Type DELETE to confirm: <Text color={T.accent} bold>{confirmText}</Text><Text color={T.muted}>█</Text></Text>
+        <Text color={T.muted}>  (Esc to go back)</Text>
       </Box>
     );
   }
@@ -298,7 +299,7 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "executing") {
     return (
       <Box padding={1}>
-        <Text color="cyan">🗑 Executing cleanup...</Text>
+        <Text color={T.accent}>🗑 Executing cleanup...</Text>
       </Box>
     );
   }
@@ -308,10 +309,10 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "error") {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="red">━━ Error ━━</Text>
-        <Text color="red">  {errorMsg}</Text>
+        <Text bold color={T.danger}>━━ Error ━━</Text>
+        <Text color={T.danger}>  {errorMsg}</Text>
         <Text> </Text>
-        <Text color="gray">  Press Enter to return.</Text>
+        <Text color={T.muted}>  Press Enter to return.</Text>
       </Box>
     );
   }
@@ -321,23 +322,23 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "done" && result) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="green">━━ Cleanup Complete ━━</Text>
+        <Text bold color={T.success}>━━ Cleanup Complete ━━</Text>
         <Text> </Text>
-        <Text color="green">  ✓ Deleted: {result.deletedCount} files</Text>
+        <Text color={T.success}>  ✓ Deleted: {result.deletedCount} files</Text>
         <Text>  💾 Freed: {fmtBytes(result.bytesFreed)}</Text>
         {result.backupPath && <Text>  📦 Backup: {result.backupPath}</Text>}
         {result.failedCount > 0 && (
-          <Text color="red">  ✗ Failed: {result.failedCount}</Text>
+          <Text color={T.danger}>  ✗ Failed: {result.failedCount}</Text>
         )}
         <Text> </Text>
-        <Text color="gray">  Press Enter to return.</Text>
+        <Text color={T.muted}>  Press Enter to return.</Text>
       </Box>
     );
   }
 
   return (
     <Box padding={1}>
-      <Text color="gray">Loading...</Text>
+      <Text color={T.muted}>Loading...</Text>
     </Box>
   );
 }

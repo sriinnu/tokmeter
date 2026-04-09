@@ -7,3 +7,9 @@ dist/
 *.log
 .tokmeter/
 packages/web/public/data.json
+.claude/worktrees/agent-a063422a/
+.claude/worktrees/agent-a03f6e39/
+
+# macOS menubar app build artifacts
+packages/macos-bar/.build/
+packages/macos-bar/*.app/
