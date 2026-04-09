@@ -208,28 +208,48 @@ export async function runStatusline(): Promise<void> {
       bolt:     "\uF0E7",        //  nf-fa-bolt
       calendar: "\uF073",        //  nf-fa-calendar
     } : {
-      // Animated Unicode — works on every modern terminal, no patched font needed.
-      // Clean, readable icons. Animate where it adds life, stay still where it's noise.
-      infinity: ["⟐", "⟐", "✦", "⟐", "⟐", "⟐", "✧", "⟐"][af],
-      agent:    PARTICLES.pulse[af],       // ○ ◐ ◑ ● — pulsing activity dot
-      git:      "⎇",                       // standard branch glyph
+      // Disney pixel animation: hero element with orbiting accent + breathing bg.
+      // Logo cycle (8 frames @ 200ms = 1.6s loop):
+      //   star orbits the infinity (right → none → left → none → repeat)
+      //   creating visible coordinated motion. The infinity itself stays put —
+      //   the eye tracks the moving star, which makes the whole logo feel alive.
+      infinity: ["♾️ ⭐", "♾️ ✨", "♾️    ", " ⭐♾️", " ✨♾️", "♾️    ", "♾️ ⭐", "♾️ ✨"][af],
+      // The Genie — Disney Aladdin signature. AI as wish-granter:
+      // you ask, it delivers. Periodic sparkle = magical action moment.
+      // Width-locked (genie + 1-cell sparkle slot) so the segment doesn't jitter.
+      agent:    ["🧞 ", "🧞✨", "🧞 ", "🧞 ", "🧞✨", "🧞 ", "🧞 ", "🧞✨"][af],
+      git:      "🌿",                       // branch (herb)
       turn:     ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
-      context:  "",                         // the bar IS the icon — no glyph needed
-      folder:   "",                         // segment bg color already shows "project"
-      dollar:   "$",                        // clean, universal
-      flame:    ["🔥", "✦", "🔥", "✧", "🔥", "✦", "🔥", "✧"][af],
+      context:  "🪟",                       // literal pun — "context WINDOW"
+      folder:   "",                         // segment color IS the project marker
+      dollar:   "💰",                       // money bag
+      flame:    "🔥",
       up:       ["↑", "⬆", "↑", "↗", "↑", "⬆", "↑", "↗"][af],
       down:     ["↓", "⬇", "↓", "↘", "↓", "⬇", "↓", "↘"][af],
       refresh:  ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
       bolt:     ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
-      calendar: ["◉", "◎", "◉", "●", "◉", "◎", "◉", "●"][af],
+      calendar: "",                         // just the word "today" speaks for itself
     };
+
+    // Hero logo bg: breathes through purple shades (indigo → violet → magenta → back).
+    // Asymmetric timing — slow rise (frames 0-3), peak (4), slow fall (5-7).
+    const logoBgCycle = [
+      "#4338ca", // indigo (rest)
+      "#5b21b6", // deep violet
+      "#6d28d9", // violet
+      "#7c3aed", // bright violet
+      "#8b5cf6", // peak — radiant violet
+      "#7c3aed", // bright violet
+      "#6d28d9", // violet
+      "#5b21b6", // deep violet
+    ];
+    const logoBg = logoBgCycle[af];
 
     // Helper: prefix icon only if non-empty
     const ic = (icon: string, text: string) => icon ? `${icon} ${text}` : text;
 
-    // 1. Logo
-    pl.push({ text: ICON.infinity, bg: seg.project });
+    // 1. Logo — its own segment with breathing purple bg cycle
+    pl.push({ text: ICON.infinity, bg: logoBg });
 
     // 2. Project
     if (projectName) {
@@ -303,7 +323,7 @@ export async function runStatusline(): Promise<void> {
             todayOut += r.outputTokens;
           }
           suffix.push(
-            `${C.accent(`${ICON.calendar}today`)} ${C.cost(formatCost(todayCost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(todayIn)}`)} ${C.output(`${ICON.down}${formatNumber(todayOut)}`)}`
+            `${C.accent("today")} ${C.cost(formatCost(todayCost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(todayIn)}`)} ${C.output(`${ICON.down}${formatNumber(todayOut)}`)}`
           );
         }
       } catch {}
