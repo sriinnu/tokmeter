@@ -8,10 +8,11 @@ import SwiftUI
 @main
 struct TokmeterBarApp: App {
     @StateObject private var loader = TokmeterLoader()
+    @StateObject private var updater = UpdaterController()
 
     var body: some Scene {
         MenuBarExtra {
-            TokmeterBarView(loader: loader)
+            TokmeterBarView(loader: loader, updater: updater)
         } label: {
             Text(menuBarLabel)
                 .accessibilityLabel(accessibilityLabel)

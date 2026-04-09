@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened runtime entitlements for TokmeterBar.
+        Required by Apple notarization (notarytool rejects apps without
+        the hardened runtime). Each capability below has a clear reason:
+    -->
+
+    <!--
+        Outgoing network access — required to talk to the Drishti daemon
+        on http://127.0.0.1:9877 AND to fetch the Sparkle appcast.xml
+        + downloading update zips.
+    -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!--
+        Sparkle 2 needs JIT for its update installer XPC service.
+        Without this, Sparkle's installer fails on hardened-runtime builds.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!--
+        Sparkle's installer needs to use library validation exceptions
+        when loading the helper from inside the app bundle.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!--
+        Sandbox is intentionally OFF. We need:
+          - Read access to /tmp/drishti-daemon.pid (for daemon health check)
+          - Spawn ability for Sparkle's installer XPC services
+          - Filesystem access to read appcast metadata
+        For a self-distributed menubar tool this is fine. If you ever
+        sandbox the app, you'll need to wire app-group + bookmarks for
+        the daemon socket.
+    -->
+</dict>
+</plist>

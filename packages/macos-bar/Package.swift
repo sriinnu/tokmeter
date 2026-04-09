@@ -2,15 +2,18 @@
 //
 // TokmeterBar — macOS menubar companion for Drishti.
 //
-// Build:
-//   swift build -c release
-//
-// Bundle as a real .app:
-//   ./bundle.sh
+// Quick start:
+//   swift build -c release        # build only
+//   ./bundle.sh                   # build + ad-hoc bundle (dev)
+//   ./bundle.sh --signed          # Developer ID signed (needs DEV_ID env)
+//   ./bundle.sh --release         # signed + notarized + appcast (full release)
 //
 // The resulting binary connects to the Drishti daemon's HTTP REST API on
 // localhost:9877. The daemon must be running:
 //   drishti daemon start
+//
+// Auto-updates are powered by Sparkle 2.x. See RELEASE.md for the full
+// release flow including notarization and appcast signing.
 
 import PackageDescription
 
@@ -22,9 +25,17 @@ let package = Package(
     products: [
         .executable(name: "TokmeterBar", targets: ["TokmeterBar"]),
     ],
+    dependencies: [
+        // Sparkle 2.x — auto-update framework for macOS apps.
+        // Pinned to the 2.x major to avoid breaking API changes.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         .executableTarget(
             name: "TokmeterBar",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/TokmeterBar"
         ),
     ]
