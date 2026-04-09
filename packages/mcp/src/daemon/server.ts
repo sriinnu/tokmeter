@@ -85,6 +85,17 @@ export function startDaemon(): void {
 
     // Start HTTP API server alongside WebSocket
     startHttpApi();
+
+    // Warm the HTTP core asynchronously so the first user request doesn't
+    // pay the full-disk-scan tax. We don't await — the WebSocket server is
+    // already up so other clients aren't blocked.
+    void getHttpCore()
+      .then(() => {
+        console.log("【♾️】 HTTP core warm — ready to serve");
+      })
+      .catch((err) => {
+        console.error("HTTP core warmup failed:", err);
+      });
   });
 
   wss.on("connection", (ws) => {
@@ -338,6 +349,15 @@ const HTTP_CACHE_TTL = 5_000;
 const MAX_BODY_BYTES = 1_048_576; // 1MB
 
 /**
+ * Tracks the in-flight scan so concurrent callers don't trigger duplicate
+ * scans. The first caller does the work; subsequent callers await the same
+ * promise.
+ */
+let _httpCorePromise: Promise<any> | null = null;
+/** True once the first warmup scan has completed. */
+let _httpCoreReady = false;
+
+/**
  * API version sent on every response as `X-Drishti-API: drishti-api/N`.
  * Native clients (TokmeterBar.app) check the MAJOR version on every request
  * and surface a clear "incompatible daemon" error if they disagree.
@@ -350,11 +370,26 @@ const DRISHTI_API_VERSION = 1;
 async function getHttpCore(): Promise<any> {
   const now = Date.now();
   if (_httpCore && now - _httpCore.ts < HTTP_CACHE_TTL) return _httpCore.core;
-  const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
-  const core = new TokmeterCore();
-  await core.scan();
-  _httpCore = { core, ts: now };
-  return core;
+
+  // Coalesce concurrent callers — only one scan runs at a time. Without
+  // this, the menubar app + a browser tab + an MCP tool can all trigger
+  // the same expensive scan in parallel.
+  if (_httpCorePromise) return _httpCorePromise;
+
+  _httpCorePromise = (async () => {
+    try {
+      const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+      const core = new TokmeterCore();
+      await core.scan();
+      _httpCore = { core, ts: Date.now() };
+      _httpCoreReady = true;
+      return core;
+    } finally {
+      _httpCorePromise = null;
+    }
+  })();
+
+  return _httpCorePromise;
 }
 
 function startHttpApi(): void {
@@ -383,12 +418,56 @@ function startHttpApi(): void {
     try {
       const { CleanupService } = await import("@sriinnu/tokmeter-core");
 
-      // GET endpoints (use cached core)
+      // GET endpoints
       if (req.method === "GET") {
+        // Fast endpoints — never trigger a fresh scan, just report state.
+        // /api/ready is a tiny health check the menubar uses to know whether
+        // it's worth firing the slow endpoints yet.
+        if (url === "/api/ready") {
+          json(res, {
+            ready: _httpCoreReady,
+            warming: _httpCorePromise !== null,
+            apiVersion: DRISHTI_API_VERSION,
+          });
+          return;
+        }
+
+        // /api/quick returns just the stats from whatever cache is available.
+        // If the core has never been scanned, returns zeros + ready: false so
+        // the UI can render a skeleton instead of timing out.
+        if (url === "/api/quick") {
+          if (_httpCore) {
+            const stats = _httpCore.core.getStats();
+            json(res, { ready: true, stats });
+          } else {
+            // Kick off the warmup but don't wait for it.
+            void getHttpCore().catch(() => {});
+            json(res, {
+              ready: false,
+              stats: {
+                totalCost: 0,
+                totalTokens: 0,
+                activeDays: 0,
+                projects: 0,
+                longestStreak: 0,
+              },
+            });
+          }
+          return;
+        }
+
+        // Slow endpoints — wait for the core to be ready.
         const core = await getHttpCore();
 
         if (url === "/api/projects") {
           json(res, core.getAllProjects());
+        } else if (url === "/api/sessions") {
+          // All projects across providers, sorted by most-recently-used descending.
+          // Used by the menubar's expandable session list — supports 10/20/50+ items.
+          const projects = core.getAllProjects()
+            .slice()
+            .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed);
+          json(res, projects.slice(0, 50));
         } else if (url.startsWith("/api/projects/")) {
           const name = decodeURIComponent(url.slice("/api/projects/".length));
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
@@ -408,7 +487,7 @@ function startHttpApi(): void {
           json(res, listThemes());
         } else {
           res.writeHead(404);
-          json(res, { error: "Not found", endpoints: ["/api/projects", "/api/stats", "/api/models", "/api/daily", "/api/providers", "/api/backups", "/api/themes", "/api/cleanup/preview", "/api/cleanup/execute", "/api/restore"] });
+          json(res, { error: "Not found", endpoints: ["/api/ready", "/api/quick", "/api/projects", "/api/sessions", "/api/stats", "/api/models", "/api/daily", "/api/providers", "/api/backups", "/api/themes", "/api/cleanup/preview", "/api/cleanup/execute", "/api/restore"] });
         }
         return;
       }

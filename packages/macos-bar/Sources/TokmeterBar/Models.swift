@@ -43,3 +43,28 @@ struct ModelData: Codable {
     let totalTokens: Int
     let percentageOfTotal: Double
 }
+
+/// /api/quick — fast cached response, may be unready (zeros) on cold start.
+struct QuickResponse: Codable {
+    let ready: Bool
+    let stats: StatsData
+}
+
+/// /api/ready — health check.
+struct ReadyResponse: Codable {
+    let ready: Bool
+    let warming: Bool
+    let apiVersion: Int
+}
+
+/// /api/sessions — per-project session aggregate.
+/// Mirrors the TS ProjectSummary type from @sriinnu/tokmeter-core.
+struct ProjectData: Codable, Identifiable {
+    let project: String
+    let totalCost: Double
+    let totalTokens: Int
+    let activeDays: Int
+    let lastUsed: Double?
+
+    var id: String { project }
+}

@@ -1,223 +1,545 @@
 // TokmeterBarView.swift — the popover content shown when the menubar icon is clicked.
 //
-// Layout:
-//   - Header: Tokmeter brand + refresh button + error chip
-//   - Stats grid: Today / Total Tokens / Total Cost
-//   - Top models bar chart
-//   - 7-day cost line chart
-//   - Quick stats: projects / active days / streak
-//   - Quit button
+// Disney/Pixar UX rules applied:
+//   - Hero element (today's cost) commands the eye via size + breathing gradient.
+//   - Skeleton shimmer instead of "0" zeros while the daemon warms up.
+//   - Color story flows: indigo → violet → amber across the layout.
+//   - Animated transitions between states (warming → ready → stale).
+//   - Sessions list scrolls — handles 10/20/50+ projects without truncation.
+//   - Every loading/error/empty state has personality, not generic placeholders.
+//   - Clear visual hierarchy: hero / details / sessions / footer.
 
 import Charts
 import SwiftUI
 
+// MARK: - Shared design tokens
+
+private enum Palette {
+    static let twilightIndigo = Color(red: 0.263, green: 0.220, blue: 0.792)  // #4338ca
+    static let twilightViolet = Color(red: 0.427, green: 0.157, blue: 0.851)  // #6d28d9
+    static let twilightBright = Color(red: 0.545, green: 0.361, blue: 0.965)  // #8b5cf6
+    static let amber          = Color(red: 0.706, green: 0.325, blue: 0.035)  // #b45309
+    static let amberWarm      = Color(red: 0.961, green: 0.690, blue: 0.255)  // #f5b041
+    static let teal           = Color(red: 0.059, green: 0.463, blue: 0.431)  // #0f766e
+    static let slate          = Color(red: 0.278, green: 0.333, blue: 0.412)  // #475569
+}
+
+private enum Typography {
+    static let hero      = Font.system(size: 44, weight: .bold,    design: .rounded)
+    static let big       = Font.system(size: 22, weight: .semibold, design: .rounded)
+    static let label     = Font.system(size: 11, weight: .medium,   design: .rounded)
+    static let bodyMono  = Font.system(size: 12, weight: .regular,  design: .monospaced)
+}
+
+// MARK: - Main view
+
 struct TokmeterBarView: View {
     @ObservedObject var loader: TokmeterLoader
+    @ObservedObject var updater: UpdaterController
+
+    // Local UI state — not persisted
+    @State private var showAllSessions = false
+    @State private var phase: CGFloat = 0  // breathing gradient phase
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        VStack(alignment: .leading, spacing: 0) {
+            heroHeader
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+
             errorBanner
-            Divider()
-            statsGrid
-                .opacity(loader.lastError != nil && loader.hasFreshData ? 0.5 : 1.0)
+                .padding(.horizontal, 16)
 
-            if !loader.topModels.isEmpty {
-                Divider()
-                topModelsChart
+            Divider().opacity(0.3)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    statsGrid
+                    if !loader.topModels.isEmpty || loader.isWarming {
+                        modelsSection
+                    }
+                    if loader.recentDaily.count > 1 || loader.isWarming {
+                        weekSection
+                    }
+                    if !loader.sessions.isEmpty || loader.isWarming {
+                        sessionsSection
+                    }
+                }
+                .padding(16)
             }
+            .frame(maxHeight: 460)
 
-            if loader.recentDaily.count > 1 {
-                Divider()
-                weekChart
-            }
+            Divider().opacity(0.3)
 
-            if let stats = loader.stats {
-                Divider()
-                quickStats(stats: stats)
-            }
-
-            Divider()
-
-            Button("Quit Tokmeter") {
-                NSApplication.shared.terminate(nil)
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .foregroundColor(.secondary)
+            footer
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
         }
-        .padding()
-        .frame(width: 360)
-    }
-
-    // MARK: - Sections
-
-    private var header: some View {
-        HStack {
-            Text("【♾️】 Tokmeter")
-                .font(.headline)
-                .foregroundColor(Color(red: 0.55, green: 0.36, blue: 0.96)) // twilight violet
-                .accessibilityLabel("Tokmeter")
-
-            if loader.lastError != nil && loader.hasFreshData {
-                // We have stale numbers visible — flag them
-                Text("STALE")
-                    .font(.caption2)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.orange.opacity(0.2))
-                    .foregroundColor(.orange)
-                    .cornerRadius(3)
-                    .accessibilityLabel("Data is stale")
+        .frame(width: 380)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(NSColor.windowBackgroundColor),
+                    Color(NSColor.windowBackgroundColor).opacity(0.95),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        // Breathing gradient animation — drives the hero header background
+        .onAppear {
+            withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
+                phase = 1
             }
-
-            Spacer()
-
-            Button(action: { Task { await loader.loadData() } }) {
-                Image(systemName: loader.isLoading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .disabled(loader.isLoading)
-            .accessibilityLabel("Refresh")
         }
     }
 
-    /// Full error block — shown below the header when offline so the user
-    /// can actually read it (the old .help() tooltip was undiscoverable).
+    // MARK: - Hero header
+
+    private var heroHeader: some View {
+        ZStack(alignment: .topLeading) {
+            // Breathing twilight gradient — the entire app's color story
+            // distilled into one block. This is the focal point.
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Palette.twilightIndigo,
+                            Palette.twilightViolet.interpolated(to: Palette.twilightBright, fraction: phase),
+                            Palette.amber,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    // Subtle inner highlight for depth
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .shadow(color: Palette.twilightViolet.opacity(0.35), radius: 12, x: 0, y: 6)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text("♾️")
+                        .font(.system(size: 28))
+                        .scaleEffect(1 + phase * 0.05)  // breathing
+                    Text("TOKMETER")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .tracking(2.5)
+                        .foregroundColor(.white.opacity(0.85))
+                    Spacer()
+                    if loader.isWarming {
+                        warmingPill
+                    } else if loader.lastError != nil && loader.hasFreshData {
+                        stalePill
+                    }
+                }
+
+                if loader.isWarming {
+                    skeletonHero
+                } else {
+                    Text(formatCost(loader.todayCost))
+                        .font(Typography.hero)
+                        .foregroundColor(.white)
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.4), value: loader.todayCost)
+                    Text("today")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .italic()
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private var skeletonHero: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            shimmerBar(width: 140, height: 32)
+            shimmerBar(width: 60, height: 12)
+        }
+    }
+
+    private var warmingPill: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(.white)
+                .frame(width: 6, height: 6)
+                .opacity(0.5 + phase * 0.5)
+            Text("WARMING")
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .tracking(1)
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.white.opacity(0.18)))
+    }
+
+    private var stalePill: some View {
+        Text("STALE")
+            .font(.system(size: 9, weight: .heavy, design: .rounded))
+            .tracking(1)
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.orange.opacity(0.4)))
+    }
+
+    // MARK: - Error banner
+
     @ViewBuilder
     private var errorBanner: some View {
-        if let error = loader.lastError {
-            HStack(alignment: .top, spacing: 6) {
+        if let error = loader.lastError, !loader.isWarming {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
-                Text(error)
                     .font(.caption)
+                Text(error)
+                    .font(.system(size: 11, design: .rounded))
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(8)
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(6)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.12))
+            )
+            .padding(.bottom, 8)
             .accessibilityElement(children: .combine)
         }
     }
 
+    // MARK: - Stats grid
+
     private var statsGrid: some View {
-        HStack(spacing: 20) {
-            statBlock(label: "Today", value: String(format: "$%.2f", loader.todayCost))
-            statBlock(label: "Total Tokens", value: formatNumber(loader.totalTokens))
-            statBlock(label: "Total Cost", value: String(format: "$%.2f", loader.totalCost))
-        }
-    }
-
-    private func statBlock(label: String, value: String) -> some View {
-        VStack(alignment: .leading) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
-        }
-    }
-
-    private var topModelsChart: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Top Models")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            Chart(loader.topModels) { model in
-                BarMark(
-                    x: .value("Cost", model.cost),
-                    y: .value("Model", model.model)
-                )
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color(red: 0.55, green: 0.36, blue: 0.96), Color(red: 0.71, green: 0.32, blue: 0.04)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
+        HStack(spacing: 10) {
+            statCard(
+                label: "TOTAL TOKENS",
+                value: formatNumber(loader.totalTokens),
+                color: Palette.twilightViolet
+            )
+            statCard(
+                label: "TOTAL SPENT",
+                value: formatCost(loader.totalCost),
+                color: Palette.amber
+            )
+            if let s = loader.stats {
+                statCard(
+                    label: "STREAK",
+                    value: "\(s.longestStreak)d",
+                    color: Palette.teal
                 )
             }
-            .frame(height: 80)
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisValueLabel {
-                        Text(String(format: "$%.1f", value.as(Double.self) ?? 0))
-                            .font(.caption2)
+        }
+    }
+
+    private func statCard(label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(Typography.label)
+                .tracking(0.8)
+                .foregroundColor(.secondary)
+            if loader.isWarming {
+                shimmerBar(width: 60, height: 18)
+            } else {
+                Text(value)
+                    .font(Typography.big)
+                    .foregroundColor(color)
+                    .contentTransition(.numericText())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(color.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(color.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Models section
+
+    @ViewBuilder
+    private var modelsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("TOP MODELS", count: loader.topModels.count)
+
+            if loader.isWarming {
+                ForEach(0..<3, id: \.self) { _ in
+                    shimmerBar(width: 280, height: 14)
+                }
+            } else {
+                let maxCost = loader.topModels.first?.cost ?? 1
+                ForEach(loader.topModels) { model in
+                    HStack(spacing: 8) {
+                        Text(shortModelName(model.model))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .lineLimit(1)
+                            .frame(width: 110, alignment: .leading)
+                        GeometryReader { geo in
+                            let pct = CGFloat(min(model.cost / max(maxCost, 0.01), 1.0))
+                            Capsule()
+                                .fill(Color.gray.opacity(0.12))
+                                .overlay(
+                                    HStack {
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [Palette.twilightViolet, Palette.amberWarm],
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                            .frame(width: max(geo.size.width * pct, 4))
+                                        Spacer(minLength: 0)
+                                    }
+                                )
+                                .frame(height: 6)
+                        }
+                        .frame(height: 6)
+                        Text(formatCost(model.cost))
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(Palette.amber)
+                            .frame(width: 56, alignment: .trailing)
                     }
                 }
             }
         }
     }
 
-    private var weekChart: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Last 7 Days")
-                .font(.caption)
-                .foregroundColor(.secondary)
+    // MARK: - Week chart
 
-            Chart(loader.recentDaily) { day in
-                LineMark(
-                    x: .value("Date", String(day.date.suffix(5))),
-                    y: .value("Cost", day.cost)
-                )
-                .foregroundStyle(Color(red: 0.71, green: 0.32, blue: 0.04)) // amber
-                .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 2))
+    @ViewBuilder
+    private var weekSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("LAST 7 DAYS", count: loader.recentDaily.count)
 
-                AreaMark(
-                    x: .value("Date", String(day.date.suffix(5))),
-                    y: .value("Cost", day.cost)
-                )
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color(red: 0.71, green: 0.32, blue: 0.04).opacity(0.3), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
+            if loader.isWarming {
+                shimmerBar(width: 340, height: 60)
+            } else {
+                Chart(loader.recentDaily) { day in
+                    LineMark(
+                        x: .value("Date", String(day.date.suffix(5))),
+                        y: .value("Cost", day.cost)
                     )
-                )
-                .interpolationMethod(.catmullRom)
-            }
-            .frame(height: 60)
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisValueLabel {
-                        Text(String(format: "$%.0f", value.as(Double.self) ?? 0))
-                            .font(.caption2)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Palette.twilightBright, Palette.amberWarm],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+                    AreaMark(
+                        x: .value("Date", String(day.date.suffix(5))),
+                        y: .value("Cost", day.cost)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Palette.twilightBright.opacity(0.3), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
+                .frame(height: 60)
+                .chartYAxis(.hidden)
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisValueLabel {
+                            Text(value.as(String.self) ?? "")
+                                .font(.system(size: 9, design: .rounded))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }
         }
     }
 
-    private func quickStats(stats: StatsData) -> some View {
-        HStack(spacing: 16) {
-            quickStat(label: "Projects", value: "\(stats.projects)")
-            quickStat(label: "Active Days", value: "\(stats.activeDays)")
-            quickStat(label: "Streak", value: "\(stats.longestStreak)d")
+    // MARK: - Sessions list
+
+    @ViewBuilder
+    private var sessionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("SESSIONS", count: loader.sessions.count)
+
+            if loader.isWarming {
+                ForEach(0..<5, id: \.self) { _ in
+                    shimmerBar(width: 340, height: 28)
+                }
+            } else {
+                let visible = showAllSessions
+                    ? loader.sessions
+                    : Array(loader.sessions.prefix(8))
+                ForEach(visible) { session in
+                    sessionRow(session)
+                }
+                if loader.sessions.count > 8 && !showAllSessions {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            showAllSessions = true
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Show all \(loader.sessions.count)")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9))
+                        }
+                        .foregroundColor(Palette.twilightBright)
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.top, 4)
+                }
+            }
         }
     }
 
-    private func quickStat(label: String, value: String) -> some View {
-        VStack(alignment: .leading) {
-            Text(label)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            Text(value)
-                .font(.caption)
-                .fontWeight(.semibold)
+    private func sessionRow(_ session: ProjectData) -> some View {
+        HStack(spacing: 10) {
+            // Provider color chip
+            Circle()
+                .fill(Palette.twilightViolet)
+                .frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.project)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .lineLimit(1)
+                Text("\(session.activeDays)d  ·  \(formatNumber(session.totalTokens)) tokens")
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Text(formatCost(session.totalCost))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(Palette.amber)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.06))
+        )
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack(spacing: 14) {
+            Button(action: { Task { await loader.loadData() } }) {
+                Label(loader.isLoading ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
+                    .font(.system(size: 11, design: .rounded))
+            }
+            .buttonStyle(.borderless)
+            .foregroundColor(.secondary)
+            .disabled(loader.isLoading)
+            .accessibilityLabel("Refresh data")
+
+            Button(action: { updater.checkForUpdates() }) {
+                Label("Updates", systemImage: "arrow.down.circle")
+                    .font(.system(size: 11, design: .rounded))
+            }
+            .buttonStyle(.borderless)
+            .foregroundColor(.secondary)
+            .disabled(!updater.canCheckForUpdates)
+            .accessibilityLabel("Check for updates")
+
+            Spacer()
+
+            Button(action: { NSApplication.shared.terminate(nil) }) {
+                Label("Quit", systemImage: "power")
+                    .font(.system(size: 11, design: .rounded))
+            }
+            .buttonStyle(.borderless)
+            .foregroundColor(.secondary)
         }
     }
 
     // MARK: - Helpers
+
+    private func sectionHeader(_ label: String, count: Int) -> some View {
+        HStack {
+            Text(label)
+                .font(Typography.label)
+                .tracking(1.2)
+                .foregroundColor(.secondary)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.gray.opacity(0.15)))
+            }
+            Spacer()
+        }
+    }
+
+    private func shimmerBar(width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: height / 3)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.gray.opacity(0.15),
+                        Color.gray.opacity(0.25),
+                        Color.gray.opacity(0.15),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: width, height: height)
+            .opacity(0.5 + phase * 0.5)
+    }
 
     private func formatNumber(_ n: Int) -> String {
         if n >= 1_000_000_000 { return String(format: "%.1fB", Double(n) / 1_000_000_000) }
         if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
         if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
         return "\(n)"
+    }
+
+    private func formatCost(_ cost: Double) -> String {
+        if cost >= 10_000 { return String(format: "$%.0fK", cost / 1000) }
+        if cost >= 1000 { return String(format: "$%.1fK", cost / 1000) }
+        if cost >= 100 { return String(format: "$%.0f", cost) }
+        return String(format: "$%.2f", cost)
+    }
+
+    private func shortModelName(_ id: String) -> String {
+        var name = id
+        if name.hasPrefix("claude-") { name = String(name.dropFirst(7)) }
+        // Strip date suffix
+        if let range = name.range(of: #"-\d{8}$"#, options: .regularExpression) {
+            name = String(name[..<range.lowerBound])
+        }
+        return name
+    }
+}
+
+// MARK: - Color helper
+
+private extension Color {
+    /// Linearly interpolates this color towards another by a fraction in [0, 1].
+    func interpolated(to other: Color, fraction: CGFloat) -> Color {
+        let t = max(0, min(1, fraction))
+        let a = NSColor(self).usingColorSpace(.sRGB)!
+        let b = NSColor(other).usingColorSpace(.sRGB)!
+        return Color(
+            red: Double(a.redComponent + (b.redComponent - a.redComponent) * t),
+            green: Double(a.greenComponent + (b.greenComponent - a.greenComponent) * t),
+            blue: Double(a.blueComponent + (b.blueComponent - a.blueComponent) * t)
+        )
     }
 }

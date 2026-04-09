@@ -1,0 +1,47 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     version="2.0">
+    <channel>
+        <title>TokmeterBar — Drishti Menubar</title>
+        <link>https://github.com/sriinnu/tokmeter</link>
+        <description>Auto-update feed for TokmeterBar.app</description>
+        <language>en</language>
+
+        <!--
+            Each release is a new <item>. The bundle.sh --release flow appends
+            a new <item> to this file using sign_update from Sparkle's tools.
+
+            Required fields per item:
+              - title: human-readable version
+              - sparkle:version: CFBundleVersion (build number, integer)
+              - sparkle:shortVersionString: CFBundleShortVersionString (semver)
+              - sparkle:minimumSystemVersion: macOS minimum
+              - enclosure: download URL + length + sparkle:edSignature
+              - description: HTML release notes (CDATA-wrapped)
+        -->
+
+        <!-- Example release item — REPLACE with real release data:
+        <item>
+            <title>TokmeterBar 0.1.0</title>
+            <pubDate>Mon, 01 Jan 2026 12:00:00 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[
+                <h2>What's new</h2>
+                <ul>
+                    <li>Initial public release</li>
+                    <li>Live daemon API integration</li>
+                    <li>Twilight palette + Pixar-magazine typography</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/sriinnu/tokmeter/releases/download/v0.1.0/TokmeterBar-0.1.0.zip"
+                sparkle:edSignature="REPLACE_WITH_OUTPUT_FROM_sign_update"
+                length="123456"
+                type="application/octet-stream" />
+        </item>
+        -->
+    </channel>
+</rss>

@@ -46,8 +46,11 @@ final class DaemonClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 5
-        config.timeoutIntervalForResource = 10
+        // The first request to a cold daemon triggers a full disk scan
+        // (potentially hundreds of MB of JSONL across 16 providers). 60s
+        // is generous; subsequent calls hit the daemon's 5s in-memory cache.
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 90
         // No persistent caches: every request is fresh telemetry.
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
@@ -66,6 +69,18 @@ final class DaemonClient {
 
     // MARK: - GET endpoints (read-only, no auth needed)
 
+    /// Fast endpoint — returns immediately even if the daemon is still
+    /// warming up. The `ready` flag tells the UI whether to show real
+    /// numbers or a skeleton.
+    func fetchQuick() async throws -> QuickResponse {
+        try await get("/api/quick", as: QuickResponse.self)
+    }
+
+    /// Daemon health/warmup status. Cheap call, never blocks on a scan.
+    func fetchReady() async throws -> ReadyResponse {
+        try await get("/api/ready", as: ReadyResponse.self)
+    }
+
     func fetchStats() async throws -> StatsData {
         try await get("/api/stats", as: StatsData.self)
     }
@@ -76,6 +91,12 @@ final class DaemonClient {
 
     func fetchModels() async throws -> [ModelData] {
         try await get("/api/models", as: [ModelData].self)
+    }
+
+    /// All sessions across all providers, up to 50 items, sorted by recency.
+    /// Used for the expandable session list in the popover.
+    func fetchSessions() async throws -> [ProjectData] {
+        try await get("/api/sessions", as: [ProjectData].self)
     }
 
     // MARK: - Internal

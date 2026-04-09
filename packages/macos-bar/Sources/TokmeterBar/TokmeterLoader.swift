@@ -8,23 +8,30 @@ import SwiftUI
 
 @MainActor
 final class TokmeterLoader: ObservableObject {
+    // Phase 1 — fast: populated from /api/quick within ~50ms even on a cold daemon
     @Published var totalCost: Double = 0
     @Published var totalTokens: Int = 0
     @Published var todayCost: Double = 0
     @Published var todayTokens: Int = 0
+    @Published var stats: StatsData?
+
+    // Phase 2 — details: populated from /api/models, /api/daily, /api/sessions
+    // after the fast phase succeeds. Each is independent so partial failure
+    // is graceful.
     @Published var topModels: [ModelUsage] = []
     @Published var recentDaily: [DailyUsage] = []
-    @Published var stats: StatsData?
+    @Published var sessions: [ProjectData] = []
+
+    // State flags
     @Published var lastError: String?
     @Published var isLoading: Bool = false
-    /// True when we have at least one successful fetch. Used to dim stale
-    /// values when the daemon goes down between refreshes.
     @Published var hasFreshData: Bool = false
+    /// True while the daemon is still doing its first cold scan. The UI
+    /// shows a shimmer/skeleton instead of "0" zeros.
+    @Published var isWarming: Bool = false
 
     private let client = DaemonClient.shared
     private var timer: Timer?
-    /// Reentrancy guard — prevents two loadData() calls from interleaving
-    /// when the user spam-clicks refresh or the timer fires mid-fetch.
     private var fetchInFlight: Bool = false
 
     init() {
@@ -43,7 +50,6 @@ final class TokmeterLoader: ObservableObject {
     }
 
     func loadData() async {
-        // Reentrancy guard: drop concurrent calls instead of interleaving them.
         if fetchInFlight { return }
         fetchInFlight = true
         isLoading = true
@@ -52,64 +58,74 @@ final class TokmeterLoader: ObservableObject {
             fetchInFlight = false
         }
 
-        // Retry with exponential backoff for transient daemon-not-ready errors.
-        // Max 3 attempts: 0s, 0.5s, 1s. Total worst case ~1.5s + request time.
-        var attempt = 0
-        let maxAttempts = 3
-        while attempt < maxAttempts {
-            do {
-                try await fetchOnce()
-                return
-            } catch DaemonError.daemonNotRunning {
-                // No point retrying if daemon isn't even running
-                self.lastError = DaemonError.daemonNotRunning.errorDescription
-                self.hasFreshData = false
-                return
-            } catch {
-                attempt += 1
-                if attempt >= maxAttempts {
-                    self.lastError = (error as? LocalizedError)?.errorDescription
-                        ?? error.localizedDescription
-                    // Don't clear stale numbers — let the user see what we last
-                    // knew with a "stale" indicator (hasFreshData stays true if
-                    // we had data before; UI dims it).
-                    return
-                }
-                let backoff = UInt64(500_000_000) << (attempt - 1) // 0.5s, 1s
-                try? await Task.sleep(nanoseconds: backoff)
+        // ─── Phase 1: fast quick endpoint ────────────────────────────
+        // Always succeeds in <50ms (no scan triggered). Returns ready=false
+        // + zeros if the daemon is still warming. We render a skeleton
+        // while warming, then upgrade to real numbers once ready=true.
+        do {
+            let quick = try await client.fetchQuick()
+            self.stats = quick.stats
+            self.totalCost = quick.stats.totalCost
+            self.totalTokens = quick.stats.totalTokens
+            self.isWarming = !quick.ready
+            self.lastError = nil
+            if quick.ready {
+                self.hasFreshData = true
             }
+        } catch DaemonError.daemonNotRunning {
+            self.lastError = DaemonError.daemonNotRunning.errorDescription
+            self.hasFreshData = false
+            self.isWarming = false
+            return
+        } catch {
+            self.lastError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+            return
+        }
+
+        // If still warming, skip phase 2 — those endpoints will block on
+        // the first scan. Try again on the next 30s tick.
+        if isWarming { return }
+
+        // ─── Phase 2: details (parallel, independent) ────────────────
+        // Each fetch is independent — a failure on one doesn't kill the others.
+        async let dailyTask = fetchDailySafe()
+        async let modelsTask = fetchModelsSafe()
+        async let sessionsTask = fetchSessionsSafe()
+
+        let (dailyResult, modelsResult, sessionsResult) = await (
+            dailyTask, modelsTask, sessionsTask
+        )
+
+        if let daily = dailyResult {
+            if let today = daily.last {
+                self.todayCost = today.cost
+                self.todayTokens = today.totalTokens
+            }
+            self.recentDaily = daily.suffix(7).map {
+                DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost)
+            }
+        }
+        if let models = modelsResult {
+            // Show top 5 instead of 3 — the user has many models
+            self.topModels = models.prefix(5).map {
+                ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
+            }
+        }
+        if let sessionsList = sessionsResult {
+            self.sessions = sessionsList
         }
     }
 
-    private func fetchOnce() async throws {
-        // Fetch in parallel — three independent endpoints
-        async let statsTask = client.fetchStats()
-        async let dailyTask = client.fetchDaily()
-        async let modelsTask = client.fetchModels()
+    private func fetchDailySafe() async -> [DailyData]? {
+        try? await client.fetchDaily()
+    }
 
-        let (stats, daily, models) = try await (statsTask, dailyTask, modelsTask)
+    private func fetchModelsSafe() async -> [ModelData]? {
+        try? await client.fetchModels()
+    }
 
-        self.stats = stats
-        self.totalCost = stats.totalCost
-        self.totalTokens = stats.totalTokens
-        self.lastError = nil
-        self.hasFreshData = true
-
-        // Today = last entry in daily (sorted ascending)
-        if let today = daily.last {
-            self.todayCost = today.cost
-            self.todayTokens = today.totalTokens
-        } else {
-            self.todayCost = 0
-            self.todayTokens = 0
-        }
-
-        self.topModels = models.prefix(3).map {
-            ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
-        }
-
-        self.recentDaily = daily.suffix(7).map {
-            DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost)
-        }
+    private func fetchSessionsSafe() async -> [ProjectData]? {
+        try? await client.fetchSessions()
     }
 }
