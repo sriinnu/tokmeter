@@ -30,7 +30,7 @@ export function BarChart({ data, width = 30, barChar = "█" }: BarChartProps) {
               <Text color={T.muted}>{item.label.slice(0, 20).padEnd(20)}</Text>
             </Box>
             <Box width={width + 2}>
-              <Text color={T.success}>{bar}</Text>
+              <Text color={T.cost}>{bar}</Text>
             </Box>
             <Box width={12}>
               <Text color={T.text}>{formatNumber(item.value)}</Text>

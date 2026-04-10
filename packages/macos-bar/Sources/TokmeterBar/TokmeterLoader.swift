@@ -29,6 +29,9 @@ final class TokmeterLoader: ObservableObject {
     /// True while the daemon is still doing its first cold scan. The UI
     /// shows a shimmer/skeleton instead of "0" zeros.
     @Published var isWarming: Bool = false
+    /// Whether the daemon process is currently alive. Updated on each
+    /// `loadData()` call so the view never does sync I/O in its body.
+    @Published var isDaemonAlive: Bool = false
 
     private let client = DaemonClient.shared
     private var timer: Timer?
@@ -57,6 +60,9 @@ final class TokmeterLoader: ObservableObject {
             isLoading = false
             fetchInFlight = false
         }
+
+        // Update daemon liveness once per fetch — avoids sync I/O in the view body.
+        self.isDaemonAlive = client.isDaemonRunning
 
         // ─── Phase 1: fast quick endpoint ────────────────────────────
         // Always succeeds in <50ms (no scan triggered). Returns ready=false

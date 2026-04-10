@@ -78,27 +78,26 @@ describe("calculateCost", () => {
 
   it("applies 10% cache-read fallback when no explicit rate", async () => {
     const pricing = new PricingService();
-    // Use a hypothetical model not in the static table — kosha may return
-    // pricing without cacheReadPerMillion. We test by reading the static
-    // table directly via a known fallback path: gpt-4 has no cache rate.
-    // gpt-4: $30 input, $60 output, no cache rate → fallback 10% of input = $3/M cache read.
-    // 100k cached → 100k * $3/M = $0.30
+    // grok-4 has $3/M input, $15/M output, no cacheReadPerMillion →
+    // fallback is 10% of input = $0.3/M cache read.
+    // 100k cached → 100k * $0.3/M = $0.03
     const cost = await pricing.calculateCost(
-      "gpt-4",
+      "grok-4",
       0, // input
       0, // output
       100_000 // cache read
     );
-    expect(cost).toBeCloseTo(0.3, 3);
+    expect(cost).toBeCloseTo(0.03, 3);
   });
 
   it("does NOT apply cache-write fallback (must be explicit)", async () => {
     const pricing = new PricingService();
-    // gpt-4 has no cacheWritePerMillion → cache writes should be free.
+    // grok-4 has no cacheWritePerMillion → cache writes should be free.
     // The 1.25x fallback is gated to Anthropic-only by requiring an
-    // explicit rate; otherwise OpenAI/Gemini would be wrongly charged.
+    // explicit rate; otherwise providers without cache write billing
+    // would be wrongly charged.
     const cost = await pricing.calculateCost(
-      "gpt-4",
+      "grok-4",
       0,
       0,
       0,

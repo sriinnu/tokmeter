@@ -14,19 +14,23 @@ struct TokmeterBarApp: App {
         MenuBarExtra {
             TokmeterBarView(loader: loader, updater: updater)
         } label: {
-            Text(menuBarLabel)
-                .accessibilityLabel(accessibilityLabel)
+            Label {
+                Text(costLabel)
+            } icon: {
+                Image(systemName: "infinity")
+            }
+            .accessibilityLabel(accessibilityLabel)
         }
         .menuBarExtraStyle(.window)
     }
 
-    /// Menu bar label — shows today's cost with the infinity glyph.
+    /// Cost text shown next to the SF Symbol in the menu bar.
     /// Falls back to a question mark when the daemon is offline.
-    private var menuBarLabel: String {
+    private var costLabel: String {
         if loader.lastError != nil {
-            return "♾️ ?"
+            return "?"
         }
-        return String(format: "♾️ $%.2f", loader.todayCost)
+        return String(format: "$%.2f", loader.todayCost)
     }
 
     /// VoiceOver-friendly description of the menu bar label.
