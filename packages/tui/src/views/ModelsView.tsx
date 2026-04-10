@@ -1,6 +1,7 @@
 import type { ModelSummary } from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
+import { T } from "../theme.js";
 
 interface ModelsViewProps {
   models: ModelSummary[];
@@ -11,7 +12,7 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
   if (models.length === 0) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="gray">No model data available.</Text>
+        <Text color={T.muted}>No model data available.</Text>
       </Box>
     );
   }
@@ -25,7 +26,7 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">
+        <Text bold color={T.accent}>
           ━━ Models ━━
         </Text>
       </Box>
@@ -36,12 +37,12 @@ export function ModelsView({ models, totalCost }: ModelsViewProps) {
         {models.map((m, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
-            <Text color="gray">{m.model.padEnd(28)}</Text>
-            <Text color="blue">{m.provider.padEnd(12)}</Text>
+            <Text color={T.text}>{m.model.padEnd(28)}</Text>
+            <Text color={T.secondary}>{m.provider.padEnd(12)}</Text>
             <Text>In: {formatNum(m.inputTokens).padStart(8)}</Text>
             <Text> Out: {formatNum(m.outputTokens).padStart(8)}</Text>
-            <Text color="green"> ${m.cost.toFixed(2).padStart(8)}</Text>
-            <Text color="gray"> {m.percentageOfTotal.toFixed(1)}%</Text>
+            <Text color={T.success}> ${m.cost.toFixed(2).padStart(8)}</Text>
+            <Text color={T.muted}> {m.percentageOfTotal.toFixed(1)}%</Text>
           </Box>
         ))}
       </Box>

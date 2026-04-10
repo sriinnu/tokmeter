@@ -5,9 +5,18 @@
  */
 
 import type { Dirent } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { localDateKey } from "../date-utils.js";
+import { canonicalizeProjectName } from "../project-name.js";
 import type { TokenRecord } from "../types.js";
 
 // ─── Record Cache (append-aware, disk-persisted) ───────────────────
@@ -48,6 +57,20 @@ let cacheCreatedAt: string | null = null;
 const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
 const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 
+/**
+ * Cache schema version. Bump this whenever a parser changes how it derives
+ * tokens or cost from the source files — old cached records will become
+ * invalid and we want to force a fresh scan instead of serving stale data.
+ *
+ * Version history:
+ *  1 — initial
+ *  2 — codex/qwen/gemini parsers now subtract cached_input from input_tokens
+ *      to match Anthropic semantics (was double-counting cached tokens)
+ *  3 — codex parser fixed duplicate records from last_token_usage fallback
+ *      (~7% of Codex records were phantom duplicates inflating cost by ~10%)
+ */
+const CACHE_VERSION = 3;
+
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
   recordCache = new Map();
@@ -55,6 +78,12 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
   try {
     if (existsSync(CACHE_FILE)) {
       const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
+      // Reject old cache versions — fall through to empty map so all files
+      // get re-parsed with the current parser semantics.
+      if (data.version !== CACHE_VERSION) {
+        cacheCreatedAt = new Date().toISOString();
+        return recordCache;
+      }
       cacheCreatedAt = data.createdAt;
       for (const [k, v] of Object.entries(data.files)) {
         recordCache.set(k, v);
@@ -69,7 +98,7 @@ function saveRecordCache(): void {
   try {
     if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
     const data: CacheFile = {
-      version: 1,
+      version: CACHE_VERSION,
       createdAt: cacheCreatedAt || new Date().toISOString(),
       lastScanAt: new Date().toISOString(),
       stats: {
@@ -141,6 +170,37 @@ export function saveRecordCacheToDisk(): void {
   saveRecordCache();
 }
 
+/** Remove specific entries from both in-memory and disk cache (used after cleanup). */
+export function invalidateRecordCache(paths: string[]): void {
+  const cache = loadRecordCache();
+  for (const p of paths) {
+    cache.delete(p);
+
+    const directoryPrefix = p.endsWith("/") || p.endsWith("\\") ? p : `${p}/`;
+    const windowsDirectoryPrefix = p.endsWith("\\") || p.endsWith("/") ? p : `${p}\\`;
+
+    for (const key of cache.keys()) {
+      if (key.startsWith(directoryPrefix) || key.startsWith(windowsDirectoryPrefix)) {
+        cache.delete(key);
+      }
+    }
+  }
+  saveRecordCache();
+}
+
+/** Clear the entire record cache, forcing a full rescan. */
+export function clearRecordCache(): void {
+  const cache = loadRecordCache();
+  cache.clear();
+  recordCache = cache;
+  cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  try {
+    if (existsSync(CACHE_FILE)) {
+      unlinkSync(CACHE_FILE);
+    }
+  } catch {}
+}
+
 /** Read only the tail of a file from a byte offset (for append-only parsing). */
 export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: number): Promise<T[]> {
   try {
@@ -184,6 +244,14 @@ export function expandHome(path: string, homeDir: string): string {
     return join(homeDir, path.slice(1));
   }
   return path;
+}
+
+/** Extract the last path segment from either POSIX or Windows-style paths. */
+export function lastPathSegment(path: string, fallback = "unknown"): string {
+  const normalizedPath = path.replace(/[\\/]+$/g, "");
+  const segments = normalizedPath.split(/[\\/]+/).filter(Boolean);
+
+  return segments[segments.length - 1] || fallback;
 }
 
 /**
@@ -264,14 +332,14 @@ export async function readJsonlFile<T>(path: string): Promise<T[]> {
 export function extractProjectFromPath(filePath: string): string {
   // ~/.claude/projects/-Users-me-myapp/session.jsonl → -Users-me-myapp
   // or just use the parent directory name
-  const parts = filePath.split("/");
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
   // Find "projects" in path and take next segment
   const projectsIdx = parts.indexOf("projects");
   if (projectsIdx >= 0 && parts[projectsIdx + 1]) {
-    return parts[projectsIdx + 1];
+    return canonicalizeProjectName(parts[projectsIdx + 1], "unknown");
   }
   // Fallback: use parent directory name
-  return parts[parts.length - 2] || "unknown";
+  return canonicalizeProjectName(parts[parts.length - 2] || "unknown", "unknown");
 }
 
 /** Create a base token record with sensible defaults. */
@@ -297,7 +365,7 @@ export function createRecord(
 
 /** Format a timestamp (ms) to YYYY-MM-DD. */
 export function toDateStr(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+  return localDateKey(ts);
 }
 
 /** Check if a file exists. */

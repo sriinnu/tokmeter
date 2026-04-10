@@ -5,17 +5,52 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
+import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tokmeter-core";
 import chalk, { type Chalk } from "chalk";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
 export const FALLBACK_STATUSLINE = "【♾️】 drishti";
 
-// Force TrueColor (level 3) regardless of TTY detection.
-// In subprocess contexts (Claude Code statusline hook), stdout is not a TTY
-// and chalk auto-detects level 0 (no color). ESM import hoisting means
-// process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads.
-// Explicit level assignment fixes this.
-chalk.level = 3 as typeof Chalk.prototype.level;
+// Force color output even when stdout is not a TTY (Claude Code statusline runs
+// as a subprocess hook, so chalk's auto-detection picks level 0). ESM import
+// hoisting means process.env.FORCE_COLOR set in cli.ts runs AFTER chalk loads,
+// so we set the level explicitly here.
+//
+// Default: level 3 (truecolor / 16M colors). The twilight palette is designed
+// for truecolor and looks noticeably worse when downsampled to 256 colors.
+// We trust the terminal to handle truecolor correctly — every modern macOS
+// terminal does (Terminal.app, iTerm2, Warp, kitty, alacritty, ghostty).
+//
+// Opt-outs:
+//   NO_COLOR=1   → no color at all (respects nocolor.org standard)
+//   TERM=dumb    → no color (legacy terminal compatibility)
+//   FORCE_COLOR=2/1/0 → explicit user override
+function detectColorLevel(): 0 | 1 | 2 | 3 {
+  if (process.env.NO_COLOR) return 0;
+  if (process.env.TERM === "dumb") return 0;
+  const force = process.env.FORCE_COLOR;
+  if (force === "0") return 0;
+  if (force === "1") return 1;
+  if (force === "2") return 2;
+  return 3;
+}
+chalk.level = detectColorLevel() as typeof Chalk.prototype.level;
+
+// ─── Active Theme ──────────────────────────────────────────────────
+// Load once at module init from ~/.config/tokmeter/config.json.
+// Falls back to the default Drishti theme if no config exists.
+const _theme = loadUserTheme();
+const _nerdFont = isNerdFontEnabled();
+
+/** Get the active theme's colors. */
+export function themeColors(): ThemeColors {
+  return _theme.colors;
+}
+
+/** Get the active theme ID. */
+export function activeThemeId(): string {
+  return _theme.id;
+}
 
 // ─── Number Formatting ─────────────────────────────────────────────
 
@@ -97,40 +132,144 @@ export function sparkline(values: number[]): string {
   return finite.map((v) => chars[Math.round(((v - min) / range) * (chars.length - 1))]).join("");
 }
 
-// ─── Color Constants ────────────────────────────────────────────────
+// ─── Color Constants (theme-aware) ──────────────────────────────────
 
-/** Chalk color palette used across all drishti output. */
-export const C = {
-  /** Purple — titles and headings. */
-  title: chalk.bold.hex("#a78bfa"),
-  /** Green — accents and highlights. */
-  accent: chalk.hex("#39d353"),
-  /** Gold — cost values. */
-  cost: chalk.bold.hex("#f0b429"),
-  /** Blue — input tokens. */
-  input: chalk.hex("#58a6ff"),
-  /** Pink/Red — output tokens. */
-  output: chalk.hex("#f97583"),
-  /** Gray — cache tokens. */
-  cache: chalk.hex("#8b949e"),
-  /** Light purple — thinking/reasoning tokens. */
-  think: chalk.hex("#d2a8ff"),
-  /** Dim text. */
-  dim: chalk.dim,
-  /** Bold text. */
-  bold: chalk.bold,
-  /** Yellow — warnings. */
-  warn: chalk.hex("#e3b341"),
-  /** Red — danger / errors. */
-  danger: chalk.hex("#f85149"),
-  /** Green — success indicators. */
-  success: chalk.hex("#39d353"),
-  /** Dark gray — muted/background text. */
-  muted: chalk.hex("#484f58"),
-  /** Light gray — column headers. */
-  header: chalk.bold.hex("#c9d1d9"),
-  /** Border gray — separators and rules. */
-  separator: chalk.hex("#30363d"),
-  /** Bright cyan — chevron separators in statusline. */
-  chevron: chalk.hex("#00e5ff"),
-};
+/** Build chalk palette from active theme. */
+function buildPalette(tc: ThemeColors) {
+  return {
+    /** Primary — titles and headings. */
+    title: chalk.bold.hex(tc.primary),
+    /** Green — accents and highlights. */
+    accent: chalk.hex(tc.success),
+    /** Gold — cost values. */
+    cost: chalk.bold.hex(tc.cost),
+    /** Blue — input tokens. */
+    input: chalk.hex(tc.input),
+    /** Pink/Red — output tokens. */
+    output: chalk.hex(tc.output),
+    /** Gray — cache tokens. */
+    cache: chalk.hex(tc.cache),
+    /** Light purple — thinking/reasoning tokens. */
+    think: chalk.hex(tc.thinking),
+    /** Dim text. */
+    dim: chalk.dim,
+    /** Bold text. */
+    bold: chalk.bold,
+    /** Yellow — warnings. */
+    warn: chalk.hex(tc.warning),
+    /** Red — danger / errors. */
+    danger: chalk.hex(tc.danger),
+    /** Green — success indicators. */
+    success: chalk.hex(tc.success),
+    /** Dark gray — muted/background text. */
+    muted: chalk.hex(tc.muted),
+    /** Light gray — column headers. */
+    header: chalk.bold.hex(tc.text),
+    /** Border gray — separators and rules. */
+    separator: chalk.hex(tc.muted),
+    /** Bright cyan — chevron separators in statusline. */
+    chevron: chalk.hex(tc.secondary),
+  };
+}
+
+/** Chalk color palette — driven by the active theme. */
+export const C = buildPalette(_theme.colors);
+
+// ─── Powerline Segment Helpers ──────────────────────────────────────
+
+/** Whether Nerd Font glyphs are available (config or env). */
+export function useNerdFont(): boolean {
+  return _nerdFont;
+}
+
+/** Powerline arrow separator — Nerd Font  (only used in nerdFont mode). */
+const PL_ARROW = "\uE0B0"; //
+
+/** Relative luminance of a hex color (0 = black, 1 = white). */
+function luminance(hex: string): number {
+  const r = Number.parseInt(hex.slice(1, 3), 16) / 255;
+  const g = Number.parseInt(hex.slice(3, 5), 16) / 255;
+  const b = Number.parseInt(hex.slice(5, 7), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Pick a foreground that contrasts cleanly with the given background.
+ * WCAG-style: pivot at luminance 0.5 (more accurate than 0.45 which never
+ * fired for any twilight palette color since they're all < 0.25).
+ */
+function fgFor(bgHex: string): string {
+  return luminance(bgHex) > 0.5 ? "#1a1a2e" : "#ffffff";
+}
+
+/** Render the body of a powerline segment (no caps, no separator). */
+function segmentBody(text: string, bgHex: string): string {
+  const fg = chalk.hex(fgFor(bgHex));
+  const bg = chalk.bgHex(bgHex);
+  // Bold ensures glyphs pop on colored backgrounds across all terminal fonts.
+  return bg(chalk.bold(fg(` ${text} `)));
+}
+
+/**
+ * Build a powerline bar from an array of { text, bg } segments.
+ *
+ * Two render modes:
+ *   - Nerd Font: classic powerline arrows  between segments, half-circle
+ *     caps   on the ends.
+ *   - Unicode (default): rounded pill caps ◖ ◗ on the ends, NO chevron
+ *     between segments. The color transition between adjacent segments
+ *     is enough visual separation — adding a chevron inside a pill creates
+ *     a contradiction (pill with teeth). Adjacent colored cells, no
+ *     glyphs between them.
+ */
+export function powerline(segments: { text: string; bg: string }[]): string {
+  if (segments.length === 0) return "";
+
+  const parts: string[] = [];
+
+  if (_nerdFont) {
+    // Classic powerline mode
+    parts.push(chalk.hex(segments[0].bg)("\uE0B6")); // rounded left
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const nextSeg = segments[i + 1];
+      parts.push(segmentBody(seg.text, seg.bg));
+      if (nextSeg) {
+        parts.push(chalk.bgHex(nextSeg.bg).hex(seg.bg)(PL_ARROW));
+      }
+    }
+    parts.push(chalk.hex(segments[segments.length - 1].bg)("\uE0B4")); // rounded right
+    return parts.join("");
+  }
+
+  // Unicode pill mode — adjacent colored cells with a hairline separator
+  // between them. The hairline is a single ▏ left-eighth-block character
+  // colored with the *next* segment's bg, sitting on the *current* segment's
+  // bg. This creates a 1-pixel-thick "pixel rule" line that respects the
+  // pill metaphor (no chevron teeth) while still defining the boundary.
+  parts.push(chalk.hex(segments[0].bg)("◖"));
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const nextSeg = segments[i + 1];
+    parts.push(segmentBody(seg.text, seg.bg));
+    if (nextSeg) {
+      // Hairline rule: ▏ in next color, on current bg.
+      parts.push(chalk.bgHex(seg.bg).hex(nextSeg.bg)("▏"));
+    }
+  }
+  parts.push(chalk.hex(segments[segments.length - 1].bg)("◗"));
+
+  return parts.join("");
+}
+
+/** Get the segment background colors from the active theme. */
+export function segmentColors() {
+  const tc = _theme.colors;
+  return {
+    project: tc.segProject,
+    model: tc.segModel,
+    context: tc.segContext,
+    git: tc.segGit,
+    cost: tc.segCost,
+  };
+}

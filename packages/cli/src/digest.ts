@@ -475,13 +475,15 @@ function buildDigestJSON(
  * Scans session data for the current + previous period, then renders
  * a terminal report or JSON output depending on flags.
  */
-export async function runDigest(opts: {
+export interface DigestArgs {
   period?: "today" | "week" | "month";
   project?: string;
   json?: boolean;
   light?: boolean;
   scanOptions?: ScanOptions;
-}) {
+}
+
+export async function runDigest(opts: DigestArgs): Promise<void> {
   const period = opts.period ?? "week";
   const { currentStart, currentEnd, prevStart } = getDigestRanges(period);
 
@@ -511,7 +513,7 @@ export async function runDigest(opts: {
 
   if (currentRecords.length === 0) {
     console.log(`No usage data found for the ${period} period.`);
-    process.exit(0);
+    return;
   }
 
   if (opts.json) {

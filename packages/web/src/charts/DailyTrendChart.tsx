@@ -5,10 +5,15 @@
 import React from "react";
 import Plot from "react-plotly.js";
 import type { TokmeterDailyEntry } from "../hooks/useTokmeterData.js";
+import { webTheme } from "../theme.js";
 
 interface Props {
   daily: TokmeterDailyEntry[];
 }
+
+/** Shared Plotly font size derived from theme body token */
+const baseFontSize = Number.parseInt(webTheme.typography.body.size);
+const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
 
 export function DailyTrendChart({ daily }: Props) {
   const dates = daily.map((d) => d.date);
@@ -21,7 +26,7 @@ export function DailyTrendChart({ daily }: Props) {
         type: "scatter",
         mode: "lines+markers",
         name: "Total Tokens",
-        line: { color: "#39d353" },
+        line: { color: webTheme.charts.output },
         yaxis: "y",
       },
       {
@@ -30,19 +35,19 @@ export function DailyTrendChart({ daily }: Props) {
         type: "scatter",
         mode: "lines+markers",
         name: "Cost ($)",
-        line: { color: "#f0883e" },
+        line: { color: webTheme.charts.costMarker },
         yaxis: "y2",
       },
     ],
     layout: {
-      title: "Daily Usage Trend",
-      xaxis: { title: "Date" },
-      yaxis: { title: "Tokens", side: "left", rangemode: "tozero" },
-      yaxis2: { title: "Cost ($)", side: "right", overlaying: "y", rangemode: "tozero" },
-      legend: { orientation: "h", y: -0.15 },
+      title: { text: "Daily Usage Trend", font: { color: webTheme.text.primary, size: titleFontSize } },
+      xaxis: { title: "Date", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+      yaxis: { title: "Tokens", side: "left", rangemode: "tozero", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+      yaxis2: { title: "Cost ($)", side: "right", overlaying: "y", rangemode: "tozero", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+      legend: { orientation: "h", y: -0.15, font: { color: webTheme.text.muted } },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: "#8b949e" },
+      font: { color: webTheme.text.muted, size: baseFontSize },
     },
     config: { responsive: true },
     style: { width: "100%", height: 400 },

@@ -41,6 +41,14 @@ export class QwenParser implements SessionParser {
       for (const msg of lines) {
         if (!msg.usageMetadata) continue;
 
+        // Google's UsageMetadata reports promptTokenCount as TOTAL prompt tokens
+        // (including cached). Subtract cached so inputTokens = uncached only,
+        // matching Anthropic semantics. Otherwise the cost calculator double-
+        // charges cached tokens (once at full input rate, once at cache rate).
+        const totalPrompt = msg.usageMetadata.promptTokenCount ?? 0;
+        const cached = msg.usageMetadata.cachedContentTokenCount ?? 0;
+        const inputTokens = Math.max(0, totalPrompt - cached);
+
         records.push(
           createRecord({
             timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
@@ -48,10 +56,10 @@ export class QwenParser implements SessionParser {
             model: msg.model || "qwen",
             project,
             sourceFile: file,
-            inputTokens: msg.usageMetadata.promptTokenCount ?? 0,
+            inputTokens,
             outputTokens: msg.usageMetadata.candidatesTokenCount ?? 0,
             reasoningTokens: msg.usageMetadata.thoughtsTokenCount ?? 0,
-            cacheReadTokens: msg.usageMetadata.cachedContentTokenCount ?? 0,
+            cacheReadTokens: cached,
           })
         );
       }

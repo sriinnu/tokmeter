@@ -12,21 +12,25 @@
  *   drishti daemon status          Check daemon status
  *   drishti install-statusline     Install statusline hook for ALL editors
  *   drishti install-mcp            Install MCP server for ALL editors
+ *   drishti install-hooks          Install guard hooks (Claude Code)
+ *   drishti install-all|restore    Restore everything — statusline + MCP + hooks
  *   drishti uninstall-statusline   Remove statusline hook from all editors
  *   drishti uninstall-mcp          Remove MCP server from all editors
+ *   drishti uninstall-hooks        Remove guard hooks (Claude Code)
  *   drishti editors                List all supported editors
  *   drishti help                   Show usage instructions
  */
 
 // Process-level error handlers — statusline must fail silently since editors
 // expect stdout output, not stderr crashes. Other commands can be noisy.
+// NOTE: import the constant from formatter so we don't drift two copies.
+import { FALLBACK_STATUSLINE } from "./formatter.js";
 const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
-const FALLBACK_LINE = "【♾️】 drishti";
 
 process.on("unhandledRejection", (reason) => {
   if (isStatusline) {
     try {
-      process.stdout.write(FALLBACK_LINE);
+      process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
   }
@@ -37,7 +41,7 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   if (isStatusline) {
     try {
-      process.stdout.write(FALLBACK_LINE);
+      process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
   }
@@ -75,7 +79,7 @@ switch (command) {
       await runStatusline();
     } catch {
       try {
-        process.stdout.write(FALLBACK_LINE);
+        process.stdout.write(FALLBACK_STATUSLINE);
       } catch {}
     }
     break;
@@ -113,6 +117,27 @@ switch (command) {
     break;
   }
 
+  case "install-hooks":
+  case "hooks-install": {
+    const { installHooks } = await import("./installer.js");
+    installHooks();
+    break;
+  }
+
+  case "uninstall-hooks":
+  case "hooks-uninstall": {
+    const { uninstallHooks } = await import("./installer.js");
+    uninstallHooks();
+    break;
+  }
+
+  case "install-all":
+  case "restore": {
+    const { installAll } = await import("./installer.js");
+    installAll();
+    break;
+  }
+
   case "editors": {
     const { listEditors } = await import("./installer.js");
     listEditors();
@@ -122,7 +147,7 @@ switch (command) {
   case "daemon": {
     const { runDaemonCLI } = await import("./daemon/server.js");
     const daemonCmd = process.argv[3] ?? "status";
-    runDaemonCLI(daemonCmd);
+    await runDaemonCLI(daemonCmd);
     break;
   }
 
@@ -162,8 +187,11 @@ ${b("COMMANDS")}
   ${a("daemon status")}     Check daemon status
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
+  ${a("install-hooks")}     Install guard hooks (Claude Code)
+  ${a("install-all")}       Restore everything — statusline + MCP + hooks
   ${a("uninstall-statusline")} Remove statusline hook from all editors
   ${a("uninstall-mcp")}     Remove MCP server from all editors
+  ${a("uninstall-hooks")}   Remove guard hooks (Claude Code)
   ${a("editors")}           List all supported editors
   ${a("help")}              Show this help message
 

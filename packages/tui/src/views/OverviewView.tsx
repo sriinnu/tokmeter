@@ -1,24 +1,29 @@
-import type { TokmeterCore } from "@sriinnu/tokmeter-core";
+import type {
+  DailyEntry,
+  ModelSummary,
+  ProviderSummary,
+  TokmeterStats,
+} from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
 import { Sparkline } from "../components/Sparkline.js";
+import { T } from "../theme.js";
 
 interface OverviewViewProps {
-  core: TokmeterCore;
+  stats: TokmeterStats;
+  models: ModelSummary[];
+  daily: DailyEntry[];
+  providers: ProviderSummary[];
 }
 
-export function OverviewView({ core }: OverviewViewProps) {
-  const stats = core.getStats();
-  const models = core.getModelCosts();
-  const daily = core.getDailyBreakdown();
-
+export function OverviewView({ stats, models, daily, providers }: OverviewViewProps) {
   if (stats.totalRecords === 0) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">
+        <Text bold color={T.accent}>
           Overview
         </Text>
-        <Text color="gray">No token usage data found. Run some AI coding sessions first.</Text>
+        <Text color={T.muted}>No token usage data found. Run some AI coding sessions first.</Text>
       </Box>
     );
   }
@@ -34,7 +39,7 @@ export function OverviewView({ core }: OverviewViewProps) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">
+        <Text bold color={T.accent}>
           ━━ Overview ━━
         </Text>
       </Box>
@@ -42,23 +47,23 @@ export function OverviewView({ core }: OverviewViewProps) {
       {/* Summary cards */}
       <Box flexDirection="row" marginBottom={1}>
         <Box width={20} flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text color="gray">Total Cost</Text>
-          <Text bold color="green">
+          <Text color={T.muted}>Total Cost</Text>
+          <Text bold color={T.success}>
             ${stats.totalCost.toFixed(2)}
           </Text>
         </Box>
         <Box width={20} flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text color="gray">Total Tokens</Text>
-          <Text bold color="yellow">
+          <Text color={T.muted}>Total Tokens</Text>
+          <Text bold color={T.warn}>
             {formatNum(stats.totalTokens)}
           </Text>
         </Box>
         <Box width={16} flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text color="gray">Projects</Text>
+          <Text color={T.muted}>Projects</Text>
           <Text bold>{stats.projects}</Text>
         </Box>
         <Box width={16} flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text color="gray">Active Days</Text>
+          <Text color={T.muted}>Active Days</Text>
           <Text bold>{stats.activeDays}</Text>
         </Box>
       </Box>
@@ -78,10 +83,10 @@ export function OverviewView({ core }: OverviewViewProps) {
       {/* Provider breakdown */}
       <Box flexDirection="column">
         <Text bold>Providers</Text>
-        {core.getProviderBreakdown().map((p, i) => (
+        {providers.map((p, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
-            <Text color="gray">{p.provider.padEnd(12)}</Text>
+            <Text color={T.muted}>{p.provider.padEnd(12)}</Text>
             <Text>
               {formatNum(p.totalTokens)} tokens | ${p.cost.toFixed(2)} (
               {p.percentageOfTotal.toFixed(1)}%)
