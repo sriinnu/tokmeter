@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import type { LiveConnectionStatus } from "../hooks/useLiveData.js";
 import type { TokmeterScanMeta, TokmeterSummarySource } from "../hooks/useTokmeterData.js";
-import { webTheme, withAlpha } from "../theme.js";
+import { applyTypography, webTheme, withAlpha } from "../theme.js";
 
 interface SummaryStatusBannerProps {
   meta: TokmeterScanMeta;
@@ -32,7 +32,7 @@ export function SummaryStatusBanner({
     <section style={containerStyle}>
       <div style={headerRowStyle}>
         <div>
-          <div style={eyebrowStyle}>Summary health</div>
+          <div style={eyebrowStyle}>{" Summary health"}</div>
           <div style={headlineStyle}>{historyMessage}</div>
           <div style={sublineStyle}>{liveMessage}</div>
         </div>
@@ -74,15 +74,16 @@ function StatusPill({
         alignItems: "center",
         background: tone.background,
         border: `1px solid ${tone.border}`,
-        borderRadius: 999,
+        borderRadius: webTheme.radii.pill,
         color: tone.color,
         display: "inline-flex",
-        fontSize: 12,
+        ...applyTypography(webTheme.typography.caption),
         fontWeight: 700,
-        gap: 8,
+        gap: webTheme.spacing.sm,
         letterSpacing: "0.04em",
-        padding: "8px 14px",
+        padding: `${webTheme.spacing.sm} ${webTheme.spacing.md}`,
         textTransform: "uppercase",
+        transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
       }}
     >
       <span
@@ -198,85 +199,94 @@ function formatTimestamp(value: number | null): string {
   }).format(value);
 }
 
+/** Container with fadeUp entrance animation */
 const containerStyle: CSSProperties = {
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
   backdropFilter: "blur(18px)",
   background: `linear-gradient(135deg, ${withAlpha(webTheme.colors.pine, 0.94)}, ${withAlpha(
     webTheme.colors.teal,
     0.76
   )})`,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 24,
-  boxShadow: `0 24px 80px ${webTheme.surfaces.shadow}`,
-  marginBottom: 24,
-  padding: 24,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.high,
+  marginBottom: webTheme.spacing.xl,
+  padding: webTheme.spacing.xl,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
 };
 
 const headerRowStyle: CSSProperties = {
   alignItems: "flex-start",
   display: "flex",
   flexWrap: "wrap",
-  gap: 16,
+  gap: webTheme.spacing.lg,
   justifyContent: "space-between",
-  marginBottom: 18,
+  marginBottom: webTheme.spacing.lg,
 };
 
+/** Eyebrow label with micro typography */
 const eyebrowStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
+  ...applyTypography(webTheme.typography.micro),
   fontWeight: 700,
   letterSpacing: "0.08em",
-  marginBottom: 8,
+  marginBottom: webTheme.spacing.sm,
   textTransform: "uppercase",
 };
 
+/** Headline with h2 typography */
 const headlineStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 22,
-  fontWeight: 700,
-  lineHeight: 1.2,
-  marginBottom: 6,
+  ...applyTypography(webTheme.typography.h2),
+  marginBottom: webTheme.spacing.xs,
 };
 
+/** Subline with body typography */
 const sublineStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 14,
+  ...applyTypography(webTheme.typography.body),
   lineHeight: 1.6,
   maxWidth: 720,
 };
 
 const metricGridStyle: CSSProperties = {
   display: "grid",
-  gap: 12,
+  gap: webTheme.spacing.md,
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
 };
 
+/** Metric card with theme radii and spacing */
 const metricCardStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 18,
-  padding: "14px 16px",
+  borderRadius: webTheme.radii.lg,
+  padding: `${webTheme.spacing.md} ${webTheme.spacing.lg}`,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
 };
 
+/** Metric label with caption typography */
 const metricLabelStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
-  marginBottom: 6,
+  ...applyTypography(webTheme.typography.caption),
+  marginBottom: webTheme.spacing.xs,
   textTransform: "uppercase",
 };
 
+/** Metric value with h3 typography */
 const metricValueStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 15,
-  fontWeight: 600,
+  fontSize: "15px",
+  fontWeight: webTheme.typography.h3.weight,
 };
 
+/** Warning banner with theme tokens */
 const warningStyle: CSSProperties = {
   background: withAlpha(webTheme.colors.rose, 0.16),
   border: `1px solid ${withAlpha(webTheme.colors.rose, 0.28)}`,
-  borderRadius: 16,
+  borderRadius: webTheme.radii.lg,
   color: webTheme.text.primary,
-  fontSize: 13,
+  ...applyTypography(webTheme.typography.mono),
   lineHeight: 1.6,
-  marginTop: 16,
-  padding: "12px 14px",
+  marginTop: webTheme.spacing.lg,
+  padding: `${webTheme.spacing.md} ${webTheme.spacing.md}`,
 };

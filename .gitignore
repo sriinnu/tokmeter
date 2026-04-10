@@ -10,11 +10,30 @@ packages/web/public/data.json
 .claude/worktrees/agent-a063422a/
 .claude/worktrees/agent-a03f6e39/
 
-# macOS menubar app build artifacts + secrets
+# macOS menubar app — build artifacts
 packages/macos-bar/.build/
 packages/macos-bar/*.app/
 packages/macos-bar/*.zip
+packages/macos-bar/*.dSYM/
+packages/macos-bar/*.dSYM.zip
+
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pem
+**/sparkle_ed25519_priv
+**/sparkle_ed25519_priv.pub
+**/sparkle_private_key
+**/generate_keys.out
+**/api-key*.p8
+**/AuthKey*.p8
+
+# macOS bar specific secrets
 packages/macos-bar/.env
+packages/macos-bar/.*.env
 packages/macos-bar/sparkle_ed25519_priv
 packages/macos-bar/sparkle_ed25519_priv.pub
 packages/macos-bar/generate_keys.out

@@ -1,7 +1,8 @@
+import type { CSSProperties } from "react";
 import React from "react";
 import Plot from "react-plotly.js";
 import { useTokmeterData } from "../hooks/useTokmeterData.js";
-import { webTheme } from "../theme.js";
+import { applyTypography, webTheme } from "../theme.js";
 
 /**
  * 3D contribution graph — isometric surface plot.
@@ -61,8 +62,8 @@ export function View3DPage() {
   }
 
   return (
-    <div>
-      <h2 style={{ color: webTheme.colors.olive }}>3D Contribution Graph</h2>
+    <div style={pageContainerStyle}>
+      <h2 style={pageTitleStyle}>3D Contribution Graph</h2>
 
       {React.createElement(Plot, {
         data: [
@@ -77,15 +78,15 @@ export function View3DPage() {
           },
         ],
         layout: {
-          title: "3D Token Usage Surface",
+          title: { text: "3D Token Usage Surface", font: { color: webTheme.text.primary, size: Number.parseInt(webTheme.typography.h3.size) } },
           scene: {
-            xaxis: { title: "Day" },
-            yaxis: { title: "Week" },
-            zaxis: { title: "Tokens" },
+            xaxis: { title: "Day", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+            yaxis: { title: "Week", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+            zaxis: { title: "Tokens", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
             camera: { eye: { x: 1.8, y: 1.8, z: 0.8 } },
           },
           paper_bgcolor: "transparent",
-          font: { color: webTheme.text.muted },
+          font: { color: webTheme.text.muted, size: Number.parseInt(webTheme.typography.body.size) },
           width: 900,
           height: 600,
         },
@@ -101,3 +102,14 @@ function toLocalDateKey(date: Date): string {
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+/* ── Style tokens ─────────────────────────────────────────────── */
+
+const pageContainerStyle: CSSProperties = {
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
+};
+
+const pageTitleStyle: CSSProperties = {
+  color: webTheme.colors.olive,
+  ...applyTypography(webTheme.typography.h1),
+};

@@ -175,6 +175,8 @@ cat > "${CONTENTS}/Info.plist" <<PLIST
     <true/>
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 sriinnu. All rights reserved.</string>
 PLIST
 
 if [[ -n "${SUPUBLIC_KEY}" ]]; then
@@ -256,12 +258,17 @@ echo "==> Built ${APP_DIR} ($(du -sh "${APP_DIR}" | cut -f1))"
 
 # ─── 8. Notarize + staple (release only) ────────────────────────────────
 if [[ "${MODE}" == "release" ]]; then
-    # ALL required env vars are now FATAL on missing — no silent failures
-    # in a release pipeline. If you forgot a credential, find out now, not
-    # after you've shipped a broken appcast.
-    if [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ]]; then
-        echo "ERROR: --release requires APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD env vars"
-        echo "       Generate an app-specific password at appleid.apple.com"
+    # ALL required env vars are now FATAL on missing.
+    # Supports two auth methods (same as Runic):
+    #   a) API Key: APP_STORE_CONNECT_API_KEY_P8 + KEY_ID + ISSUER_ID (preferred)
+    #   b) Apple ID: APPLE_ID + APPLE_APP_PASSWORD + APPLE_TEAM_ID (legacy)
+    USE_API_KEY=0
+    if [[ -n "${APP_STORE_CONNECT_API_KEY_P8:-}" && -n "${APP_STORE_CONNECT_KEY_ID:-}" && -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+        USE_API_KEY=1
+    elif [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ]]; then
+        echo "ERROR: --release requires notarization credentials."
+        echo "       Option A (preferred): APP_STORE_CONNECT_API_KEY_P8 + KEY_ID + ISSUER_ID"
+        echo "       Option B: APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD"
         exit 4
     fi
     if [[ -z "${RELEASE_DOWNLOAD_URL:-}" ]]; then
@@ -281,33 +288,39 @@ if [[ "${MODE}" == "release" ]]; then
     ZIP_PATH="${APP_NAME}-${SHORT_VERSION}.zip"
     echo "==> Creating notarization zip: ${ZIP_PATH}"
     rm -f "${ZIP_PATH}"
-    /usr/bin/ditto -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
+    /usr/bin/ditto --norsrc -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
+
+    # Strip extended attributes that would create AppleDouble files
+    xattr -cr "${APP_DIR}" 2>/dev/null || true
+    find "${APP_DIR}" -name '._*' -delete 2>/dev/null || true
 
     echo "==> Submitting to Apple notary service (this can take 5-30 minutes)"
-    # Capture the submission UUID so we can fetch the log on failure.
-    NOTARY_OUT=$(mktemp)
-    if ! xcrun notarytool submit "${ZIP_PATH}" \
-        --apple-id "${APPLE_ID}" \
-        --team-id "${APPLE_TEAM_ID}" \
-        --password "${APPLE_APP_PASSWORD}" \
-        --wait \
-        --output-format plist > "${NOTARY_OUT}" 2>&1; then
-        echo "ERROR: notarytool submit failed:"
-        cat "${NOTARY_OUT}"
-        # Try to extract a UUID and fetch the detailed log
-        UUID=$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "${NOTARY_OUT}" | head -1 || true)
-        if [[ -n "${UUID}" ]]; then
-            echo "==> Fetching detailed notarization log for ${UUID}"
-            xcrun notarytool log "${UUID}" \
-                --apple-id "${APPLE_ID}" \
-                --team-id "${APPLE_TEAM_ID}" \
-                --password "${APPLE_APP_PASSWORD}" || true
-        fi
-        rm -f "${NOTARY_OUT}"
+    NOTARY_FAILED=0
+
+    if [[ "${USE_API_KEY}" == "1" ]]; then
+        # API Key auth (same pattern as Runic — preferred)
+        API_KEY_FILE=$(mktemp)
+        echo "${APP_STORE_CONNECT_API_KEY_P8}" | sed 's/\\n/\n/g' > "${API_KEY_FILE}"
+        trap "rm -f '${API_KEY_FILE}'" EXIT
+
+        xcrun notarytool submit "${ZIP_PATH}" \
+            --key "${API_KEY_FILE}" \
+            --key-id "${APP_STORE_CONNECT_KEY_ID}" \
+            --issuer "${APP_STORE_CONNECT_ISSUER_ID}" \
+            --wait || NOTARY_FAILED=1
+    else
+        # Apple ID + app-specific password auth (legacy)
+        xcrun notarytool submit "${ZIP_PATH}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait || NOTARY_FAILED=1
+    fi
+
+    if [[ "${NOTARY_FAILED}" == "1" ]]; then
+        echo "ERROR: notarytool submit failed"
         exit 5
     fi
-    cat "${NOTARY_OUT}"
-    rm -f "${NOTARY_OUT}"
 
     echo "==> Stapling notarization ticket to ${APP_DIR}"
     xcrun stapler staple "${APP_DIR}"

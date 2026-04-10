@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Link, useParams } from "react-router-dom";
 import { projectNameIncludes, projectNamesMatch } from "../../../core/src/project-name.js";
 import { ModelCostChart } from "../charts/ModelCostChart.js";
@@ -6,7 +7,7 @@ import {
   type TokmeterProjectSummary,
   useTokmeterData,
 } from "../hooks/useTokmeterData.js";
-import { pageCardStyle, webTheme, withAlpha } from "../theme.js";
+import { applyTypography, pageCardStyle, webTheme, withAlpha } from "../theme.js";
 
 /**
  * Render the project overview list and the project detail route.
@@ -32,16 +33,9 @@ export function ProjectsPage() {
     if (!project) return <div style={{ color: webTheme.text.danger }}>Project not found</div>;
 
     return (
-      <div>
-        <h2 style={{ color: webTheme.colors.olive }}>{project.project}</h2>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-            gap: 16,
-            marginBottom: 24,
-          }}
-        >
+      <div style={pageContainerStyle}>
+        <h2 style={pageTitleStyle}>{project.project}</h2>
+        <div style={statGridStyle}>
           <StatCard label="Total Cost" value={`$${project.totalCost.toFixed(2)}`} />
           <StatCard label="Total Tokens" value={formatNum(project.totalTokens)} />
           <StatCard label="Models" value={project.models.length.toString()} />
@@ -49,12 +43,12 @@ export function ProjectsPage() {
         </div>
         <ModelCostChart models={project.models} />
 
-        <h3 style={{ color: webTheme.text.muted, marginTop: 32 }}>Models</h3>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <h3 style={sectionHeadingStyle}>Models</h3>
+        <table style={tableStyle}>
           <thead>
-            <tr style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}` }}>
+            <tr style={theadRowStyle}>
               {["Model", "Provider", "Tokens", "Input", "Output", "Cost", "%"].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: 8, color: webTheme.text.muted }}>
+                <th key={h} style={thStyle}>
                   {h}
                 </th>
               ))}
@@ -62,19 +56,14 @@ export function ProjectsPage() {
           </thead>
           <tbody>
             {project.models.map((m: TokmeterModelSummary) => (
-              <tr
-                key={`${m.provider}-${m.model}`}
-                style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}` }}
-              >
-                <td style={{ padding: 8, color: webTheme.text.primary }}>{m.model}</td>
-                <td style={{ padding: 8, color: webTheme.text.muted }}>{m.provider}</td>
-                <td style={{ padding: 8 }}>{formatNum(m.totalTokens)}</td>
-                <td style={{ padding: 8 }}>{formatNum(m.inputTokens)}</td>
-                <td style={{ padding: 8 }}>{formatNum(m.outputTokens)}</td>
-                <td style={{ padding: 8, color: webTheme.colors.olive }}>${m.cost.toFixed(2)}</td>
-                <td style={{ padding: 8, color: webTheme.text.muted }}>
-                  {m.percentageOfTotal.toFixed(1)}%
-                </td>
+              <tr key={`${m.provider}-${m.model}`} style={tbodyRowStyle}>
+                <td style={tdPrimaryStyle}>{m.model}</td>
+                <td style={tdMutedStyle}>{m.provider}</td>
+                <td style={tdStyle}>{formatNum(m.totalTokens)}</td>
+                <td style={tdStyle}>{formatNum(m.inputTokens)}</td>
+                <td style={tdStyle}>{formatNum(m.outputTokens)}</td>
+                <td style={tdAccentStyle}>${m.cost.toFixed(2)}</td>
+                <td style={tdMutedStyle}>{m.percentageOfTotal.toFixed(1)}%</td>
               </tr>
             ))}
           </tbody>
@@ -85,39 +74,30 @@ export function ProjectsPage() {
 
   // All projects list
   return (
-    <div>
-      <h2 style={{ color: webTheme.colors.olive }}>Projects</h2>
-      <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-        {data.projects.map((p: TokmeterProjectSummary) => (
+    <div style={pageContainerStyle}>
+      <h2 style={pageTitleStyle}>Projects</h2>
+      <div style={listStackStyle}>
+        {data.projects.map((p: TokmeterProjectSummary, i: number) => (
           <Link
             key={p.project}
             to={`/projects/${encodeURIComponent(p.project)}`}
             style={{
-              display: "block",
-              ...pageCardStyle,
-              borderRadius: 12,
-              padding: 16,
-              textDecoration: "none",
-              color: "inherit",
+              ...projectCardStyle,
+              animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
+              animationDelay: `${i * 60}ms`,
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div style={{ color: webTheme.text.primary, fontWeight: 600, fontSize: 16 }}>
-                  {p.project}
-                </div>
-                <div style={{ color: webTheme.text.muted, fontSize: 13 }}>
+                <div style={projectNameStyle}>{p.project}</div>
+                <div style={projectMetaStyle}>
                   {p.models.length} models | {p.providers.length} providers | {p.activeDays} active
                   days
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ color: webTheme.colors.olive, fontSize: 18, fontWeight: 700 }}>
-                  ${p.totalCost.toFixed(2)}
-                </div>
-                <div style={{ color: webTheme.text.muted, fontSize: 13 }}>
-                  {formatNum(p.totalTokens)} tokens
-                </div>
+                <div style={projectCostStyle}>${p.totalCost.toFixed(2)}</div>
+                <div style={projectMetaStyle}>{formatNum(p.totalTokens)} tokens</div>
               </div>
             </div>
           </Link>
@@ -129,9 +109,9 @@ export function ProjectsPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ ...pageCardStyle, borderRadius: 12, padding: 16 }}>
-      <div style={{ color: webTheme.text.muted, fontSize: 12 }}>{label}</div>
-      <div style={{ color: webTheme.text.primary, fontSize: 24, fontWeight: 700 }}>{value}</div>
+    <div style={statCardStyle}>
+      <div style={statLabelStyle}>{label}</div>
+      <div style={statValueStyle}>{value}</div>
     </div>
   );
 }
@@ -141,3 +121,120 @@ function formatNum(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toFixed(0);
 }
+
+/* ── Style tokens ─────────────────────────────────────────────── */
+
+const pageContainerStyle: CSSProperties = {
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
+};
+
+const pageTitleStyle: CSSProperties = {
+  color: webTheme.colors.olive,
+  ...applyTypography(webTheme.typography.h1),
+};
+
+const statGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: webTheme.spacing.lg,
+  marginBottom: webTheme.spacing.xl,
+};
+
+const statCardStyle: CSSProperties = {
+  ...pageCardStyle,
+  borderRadius: webTheme.radii.md,
+  padding: webTheme.spacing.lg,
+  boxShadow: webTheme.elevation.low,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
+};
+
+const statLabelStyle: CSSProperties = {
+  color: webTheme.text.muted,
+  ...applyTypography(webTheme.typography.caption),
+};
+
+const statValueStyle: CSSProperties = {
+  color: webTheme.text.primary,
+  ...applyTypography(webTheme.typography.h1),
+};
+
+const sectionHeadingStyle: CSSProperties = {
+  color: webTheme.text.muted,
+  ...applyTypography(webTheme.typography.h3),
+  marginTop: webTheme.spacing["2xl"],
+};
+
+const tableStyle: CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+};
+
+const theadRowStyle: CSSProperties = {
+  borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}`,
+};
+
+const thStyle: CSSProperties = {
+  textAlign: "left",
+  padding: webTheme.spacing.sm,
+  color: webTheme.text.muted,
+  ...applyTypography(webTheme.typography.caption),
+  fontWeight: 700,
+};
+
+const tbodyRowStyle: CSSProperties = {
+  borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}`,
+  transition: `background ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
+};
+
+const tdStyle: CSSProperties = {
+  padding: webTheme.spacing.sm,
+  ...applyTypography(webTheme.typography.body),
+};
+
+const tdPrimaryStyle: CSSProperties = {
+  ...tdStyle,
+  color: webTheme.text.primary,
+};
+
+const tdMutedStyle: CSSProperties = {
+  ...tdStyle,
+  color: webTheme.text.muted,
+};
+
+const tdAccentStyle: CSSProperties = {
+  ...tdStyle,
+  color: webTheme.colors.olive,
+};
+
+const listStackStyle: CSSProperties = {
+  display: "grid",
+  gap: webTheme.spacing.md,
+  marginTop: webTheme.spacing.lg,
+};
+
+const projectCardStyle: CSSProperties = {
+  display: "block",
+  ...pageCardStyle,
+  borderRadius: webTheme.radii.md,
+  padding: webTheme.spacing.lg,
+  textDecoration: "none",
+  color: "inherit",
+  boxShadow: webTheme.elevation.low,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, transform ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
+};
+
+const projectNameStyle: CSSProperties = {
+  color: webTheme.text.primary,
+  ...applyTypography(webTheme.typography.h3),
+  fontSize: webTheme.spacing.lg,
+};
+
+const projectMetaStyle: CSSProperties = {
+  color: webTheme.text.muted,
+  ...applyTypography(webTheme.typography.mono),
+};
+
+const projectCostStyle: CSSProperties = {
+  color: webTheme.colors.olive,
+  ...applyTypography(webTheme.typography.h3),
+};

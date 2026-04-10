@@ -65,7 +65,7 @@ function renderStateCard(title: string, message: string, accent = webTheme.text.
 
 const pageStyle: CSSProperties = {
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
 };
 
 const stateCardStyle: CSSProperties = {
@@ -77,16 +77,16 @@ const stateCardStyle: CSSProperties = {
     0.72
   )})`,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 28,
-  boxShadow: `0 26px 90px ${webTheme.surfaces.shadow}`,
-  padding: 32,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.high,
+  padding: webTheme.spacing["2xl"],
 };
 
 const stateTitleStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 24,
-  fontWeight: 700,
-  marginBottom: 10,
+  fontSize: webTheme.typography.h1.size,
+  fontWeight: webTheme.typography.h1.weight,
+  marginBottom: webTheme.spacing.md,
 };
 
 const stateMessageStyle: CSSProperties = {

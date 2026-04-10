@@ -25,7 +25,7 @@ import {
   segmentColors,
   useNerdFont,
 } from "./formatter.js";
-import { italicMath, smallCaps } from "./typography.js";
+import { defaultTheme, italicMath } from "./typography.js";
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
 // The statusline runs as a fresh subprocess every ~200ms. To avoid
@@ -439,7 +439,7 @@ export async function runStatusline(): Promise<void> {
     // Truncate long names so the bar doesn't wrap on 80-col terms.
     if (projectName) {
       const trunc = projectName.length > 24 ? `${projectName.slice(0, 23)}…` : projectName;
-      pl.push({ text: ic(ICON.folder, smallCaps(trunc)), bg: seg.project });
+      pl.push({ text: ic(ICON.folder, defaultTheme.name(trunc)), bg: seg.project });
     }
 
     // 3. Model / Agent — pulsing activity indicator

@@ -12,10 +12,14 @@ interface Props {
   daily: TokmeterDailyEntry[];
 }
 
+/** Shared Plotly font sizes derived from theme typography tokens */
+const baseFontSize = Number.parseInt(webTheme.typography.body.size);
+const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
+
 export function ContributionHeatmap({ daily }: Props) {
   if (daily.length === 0) {
     return (
-      <div style={{ color: webTheme.text.muted, padding: 24 }}>No activity data to display.</div>
+      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>No activity data to display.</div>
     );
   }
 
@@ -70,17 +74,19 @@ export function ContributionHeatmap({ daily }: Props) {
       },
     ],
     layout: {
-      title: "Contribution Heatmap",
+      title: { text: "Contribution Heatmap", font: { color: webTheme.text.primary, size: titleFontSize } },
       xaxis: {
         tickangle: 0,
-        tickfont: { color: webTheme.text.muted },
+        tickfont: { color: webTheme.charts.axis, size: baseFontSize },
+        gridcolor: webTheme.charts.grid,
       },
       yaxis: {
-        tickfont: { color: webTheme.text.muted },
+        tickfont: { color: webTheme.charts.axis, size: baseFontSize },
+        gridcolor: webTheme.charts.grid,
       },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: webTheme.text.muted },
+      font: { color: webTheme.text.muted, size: baseFontSize },
       margin: { b: 48, l: 48, r: 48, t: 48 },
     },
     config: { responsive: true },

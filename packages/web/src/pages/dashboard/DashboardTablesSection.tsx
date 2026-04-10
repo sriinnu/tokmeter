@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { memo } from "react";
 import { Link } from "react-router-dom";
-import { webTheme, withAlpha } from "../../theme.js";
+import { applyTypography, webTheme, withAlpha } from "../../theme.js";
 import { DashboardPanel } from "./DashboardPanel.js";
 import type { DashboardInsights } from "./buildDashboardInsights.js";
 import {
@@ -222,26 +222,29 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
+/** Section stack with theme spacing */
 const sectionStackStyle: CSSProperties = {
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
 };
 
+/** Feature grid with theme spacing */
 const featureGridStyle: CSSProperties = {
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
   gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
 };
 
+/** Pill-style action link using theme tokens */
 const actionLinkStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}`,
-  borderRadius: 999,
+  borderRadius: webTheme.radii.pill,
   color: webTheme.text.primary,
-  fontSize: 13,
-  fontWeight: 600,
-  padding: "10px 14px",
+  ...applyTypography(webTheme.typography.mono),
+  padding: `${webTheme.spacing.sm} ${webTheme.spacing.md}`,
   textDecoration: "none",
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
 };
 
 const tableScrollStyle: CSSProperties = {
@@ -255,12 +258,13 @@ const tableStyle: CSSProperties = {
   width: "100%",
 };
 
+/** Header cell with caption typography */
 const headerCellStyle: CSSProperties = {
   borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}`,
   color: webTheme.text.muted,
-  fontSize: 12,
+  ...applyTypography(webTheme.typography.caption),
   fontWeight: 700,
-  padding: "0 12px 12px",
+  padding: `0 ${webTheme.spacing.md} ${webTheme.spacing.md}`,
   textAlign: "left",
   textTransform: "uppercase",
 };
@@ -269,11 +273,12 @@ const bodyRowStyle: CSSProperties = {
   background: withAlpha(webTheme.colors.pine, 0.3),
 };
 
+/** Body cell with body typography and theme spacing */
 const bodyCellStyle: CSSProperties = {
   borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}`,
   color: webTheme.text.secondary,
-  fontSize: 14,
-  padding: "16px 12px",
+  ...applyTypography(webTheme.typography.body),
+  padding: `${webTheme.spacing.lg} ${webTheme.spacing.md}`,
   verticalAlign: "middle",
 };
 
@@ -282,11 +287,12 @@ const strongValueStyle: CSSProperties = {
   fontWeight: 700,
 };
 
+/** Secondary text with caption typography */
 const secondaryTextStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 12,
+  ...applyTypography(webTheme.typography.caption),
   lineHeight: 1.6,
-  marginTop: 4,
+  marginTop: webTheme.spacing.xs,
 };
 
 const primaryLinkStyle: CSSProperties = {
@@ -295,9 +301,10 @@ const primaryLinkStyle: CSSProperties = {
   textDecoration: "none",
 };
 
+/** Empty state with body typography */
 const emptyStateStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 14,
+  ...applyTypography(webTheme.typography.body),
   lineHeight: 1.7,
 };
 

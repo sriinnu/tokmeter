@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { webTheme } from "../../theme.js";
+import { applyTypography, webTheme } from "../../theme.js";
 
 interface DashboardPanelProps {
   eyebrow?: string;
@@ -39,47 +39,53 @@ export function DashboardPanel({
   );
 }
 
+/** Panel container with theme radii, elevation, spacing, and motion */
 const panelStyle: CSSProperties = {
   backdropFilter: "blur(22px)",
   background: webTheme.surfaces.panelBackground,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 28,
-  boxShadow: `0 24px 90px ${webTheme.surfaces.shadow}`,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.high,
   overflow: "hidden",
-  padding: 24,
+  padding: webTheme.spacing.xl,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
 };
 
 const headerStyle: CSSProperties = {
   alignItems: "flex-start",
   display: "flex",
   flexWrap: "wrap",
-  gap: 16,
+  gap: webTheme.spacing.lg,
   justifyContent: "space-between",
-  marginBottom: 18,
+  marginBottom: webTheme.spacing.lg,
 };
 
+/** Eyebrow with micro typography */
 const eyebrowStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
+  ...applyTypography(webTheme.typography.micro),
   fontWeight: 700,
   letterSpacing: "0.1em",
-  marginBottom: 8,
+  marginBottom: webTheme.spacing.sm,
   textTransform: "uppercase",
 };
 
+/** Title with h1 typography */
 const titleStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 24,
-  fontWeight: 700,
+  ...applyTypography(webTheme.typography.h1),
+  fontSize: webTheme.spacing.xl,
   letterSpacing: "-0.02em",
   lineHeight: 1.15,
   margin: 0,
 };
 
+/** Description with body typography */
 const descriptionStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 14,
+  ...applyTypography(webTheme.typography.body),
   lineHeight: 1.7,
-  margin: "10px 0 0",
+  margin: `${webTheme.spacing.sm} 0 0`,
   maxWidth: 760,
 };
