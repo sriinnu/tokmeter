@@ -1,18 +1,22 @@
-import type { TokmeterCore } from "@sriinnu/tokmeter-core";
+import type {
+  DailyEntry,
+  ModelSummary,
+  ProviderSummary,
+  TokmeterStats,
+} from "@sriinnu/tokmeter-core";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
 import { Sparkline } from "../components/Sparkline.js";
 import { T } from "../theme.js";
 
 interface OverviewViewProps {
-  core: TokmeterCore;
+  stats: TokmeterStats;
+  models: ModelSummary[];
+  daily: DailyEntry[];
+  providers: ProviderSummary[];
 }
 
-export function OverviewView({ core }: OverviewViewProps) {
-  const stats = core.getStats();
-  const models = core.getModelCosts();
-  const daily = core.getDailyBreakdown();
-
+export function OverviewView({ stats, models, daily, providers }: OverviewViewProps) {
   if (stats.totalRecords === 0) {
     return (
       <Box flexDirection="column" padding={1}>
@@ -79,7 +83,7 @@ export function OverviewView({ core }: OverviewViewProps) {
       {/* Provider breakdown */}
       <Box flexDirection="column">
         <Text bold>Providers</Text>
-        {core.getProviderBreakdown().map((p, i) => (
+        {providers.map((p, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static data order
           <Box key={i} flexDirection="row">
             <Text color={T.muted}>{p.provider.padEnd(12)}</Text>

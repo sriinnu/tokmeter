@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { localDateKey } from "@sriinnu/tokmeter-core";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
 import {
@@ -257,7 +258,7 @@ interface TodayTotals {
 }
 
 function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey();
 }
 
 /**
@@ -318,7 +319,6 @@ export async function runStatusline(): Promise<void> {
     }
 
     // ── Gather data ──
-    const f = frame();
     const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
     const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
     const git = projectDir ? getGitInfo(projectDir) : null;

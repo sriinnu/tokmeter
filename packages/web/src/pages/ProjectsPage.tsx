@@ -1,33 +1,43 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { projectNameIncludes, projectNamesMatch } from "../../../core/src/project-name.js";
 import { ModelCostChart } from "../charts/ModelCostChart.js";
 import {
   type TokmeterModelSummary,
   type TokmeterProjectSummary,
   useTokmeterData,
 } from "../hooks/useTokmeterData.js";
+import { pageCardStyle, webTheme, withAlpha } from "../theme.js";
 
+/**
+ * Render the project overview list and the project detail route.
+ */
 export function ProjectsPage() {
   const { name } = useParams<{ name?: string }>();
   const { data, loading, error } = useTokmeterData();
+  const requestedProject = decodeURIComponent(name ?? "");
 
-  if (loading) return <div style={{ color: "#8b949e" }}>Loading...</div>;
-  if (error || !data) return <div style={{ color: "#f85149" }}>Error loading data</div>;
+  if (loading) return <div style={{ color: webTheme.text.muted }}>Loading...</div>;
+  if (error || !data) return <div style={{ color: webTheme.text.danger }}>Error loading data</div>;
 
   // Single project view
   if (name) {
-    const project = data.projects.find(
-      (p: TokmeterProjectSummary) =>
-        p.project === name || p.project.toLowerCase().includes(name.toLowerCase())
-    );
-    if (!project) return <div style={{ color: "#f85149" }}>Project not found</div>;
+    const project =
+      data.projects.find((entry: TokmeterProjectSummary) =>
+        projectNamesMatch(entry.project, requestedProject)
+      ) ??
+      data.projects.find((entry: TokmeterProjectSummary) =>
+        projectNameIncludes(entry.project, requestedProject)
+      );
+
+    if (!project) return <div style={{ color: webTheme.text.danger }}>Project not found</div>;
 
     return (
       <div>
-        <h2 style={{ color: "#39d353" }}>{project.project}</h2>
+        <h2 style={{ color: webTheme.colors.olive }}>{project.project}</h2>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
             gap: 16,
             marginBottom: 24,
           }}
@@ -39,28 +49,32 @@ export function ProjectsPage() {
         </div>
         <ModelCostChart models={project.models} />
 
-        <h3 style={{ color: "#8b949e", marginTop: 32 }}>Models</h3>
+        <h3 style={{ color: webTheme.text.muted, marginTop: 32 }}>Models</h3>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr style={{ borderBottom: "1px solid #30363d" }}>
+            <tr style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}` }}>
               {["Model", "Provider", "Tokens", "Input", "Output", "Cost", "%"].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+                <th key={h} style={{ textAlign: "left", padding: 8, color: webTheme.text.muted }}>
                   {h}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {project.models.map((m: TokmeterModelSummary, i: number) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: static data order
-              <tr key={i} style={{ borderBottom: "1px solid #21262d" }}>
-                <td style={{ padding: 8, color: "#c9d1d9" }}>{m.model}</td>
-                <td style={{ padding: 8, color: "#8b949e" }}>{m.provider}</td>
+            {project.models.map((m: TokmeterModelSummary) => (
+              <tr
+                key={`${m.provider}-${m.model}`}
+                style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}` }}
+              >
+                <td style={{ padding: 8, color: webTheme.text.primary }}>{m.model}</td>
+                <td style={{ padding: 8, color: webTheme.text.muted }}>{m.provider}</td>
                 <td style={{ padding: 8 }}>{formatNum(m.totalTokens)}</td>
                 <td style={{ padding: 8 }}>{formatNum(m.inputTokens)}</td>
                 <td style={{ padding: 8 }}>{formatNum(m.outputTokens)}</td>
-                <td style={{ padding: 8, color: "#39d353" }}>${m.cost.toFixed(2)}</td>
-                <td style={{ padding: 8, color: "#8b949e" }}>{m.percentageOfTotal.toFixed(1)}%</td>
+                <td style={{ padding: 8, color: webTheme.colors.olive }}>${m.cost.toFixed(2)}</td>
+                <td style={{ padding: 8, color: webTheme.text.muted }}>
+                  {m.percentageOfTotal.toFixed(1)}%
+                </td>
               </tr>
             ))}
           </tbody>
@@ -72,17 +86,16 @@ export function ProjectsPage() {
   // All projects list
   return (
     <div>
-      <h2 style={{ color: "#39d353" }}>Projects</h2>
+      <h2 style={{ color: webTheme.colors.olive }}>Projects</h2>
       <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
         {data.projects.map((p: TokmeterProjectSummary) => (
-          <a
+          <Link
             key={p.project}
-            href={`/projects/${encodeURIComponent(p.project)}`}
+            to={`/projects/${encodeURIComponent(p.project)}`}
             style={{
               display: "block",
-              background: "#161b22",
-              border: "1px solid #30363d",
-              borderRadius: 8,
+              ...pageCardStyle,
+              borderRadius: 12,
               padding: 16,
               textDecoration: "none",
               color: "inherit",
@@ -90,22 +103,24 @@ export function ProjectsPage() {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div style={{ color: "#c9d1d9", fontWeight: 600, fontSize: 16 }}>{p.project}</div>
-                <div style={{ color: "#8b949e", fontSize: 13 }}>
+                <div style={{ color: webTheme.text.primary, fontWeight: 600, fontSize: 16 }}>
+                  {p.project}
+                </div>
+                <div style={{ color: webTheme.text.muted, fontSize: 13 }}>
                   {p.models.length} models | {p.providers.length} providers | {p.activeDays} active
                   days
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ color: "#39d353", fontSize: 18, fontWeight: 700 }}>
+                <div style={{ color: webTheme.colors.olive, fontSize: 18, fontWeight: 700 }}>
                   ${p.totalCost.toFixed(2)}
                 </div>
-                <div style={{ color: "#8b949e", fontSize: 13 }}>
+                <div style={{ color: webTheme.text.muted, fontSize: 13 }}>
                   {formatNum(p.totalTokens)} tokens
                 </div>
               </div>
             </div>
-          </a>
+          </Link>
         ))}
       </div>
     </div>
@@ -114,11 +129,9 @@ export function ProjectsPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}
-    >
-      <div style={{ color: "#8b949e", fontSize: 12 }}>{label}</div>
-      <div style={{ color: "#c9d1d9", fontSize: 24, fontWeight: 700 }}>{value}</div>
+    <div style={{ ...pageCardStyle, borderRadius: 12, padding: 16 }}>
+      <div style={{ color: webTheme.text.muted, fontSize: 12 }}>{label}</div>
+      <div style={{ color: webTheme.text.primary, fontSize: 24, fontWeight: 700 }}>{value}</div>
     </div>
   );
 }

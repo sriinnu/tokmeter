@@ -119,6 +119,61 @@ export interface ScanOptions {
   year?: number;
   /** Filter by project name/path substring. */
   project?: string;
+  /** Force a rebuild of the frozen pre-today history snapshot. */
+  rescanHistory?: boolean;
+}
+
+/** Non-fatal warning emitted during scan/cache composition. */
+export interface ScanWarning {
+  /** Area where the warning originated. */
+  scope: "history" | "today" | "provider" | "cache";
+  /** Optional provider when the warning is provider-specific. */
+  provider?: ProviderId;
+  /** Human-readable warning message. */
+  message: string;
+}
+
+/** Scan metadata describing the stable-history/live-today composition state. */
+export interface ScanMeta {
+  /** Local date key (YYYY-MM-DD) through which history is frozen. */
+  stableThrough: string | null;
+  /** Whether frozen history came from cache, rebuild, or is unavailable. */
+  historySource: "snapshot" | "rebuilt" | "none";
+  /** Current state of today's overlay data. */
+  todayState: "live" | "degraded" | "snapshot-only";
+  /** Epoch ms of the last completed scan. */
+  lastScanAt: number;
+  /** Non-fatal warnings gathered during scan/caching. */
+  warnings: ScanWarning[];
+}
+
+/** Overall usage stats returned by TokmeterCore. */
+export interface TokmeterStats {
+  totalTokens: number;
+  totalCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalRecords: number;
+  projects: number;
+  models: number;
+  providers: number;
+  activeDays: number;
+  longestStreak: number;
+  firstUsed: number;
+  lastUsed: number;
+}
+
+/** Full serialisable summary payload used by web/CLI/API consumers. */
+export interface TokmeterSummary {
+  records: TokenRecord[];
+  projects: ProjectSummary[];
+  models: ModelSummary[];
+  daily: DailyEntry[];
+  stats: TokmeterStats;
+  meta: ScanMeta;
 }
 
 /** Options for the TokmeterCore constructor. */
@@ -175,6 +230,8 @@ export interface CleanupTarget {
 export interface CleanupFilter {
   /** Filter by project name/path substring. */
   project?: string;
+  /** Filter by an exact set of selected project names. */
+  projects?: string[];
   /** Filter by provider(s). */
   providers?: ProviderId[];
   /** Only records from this date onward (inclusive, YYYY-MM-DD or ISO). */

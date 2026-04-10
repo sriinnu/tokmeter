@@ -2,18 +2,19 @@ import React from "react";
 import Plot from "react-plotly.js";
 import { ModelCostChart } from "../charts/ModelCostChart.js";
 import { type TokmeterModelSummary, useTokmeterData } from "../hooks/useTokmeterData.js";
+import { webTheme, withAlpha } from "../theme.js";
 
 export function ModelsPage() {
   const { data, loading, error } = useTokmeterData();
 
-  if (loading) return <div style={{ color: "#8b949e" }}>Loading...</div>;
-  if (error) return <div style={{ color: "#f85149" }}>Error: {error}</div>;
-  if (!data) return <div style={{ color: "#8b949e" }}>No data available.</div>;
+  if (loading) return <div style={{ color: webTheme.text.muted }}>Loading...</div>;
+  if (error) return <div style={{ color: webTheme.text.danger }}>Error: {error}</div>;
+  if (!data) return <div style={{ color: webTheme.text.muted }}>No data available.</div>;
   if (data.models.length === 0) {
     return (
       <div>
-        <h2 style={{ color: "#39d353" }}>Models</h2>
-        <div style={{ color: "#8b949e" }}>No model usage data found.</div>
+        <h2 style={{ color: webTheme.colors.olive }}>Models</h2>
+        <div style={{ color: webTheme.text.muted }}>No model usage data found.</div>
       </div>
     );
   }
@@ -23,7 +24,7 @@ export function ModelsPage() {
 
   return (
     <div>
-      <h2 style={{ color: "#39d353" }}>Models</h2>
+      <h2 style={{ color: webTheme.colors.olive }}>Models</h2>
 
       {/* Stacked bar: input/output/cache per model */}
       {React.createElement(Plot, {
@@ -33,21 +34,21 @@ export function ModelsPage() {
             y: top15.map((m: TokmeterModelSummary) => m.inputTokens),
             type: "bar",
             name: "Input",
-            marker: { color: "#58a6ff" },
+            marker: { color: webTheme.colors.teal },
           },
           {
             x: top15.map((m: TokmeterModelSummary) => m.model),
             y: top15.map((m: TokmeterModelSummary) => m.outputTokens),
             type: "bar",
             name: "Output",
-            marker: { color: "#39d353" },
+            marker: { color: webTheme.colors.olive },
           },
           {
             x: top15.map((m: TokmeterModelSummary) => m.model),
             y: top15.map((m: TokmeterModelSummary) => m.cacheReadTokens),
             type: "bar",
             name: "Cache Read",
-            marker: { color: "#f0883e" },
+            marker: { color: webTheme.colors.rose },
           },
         ],
         layout: {
@@ -58,7 +59,7 @@ export function ModelsPage() {
           margin: { b: 120 },
           paper_bgcolor: "transparent",
           plot_bgcolor: "transparent",
-          font: { color: "#8b949e" },
+          font: { color: webTheme.text.muted },
         },
         config: { responsive: true },
         style: { width: "100%", height: 500 },
@@ -69,7 +70,7 @@ export function ModelsPage() {
       {/* Model table */}
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 24 }}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #30363d" }}>
+          <tr style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}` }}>
             {[
               "Model",
               "Provider",
@@ -81,25 +82,29 @@ export function ModelsPage() {
               "Cost",
               "%",
             ].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+              <th key={h} style={{ textAlign: "left", padding: 8, color: webTheme.text.muted }}>
                 {h}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {models.map((m: TokmeterModelSummary, i: number) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: static data order
-            <tr key={i} style={{ borderBottom: "1px solid #21262d" }}>
-              <td style={{ padding: 8, color: "#c9d1d9" }}>{m.model}</td>
-              <td style={{ padding: 8, color: "#8b949e" }}>{m.provider}</td>
+          {models.map((m: TokmeterModelSummary) => (
+            <tr
+              key={`${m.provider}-${m.model}`}
+              style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}` }}
+            >
+              <td style={{ padding: 8, color: webTheme.text.primary }}>{m.model}</td>
+              <td style={{ padding: 8, color: webTheme.text.muted }}>{m.provider}</td>
               <td style={{ padding: 8 }}>{formatNum(m.inputTokens)}</td>
               <td style={{ padding: 8 }}>{formatNum(m.outputTokens)}</td>
               <td style={{ padding: 8 }}>{formatNum(m.cacheReadTokens)}</td>
               <td style={{ padding: 8 }}>{formatNum(m.cacheWriteTokens)}</td>
               <td style={{ padding: 8 }}>{formatNum(m.reasoningTokens)}</td>
-              <td style={{ padding: 8, color: "#39d353" }}>${m.cost.toFixed(2)}</td>
-              <td style={{ padding: 8, color: "#8b949e" }}>{m.percentageOfTotal.toFixed(1)}%</td>
+              <td style={{ padding: 8, color: webTheme.colors.olive }}>${m.cost.toFixed(2)}</td>
+              <td style={{ padding: 8, color: webTheme.text.muted }}>
+                {m.percentageOfTotal.toFixed(1)}%
+              </td>
             </tr>
           ))}
         </tbody>

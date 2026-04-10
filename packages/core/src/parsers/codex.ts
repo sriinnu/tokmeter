@@ -8,6 +8,7 @@
  * Token data comes from event_msg with type "token_count".
  */
 
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
@@ -65,8 +66,7 @@ function defaultState(): CodexParseState {
 
 /** Extract project name from cwd path (last directory component). */
 function projectFromCwd(cwd: string): string {
-  const parts = cwd.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || "codex";
+  return canonicalizeProjectName(cwd, "codex");
 }
 
 /** Compute delta between current and previous cumulative totals. */

@@ -5,6 +5,7 @@
 import React from "react";
 import Plot from "react-plotly.js";
 import type { TokmeterModelSummary } from "../hooks/useTokmeterData.js";
+import { webTheme } from "../theme.js";
 
 interface Props {
   models: TokmeterModelSummary[];
@@ -12,7 +13,7 @@ interface Props {
 
 export function ModelCostChart({ models }: Props) {
   if (models.length === 0) {
-    return <div style={{ color: "#8b949e", padding: 24 }}>No model data to display.</div>;
+    return <div style={{ color: webTheme.text.muted, padding: 24 }}>No model data to display.</div>;
   }
 
   const top = models.slice(0, 15);
@@ -23,7 +24,7 @@ export function ModelCostChart({ models }: Props) {
         x: top.map((m) => m.model),
         y: top.map((m) => m.cost),
         type: "bar",
-        marker: { color: "#39d353" },
+        marker: { color: webTheme.colors.olive },
         name: "Cost ($)",
       },
     ],
@@ -34,7 +35,7 @@ export function ModelCostChart({ models }: Props) {
       margin: { b: 120 },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: "#8b949e" },
+      font: { color: webTheme.text.muted },
     },
     config: { responsive: true },
     style: { width: "100%", height: 400 },

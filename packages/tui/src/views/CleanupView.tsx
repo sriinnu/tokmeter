@@ -35,6 +35,14 @@ function fmtBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
+function shortPath(filePath: string, segmentCount = 2): string {
+  return filePath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .slice(-segmentCount)
+    .join("/");
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────
 
 const MAX_VISIBLE = 20;
@@ -46,13 +54,15 @@ type Phase = "browse" | "preview" | "confirm" | "executing" | "done" | "error";
 
 interface CleanupViewProps {
   core: TokmeterCore;
+  projects: ProjectSummary[];
+  onRefresh: () => Promise<void>;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────
 
-export function CleanupView({ core }: CleanupViewProps) {
+export function CleanupView({ core, projects: incomingProjects, onRefresh }: CleanupViewProps) {
   const [phase, setPhase] = useState<Phase>("browse");
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>(incomingProjects);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -63,8 +73,8 @@ export function CleanupView({ core }: CleanupViewProps) {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    setProjects(core.getAllProjects());
-  }, [core]);
+    setProjects(incomingProjects);
+  }, [incomingProjects]);
 
   // Stable identity for selectedProjects so useCallback deps don't churn.
   const selectedProjects = useMemo(
@@ -78,28 +88,11 @@ export function CleanupView({ core }: CleanupViewProps) {
     if (selectedProjects.length === 0) return;
     try {
       const service = new CleanupService(core);
-      // Build a fresh accumulator instead of mutating the first preview's
-      // returned object — CleanupService may cache or reuse it later.
-      const merged: CleanupPreview = {
-        recordCount: 0,
-        sourceFileCount: 0,
-        targets: [],
-        totalBytes: 0,
-        byProvider: [],
-        byProject: [],
-        partialFileWarnings: [],
-      };
-      for (const proj of selectedProjects) {
-        const p = await service.preview({ project: proj.project });
-        merged.recordCount += p.recordCount;
-        merged.sourceFileCount += p.sourceFileCount;
-        merged.targets.push(...p.targets);
-        merged.totalBytes += p.totalBytes;
-        merged.byProvider.push(...p.byProvider);
-        merged.byProject.push(...p.byProject);
-        merged.partialFileWarnings.push(...p.partialFileWarnings);
-      }
-      setPreview(merged);
+      const nextPreview = await service.preview({
+        projects: selectedProjects.map((project) => project.project),
+      });
+
+      setPreview(nextPreview);
       setPhase("preview");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -111,21 +104,12 @@ export function CleanupView({ core }: CleanupViewProps) {
     setPhase("executing");
     try {
       const service = new CleanupService(core);
-      const totalResult: CleanupResult = {
-        deletedCount: 0,
-        failedCount: 0,
-        errors: [],
-        bytesFreed: 0,
-      };
-      for (const proj of selectedProjects) {
-        const r = await service.execute({ project: proj.project }, { backup: doBackup });
-        totalResult.deletedCount += r.deletedCount;
-        totalResult.failedCount += r.failedCount;
-        totalResult.bytesFreed += r.bytesFreed;
-        totalResult.errors.push(...r.errors);
-        if (r.backupPath && !totalResult.backupPath) totalResult.backupPath = r.backupPath;
-      }
-      setResult(totalResult);
+      const nextResult = await service.execute(
+        { projects: selectedProjects.map((project) => project.project) },
+        { backup: doBackup }
+      );
+
+      setResult(nextResult);
       setPhase("done");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -196,13 +180,12 @@ export function CleanupView({ core }: CleanupViewProps) {
         setCursor(0);
         setScrollOffset(0);
         // Re-scan; surface failure to the error phase instead of swallowing.
-        core
-          .scan()
-          .then(() => setProjects(core.getAllProjects()))
-          .catch((err: Error) => {
-            setErrorMsg(`Re-scan failed: ${err.message}`);
-            setPhase("error");
-          });
+        void onRefresh().catch((refreshError) => {
+          setErrorMsg(
+            `Re-scan failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
+          );
+          setPhase("error");
+        });
       }
     }
   });
@@ -320,8 +303,8 @@ export function CleanupView({ core }: CleanupViewProps) {
             {preview.partialFileWarnings.slice(0, 5).map((w) => (
               <Text key={w.file} color={T.warn}>
                 {"    "}
-                {w.file.split("/").slice(-2).join("/")}: {w.matchedRecords} matched,{" "}
-                {w.otherRecords} others ({w.otherDateRange}) will also go
+                {shortPath(w.file)}: {w.matchedRecords} matched, {w.otherRecords} others (
+                {w.otherDateRange}) will also go
               </Text>
             ))}
             {preview.partialFileWarnings.length > 5 && (

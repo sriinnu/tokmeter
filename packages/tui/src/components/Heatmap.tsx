@@ -32,7 +32,7 @@ export function Heatmap({ data, weeks = 20 }: HeatmapProps) {
   const startDate = new Date(endDate);
   startDate.setDate(startDate.getDate() - (weeks * 7 - 1));
 
-  const colors = [T.muted, T.accent + "33", T.accent + "66", T.accent + "99", T.accent];
+  const colors = [T.muted, `${T.accent}33`, `${T.accent}66`, `${T.accent}99`, T.accent];
 
   // Render row by row (7 rows for days of week, 0=Mon..6=Sun)
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

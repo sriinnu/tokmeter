@@ -17,6 +17,7 @@ import {
   type ProviderSummary,
   type TokenRecord,
   TokmeterCore,
+  localDateKey,
 } from "@sriinnu/tokmeter-core";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ export class LiveTracker extends EventEmitter {
    * see updates even when record count stays the same but costs change.
    */
   async refresh(): Promise<Snapshot> {
-    const records = await this.core.scan({ today: true });
+    const records = await this.core.scan();
     const stats = this.core.getStats() as Stats;
     const models = this.core.getModelCosts();
     const providers = this.core.getProviderBreakdown();
@@ -208,7 +209,8 @@ export class LiveTracker extends EventEmitter {
     // Session records: records since the tracker started, or matching sessionId
     const sessionRecords = this.computeSessionRecords(records);
     const sessionCost = sessionRecords.reduce((sum, r) => sum + r.cost, 0);
-    const todayCost = records.reduce((sum, r) => sum + r.cost, 0);
+    const todayKey = localDateKey();
+    const todayCost = daily.find((entry) => entry.date === todayKey)?.cost ?? 0;
 
     // Precomputed token breakdown — avoids O(n) per render frame
     const sessionTokens = computeTokenBreakdown(sessionRecords);

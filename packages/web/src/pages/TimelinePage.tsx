@@ -1,25 +1,26 @@
 import { ContributionHeatmap } from "../charts/ContributionHeatmap.js";
 import { DailyTrendChart } from "../charts/DailyTrendChart.js";
 import { type TokmeterDailyEntry, useTokmeterData } from "../hooks/useTokmeterData.js";
+import { pageCardStyle, webTheme, withAlpha } from "../theme.js";
 
 export function TimelinePage() {
   const { data, loading, error } = useTokmeterData();
 
-  if (loading) return <div style={{ color: "#8b949e" }}>Loading...</div>;
-  if (error) return <div style={{ color: "#f85149" }}>Error: {error}</div>;
-  if (!data) return <div style={{ color: "#8b949e" }}>No data available.</div>;
+  if (loading) return <div style={{ color: webTheme.text.muted }}>Loading...</div>;
+  if (error) return <div style={{ color: webTheme.text.danger }}>Error: {error}</div>;
+  if (!data) return <div style={{ color: webTheme.text.muted }}>No data available.</div>;
 
   const { daily, stats } = data;
 
   return (
     <div>
-      <h2 style={{ color: "#39d353" }}>Timeline</h2>
+      <h2 style={{ color: webTheme.colors.olive }}>Timeline</h2>
 
       {/* Stats */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
           gap: 16,
           marginBottom: 24,
         }}
@@ -33,12 +34,12 @@ export function TimelinePage() {
       <ContributionHeatmap daily={daily} />
 
       {/* Daily table */}
-      <h3 style={{ color: "#8b949e", marginTop: 32 }}>Daily Breakdown</h3>
+      <h3 style={{ color: webTheme.text.muted, marginTop: 32 }}>Daily Breakdown</h3>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #30363d" }}>
+          <tr style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}` }}>
             {["Date", "Tokens", "Input", "Output", "Cost", "Records"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 8, color: "#8b949e" }}>
+              <th key={h} style={{ textAlign: "left", padding: 8, color: webTheme.text.muted }}>
                 {h}
               </th>
             ))}
@@ -49,13 +50,16 @@ export function TimelinePage() {
             .slice(-30)
             .reverse()
             .map((d: TokmeterDailyEntry, _i: number) => (
-              <tr key={d.date} style={{ borderBottom: "1px solid #21262d" }}>
-                <td style={{ padding: 8, color: "#c9d1d9" }}>{d.date}</td>
+              <tr
+                key={d.date}
+                style={{ borderBottom: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}` }}
+              >
+                <td style={{ padding: 8, color: webTheme.text.primary }}>{d.date}</td>
                 <td style={{ padding: 8 }}>{formatNum(d.totalTokens)}</td>
                 <td style={{ padding: 8 }}>{formatNum(d.inputTokens)}</td>
                 <td style={{ padding: 8 }}>{formatNum(d.outputTokens)}</td>
-                <td style={{ padding: 8, color: "#39d353" }}>${d.cost.toFixed(2)}</td>
-                <td style={{ padding: 8, color: "#8b949e" }}>{d.records}</td>
+                <td style={{ padding: 8, color: webTheme.colors.olive }}>${d.cost.toFixed(2)}</td>
+                <td style={{ padding: 8, color: webTheme.text.muted }}>{d.records}</td>
               </tr>
             ))}
         </tbody>
@@ -66,11 +70,9 @@ export function TimelinePage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}
-    >
-      <div style={{ color: "#8b949e", fontSize: 12 }}>{label}</div>
-      <div style={{ color: "#c9d1d9", fontSize: 24, fontWeight: 700 }}>{value}</div>
+    <div style={{ ...pageCardStyle, borderRadius: 12, padding: 16 }}>
+      <div style={{ color: webTheme.text.muted, fontSize: 12 }}>{label}</div>
+      <div style={{ color: webTheme.text.primary, fontSize: 24, fontWeight: 700 }}>{value}</div>
     </div>
   );
 }

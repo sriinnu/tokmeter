@@ -2914,7 +2914,11 @@ export function createServer(): McpServer {
         if (preview.partialFileWarnings.length > 0) {
           lines.push("  ⚠️  PARTIAL FILE WARNINGS:", separator());
           for (const w of preview.partialFileWarnings) {
-            const shortFile = w.file.split("/").slice(-2).join("/");
+            const shortFile = w.file
+              .split(/[\\/]+/)
+              .filter(Boolean)
+              .slice(-2)
+              .join("/");
             lines.push(
               `  ${shortFile}: ${w.matchedRecords} matched, ${w.otherRecords} other records (${w.otherDateRange}) will ALSO be deleted`
             );

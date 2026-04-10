@@ -5,6 +5,7 @@
  */
 
 import { toDateStr } from "./parsers/utils.js";
+import { projectNameIncludes } from "./project-name.js";
 import type {
   DailyEntry,
   ModelSummary,
@@ -69,7 +70,7 @@ export function filterByProvider(records: TokenRecord[], providers: ProviderId[]
 /** Filter records by project name substring. */
 export function filterByProject(records: TokenRecord[], project: string): TokenRecord[] {
   if (!project) return records;
-  return records.filter((r) => r.project.toLowerCase().includes(project.toLowerCase()));
+  return records.filter((r) => projectNameIncludes(r.project, project));
 }
 
 /** Group records by a key extractor. */

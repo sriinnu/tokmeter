@@ -37,6 +37,14 @@ function fmtBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
+function shortPath(filePath: string, segmentCount = 2): string {
+  return filePath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .slice(-segmentCount)
+    .join("/");
+}
+
 // ─── Readline helpers ────────────────────────────────────────────────────
 
 function ask(question: string): Promise<string> {
@@ -69,6 +77,9 @@ export interface CleanupArgs {
 
 // ─── Main ────────────────────────────────────────────────────────────────
 
+/**
+ * Run the interactive or flag-driven cleanup workflow.
+ */
 export async function runCleanup(args: CleanupArgs): Promise<void> {
   const core = new TokmeterCore({ skipPricing: args.light });
   const service = new CleanupService(core);
@@ -95,7 +106,7 @@ export async function runCleanup(args: CleanupArgs): Promise<void> {
 
 async function runFilteredCleanup(
   service: CleanupService,
-  core: TokmeterCore,
+  _core: TokmeterCore,
   args: CleanupArgs
 ): Promise<void> {
   const filter: CleanupFilter = {
@@ -162,7 +173,7 @@ async function runInteractiveCleanup(
 
   // Show project list
   console.log("  Tokmeter Cleanup");
-  console.log("  " + "─".repeat(60));
+  console.log(`  ${"─".repeat(60)}`);
 
   const table = new Table({
     head: ["#", "Project", "Provider(s)", "Tokens", "Cost", "Days", "Last Used"],
@@ -215,12 +226,9 @@ async function runInteractiveCleanup(
 
   console.log(`\nSelected: ${selectedProjects.map((p) => p.project).join(", ")}`);
 
-  // Preview each selected project
-  for (const proj of selectedProjects) {
-    const filter: CleanupFilter = { project: proj.project };
-    const preview = await service.preview(filter);
-    renderPreview(preview);
-  }
+  const filter: CleanupFilter = { projects: selectedProjects.map((proj) => proj.project) };
+  const preview = await service.preview(filter);
+  renderPreview(preview);
 
   // Confirm
   if (!args.force) {
@@ -233,21 +241,17 @@ async function runInteractiveCleanup(
 
   // Execute
   console.log("\n🗑  Executing cleanup...\n");
-  for (const proj of selectedProjects) {
-    const filter: CleanupFilter = { project: proj.project };
-    const result = await service.execute(filter, {
-      backup: args.backup ?? true,
-    });
-    console.log(`  ${proj.project}:`);
-    renderResult(result);
-  }
+  const result = await service.execute(filter, {
+    backup: args.backup ?? true,
+  });
+  renderResult(result);
 }
 
 // ─── Renderers ───────────────────────────────────────────────────────────
 
 function renderPreview(preview: CleanupPreview): void {
   console.log("  Cleanup Preview");
-  console.log("  " + "─".repeat(60));
+  console.log(`  ${"─".repeat(60)}`);
 
   // Provider breakdown
   if (preview.byProvider.length > 0) {
@@ -282,7 +286,7 @@ function renderPreview(preview: CleanupPreview): void {
   if (preview.partialFileWarnings.length > 0) {
     console.log("\n  ⚠  PARTIAL FILE WARNINGS:");
     for (const w of preview.partialFileWarnings) {
-      const shortFile = w.file.split("/").slice(-2).join("/");
+      const shortFile = shortPath(w.file);
       console.log(
         `     ${shortFile}: ${w.matchedRecords} matched, BUT ${w.otherRecords} other records (${w.otherDateRange}) will also be deleted`
       );

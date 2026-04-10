@@ -20,7 +20,10 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { getCleaners } from "./cleaners/index.js";
+import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { clearRecordCache, invalidateRecordCache } from "./parsers/utils.js";
+import { projectMatchKey } from "./project-name.js";
+import { invalidateSummaryCache } from "./summary-cache.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
 import type {
   BackupInfo,
@@ -177,6 +180,8 @@ export class CleanupService {
       .filter((t) => t.type === "file" || t.type === "directory")
       .map((t) => t.path);
     invalidateRecordCache(deletedPaths);
+    invalidateHistorySnapshot(this.homeDir);
+    invalidateSummaryCache(this.homeDir);
 
     return {
       deletedCount: totalDeleted,
@@ -263,6 +268,8 @@ export class CleanupService {
 
       // Clear entire cache after restore so next scan picks up restored files
       clearRecordCache();
+      invalidateHistorySnapshot(this.homeDir);
+      invalidateSummaryCache(this.homeDir);
 
       return { restoredCount: meta.recordCount, errors: [] };
     } catch (err) {
@@ -285,6 +292,15 @@ export class CleanupService {
 
     if (filter.providers && filter.providers.length > 0) {
       result = filterByProvider(result, filter.providers);
+    }
+    if (filter.projects && filter.projects.length > 0) {
+      const selectedProjects = new Set(
+        filter.projects.map((project) => projectMatchKey(project, project)).filter(Boolean)
+      );
+
+      result = result.filter((record) =>
+        selectedProjects.has(projectMatchKey(record.project, record.project))
+      );
     }
     if (filter.project) {
       result = filterByProject(result, filter.project);
