@@ -40,6 +40,7 @@ struct TokmeterBarView: View {
     // Local UI state — not persisted
     @State private var showAllSessions = false
     @State private var phase: CGFloat = 0  // breathing gradient phase
+    @State private var heartbeatPhase: CGFloat = 0  // 0.8s heartbeat pulse
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,6 +95,9 @@ struct TokmeterBarView: View {
         .onAppear {
             withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
                 phase = 1
+            }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                heartbeatPhase = 1
             }
         }
     }
@@ -517,17 +521,16 @@ struct TokmeterBarView: View {
     }
 
     /// Green pulsing heartbeat when daemon is alive, red static dot when offline.
-    /// The ECG-style pulse uses a scaling animation on a circle — simple but
-    /// immediately communicates "alive vs dead" to anyone who glances at it.
+    /// Reads `loader.isDaemonAlive` (updated on each loadData()) — no sync I/O
+    /// in the view body. Uses its own 0.8s `heartbeatPhase` for the pulse.
     private var daemonHeartbeat: some View {
-        let isAlive = DaemonClient.shared.isDaemonRunning
+        let isAlive = loader.isDaemonAlive
         return HStack(spacing: 4) {
             Circle()
                 .fill(isAlive ? Color.green : Color.red)
                 .frame(width: 7, height: 7)
                 .shadow(color: isAlive ? .green.opacity(0.6) : .clear, radius: 4)
-                .scaleEffect(isAlive ? (1.0 + phase * 0.3) : 1.0)  // heartbeat pulse
-                .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: phase)
+                .scaleEffect(isAlive ? (1.0 + heartbeatPhase * 0.3) : 1.0)
             Text(isAlive ? "Live" : "Offline")
                 .font(.system(size: 9, weight: .semibold, design: .rounded))
                 .foregroundColor(isAlive ? .green : .red.opacity(0.8))

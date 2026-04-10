@@ -525,9 +525,24 @@ export class PricingService {
     return eff ? this.roundPricing(eff) : null;
   }
 
-  /** Round all pricing fields to 6 decimal places to eliminate float noise. */
-  private roundPricing(p: ModelPricing): FullPricing {
+  /**
+   * Round all pricing fields to 6 decimal places to eliminate float noise.
+   * Returns null if any required field is NaN or Infinity (treat as unpriced).
+   */
+  private roundPricing(p: ModelPricing): FullPricing | null {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+    // Guard: if any field is NaN or Infinity, bail — this model is unpriced.
+    const allValues = [
+      p.inputPerMillion,
+      p.outputPerMillion,
+      p.cacheReadPerMillion,
+      p.cacheWritePerMillion,
+      p.reasoningInputPerMillion,
+      p.reasoningOutputPerMillion,
+    ];
+    for (const v of allValues) {
+      if (v !== undefined && !Number.isFinite(v)) return null;
+    }
     return {
       inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),

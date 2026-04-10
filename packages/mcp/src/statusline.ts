@@ -395,15 +395,15 @@ export async function runStatusline(): Promise<void> {
           // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
           // emoji. The infinity NEVER shifts position — only the trailing accent
           // changes. (No more leading-space frames that shift the whole logo.)
-          infinity: ["♾️✨", "♾️⭐", "♾️✨", "♾️🌟", "♾️✨", "♾️⭐", "♾️✨", "♾️🌟"][af],
+          infinity: ["♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧"][af],
           // The Genie — both frames are width-stable (genie + sparkle emoji slot).
           // Frame 0: genie + invisible joiner (width 2 + 1)
           // Frame 1: genie + sparkle (width 2 + 1)
           // Both slots are exactly 1 visual cell wide.
-          agent: ["🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨"][af],
+          agent: ["🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞"][af],
           git: "🌿",
           turn: ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
-          context: "🪟",
+          context: "",
           folder: "",
           dollar: "💰",
           flame: "🔥",

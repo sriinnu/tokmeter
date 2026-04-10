@@ -40,7 +40,7 @@ export function Sparkline({ data, width = 50, label }: SparklineProps) {
           <Text color={T.muted}>{label}</Text>
         </Box>
       )}
-      <Text color={T.success}>{spark}</Text>
+      <Text color={T.accent}>{spark}</Text>
       <Box marginLeft={1}>
         <Text color={T.muted}>
           {formatNum(min)}–{formatNum(max)}
