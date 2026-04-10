@@ -6,14 +6,14 @@
  */
 
 import {
-  CleanupService,
-  TokmeterCore,
   type CleanupPreview,
   type CleanupResult,
+  CleanupService,
   type ProjectSummary,
+  type TokmeterCore,
 } from "@sriinnu/tokmeter-core";
 import { Box, Text, useInput } from "ink";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { T } from "../theme.js";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ export function CleanupView({ core }: CleanupViewProps) {
   // Stable identity for selectedProjects so useCallback deps don't churn.
   const selectedProjects = useMemo(
     () => projects.filter((_, i) => selected.has(i)),
-    [projects, selected],
+    [projects, selected]
   );
   const totalCost = selectedProjects.reduce((s, p) => s + p.totalCost, 0);
   const totalTokens = selectedProjects.reduce((s, p) => s + p.totalTokens, 0);
@@ -111,7 +111,12 @@ export function CleanupView({ core }: CleanupViewProps) {
     setPhase("executing");
     try {
       const service = new CleanupService(core);
-      const totalResult: CleanupResult = { deletedCount: 0, failedCount: 0, errors: [], bytesFreed: 0 };
+      const totalResult: CleanupResult = {
+        deletedCount: 0,
+        failedCount: 0,
+        errors: [],
+        bytesFreed: 0,
+      };
       for (const proj of selectedProjects) {
         const r = await service.execute({ project: proj.project }, { backup: doBackup });
         totalResult.deletedCount += r.deletedCount;
@@ -129,7 +134,6 @@ export function CleanupView({ core }: CleanupViewProps) {
   }, [core, selectedProjects, doBackup]);
 
   // Scroll cursor into view
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollOffset is read but only as the previous value
   useEffect(() => {
     if (cursor < scrollOffset) setScrollOffset(cursor);
     else if (cursor >= scrollOffset + MAX_VISIBLE) setScrollOffset(cursor - MAX_VISIBLE + 1);
@@ -155,9 +159,15 @@ export function CleanupView({ core }: CleanupViewProps) {
     }
 
     if (phase === "preview") {
-      if (key.escape) { setPhase("browse"); setPreview(null); }
+      if (key.escape) {
+        setPhase("browse");
+        setPreview(null);
+      }
       if (input === "b") setDoBackup((v) => !v);
-      if (key.return) { setConfirmText(""); setPhase("confirm"); }
+      if (key.return) {
+        setConfirmText("");
+        setPhase("confirm");
+      }
     }
 
     if (phase === "confirm") {
@@ -203,8 +213,10 @@ export function CleanupView({ core }: CleanupViewProps) {
     if (projects.length === 0) {
       return (
         <Box flexDirection="column" padding={1}>
-          <Text bold color={T.accent}>━━ Cleanup ━━</Text>
-          <Text color={T.muted}>  No projects found. Use an AI coding agent first.</Text>
+          <Text bold color={T.accent}>
+            ━━ Cleanup ━━
+          </Text>
+          <Text color={T.muted}> No projects found. Use an AI coding agent first.</Text>
         </Box>
       );
     }
@@ -216,17 +228,24 @@ export function CleanupView({ core }: CleanupViewProps) {
     return (
       <Box flexDirection="column" padding={1}>
         <Box marginBottom={1}>
-          <Text bold color={T.accent}>━━ Cleanup ━━</Text>
-          <Text color={T.muted}>  Space:toggle  a:all  Enter:preview</Text>
+          <Text bold color={T.accent}>
+            ━━ Cleanup ━━
+          </Text>
+          <Text color={T.muted}> Space:toggle a:all Enter:preview</Text>
         </Box>
 
         <Box flexDirection="row" marginBottom={1}>
           <Text color={T.muted}>
-            {"  Project".padEnd(26)}{"Provider".padEnd(14)}{"Tokens".padEnd(10)}{"Cost".padEnd(10)}{"Days".padEnd(6)}{"Last Used"}
+            {"  Project".padEnd(26)}
+            {"Provider".padEnd(14)}
+            {"Tokens".padEnd(10)}
+            {"Cost".padEnd(10)}
+            {"Days".padEnd(6)}
+            {"Last Used"}
           </Text>
         </Box>
 
-        {showScrollUp && <Text color={T.muted}>  ↑ {scrollOffset} more above</Text>}
+        {showScrollUp && <Text color={T.muted}> ↑ {scrollOffset} more above</Text>}
 
         {visible.map((p, vi) => {
           const i = vi + scrollOffset; // Real index
@@ -250,7 +269,9 @@ export function CleanupView({ core }: CleanupViewProps) {
           );
         })}
 
-        {showScrollDown && <Text color={T.muted}>  ↓ {projects.length - scrollOffset - MAX_VISIBLE} more below</Text>}
+        {showScrollDown && (
+          <Text color={T.muted}> ↓ {projects.length - scrollOffset - MAX_VISIBLE} more below</Text>
+        )}
 
         {selected.size > 0 && (
           <Box marginTop={1}>
@@ -269,29 +290,42 @@ export function CleanupView({ core }: CleanupViewProps) {
     return (
       <Box flexDirection="column" padding={1}>
         <Box marginBottom={1}>
-          <Text bold color={T.accent}>━━ Cleanup Preview ━━</Text>
-          <Text color={T.muted}>  Enter:confirm  b:backup({doBackup ? "on" : "off"})  Esc:back</Text>
+          <Text bold color={T.accent}>
+            ━━ Cleanup Preview ━━
+          </Text>
+          <Text color={T.muted}> Enter:confirm b:backup({doBackup ? "on" : "off"}) Esc:back</Text>
         </Box>
 
-        <Text>  Records: {fmtNum(preview.recordCount)}  |  Files: {preview.sourceFileCount}  |  Size: {fmtBytes(preview.totalBytes)}</Text>
+        <Text>
+          {" "}
+          Records: {fmtNum(preview.recordCount)} | Files: {preview.sourceFileCount} | Size:{" "}
+          {fmtBytes(preview.totalBytes)}
+        </Text>
         <Text> </Text>
 
         {preview.byProvider.map((p) => (
           <Text key={p.provider}>
-            {"  "}{p.provider.padEnd(16)}{String(p.targets).padEnd(8)}files  {fmtBytes(p.bytes).padEnd(8)}  {p.records} records
+            {"  "}
+            {p.provider.padEnd(16)}
+            {String(p.targets).padEnd(8)}files {fmtBytes(p.bytes).padEnd(8)} {p.records} records
           </Text>
         ))}
 
         {preview.partialFileWarnings.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
-            <Text color={T.danger} bold>  ⚠ PARTIAL FILE WARNINGS:</Text>
+            <Text color={T.danger} bold>
+              {" "}
+              ⚠ PARTIAL FILE WARNINGS:
+            </Text>
             {preview.partialFileWarnings.slice(0, 5).map((w) => (
               <Text key={w.file} color={T.warn}>
-                {"    "}{w.file.split("/").slice(-2).join("/")}: {w.matchedRecords} matched, {w.otherRecords} others ({w.otherDateRange}) will also go
+                {"    "}
+                {w.file.split("/").slice(-2).join("/")}: {w.matchedRecords} matched,{" "}
+                {w.otherRecords} others ({w.otherDateRange}) will also go
               </Text>
             ))}
             {preview.partialFileWarnings.length > 5 && (
-              <Text color={T.muted}>    ... and {preview.partialFileWarnings.length - 5} more</Text>
+              <Text color={T.muted}> ... and {preview.partialFileWarnings.length - 5} more</Text>
             )}
           </Box>
         )}
@@ -305,12 +339,20 @@ export function CleanupView({ core }: CleanupViewProps) {
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color={T.danger}>
-          ⚠ This will permanently delete {preview?.targets.length ?? 0} files ({fmtBytes(preview?.totalBytes ?? 0)}).
+          ⚠ This will permanently delete {preview?.targets.length ?? 0} files (
+          {fmtBytes(preview?.totalBytes ?? 0)}).
         </Text>
-        {doBackup && <Text color={T.success}>  📦 Backup will be created first.</Text>}
+        {doBackup && <Text color={T.success}> 📦 Backup will be created first.</Text>}
         <Text> </Text>
-        <Text>  Type DELETE to confirm: <Text color={T.accent} bold>{confirmText}</Text><Text color={T.muted}>█</Text></Text>
-        <Text color={T.muted}>  (case-sensitive · Esc to go back)</Text>
+        <Text>
+          {" "}
+          Type DELETE to confirm:{" "}
+          <Text color={T.accent} bold>
+            {confirmText}
+          </Text>
+          <Text color={T.muted}>█</Text>
+        </Text>
+        <Text color={T.muted}> (case-sensitive · Esc to go back)</Text>
       </Box>
     );
   }
@@ -330,10 +372,12 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "error") {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color={T.danger}>━━ Error ━━</Text>
-        <Text color={T.danger}>  {errorMsg}</Text>
+        <Text bold color={T.danger}>
+          ━━ Error ━━
+        </Text>
+        <Text color={T.danger}> {errorMsg}</Text>
         <Text> </Text>
-        <Text color={T.muted}>  Press Enter to return.</Text>
+        <Text color={T.muted}> Press Enter to return.</Text>
       </Box>
     );
   }
@@ -343,16 +387,16 @@ export function CleanupView({ core }: CleanupViewProps) {
   if (phase === "done" && result) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color={T.success}>━━ Cleanup Complete ━━</Text>
+        <Text bold color={T.success}>
+          ━━ Cleanup Complete ━━
+        </Text>
         <Text> </Text>
-        <Text color={T.success}>  ✓ Deleted: {result.deletedCount} files</Text>
-        <Text>  💾 Freed: {fmtBytes(result.bytesFreed)}</Text>
-        {result.backupPath && <Text>  📦 Backup: {result.backupPath}</Text>}
-        {result.failedCount > 0 && (
-          <Text color={T.danger}>  ✗ Failed: {result.failedCount}</Text>
-        )}
+        <Text color={T.success}> ✓ Deleted: {result.deletedCount} files</Text>
+        <Text> 💾 Freed: {fmtBytes(result.bytesFreed)}</Text>
+        {result.backupPath && <Text> 📦 Backup: {result.backupPath}</Text>}
+        {result.failedCount > 0 && <Text color={T.danger}> ✗ Failed: {result.failedCount}</Text>}
         <Text> </Text>
-        <Text color={T.muted}>  Press Enter to return.</Text>
+        <Text color={T.muted}> Press Enter to return.</Text>
       </Box>
     );
   }

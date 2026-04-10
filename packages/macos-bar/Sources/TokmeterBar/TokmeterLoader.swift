@@ -73,13 +73,13 @@ final class TokmeterLoader: ObservableObject {
                 self.hasFreshData = true
             }
         } catch DaemonError.daemonNotRunning {
-            self.lastError = DaemonError.daemonNotRunning.errorDescription
-            self.hasFreshData = false
-            self.isWarming = false
+            // Daemon is offline — fall back to the CLI subprocess which reads
+            // the same session files and scan-cache directly from disk.
+            await loadFromCLI()
             return
         } catch {
-            self.lastError = (error as? LocalizedError)?.errorDescription
-                ?? error.localizedDescription
+            // Network error or decode failure — try CLI fallback too
+            await loadFromCLI()
             return
         }
 
@@ -127,5 +127,143 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchSessionsSafe() async -> [ProjectData]? {
         try? await client.fetchSessions()
+    }
+
+    // ─── CLI fallback (daemon offline) ───────────────────────────────
+
+    /// When the daemon isn't running, spawn `tokmeter --json` as a subprocess
+    /// to read the same session files + scan-cache from disk. The output is
+    /// cached to `~/.cache/tokmeter/bar-cache.json` with a 120s TTL so we
+    /// don't re-scan on every 30s timer tick.
+    private func loadFromCLI() async {
+        self.isWarming = false
+
+        // Check disk cache first (avoids a 30-60s subprocess on every timer tick)
+        let cacheFile = NSHomeDirectory() + "/.cache/tokmeter/bar-cache.json"
+        if let cached = readBarCache(path: cacheFile, maxAgeSeconds: 120) {
+            applyTokmeterJSON(cached)
+            self.lastError = nil
+            self.hasFreshData = true
+            return
+        }
+
+        // Spawn the CLI. macOS apps launched from LaunchServices get a minimal
+        // PATH that doesn't include homebrew, nvm, bun, etc. We resolve `node`
+        // via the user's login shell so it finds the same binary they use in
+        // Terminal.app. The -l flag loads .zshrc/.bashrc which sets up PATH.
+        let localBin = NSHomeDirectory() + "/Sriinnu/Personal/tokmeter/packages/cli/dist/cli.js"
+        let cliScript: String
+        if FileManager.default.fileExists(atPath: localBin) {
+            cliScript = "node '\(localBin)' --json"
+        } else {
+            cliScript = "npx -y @sriinnu/tokmeter --json"
+        }
+        // Use the user's default shell with login mode to get their full PATH.
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let execPath = shell
+        let args = ["-l", "-c", cliScript]
+
+        do {
+            let output = try await runProcess(executable: execPath, arguments: args, timeout: 30)
+            guard let data = output.data(using: .utf8) else {
+                self.lastError = "CLI returned non-UTF8 output"
+                return
+            }
+
+            // Write to disk cache for the next 120s
+            writeBarCache(data: data, path: cacheFile)
+
+            let decoded = try JSONDecoder().decode(TokmeterFullJSON.self, from: data)
+            applyTokmeterJSON(decoded)
+            self.lastError = nil
+            self.hasFreshData = true
+        } catch {
+            self.lastError = "Daemon offline · CLI scan failed: \(error.localizedDescription)"
+            self.hasFreshData = false
+        }
+    }
+
+    private func applyTokmeterJSON(_ data: TokmeterFullJSON) {
+        self.stats = data.stats
+        self.totalCost = data.stats.totalCost
+        self.totalTokens = data.stats.totalTokens
+
+        if let today = data.daily.last {
+            self.todayCost = today.cost
+            self.todayTokens = today.totalTokens
+        }
+
+        self.recentDaily = data.daily.suffix(7).map {
+            DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost)
+        }
+
+        self.topModels = data.models.prefix(5).map {
+            ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
+        }
+
+        // Projects sorted by recency
+        let sorted = data.projects
+            .sorted { ($0.lastUsed ?? 0) > ($1.lastUsed ?? 0) }
+        self.sessions = Array(sorted.prefix(50))
+    }
+
+    // ─── Disk cache helpers ──────────────────────────────────────────
+
+    private func readBarCache(path: String, maxAgeSeconds: TimeInterval) -> TokmeterFullJSON? {
+        guard FileManager.default.fileExists(atPath: path),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let modified = attrs[.modificationDate] as? Date,
+              Date().timeIntervalSince(modified) < maxAgeSeconds,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let decoded = try? JSONDecoder().decode(TokmeterFullJSON.self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+
+    private func writeBarCache(data: Data, path: String) {
+        let dir = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
+    // ─── Subprocess runner ───────────────────────────────────────────
+
+    private func runProcess(executable: String, arguments: [String], timeout: TimeInterval) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: executable)
+                proc.arguments = arguments
+
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError = FileHandle.nullDevice
+
+                do {
+                    try proc.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let deadline = Date().addingTimeInterval(timeout)
+                while proc.isRunning && Date() < deadline {
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                }
+                if proc.isRunning {
+                    proc.terminate()
+                    continuation.resume(throwing: DaemonError.networkError("CLI timed out after \(Int(timeout))s"))
+                    return
+                }
+
+                let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+                guard let output = String(data: outputData, encoding: .utf8) else {
+                    continuation.resume(throwing: DaemonError.decodingError("non-UTF8 CLI output"))
+                    return
+                }
+                continuation.resume(returning: output)
+            }
+        }
     }
 }

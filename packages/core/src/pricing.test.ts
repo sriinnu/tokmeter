@@ -56,7 +56,7 @@ describe("calculateCost", () => {
       1_000_000, // input
       1_000_000, // output
       1_000_000, // cache read
-      1_000_000, // cache write
+      1_000_000 // cache write
     );
     expect(cost).toBeCloseTo(110.25, 2);
   });
@@ -71,7 +71,7 @@ describe("calculateCost", () => {
       "claude-opus-4-6",
       100_000, // uncached input
       1_000, // output
-      900_000, // cache read
+      900_000 // cache read
     );
     expect(cost).toBeCloseTo(2.925, 3);
   });
@@ -87,9 +87,9 @@ describe("calculateCost", () => {
       "gpt-4",
       0, // input
       0, // output
-      100_000, // cache read
+      100_000 // cache read
     );
-    expect(cost).toBeCloseTo(0.30, 3);
+    expect(cost).toBeCloseTo(0.3, 3);
   });
 
   it("does NOT apply cache-write fallback (must be explicit)", async () => {
@@ -102,18 +102,14 @@ describe("calculateCost", () => {
       0,
       0,
       0,
-      100_000, // cache write
+      100_000 // cache write
     );
     expect(cost).toBe(0);
   });
 
   it("returns 0 for unknown model (no static, no kosha hit)", async () => {
     const pricing = new PricingService();
-    const cost = await pricing.calculateCost(
-      "totally-fake-model-xyz-9000",
-      1_000_000,
-      1_000_000,
-    );
+    const cost = await pricing.calculateCost("totally-fake-model-xyz-9000", 1_000_000, 1_000_000);
     expect(cost).toBe(0);
   });
 
@@ -122,12 +118,7 @@ describe("calculateCost", () => {
     // gemini-2.5-pro: $1.25 input, $10 output, $0.31 cache read (25% of input)
     // 1M cached → 1M * $0.31/M = $0.31
     // (If the 10% fallback fired wrongly, we'd get $0.125 — visibly different)
-    const cost = await pricing.calculateCost(
-      "gemini-2.5-pro",
-      0,
-      0,
-      1_000_000,
-    );
+    const cost = await pricing.calculateCost("gemini-2.5-pro", 0, 0, 1_000_000);
     expect(cost).toBeCloseTo(0.31, 2);
   });
 });

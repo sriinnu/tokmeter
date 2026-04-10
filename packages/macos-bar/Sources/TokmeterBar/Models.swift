@@ -68,3 +68,12 @@ struct ProjectData: Codable, Identifiable {
 
     var id: String { project }
 }
+
+/// Full CLI output from `tokmeter --json`.
+/// Used as the fallback data source when the daemon is offline.
+struct TokmeterFullJSON: Codable {
+    let stats: StatsData
+    let daily: [DailyData]
+    let models: [ModelData]
+    let projects: [ProjectData]
+}

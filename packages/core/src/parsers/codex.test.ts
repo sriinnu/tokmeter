@@ -9,7 +9,7 @@
  * These tests pin that contract to a fixture so we never regress.
  */
 
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,11 +22,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  try {
+    rmSync(tmpDir, { recursive: true, force: true });
+  } catch {}
 });
 
 /** Build a fake Codex JSONL file with controlled token_count events. */
-function writeFakeSession(events: Array<{ totalIn: number; totalOut: number; cached: number; reasoning?: number }>): string {
+function writeFakeSession(
+  events: Array<{ totalIn: number; totalOut: number; cached: number; reasoning?: number }>
+): string {
   // Place file in YYYY/MM/DD-style nested dir to match Codex's layout.
   const sessionsDir = join(tmpDir, ".codex", "sessions", "2026", "04", "09");
   const fs = require("node:fs");
@@ -35,35 +39,41 @@ function writeFakeSession(events: Array<{ totalIn: number; totalOut: number; cac
 
   const lines: string[] = [];
   // Session meta
-  lines.push(JSON.stringify({
-    timestamp: "2026-04-09T12:00:00.000Z",
-    type: "session_meta",
-    payload: { id: "test-session", cwd: "/tmp/test-project", model_provider: "openai" },
-  }));
+  lines.push(
+    JSON.stringify({
+      timestamp: "2026-04-09T12:00:00.000Z",
+      type: "session_meta",
+      payload: { id: "test-session", cwd: "/tmp/test-project", model_provider: "openai" },
+    })
+  );
   // Turn context with model
-  lines.push(JSON.stringify({
-    timestamp: "2026-04-09T12:00:01.000Z",
-    type: "turn_context",
-    payload: { model: "gpt-5.4" },
-  }));
+  lines.push(
+    JSON.stringify({
+      timestamp: "2026-04-09T12:00:01.000Z",
+      type: "turn_context",
+      payload: { model: "gpt-5.4" },
+    })
+  );
   // Token count events
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    lines.push(JSON.stringify({
-      timestamp: `2026-04-09T12:00:${String(10 + i).padStart(2, "0")}.000Z`,
-      type: "event_msg",
-      payload: {
-        type: "token_count",
-        info: {
-          total_token_usage: {
-            input_tokens: e.totalIn,
-            cached_input_tokens: e.cached,
-            output_tokens: e.totalOut,
-            reasoning_output_tokens: e.reasoning ?? 0,
+    lines.push(
+      JSON.stringify({
+        timestamp: `2026-04-09T12:00:${String(10 + i).padStart(2, "0")}.000Z`,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: e.totalIn,
+              cached_input_tokens: e.cached,
+              output_tokens: e.totalOut,
+              reasoning_output_tokens: e.reasoning ?? 0,
+            },
           },
         },
-      },
-    }));
+      })
+    );
   }
 
   writeFileSync(filePath, `${lines.join("\n")}\n`);
@@ -74,9 +84,7 @@ describe("CodexParser", () => {
   it("subtracts cached_input_tokens from input_tokens (Anthropic semantics)", async () => {
     // One event: 100k total prompt, 80k of which is cached.
     // Expected: inputTokens = 20k uncached, cacheReadTokens = 80k.
-    writeFakeSession([
-      { totalIn: 100_000, totalOut: 5_000, cached: 80_000 },
-    ]);
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }]);
 
     const parser = new CodexParser();
     const records = await parser.scan(tmpDir);
@@ -117,9 +125,7 @@ describe("CodexParser", () => {
   });
 
   it("preserves the original timestamp from the JSONL", async () => {
-    writeFakeSession([
-      { totalIn: 100_000, totalOut: 5_000, cached: 80_000 },
-    ]);
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }]);
 
     const parser = new CodexParser();
     const records = await parser.scan(tmpDir);
@@ -129,9 +135,7 @@ describe("CodexParser", () => {
 
   it("handles cache > input edge case (clamps to zero, not negative)", async () => {
     // Pathological: API quirk where cached > input.
-    writeFakeSession([
-      { totalIn: 50_000, totalOut: 1_000, cached: 80_000 },
-    ]);
+    writeFakeSession([{ totalIn: 50_000, totalOut: 1_000, cached: 80_000 }]);
 
     const parser = new CodexParser();
     const records = await parser.scan(tmpDir);

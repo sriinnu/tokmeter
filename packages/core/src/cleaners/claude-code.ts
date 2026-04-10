@@ -15,8 +15,8 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { CleanupResult, CleanupTarget, SessionCleaner } from "../types.js";
 
 export class ClaudeCodeCleaner implements SessionCleaner {
@@ -133,7 +133,7 @@ export class ClaudeCodeCleaner implements SessionCleaner {
   private async addFileTarget(
     targets: CleanupTarget[],
     path: string,
-    description: string,
+    description: string
   ): Promise<void> {
     try {
       const s = await stat(path);
@@ -154,7 +154,7 @@ export class ClaudeCodeCleaner implements SessionCleaner {
   private async addDirTarget(
     targets: CleanupTarget[],
     path: string,
-    description: string,
+    description: string
   ): Promise<void> {
     try {
       const s = await stat(path);
@@ -175,7 +175,7 @@ export class ClaudeCodeCleaner implements SessionCleaner {
   private async addTodoTargets(
     targets: CleanupTarget[],
     claudeDir: string,
-    uuid: string,
+    uuid: string
   ): Promise<void> {
     const todosDir = join(claudeDir, "todos");
     try {
@@ -214,7 +214,7 @@ export class ClaudeCodeCleaner implements SessionCleaner {
         const uuidSet = new Set(uuidsToRemove);
         index.entries = index.entries.filter(
           (entry: { id?: string; sessionId?: string }) =>
-            !uuidSet.has(entry.id ?? "") && !uuidSet.has(entry.sessionId ?? ""),
+            !uuidSet.has(entry.id ?? "") && !uuidSet.has(entry.sessionId ?? "")
         );
       }
 

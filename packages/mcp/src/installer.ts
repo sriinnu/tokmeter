@@ -131,7 +131,9 @@ function readJSON<T>(path: string): T | null {
 /** Returns true (and prints a warning) if the last readJSON hit a corrupt file. */
 function wasCorrupt(filePath: string, editorName: string): boolean {
   if (_lastReadCorrupt) {
-    console.log(C.danger(`  ✗ ${editorName} — ${filePath} has a JSON syntax error, refusing to modify`));
+    console.log(
+      C.danger(`  ✗ ${editorName} — ${filePath} has a JSON syntax error, refusing to modify`)
+    );
     return true;
   }
   return false;
@@ -223,7 +225,10 @@ export function installStatusline(editors?: string[]): void {
     }
 
     const raw = readJSON<SettingsWithStatusLine>(editor.settingsPath);
-    if (wasCorrupt(editor.settingsPath, editor.name)) { skipped++; continue; }
+    if (wasCorrupt(editor.settingsPath, editor.name)) {
+      skipped++;
+      continue;
+    }
     const settings = raw ?? {};
 
     // Check if already installed with the LOCAL command
@@ -304,7 +309,10 @@ export function installMCP(editors?: string[]): void {
 
     // For editors with separate MCP files, read that; otherwise read settings
     const rawMcp = readJSON<Record<string, unknown>>(mcpPath);
-    if (wasCorrupt(mcpPath, editor.name)) { skipped++; continue; }
+    if (wasCorrupt(mcpPath, editor.name)) {
+      skipped++;
+      continue;
+    }
     const config = rawMcp ?? {};
 
     const existingServers = (config[mcpKey] ?? {}) as Record<string, unknown>;
@@ -475,7 +483,10 @@ export function installHooks(): void {
 
   const editor = EDITORS.find((e) => e.name === "Claude Code")!;
   const rawSettings = readJSON<Record<string, unknown>>(editor.settingsPath);
-  if (wasCorrupt(editor.settingsPath, "Claude Code")) { console.log(); return; }
+  if (wasCorrupt(editor.settingsPath, "Claude Code")) {
+    console.log();
+    return;
+  }
   const settings = rawSettings ?? {};
   const expected = getGuardHooks();
 
@@ -486,8 +497,9 @@ export function installHooks(): void {
 
   // Check if our guard matchers are already in PreToolUse
   const guardJson = JSON.stringify(guardMatchers);
-  const hasGuards = existingPre.length >= guardMatchers.length
-    && JSON.stringify(existingPre.slice(0, guardMatchers.length)) === guardJson;
+  const hasGuards =
+    existingPre.length >= guardMatchers.length &&
+    JSON.stringify(existingPre.slice(0, guardMatchers.length)) === guardJson;
 
   if (hasGuards) {
     console.log(C.accent("  ✓ Claude Code — hooks already installed and up to date"));
@@ -496,8 +508,8 @@ export function installHooks(): void {
   }
 
   // Merge: replace our guard matchers at the start, preserve any user-added hooks
-  const userHooks = existingPre.filter((m) =>
-    !guardMatchers.some((g) => JSON.stringify(g) === JSON.stringify(m))
+  const userHooks = existingPre.filter(
+    (m) => !guardMatchers.some((g) => JSON.stringify(g) === JSON.stringify(m))
   );
   settings.hooks = {
     ...existing,

@@ -130,7 +130,9 @@ export class DaemonClient {
         this.session = session;
 
         const timer = setTimeout(() => {
-          try { this.ws?.close(); } catch {}
+          try {
+            this.ws?.close();
+          } catch {}
           resolve(false);
         }, timeoutMs);
 

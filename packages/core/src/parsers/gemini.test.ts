@@ -46,10 +46,7 @@ interface GeminiMessageFixture {
  * Write a fake Gemini session JSON file at the expected location:
  * {tmp}/.gemini/tmp/{sessionId}/chats/{file}.json
  */
-function writeFakeSession(
-  messages: GeminiMessageFixture[],
-  sessionTimestamp?: string
-): string {
+function writeFakeSession(messages: GeminiMessageFixture[], sessionTimestamp?: string): string {
   const chatsDir = join(tmpDir, ".gemini", "tmp", "test-session-id", "chats");
   mkdirSync(chatsDir, { recursive: true });
   const filePath = join(chatsDir, "test-chat.json");

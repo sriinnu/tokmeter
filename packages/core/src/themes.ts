@@ -95,11 +95,11 @@ const defaultTheme: Theme = {
     thinking: "#d2a8ff",
     // Twilight flow: cool indigo → blue → teal → muted slate → warm amber
     // Reads like a gradient, not a rainbow. Cost is the warm "hero" accent.
-    segProject: "#4338ca",  // deep indigo — identity, grounding
-    segModel: "#2563eb",    // royal blue — intelligence, clarity
-    segContext: "#0f766e",  // deep teal — health, organic
-    segGit: "#475569",      // slate — quiet, supporting detail
-    segCost: "#b45309",     // warm amber — draws the eye to money
+    segProject: "#4338ca", // deep indigo — identity, grounding
+    segModel: "#2563eb", // royal blue — intelligence, clarity
+    segContext: "#0f766e", // deep teal — health, organic
+    segGit: "#475569", // slate — quiet, supporting detail
+    segCost: "#b45309", // warm amber — draws the eye to money
   },
 };
 
@@ -219,21 +219,21 @@ const highContrast: Theme = {
   colors: {
     primary: "#ffffff",
     secondary: "#00ddff",
-    success: "#00bbff",    // blue — distinguishable from danger for all CVD types
-    warning: "#ffcc00",    // yellow
-    danger: "#ff8800",     // orange — not red, safe for deuteranopia
+    success: "#00bbff", // blue — distinguishable from danger for all CVD types
+    warning: "#ffcc00", // yellow
+    danger: "#ff8800", // orange — not red, safe for deuteranopia
     muted: "#999999",
     text: "#ffffff",
     bg: "#000000",
     cost: "#ffcc00",
-    input: "#00ddff",      // cyan
-    output: "#ff88cc",     // pink — distinct from cyan for all CVD types
+    input: "#00ddff", // cyan
+    output: "#ff88cc", // pink — distinct from cyan for all CVD types
     cache: "#999999",
     thinking: "#00ddff",
     segProject: "#333333",
     segModel: "#004488",
-    segContext: "#006688",  // teal, not green
-    segGit: "#884400",     // dark orange, not red
+    segContext: "#006688", // teal, not green
+    segGit: "#884400", // dark orange, not red
     segCost: "#886600",
   },
 };

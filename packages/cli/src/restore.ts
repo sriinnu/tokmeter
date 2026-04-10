@@ -3,7 +3,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { TokmeterCore, CleanupService } from "@sriinnu/tokmeter-core";
+import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter-core";
 import Table from "cli-table3";
 
 function ask(question: string): Promise<string> {
@@ -68,9 +68,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
   }
 
   // Resolve which backup to restore
-  const backup = args.latest
-    ? backups[0]
-    : backups.find((b) => b.id === args.id);
+  const backup = args.latest ? backups[0] : backups.find((b) => b.id === args.id);
 
   if (!backup) {
     console.log(`\nBackup not found: ${args.id || "(latest)"}\n`);

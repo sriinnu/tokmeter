@@ -8,12 +8,12 @@
  */
 
 import { createInterface } from "node:readline";
-import { TokmeterCore, CleanupService } from "@sriinnu/tokmeter-core";
+import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter-core";
 import type {
   CleanupFilter,
   CleanupPreview,
-  ProviderId,
   ProjectSummary,
+  ProviderId,
   ScanOptions,
 } from "@sriinnu/tokmeter-core";
 import Table from "cli-table3";
@@ -74,7 +74,15 @@ export async function runCleanup(args: CleanupArgs): Promise<void> {
   const service = new CleanupService(core);
 
   // If specific filters provided via flags, go direct (scripting mode)
-  if (args.project || args.providers?.length || args.since || args.until || args.today || args.week || args.month) {
+  if (
+    args.project ||
+    args.providers?.length ||
+    args.since ||
+    args.until ||
+    args.today ||
+    args.week ||
+    args.month
+  ) {
     await runFilteredCleanup(service, core, args);
     return;
   }
@@ -88,7 +96,7 @@ export async function runCleanup(args: CleanupArgs): Promise<void> {
 async function runFilteredCleanup(
   service: CleanupService,
   core: TokmeterCore,
-  args: CleanupArgs,
+  args: CleanupArgs
 ): Promise<void> {
   const filter: CleanupFilter = {
     project: args.project,
@@ -141,7 +149,7 @@ async function runFilteredCleanup(
 async function runInteractiveCleanup(
   service: CleanupService,
   core: TokmeterCore,
-  args: CleanupArgs,
+  args: CleanupArgs
 ): Promise<void> {
   console.log("\n🔍 Scanning all session data...\n");
   await core.scan();
@@ -164,9 +172,7 @@ async function runInteractiveCleanup(
   for (let i = 0; i < projects.length; i++) {
     const p = projects[i];
     const providers = p.providers.map((pr) => pr.provider).join(", ");
-    const lastUsed = p.lastUsed
-      ? new Date(p.lastUsed).toISOString().slice(0, 10)
-      : "—";
+    const lastUsed = p.lastUsed ? new Date(p.lastUsed).toISOString().slice(0, 10) : "—";
     table.push([
       (i + 1).toString(),
       p.project.slice(0, 24),
@@ -180,9 +186,7 @@ async function runInteractiveCleanup(
   console.log(table.toString());
 
   // Ask which projects to clean
-  const answer = await ask(
-    "\nEnter project numbers to delete (comma-separated, or 'all'): ",
-  );
+  const answer = await ask("\nEnter project numbers to delete (comma-separated, or 'all'): ");
 
   if (!answer || answer.toLowerCase() === "q") {
     console.log("Cancelled.\n");
@@ -198,7 +202,7 @@ async function runInteractiveCleanup(
         answer
           .split(",")
           .map((s) => Number.parseInt(s.trim(), 10) - 1)
-          .filter((i) => i >= 0 && i < projects.length),
+          .filter((i) => i >= 0 && i < projects.length)
       ),
     ];
 
@@ -209,9 +213,7 @@ async function runInteractiveCleanup(
     selectedProjects = indices.map((i) => projects[i]);
   }
 
-  console.log(
-    `\nSelected: ${selectedProjects.map((p) => p.project).join(", ")}`,
-  );
+  console.log(`\nSelected: ${selectedProjects.map((p) => p.project).join(", ")}`);
 
   // Preview each selected project
   for (const proj of selectedProjects) {
@@ -273,7 +275,7 @@ function renderPreview(preview: CleanupPreview): void {
 
   // Totals
   console.log(
-    `  Total: ${preview.sourceFileCount} source files, ${preview.targets.length} targets, ${fmtBytes(preview.totalBytes)}`,
+    `  Total: ${preview.sourceFileCount} source files, ${preview.targets.length} targets, ${fmtBytes(preview.totalBytes)}`
   );
 
   // Partial file warnings (TRANSPARENCY)
@@ -282,7 +284,7 @@ function renderPreview(preview: CleanupPreview): void {
     for (const w of preview.partialFileWarnings) {
       const shortFile = w.file.split("/").slice(-2).join("/");
       console.log(
-        `     ${shortFile}: ${w.matchedRecords} matched, BUT ${w.otherRecords} other records (${w.otherDateRange}) will also be deleted`,
+        `     ${shortFile}: ${w.matchedRecords} matched, BUT ${w.otherRecords} other records (${w.otherDateRange}) will also be deleted`
       );
     }
   }

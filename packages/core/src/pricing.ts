@@ -147,18 +147,20 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
   ["claude-3-haiku", { inputPerMillion: 0.25, outputPerMillion: 1.25 }],
   // ── OpenAI GPT / O-series ────────────────────────────────────────
   // GPT-5 family resolves through kosha-discovery (OpenRouter mirror).
-  // The 10% cache-read fallback in calculateCost() handles cache pricing
-  // until kosha exposes cacheReadPerMillion natively.
-  ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6 }],
-  ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10 }],
-  ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30 }],
-  ["gpt-4", { inputPerMillion: 30, outputPerMillion: 60 }],
-  ["gpt-3.5-turbo", { inputPerMillion: 0.5, outputPerMillion: 1.5 }],
+  // OpenAI caches at 50% of input (NOT 10% like Anthropic). Every OpenAI
+  // model gets explicit cacheReadPerMillion to avoid the 10% universal
+  // fallback undercharging by 5x.
+  ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6, cacheReadPerMillion: 0.075 }],
+  ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25 }],
+  ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30, cacheReadPerMillion: 5 }],
+  ["gpt-4", { inputPerMillion: 30, outputPerMillion: 60, cacheReadPerMillion: 15 }],
+  ["gpt-3.5-turbo", { inputPerMillion: 0.5, outputPerMillion: 1.5, cacheReadPerMillion: 0.25 }],
   [
     "o4-mini",
     {
       inputPerMillion: 1.1,
       outputPerMillion: 4.4,
+      cacheReadPerMillion: 0.55,
       reasoningInputPerMillion: 1.1,
       reasoningOutputPerMillion: 4.4,
     },
@@ -168,6 +170,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 1.1,
       outputPerMillion: 4.4,
+      cacheReadPerMillion: 0.55,
       reasoningInputPerMillion: 1.1,
       reasoningOutputPerMillion: 4.4,
     },
@@ -177,6 +180,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 10,
       outputPerMillion: 40,
+      cacheReadPerMillion: 5,
       reasoningInputPerMillion: 10,
       reasoningOutputPerMillion: 40,
     },
@@ -186,6 +190,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 3,
       outputPerMillion: 12,
+      cacheReadPerMillion: 1.5,
       reasoningInputPerMillion: 3,
       reasoningOutputPerMillion: 12,
     },
@@ -195,6 +200,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 15,
       outputPerMillion: 60,
+      cacheReadPerMillion: 7.5,
       reasoningInputPerMillion: 15,
       reasoningOutputPerMillion: 60,
     },
@@ -221,14 +227,8 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
       reasoningOutputPerMillion: 3.5,
     },
   ],
-  [
-    "gemini-2.0-flash",
-    { inputPerMillion: 0.1, outputPerMillion: 0.4, cacheReadPerMillion: 0.025 },
-  ],
-  [
-    "gemini-1.5-pro",
-    { inputPerMillion: 1.25, outputPerMillion: 5, cacheReadPerMillion: 0.3125 },
-  ],
+  ["gemini-2.0-flash", { inputPerMillion: 0.1, outputPerMillion: 0.4, cacheReadPerMillion: 0.025 }],
+  ["gemini-1.5-pro", { inputPerMillion: 1.25, outputPerMillion: 5, cacheReadPerMillion: 0.3125 }],
   [
     "gemini-1.5-flash",
     { inputPerMillion: 0.075, outputPerMillion: 0.3, cacheReadPerMillion: 0.01875 },
