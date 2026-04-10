@@ -2844,73 +2844,101 @@ export function createServer(): McpServer {
     },
     async (params) => {
       try {
-      const { CleanupService } = await import("@sriinnu/tokmeter-core");
-      const opts = buildScanOptions(params);
-      const core = await getCore(opts);
-      const service = new CleanupService(core);
+        const { CleanupService } = await import("@sriinnu/tokmeter-core");
+        const opts = buildScanOptions(params);
+        const core = await getCore(opts);
+        const service = new CleanupService(core);
 
-      const filter = buildCleanupFilter(params);
+        const filter = buildCleanupFilter(params);
 
-      const preview = await service.preview(filter);
+        const preview = await service.preview(filter);
 
-      if (preview.recordCount === 0) {
-        return { content: [{ type: "text", text: `${header("CLEANUP PREVIEW")}\n\n  No records match the filter. Nothing to clean up.\n` }] };
-      }
-
-      const lines: string[] = [header("CLEANUP PREVIEW"), ""];
-
-      // Summary
-      lines.push(
-        `  Records: ${fmtNum(preview.recordCount)}`,
-        `  Source Files: ${preview.sourceFileCount}`,
-        `  Targets: ${preview.targets.length}`,
-        `  Disk Space: ${fmtNum(preview.totalBytes)} bytes`,
-        "",
-      );
-
-      // By provider
-      if (preview.byProvider.length > 0) {
-        lines.push("  BY PROVIDER:", separator());
-        const rows = preview.byProvider.map((p) => [
-          p.provider,
-          p.targets.toString(),
-          fmtNum(p.bytes),
-          p.records.toString(),
-        ]);
-        lines.push(formatTable(["Provider", "Targets", "Bytes", "Records"], rows, [false, true, true, true]));
-        lines.push("");
-      }
-
-      // By project
-      if (preview.byProject.length > 0) {
-        lines.push("  BY PROJECT:", separator());
-        const rows = preview.byProject.map((p) => [
-          p.project.slice(0, 30),
-          p.records.toString(),
-          fmtNum(p.tokens),
-          fmtCost(p.cost),
-        ]);
-        lines.push(formatTable(["Project", "Records", "Tokens", "Cost"], rows, [false, true, true, true]));
-        lines.push("");
-      }
-
-      // Partial file warnings
-      if (preview.partialFileWarnings.length > 0) {
-        lines.push("  ⚠️  PARTIAL FILE WARNINGS:", separator());
-        for (const w of preview.partialFileWarnings) {
-          const shortFile = w.file.split("/").slice(-2).join("/");
-          lines.push(`  ${shortFile}: ${w.matchedRecords} matched, ${w.otherRecords} other records (${w.otherDateRange}) will ALSO be deleted`);
+        if (preview.recordCount === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${header("CLEANUP PREVIEW")}\n\n  No records match the filter. Nothing to clean up.\n`,
+              },
+            ],
+          };
         }
-        lines.push("");
-      }
 
-      lines.push("  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'");
+        const lines: string[] = [header("CLEANUP PREVIEW"), ""];
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+        // Summary
+        lines.push(
+          `  Records: ${fmtNum(preview.recordCount)}`,
+          `  Source Files: ${preview.sourceFileCount}`,
+          `  Targets: ${preview.targets.length}`,
+          `  Disk Space: ${fmtNum(preview.totalBytes)} bytes`,
+          ""
+        );
+
+        // By provider
+        if (preview.byProvider.length > 0) {
+          lines.push("  BY PROVIDER:", separator());
+          const rows = preview.byProvider.map((p) => [
+            p.provider,
+            p.targets.toString(),
+            fmtNum(p.bytes),
+            p.records.toString(),
+          ]);
+          lines.push(
+            formatTable(["Provider", "Targets", "Bytes", "Records"], rows, [
+              false,
+              true,
+              true,
+              true,
+            ])
+          );
+          lines.push("");
+        }
+
+        // By project
+        if (preview.byProject.length > 0) {
+          lines.push("  BY PROJECT:", separator());
+          const rows = preview.byProject.map((p) => [
+            p.project.slice(0, 30),
+            p.records.toString(),
+            fmtNum(p.tokens),
+            fmtCost(p.cost),
+          ]);
+          lines.push(
+            formatTable(["Project", "Records", "Tokens", "Cost"], rows, [false, true, true, true])
+          );
+          lines.push("");
+        }
+
+        // Partial file warnings
+        if (preview.partialFileWarnings.length > 0) {
+          lines.push("  ⚠️  PARTIAL FILE WARNINGS:", separator());
+          for (const w of preview.partialFileWarnings) {
+            const shortFile = w.file.split("/").slice(-2).join("/");
+            lines.push(
+              `  ${shortFile}: ${w.matchedRecords} matched, ${w.otherRecords} other records (${w.otherDateRange}) will ALSO be deleted`
+            );
+          }
+          lines.push("");
+        }
+
+        lines.push(
+          "  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'"
+        );
+
+        return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
       } catch (err) {
-        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n`,
+            },
+          ],
+          isError: true,
+        };
       }
-    },
+    }
   );
 
   server.tool(
@@ -2925,54 +2953,67 @@ export function createServer(): McpServer {
       since: SinceDate,
       until: UntilDate,
       scope: ScopeEnum,
-      backup: z.boolean().default(true).describe("Create tar.gz backup before deleting (default: true)"),
+      backup: z
+        .boolean()
+        .default(true)
+        .describe("Create tar.gz backup before deleting (default: true)"),
       confirm: z.string().describe("Must be exactly 'DELETE' to proceed with deletion"),
     },
     async (params) => {
       if (params.confirm !== "DELETE") {
         return {
-          content: [{
-            type: "text",
-            text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call drishti_cleanup_preview first to review what will be deleted.\n`,
-          }],
+          content: [
+            {
+              type: "text",
+              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call drishti_cleanup_preview first to review what will be deleted.\n`,
+            },
+          ],
           isError: true,
         };
       }
 
       try {
-      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
-      // Fresh core for destructive ops — never use stale cache
-      const core = new Core();
-      const service = new CleanupService(core);
+        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+        // Fresh core for destructive ops — never use stale cache
+        const core = new Core();
+        const service = new CleanupService(core);
 
-      const filter = buildCleanupFilter(params);
+        const filter = buildCleanupFilter(params);
 
-      const result = await service.execute(filter, { backup: params.backup });
+        const result = await service.execute(filter, { backup: params.backup });
 
-      // Invalidate cached core so next tool call rescans
-      _cachedCore = null;
+        // Invalidate cached core so next tool call rescans
+        _cachedCore = null;
 
-      const lines: string[] = [header("CLEANUP RESULT"), ""];
-      lines.push(
-        `  ✅ Deleted: ${result.deletedCount} targets`,
-        `  💾 Freed: ${fmtNum(result.bytesFreed)} bytes`,
-      );
-      if (result.backupPath) {
-        lines.push(`  📦 Backup: ${result.backupPath}`);
-      }
-      if (result.failedCount > 0) {
-        lines.push(`  ❌ Failed: ${result.failedCount}`);
-        for (const e of result.errors.slice(0, 5)) {
-          lines.push(`     ${e.target}: ${e.error}`);
+        const lines: string[] = [header("CLEANUP RESULT"), ""];
+        lines.push(
+          `  ✅ Deleted: ${result.deletedCount} targets`,
+          `  💾 Freed: ${fmtNum(result.bytesFreed)} bytes`
+        );
+        if (result.backupPath) {
+          lines.push(`  📦 Backup: ${result.backupPath}`);
         }
-      }
-      lines.push("");
+        if (result.failedCount > 0) {
+          lines.push(`  ❌ Failed: ${result.failedCount}`);
+          for (const e of result.errors.slice(0, 5)) {
+            lines.push(`     ${e.target}: ${e.error}`);
+          }
+        }
+        lines.push("");
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (err) {
-        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n`,
+            },
+          ],
+          isError: true,
+        };
       }
-    },
+    }
   );
 
   server.tool(
@@ -2986,7 +3027,9 @@ export function createServer(): McpServer {
       const backups = service.listBackups();
 
       if (backups.length === 0) {
-        return { content: [{ type: "text", text: `${header("BACKUPS")}\n\n  No backups found.\n` }] };
+        return {
+          content: [{ type: "text", text: `${header("BACKUPS")}\n\n  No backups found.\n` }],
+        };
       }
 
       const lines: string[] = [header("BACKUPS"), ""];
@@ -3000,7 +3043,7 @@ export function createServer(): McpServer {
       lines.push("");
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
-    },
+    }
   );
 
   server.tool(
@@ -3013,39 +3056,49 @@ export function createServer(): McpServer {
     async (params) => {
       if (params.confirm !== "RESTORE") {
         return {
-          content: [{
-            type: "text",
-            text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'RESTORE' to proceed.\n`,
-          }],
+          content: [
+            {
+              type: "text",
+              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'RESTORE' to proceed.\n`,
+            },
+          ],
           isError: true,
         };
       }
 
       try {
-      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
-      const core = new Core({ skipPricing: true });
-      const service = new CleanupService(core);
-      const result = service.restore(params.backup_id);
+        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+        const core = new Core({ skipPricing: true });
+        const service = new CleanupService(core);
+        const result = service.restore(params.backup_id);
 
-      // Invalidate cached core
-      _cachedCore = null;
+        // Invalidate cached core
+        _cachedCore = null;
 
-      const lines: string[] = [header("RESTORE RESULT"), ""];
-      if (result.errors.length > 0) {
-        lines.push("  ❌ Restore failed:");
-        for (const e of result.errors) {
-          lines.push(`     ${e.file}: ${e.error}`);
+        const lines: string[] = [header("RESTORE RESULT"), ""];
+        if (result.errors.length > 0) {
+          lines.push("  ❌ Restore failed:");
+          for (const e of result.errors) {
+            lines.push(`     ${e.file}: ${e.error}`);
+          }
+        } else {
+          lines.push(`  ✅ Restored ${result.restoredCount} items.`);
         }
-      } else {
-        lines.push(`  ✅ Restored ${result.restoredCount} items.`);
-      }
-      lines.push("");
+        lines.push("");
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (err) {
-        return { content: [{ type: "text", text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n` }], isError: true };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${header("ERROR")}\n\n  ${err instanceof Error ? err.message : String(err)}\n`,
+            },
+          ],
+          isError: true,
+        };
       }
-    },
+    }
   );
 
   return server;

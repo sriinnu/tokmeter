@@ -5,8 +5,8 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
+import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tokmeter-core";
 import chalk, { type Chalk } from "chalk";
-import { loadUserTheme, isNerdFontEnabled, type ThemeColors } from "@sriinnu/tokmeter-core";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
 export const FALLBACK_STATUSLINE = "【♾️】 drishti";
@@ -187,9 +187,9 @@ const PL_ARROW = "\uE0B0"; //
 
 /** Relative luminance of a hex color (0 = black, 1 = white). */
 function luminance(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const r = Number.parseInt(hex.slice(1, 3), 16) / 255;
+  const g = Number.parseInt(hex.slice(3, 5), 16) / 255;
+  const b = Number.parseInt(hex.slice(5, 7), 16) / 255;
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 

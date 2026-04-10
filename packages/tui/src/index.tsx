@@ -20,11 +20,11 @@ import { TokmeterCore } from "@sriinnu/tokmeter-core";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
 import { T } from "./theme.js";
+import { CleanupView } from "./views/CleanupView.js";
 import { DailyView } from "./views/DailyView.js";
 import { ModelsView } from "./views/ModelsView.js";
 import { OverviewView } from "./views/OverviewView.js";
 import { StatsView } from "./views/StatsView.js";
-import { CleanupView } from "./views/CleanupView.js";
 
 type TabId = "overview" | "models" | "daily" | "stats" | "cleanup";
 

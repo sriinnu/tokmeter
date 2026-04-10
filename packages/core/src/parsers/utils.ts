@@ -57,8 +57,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *  1 — initial
  *  2 — codex/qwen/gemini parsers now subtract cached_input from input_tokens
  *      to match Anthropic semantics (was double-counting cached tokens)
+ *  3 — codex parser fixed duplicate records from last_token_usage fallback
+ *      (~7% of Codex records were phantom duplicates inflating cost by ~10%)
  */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

@@ -28,10 +28,7 @@ export class SqliteCleaner implements SessionCleaner {
     this.config = config;
   }
 
-  async resolveTargets(
-    sourceFiles: string[],
-    homeDir: string,
-  ): Promise<CleanupTarget[]> {
+  async resolveTargets(sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]> {
     // For SQLite providers, sourceFile points to the .db file itself.
     // We count rows that would be deleted rather than deleting the file.
     const dbPath = this.config.dbPath(homeDir);
@@ -42,9 +39,9 @@ export class SqliteCleaner implements SessionCleaner {
       if (!Database) return targets;
 
       const db = new Database(dbPath, { readonly: true });
-      const countResult = db.prepare(
-        `SELECT COUNT(*) as cnt FROM ${this.config.table} WHERE role = 'assistant'`,
-      ).get() as { cnt: number } | undefined;
+      const countResult = db
+        .prepare(`SELECT COUNT(*) as cnt FROM ${this.config.table} WHERE role = 'assistant'`)
+        .get() as { cnt: number } | undefined;
 
       const rowCount = countResult?.cnt ?? 0;
       db.close();
@@ -82,9 +79,9 @@ export class SqliteCleaner implements SessionCleaner {
       if (!Database) return null;
 
       const db = new Database(target.path, { readonly: true });
-      const rows = db.prepare(
-        `SELECT * FROM ${target.sqlDetail.table} WHERE ${target.sqlDetail.whereClause}`,
-      ).all();
+      const rows = db
+        .prepare(`SELECT * FROM ${target.sqlDetail.table} WHERE ${target.sqlDetail.whereClause}`)
+        .all();
       db.close();
 
       if (rows.length === 0) return null;
@@ -113,9 +110,9 @@ export class SqliteCleaner implements SessionCleaner {
         }
 
         const db = new Database(t.path);
-        const result = db.prepare(
-          `DELETE FROM ${t.sqlDetail.table} WHERE ${t.sqlDetail.whereClause}`,
-        ).run();
+        const result = db
+          .prepare(`DELETE FROM ${t.sqlDetail.table} WHERE ${t.sqlDetail.whereClause}`)
+          .run();
 
         // Reclaim disk space
         db.pragma("wal_checkpoint(TRUNCATE)");

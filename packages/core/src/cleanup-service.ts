@@ -9,20 +9,16 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  rmdirSync,
+  readdirSync,
   rmSync,
+  rmdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  filterByDate,
-  filterByProject,
-  filterByProvider,
-} from "./aggregator.js";
+import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { getCleaners } from "./cleaners/index.js";
 import { clearRecordCache, invalidateRecordCache } from "./parsers/utils.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
@@ -39,12 +35,7 @@ import type {
   TokenRecord,
 } from "./types.js";
 
-const DEFAULT_BACKUP_DIR = join(
-  process.env.HOME || homedir(),
-  ".cache",
-  "tokmeter",
-  "backups",
-);
+const DEFAULT_BACKUP_DIR = join(process.env.HOME || homedir(), ".cache", "tokmeter", "backups");
 
 export class CleanupService {
   private core: TokmeterCore;
@@ -99,19 +90,14 @@ export class CleanupService {
     }
 
     // 5. Detect partial files (transparency)
-    const partialFileWarnings = this.detectPartialFiles(
-      matchedRecords,
-      allRecords,
-    );
+    const partialFileWarnings = this.detectPartialFiles(matchedRecords, allRecords);
 
     // 6. Build breakdowns
     const byProvider = this.buildProviderBreakdown(matchedRecords, allTargets);
     const byProject = this.buildProjectBreakdown(matchedRecords);
 
     const totalBytes = allTargets.reduce((s, t) => s + t.sizeBytes, 0);
-    const sourceFileCount = new Set(
-      matchedRecords.map((r) => r.sourceFile).filter(Boolean),
-    ).size;
+    const sourceFileCount = new Set(matchedRecords.map((r) => r.sourceFile).filter(Boolean)).size;
 
     return {
       recordCount: matchedRecords.length,
@@ -127,10 +113,7 @@ export class CleanupService {
   /**
    * Execute cleanup: optionally backup, then delete, then invalidate cache.
    */
-  async execute(
-    filter: CleanupFilter,
-    options: CleanupOptions = {},
-  ): Promise<CleanupResult> {
+  async execute(filter: CleanupFilter, options: CleanupOptions = {}): Promise<CleanupResult> {
     const { dryRun = false, backup = true, backupDir } = options;
 
     // Preview first
@@ -164,7 +147,9 @@ export class CleanupService {
         return {
           deletedCount: 0,
           failedCount: 1,
-          errors: [{ target: "backup", error: "Backup creation failed — deletion aborted for safety" }],
+          errors: [
+            { target: "backup", error: "Backup creation failed — deletion aborted for safety" },
+          ],
           bytesFreed: 0,
         };
       }
@@ -178,9 +163,7 @@ export class CleanupService {
     const allErrors: { target: string; error: string }[] = [];
 
     for (const cleaner of cleaners) {
-      const providerTargets = preview.targets.filter(
-        (t) => t.provider === cleaner.providerId,
-      );
+      const providerTargets = preview.targets.filter((t) => t.provider === cleaner.providerId);
       if (providerTargets.length === 0) continue;
 
       const result = await cleaner.executeCleanup(providerTargets);
@@ -222,8 +205,7 @@ export class CleanupService {
     }
 
     return backups.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }
 
@@ -246,7 +228,10 @@ export class CleanupService {
 
     // Validate archive path is within backup directory (resolve to catch symlinks / ..)
     if (!resolve(archivePath).startsWith(resolve(dir))) {
-      return { restoredCount: 0, errors: [{ file: archivePath, error: "Archive path outside backup directory" }] };
+      return {
+        restoredCount: 0,
+        errors: [{ file: archivePath, error: "Archive path outside backup directory" }],
+      };
     }
 
     if (!existsSync(archivePath)) {
@@ -262,7 +247,12 @@ export class CleanupService {
       if (hasTraversal) {
         return {
           restoredCount: 0,
-          errors: [{ file: archivePath, error: "Archive contains path traversal entries — refusing to extract" }],
+          errors: [
+            {
+              file: archivePath,
+              error: "Archive contains path traversal entries — refusing to extract",
+            },
+          ],
         };
       }
 
@@ -290,10 +280,7 @@ export class CleanupService {
 
   // ─── Private Helpers ──────────────────────────────────────────────────
 
-  private applyFilter(
-    records: TokenRecord[],
-    filter: CleanupFilter,
-  ): TokenRecord[] {
+  private applyFilter(records: TokenRecord[], filter: CleanupFilter): TokenRecord[] {
     let result = records;
 
     if (filter.providers && filter.providers.length > 0) {
@@ -315,7 +302,7 @@ export class CleanupService {
    */
   private detectPartialFiles(
     matchedRecords: TokenRecord[],
-    allRecords: TokenRecord[],
+    allRecords: TokenRecord[]
   ): PartialFileWarning[] {
     // Build set of source files from matched records
     const matchedFiles = new Set<string>();
@@ -324,17 +311,11 @@ export class CleanupService {
     for (const r of matchedRecords) {
       if (!r.sourceFile) continue;
       matchedFiles.add(r.sourceFile);
-      matchedCountByFile.set(
-        r.sourceFile,
-        (matchedCountByFile.get(r.sourceFile) || 0) + 1,
-      );
+      matchedCountByFile.set(r.sourceFile, (matchedCountByFile.get(r.sourceFile) || 0) + 1);
     }
 
     // Check all records for source files that also have unmatched records
-    const otherByFile = new Map<
-      string,
-      { count: number; minTs: number; maxTs: number }
-    >();
+    const otherByFile = new Map<string, { count: number; minTs: number; maxTs: number }>();
 
     for (const r of allRecords) {
       if (!r.sourceFile || !matchedFiles.has(r.sourceFile)) continue;
@@ -377,12 +358,9 @@ export class CleanupService {
 
   private buildProviderBreakdown(
     records: TokenRecord[],
-    targets: CleanupTarget[],
+    targets: CleanupTarget[]
   ): CleanupPreview["byProvider"] {
-    const map = new Map<
-      ProviderId,
-      { targets: number; bytes: number; records: number }
-    >();
+    const map = new Map<ProviderId, { targets: number; bytes: number; records: number }>();
 
     for (const r of records) {
       const entry = map.get(r.provider) || { targets: 0, bytes: 0, records: 0 };
@@ -403,24 +381,15 @@ export class CleanupService {
     }));
   }
 
-  private buildProjectBreakdown(
-    records: TokenRecord[],
-  ): CleanupPreview["byProject"] {
-    const map = new Map<
-      string,
-      { records: number; cost: number; tokens: number }
-    >();
+  private buildProjectBreakdown(records: TokenRecord[]): CleanupPreview["byProject"] {
+    const map = new Map<string, { records: number; cost: number; tokens: number }>();
 
     for (const r of records) {
       const entry = map.get(r.project) || { records: 0, cost: 0, tokens: 0 };
       entry.records++;
       entry.cost += r.cost;
       entry.tokens +=
-        r.inputTokens +
-        r.outputTokens +
-        r.cacheReadTokens +
-        r.cacheWriteTokens +
-        r.reasoningTokens;
+        r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens;
       map.set(r.project, entry);
     }
 
@@ -437,15 +406,12 @@ export class CleanupService {
     targets: CleanupTarget[],
     filter: CleanupFilter,
     backupDir?: string,
-    projectNames: string[] = [],
+    projectNames: string[] = []
   ): Promise<string> {
     const dir = backupDir || DEFAULT_BACKUP_DIR;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, 19);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const id = timestamp;
     const archivePath = join(dir, `${id}.tar.gz`);
 
@@ -462,9 +428,7 @@ export class CleanupService {
 
     if (sqliteTargets.length > 0) {
       const { SqliteCleaner } = await import("./cleaners/sqlite-cleaner.js");
-      const cleaners = getCleaners(
-        [...new Set(sqliteTargets.map((t) => t.provider))],
-      );
+      const cleaners = getCleaners([...new Set(sqliteTargets.map((t) => t.provider))]);
 
       for (const cleaner of cleaners) {
         if (!(cleaner instanceof SqliteCleaner)) continue;
@@ -489,9 +453,13 @@ export class CleanupService {
 
       // Clean up temp SQL dump files (they're now in the archive)
       for (const f of sqlDumpFiles) {
-        try { rmSync(f); } catch {}
+        try {
+          rmSync(f);
+        } catch {}
       }
-      try { rmdirSync(sqlDumpDir); } catch {}
+      try {
+        rmdirSync(sqlDumpDir);
+      } catch {}
     } else {
       // Nothing to back up
       return "";
@@ -506,17 +474,13 @@ export class CleanupService {
       filter,
       recordCount: targets.reduce(
         (s, t) => s + (t.sqlDetail?.rowCount || (t.type === "file" ? 1 : 0)),
-        0,
+        0
       ),
       providers: [...new Set(targets.map((t) => t.provider))],
       projects: projectNames,
     };
 
-    writeFileSync(
-      join(dir, `${id}.meta.json`),
-      `${JSON.stringify(meta, null, 2)}\n`,
-      "utf-8",
-    );
+    writeFileSync(join(dir, `${id}.meta.json`), `${JSON.stringify(meta, null, 2)}\n`, "utf-8");
 
     return archivePath;
   }

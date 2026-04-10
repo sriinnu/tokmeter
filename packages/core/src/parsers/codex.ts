@@ -125,23 +125,25 @@ export class CodexParser implements SessionParser {
         const info = payload.info;
         if (!info) continue;
 
-        // Prefer delta from total_token_usage for accuracy
+        // Prefer delta from total_token_usage for accuracy.
         let usage: CodexTokenUsage;
         if (info.total_token_usage) {
           usage = computeDelta(info.total_token_usage, state.prevTotal);
           state.prevTotal = { ...info.total_token_usage };
 
-          // If delta is all zeros but last_token_usage has data, use that
-          const deltaSum = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
-          if (deltaSum === 0 && info.last_token_usage) {
-            const lastSum =
-              (info.last_token_usage.input_tokens ?? 0) +
-              (info.last_token_usage.output_tokens ?? 0);
-            if (lastSum > 0) {
-              usage = info.last_token_usage;
-            }
-          }
+          // If delta is all zeros, skip this event — no new tokens were consumed.
+          // The old code fell back to last_token_usage here, but last_token_usage
+          // is per-turn CUMULATIVE (not a delta), so using it when the total hasn't
+          // changed creates exact duplicates (~7% of Codex records were duped).
+          const deltaSum =
+            (usage.input_tokens ?? 0) +
+            (usage.output_tokens ?? 0) +
+            (usage.cached_input_tokens ?? 0) +
+            (usage.reasoning_output_tokens ?? 0);
+          if (deltaSum === 0) continue;
         } else if (info.last_token_usage) {
+          // Fallback: some events only have last_token_usage (no cumulative).
+          // This path fires for events where total_token_usage is absent.
           usage = info.last_token_usage;
         } else {
           continue;

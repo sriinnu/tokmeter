@@ -8,13 +8,22 @@
  */
 
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
-import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent, powerline, segmentColors, useNerdFont } from "./formatter.js";
+import {
+  C,
+  FALLBACK_STATUSLINE,
+  formatCost,
+  formatNumber,
+  formatPercent,
+  powerline,
+  segmentColors,
+  useNerdFont,
+} from "./formatter.js";
 import { italicMath, smallCaps } from "./typography.js";
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
@@ -60,7 +69,9 @@ function readCache<T>(path: string, ttlMs: number, expectedKey?: string): T | nu
     return wrapper.data;
   } catch {
     // Corrupt cache file — delete it so it doesn't keep failing.
-    try { unlinkSync(path); } catch {}
+    try {
+      unlinkSync(path);
+    } catch {}
     return null;
   }
 }
@@ -331,8 +342,16 @@ export async function runStatusline(): Promise<void> {
     try {
       const { syncUpdate } = await import("./daemon/client.js");
       daemonResponse = await syncUpdate(
-        { provider: "claude-code", sessionId, model: modelId ?? "unknown", project: projectName, cwd: projectDir },
-        sessionCost, tokens, durationMs,
+        {
+          provider: "claude-code",
+          sessionId,
+          model: modelId ?? "unknown",
+          project: projectName,
+          cwd: projectDir,
+        },
+        sessionCost,
+        tokens,
+        durationMs
       );
     } catch {}
 
@@ -347,52 +366,54 @@ export async function runStatusline(): Promise<void> {
     const nf = useNerdFont();
     const af = frame(); // animation frame for icon cycling
 
-    const ICON = nf ? {
-      infinity: "【♾️】",
-      agent:    "\uDB83\uDD70",  // 󰍰 nf-md-robot
-      git:      "\uF113",        //  nf-fa-git
-      turn:     "\uF148",        //  nf-fa-level_up
-      context:  "\uDB80\uDF5B",  // 󰍛 nf-md-memory
-      folder:   "\uDB82\uDCDE",  // 󰳞 nf-md-folder
-      dollar:   "\uF155",        //  nf-fa-dollar
-      flame:    "\uF490",        //  nf-oct-flame
-      up:       "\uF062",        //  nf-fa-arrow_up
-      down:     "\uF063",        //  nf-fa-arrow_down
-      refresh:  "\uF021",        //  nf-fa-refresh
-      bolt:     "\uF0E7",        //  nf-fa-bolt
-      calendar: "\uF073",        //  nf-fa-calendar
-    } : {
-      // Disney pixel animation: width-stable, anchored, no horizontal jitter.
-      //
-      // Width-stability rules:
-      //   - Every animation frame must occupy the same number of terminal cells.
-      //   - Emoji are width-2 (sometimes 1 on legacy terminals); when paired
-      //     with text characters, the total width can shift. We avoid mixing.
-      //   - Sparkle accents use the same emoji-style chars as the base so the
-      //     trailing slot stays width-2 in every frame.
-      //
-      // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
-      // emoji. The infinity NEVER shifts position — only the trailing accent
-      // changes. (No more leading-space frames that shift the whole logo.)
-      infinity: ["♾️✨", "♾️⭐", "♾️✨", "♾️🌟", "♾️✨", "♾️⭐", "♾️✨", "♾️🌟"][af],
-      // The Genie — both frames are width-stable (genie + sparkle emoji slot).
-      // Frame 0: genie + invisible joiner (width 2 + 1)
-      // Frame 1: genie + sparkle (width 2 + 1)
-      // Both slots are exactly 1 visual cell wide.
-      agent:    ["🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨"][af],
-      git:      "🌿",
-      turn:     ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
-      context:  "🪟",
-      folder:   "",
-      dollar:   "💰",
-      flame:    "🔥",
-      // Token arrows: stick to 1-cell text chars (no emoji ⬆⬇ which cause jitter).
-      up:       ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
-      down:     ["↓", "↓", "↓", "↘", "↓", "↓", "↓", "↘"][af],
-      refresh:  ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
-      bolt:     ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
-      calendar: "",
-    };
+    const ICON = nf
+      ? {
+          infinity: "【♾️】",
+          agent: "\uDB83\uDD70", // 󰍰 nf-md-robot
+          git: "\uF113", //  nf-fa-git
+          turn: "\uF148", //  nf-fa-level_up
+          context: "\uDB80\uDF5B", // 󰍛 nf-md-memory
+          folder: "\uDB82\uDCDE", // 󰳞 nf-md-folder
+          dollar: "\uF155", //  nf-fa-dollar
+          flame: "\uF490", //  nf-oct-flame
+          up: "\uF062", //  nf-fa-arrow_up
+          down: "\uF063", //  nf-fa-arrow_down
+          refresh: "\uF021", //  nf-fa-refresh
+          bolt: "\uF0E7", //  nf-fa-bolt
+          calendar: "\uF073", //  nf-fa-calendar
+        }
+      : {
+          // Disney pixel animation: width-stable, anchored, no horizontal jitter.
+          //
+          // Width-stability rules:
+          //   - Every animation frame must occupy the same number of terminal cells.
+          //   - Emoji are width-2 (sometimes 1 on legacy terminals); when paired
+          //     with text characters, the total width can shift. We avoid mixing.
+          //   - Sparkle accents use the same emoji-style chars as the base so the
+          //     trailing slot stays width-2 in every frame.
+          //
+          // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
+          // emoji. The infinity NEVER shifts position — only the trailing accent
+          // changes. (No more leading-space frames that shift the whole logo.)
+          infinity: ["♾️✨", "♾️⭐", "♾️✨", "♾️🌟", "♾️✨", "♾️⭐", "♾️✨", "♾️🌟"][af],
+          // The Genie — both frames are width-stable (genie + sparkle emoji slot).
+          // Frame 0: genie + invisible joiner (width 2 + 1)
+          // Frame 1: genie + sparkle (width 2 + 1)
+          // Both slots are exactly 1 visual cell wide.
+          agent: ["🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨", "🧞·", "🧞·", "🧞✨"][af],
+          git: "🌿",
+          turn: ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
+          context: "🪟",
+          folder: "",
+          dollar: "💰",
+          flame: "🔥",
+          // Token arrows: stick to 1-cell text chars (no emoji ⬆⬇ which cause jitter).
+          up: ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
+          down: ["↓", "↓", "↓", "↘", "↓", "↓", "↓", "↘"][af],
+          refresh: ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
+          bolt: ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
+          calendar: "",
+        };
 
     // Hero logo bg: breathes through purple shades (indigo → violet → magenta → back).
     // Asymmetric timing — slow rise (frames 0-3), peak (4), slow fall (5-7).
@@ -409,7 +430,7 @@ export async function runStatusline(): Promise<void> {
     const logoBg = logoBgCycle[af];
 
     // Helper: prefix icon only if non-empty
-    const ic = (icon: string, text: string) => icon ? `${icon} ${text}` : text;
+    const ic = (icon: string, text: string) => (icon ? `${icon} ${text}` : text);
 
     // 1. Logo — its own segment with breathing purple bg cycle
     pl.push({ text: ICON.infinity, bg: logoBg });
@@ -417,9 +438,7 @@ export async function runStatusline(): Promise<void> {
     // 2. Project — small caps typography (Pixar-magazine type system).
     // Truncate long names so the bar doesn't wrap on 80-col terms.
     if (projectName) {
-      const trunc = projectName.length > 24
-        ? `${projectName.slice(0, 23)}…`
-        : projectName;
+      const trunc = projectName.length > 24 ? `${projectName.slice(0, 23)}…` : projectName;
       pl.push({ text: ic(ICON.folder, smallCaps(trunc)), bg: seg.project });
     }
 

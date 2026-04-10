@@ -43,15 +43,17 @@ struct TokmeterBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Hero is flush with the popover edges and "hangs" from the top
-            // like a macOS notch widget — rounded only on the bottom corners.
+            // Hero hangs from the top — notch-widget aesthetic
             heroHeader
 
             errorBanner
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.top, 8)
 
-            ScrollView {
+            // Scrollable middle — takes whatever space is left between
+            // hero and footer. The footer is pinned at the bottom and
+            // NEVER clips (that's the user's escape hatch to Quit).
+            ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 14) {
                     statsGrid
                     if !loader.topModels.isEmpty || loader.isWarming {
@@ -65,18 +67,19 @@ struct TokmeterBarView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
             }
-            .frame(maxHeight: 440)
 
             Divider().opacity(0.3)
 
+            // Footer is OUTSIDE the scroll — always visible, never cut off.
             footer
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
         }
         .frame(width: 380)
+        .frame(maxHeight: 580)
         .background(
             LinearGradient(
                 colors: [
@@ -212,23 +215,35 @@ struct TokmeterBarView: View {
     @ViewBuilder
     private var errorBanner: some View {
         if let error = loader.lastError, !loader.isWarming {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
                     .foregroundColor(.orange)
-                    .font(.caption)
-                Text(error)
-                    .font(.system(size: 11, design: .rounded))
-                    .foregroundColor(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 12))
+                // Show just the first line — full error on hover via tooltip.
+                Text(shortError(error))
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundColor(.primary.opacity(0.8))
+                    .lineLimit(1)
+                    .help(error)  // full text on hover
             }
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.12))
+                Capsule().fill(Color.orange.opacity(0.12))
             )
-            .padding(.bottom, 8)
+            .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// Truncate long error messages to a short one-liner for the banner.
+    /// The full error is in the tooltip.
+    private func shortError(_ error: String) -> String {
+        if error.contains("not running") { return "Daemon offline — using cached data" }
+        if error.contains("timed out") { return "Scan timed out — retrying…" }
+        if error.contains("Network") { return "Network error — using cached data" }
+        let first = error.prefix(50)
+        return first.count < error.count ? "\(first)…" : error
     }
 
     // MARK: - Stats grid
@@ -466,7 +481,10 @@ struct TokmeterBarView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
+            // Daemon status heartbeat — green pulse when connected, red dot when offline
+            daemonHeartbeat
+
             Button(action: { Task { await loader.loadData() } }) {
                 Label(loader.isLoading ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
                     .font(.system(size: 11, design: .rounded))
@@ -476,24 +494,45 @@ struct TokmeterBarView: View {
             .disabled(loader.isLoading)
             .accessibilityLabel("Refresh data")
 
+            Spacer()
+
             Button(action: { updater.checkForUpdates() }) {
-                Label("Updates", systemImage: "arrow.down.circle")
-                    .font(.system(size: 11, design: .rounded))
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.borderless)
             .foregroundColor(.secondary)
             .disabled(!updater.canCheckForUpdates)
             .accessibilityLabel("Check for updates")
-
-            Spacer()
+            .help("Check for updates")
 
             Button(action: { NSApplication.shared.terminate(nil) }) {
-                Label("Quit", systemImage: "power")
-                    .font(.system(size: 11, design: .rounded))
+                Image(systemName: "power")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.borderless)
             .foregroundColor(.secondary)
+            .help("Quit Tokmeter")
         }
+    }
+
+    /// Green pulsing heartbeat when daemon is alive, red static dot when offline.
+    /// The ECG-style pulse uses a scaling animation on a circle — simple but
+    /// immediately communicates "alive vs dead" to anyone who glances at it.
+    private var daemonHeartbeat: some View {
+        let isAlive = DaemonClient.shared.isDaemonRunning
+        return HStack(spacing: 4) {
+            Circle()
+                .fill(isAlive ? Color.green : Color.red)
+                .frame(width: 7, height: 7)
+                .shadow(color: isAlive ? .green.opacity(0.6) : .clear, radius: 4)
+                .scaleEffect(isAlive ? (1.0 + phase * 0.3) : 1.0)  // heartbeat pulse
+                .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: phase)
+            Text(isAlive ? "Live" : "Offline")
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundColor(isAlive ? .green : .red.opacity(0.8))
+        }
+        .accessibilityLabel(isAlive ? "Daemon running" : "Daemon offline")
     }
 
     // MARK: - Helpers

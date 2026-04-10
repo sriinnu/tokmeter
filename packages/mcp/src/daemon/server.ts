@@ -6,8 +6,12 @@
  * aggregated totals from all active sessions.
  */
 
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  type IncomingMessage,
+  type ServerResponse,
+  createServer as createHttpServer,
+} from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
@@ -32,7 +36,6 @@ const HTTP_PORT = DAEMON_PORT + 1;
 // Generate a random bearer token on daemon start. Written to a file (mode 0600)
 // so only the owning user can read it. All HTTP POST requests must include it.
 import { randomBytes } from "node:crypto";
-import { chmodSync } from "node:fs";
 
 const DAEMON_TOKEN_FILE = DAEMON_PID_FILE.replace(".pid", ".token");
 let _authToken: string | null = null;
@@ -302,7 +305,11 @@ export function stopDaemon(): void {
 
   // Clean up PID and token files
   for (const f of [DAEMON_PID_FILE, DAEMON_TOKEN_FILE]) {
-    try { unlinkSync(f); } catch { /* ignore */ }
+    try {
+      unlinkSync(f);
+    } catch {
+      /* ignore */
+    }
   }
 
   _authToken = null;
@@ -464,7 +471,8 @@ function startHttpApi(): void {
         } else if (url === "/api/sessions") {
           // All projects across providers, sorted by most-recently-used descending.
           // Used by the menubar's expandable session list — supports 10/20/50+ items.
-          const projects = core.getAllProjects()
+          const projects = core
+            .getAllProjects()
             .slice()
             .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed);
           json(res, projects.slice(0, 50));
@@ -487,7 +495,24 @@ function startHttpApi(): void {
           json(res, listThemes());
         } else {
           res.writeHead(404);
-          json(res, { error: "Not found", endpoints: ["/api/ready", "/api/quick", "/api/projects", "/api/sessions", "/api/stats", "/api/models", "/api/daily", "/api/providers", "/api/backups", "/api/themes", "/api/cleanup/preview", "/api/cleanup/execute", "/api/restore"] });
+          json(res, {
+            error: "Not found",
+            endpoints: [
+              "/api/ready",
+              "/api/quick",
+              "/api/projects",
+              "/api/sessions",
+              "/api/stats",
+              "/api/models",
+              "/api/daily",
+              "/api/providers",
+              "/api/backups",
+              "/api/themes",
+              "/api/cleanup/preview",
+              "/api/cleanup/execute",
+              "/api/restore",
+            ],
+          });
         }
         return;
       }
@@ -496,7 +521,9 @@ function startHttpApi(): void {
       if (req.method === "POST") {
         if (!checkAuth(req)) {
           res.writeHead(401);
-          json(res, { error: "Unauthorized — include Authorization: Bearer <token> from " + DAEMON_TOKEN_FILE });
+          json(res, {
+            error: "Unauthorized — include Authorization: Bearer <token> from " + DAEMON_TOKEN_FILE,
+          });
           return;
         }
         const body = await readBody(req);
@@ -505,7 +532,15 @@ function startHttpApi(): void {
           const core = await getHttpCore();
           const service = new CleanupService(core);
           const { project, providers, since, until, today, week, month } = body;
-          const preview = await service.preview({ project, providers, since, until, today, week, month });
+          const preview = await service.preview({
+            project,
+            providers,
+            since,
+            until,
+            today,
+            week,
+            month,
+          });
           json(res, preview);
         } else if (url === "/api/cleanup/execute") {
           if (body.confirm !== "DELETE") {
@@ -519,7 +554,7 @@ function startHttpApi(): void {
           const { project, providers, since, until, today, week, month, backup } = body;
           const result = await service.execute(
             { project, providers, since, until, today, week, month },
-            { backup: backup ?? true },
+            { backup: backup ?? true }
           );
           _httpCore = null; // Invalidate cache after mutation
           json(res, result);
