@@ -47,7 +47,7 @@ export class OpenclawCleaner implements SessionCleaner {
             type: "index-entry",
             sizeBytes: 0,
             provider: this.providerId,
-            description: `update sessions.json index`,
+            description: "update sessions.json index",
           });
         }
       }

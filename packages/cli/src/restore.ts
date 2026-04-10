@@ -28,6 +28,9 @@ function fmtBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
+/**
+ * Restore Tokmeter data from a cleanup backup archive.
+ */
 export async function runRestore(args: RestoreArgs): Promise<void> {
   const core = new TokmeterCore({ skipPricing: true });
   const service = new CleanupService(core);
@@ -63,7 +66,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
       ]);
     }
     console.log(table.toString());
-    console.log(`\nUsage: tokmeter restore --id <ID>  or  tokmeter restore --latest\n`);
+    console.log("\nUsage: tokmeter restore --id <ID>  or  tokmeter restore --latest\n");
     return;
   }
 
@@ -89,7 +92,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
   const result = service.restore(backup.id);
 
   if (result.errors.length > 0) {
-    console.log(`\n✗ Restore failed:`);
+    console.log("\n✗ Restore failed:");
     for (const e of result.errors) {
       console.log(`   ${e.file}: ${e.error}`);
     }

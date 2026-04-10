@@ -13,24 +13,43 @@ import {
   aggregateByProvider,
   filterByDate,
   filterByProject,
+  filterByProvider,
 } from "./aggregator.js";
+import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { loadHistorySnapshot, saveHistorySnapshot } from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
 import { saveRecordCacheToDisk } from "./parsers/utils.js";
 import { PricingService } from "./pricing.js";
+import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
+import { saveSummaryCache } from "./summary-cache.js";
 import type {
   DailyEntry,
   ModelSummary,
   ProjectSummary,
+  ProviderId,
+  ScanMeta,
   ScanOptions,
+  ScanWarning,
   TokenRecord,
   TokmeterConfig,
+  TokmeterStats,
+  TokmeterSummary,
 } from "./types.js";
+
+const EMPTY_SCAN_META: ScanMeta = {
+  stableThrough: null,
+  historySource: "none",
+  todayState: "snapshot-only",
+  lastScanAt: 0,
+  warnings: [],
+};
 
 export class TokmeterCore {
   private records: TokenRecord[] = [];
   private pricing: PricingService;
   private homeDir: string;
   private skipPricing: boolean;
+  private scanMeta: ScanMeta = EMPTY_SCAN_META;
 
   constructor(config?: TokmeterConfig) {
     this.homeDir = config?.homeDir || homedir();
@@ -46,19 +65,58 @@ export class TokmeterCore {
    * @returns Array of parsed token usage records.
    */
   async scan(options?: ScanOptions): Promise<TokenRecord[]> {
-    // Initialize pricing unless explicitly skipped
-    if (!this.skipPricing) {
-      await this.pricing.init();
+    const referenceTimestamp = Date.now();
+    const historyWarnings: ScanWarning[] = [];
+    const todayWarnings: ScanWarning[] = [];
+    const stableThrough = yesterdayDateKey(referenceTimestamp);
+    const isTodayOnlyScan =
+      options?.today === true &&
+      !options?.since &&
+      !options?.until &&
+      !options?.week &&
+      !options?.month &&
+      !options?.year;
+
+    let records: TokenRecord[];
+    let historySource: ScanMeta["historySource"] = "none";
+
+    if (isTodayOnlyScan) {
+      records = await this.scanTodayRecords(options?.providers, referenceTimestamp, todayWarnings);
+    } else {
+      let stableRecords: TokenRecord[] = [];
+
+      if (!options?.rescanHistory) {
+        const snapshot = loadHistorySnapshot(this.homeDir, stableThrough);
+        stableRecords = snapshot.records;
+        historySource = snapshot.historySource;
+        historyWarnings.push(...snapshot.warnings);
+      }
+
+      if (options?.rescanHistory || historySource === "none") {
+        const rebuiltHistory = await this.scanHistoricalRecords(
+          undefined,
+          referenceTimestamp,
+          historyWarnings
+        );
+
+        stableRecords = rebuiltHistory;
+        historySource = rebuiltHistory.length > 0 ? "rebuilt" : historySource;
+        historyWarnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, rebuiltHistory));
+      }
+
+      const todayRecords = await this.scanTodayRecords(
+        options?.providers,
+        referenceTimestamp,
+        todayWarnings
+      );
+
+      records = [...stableRecords, ...todayRecords];
     }
 
-    // Get relevant parsers
-    const parsers = getParsers(options?.providers);
-
-    // Run all parsers in parallel
-    const results = await Promise.all(parsers.map((p) => p.scan(this.homeDir)));
-    let records = results.flat();
-
     // Apply filters
+    if (options?.providers && options.providers.length > 0) {
+      records = filterByProvider(records, options.providers);
+    }
     if (options?.project) {
       records = filterByProject(records, options.project);
     }
@@ -75,13 +133,38 @@ export class TokmeterCore {
 
     // Calculate costs for records that don't have them
     if (records.length > 0 && !this.skipPricing) {
-      await this.enrichCosts(records);
+      const historicalRecords = records.filter((record) =>
+        isBeforeToday(record.timestamp, referenceTimestamp)
+      );
+      const todayRecords = records.filter(
+        (record) => !isBeforeToday(record.timestamp, referenceTimestamp)
+      );
+
+      if (historicalRecords.length > 0) {
+        await this.enrichCosts(historicalRecords, "history", historyWarnings);
+      }
+
+      if (todayRecords.length > 0) {
+        await this.enrichCosts(todayRecords, "today", todayWarnings);
+      }
     }
 
     this.records = records;
+    this.scanMeta = {
+      stableThrough: isTodayOnlyScan ? null : stableThrough,
+      historySource: isTodayOnlyScan ? "none" : historySource,
+      todayState: this.resolveTodayState(records, todayWarnings, isTodayOnlyScan),
+      lastScanAt: Date.now(),
+      warnings: [...historyWarnings, ...todayWarnings],
+    };
 
-    // Persist record cache to disk so subsequent scans skip unchanged files
-    saveRecordCacheToDisk();
+    const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
+    if (summaryCacheWarnings.length > 0) {
+      this.scanMeta = {
+        ...this.scanMeta,
+        warnings: [...this.scanMeta.warnings, ...summaryCacheWarnings],
+      };
+    }
 
     return records;
   }
@@ -89,6 +172,14 @@ export class TokmeterCore {
   /** Get all loaded records. */
   getRecords(): TokenRecord[] {
     return this.records;
+  }
+
+  /** Metadata describing the last scan's stable/live composition state. */
+  getScanMeta(): ScanMeta {
+    return {
+      ...this.scanMeta,
+      warnings: [...this.scanMeta.warnings],
+    };
   }
 
   /** Get summaries for all projects. */
@@ -99,9 +190,10 @@ export class TokmeterCore {
   /** Get summary for a specific project (by exact name or substring match). */
   getProjectSummary(projectName: string): ProjectSummary | undefined {
     const all = this.getAllProjects();
-    return all.find(
-      (p) =>
-        p.project === projectName || p.project.toLowerCase().includes(projectName.toLowerCase())
+
+    return (
+      all.find((project) => projectNamesMatch(project.project, projectName)) ||
+      all.find((project) => projectNameIncludes(project.project, projectName))
     );
   }
 
@@ -136,7 +228,7 @@ export class TokmeterCore {
    *
    * Returns totals, unique counts, and longest activity streak.
    */
-  getStats() {
+  getStats(): TokmeterStats {
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens = 0;
@@ -163,7 +255,7 @@ export class TokmeterCore {
       projectSet.add(r.project);
       modelSet.add(r.model);
       providerSet.add(r.provider);
-      daySet.add(new Date(r.timestamp).toISOString().slice(0, 10));
+      daySet.add(localDateKey(r.timestamp));
     }
 
     const totalTokens =
@@ -203,25 +295,25 @@ export class TokmeterCore {
     };
   }
 
-  /**
-   * Export everything as a JSON-serialisable object.
-   *
-   * The output shape matches what the web app and macOS bar expect.
-   */
-  toJSON(): {
-    records: TokenRecord[];
-    projects: ProjectSummary[];
-    models: ModelSummary[];
-    daily: DailyEntry[];
-    stats: ReturnType<TokmeterCore["getStats"]>;
-  } {
+  /** Get a serialisable summary payload with data plus scan metadata. */
+  getSummary(): TokmeterSummary {
     return {
       records: this.records,
       projects: this.getAllProjects(),
       models: this.getModelCosts(),
       daily: this.getDailyBreakdown(),
       stats: this.getStats(),
+      meta: this.getScanMeta(),
     };
+  }
+
+  /**
+   * Export everything as a JSON-serialisable object.
+   *
+   * The output shape matches what the web app and macOS bar expect.
+   */
+  toJSON(): TokmeterSummary {
+    return this.getSummary();
   }
 
   /**
@@ -235,18 +327,109 @@ export class TokmeterCore {
    * Consumers should treat `cost === 0 && (inputTokens + outputTokens) > 0`
    * as a signal that pricing data was unavailable.
    */
-  private async enrichCosts(records: TokenRecord[]): Promise<void> {
+  private async enrichCosts(
+    records: TokenRecord[],
+    warningScope: "history" | "today",
+    warnings: ScanWarning[]
+  ): Promise<void> {
     const costPromises = records.map(async (r) => {
       if (r.cost > 0) return; // already has cost
-      r.cost = await this.pricing.calculateCost(
-        r.model,
-        r.inputTokens,
-        r.outputTokens,
-        r.cacheReadTokens,
-        r.cacheWriteTokens,
-        r.reasoningTokens
-      );
+      try {
+        r.cost = await this.pricing.calculateCost(
+          r.model,
+          r.inputTokens,
+          r.outputTokens,
+          r.cacheReadTokens,
+          r.cacheWriteTokens,
+          r.reasoningTokens
+        );
+      } catch (error) {
+        warnings.push({
+          scope: warningScope,
+          message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
+        });
+      }
     });
     await Promise.all(costPromises);
+  }
+
+  private async scanHistoricalRecords(
+    providers: ProviderId[] | undefined,
+    referenceTimestamp: number,
+    warnings: ScanWarning[]
+  ): Promise<TokenRecord[]> {
+    const rawRecords = await this.scanRawRecords(providers, "history", warnings);
+    return rawRecords.filter((record) => isBeforeToday(record.timestamp, referenceTimestamp));
+  }
+
+  private async scanTodayRecords(
+    providers: ProviderId[] | undefined,
+    referenceTimestamp: number,
+    warnings: ScanWarning[]
+  ): Promise<TokenRecord[]> {
+    const rawRecords = await this.scanRawRecords(providers, "today", warnings);
+    return rawRecords.filter((record) => !isBeforeToday(record.timestamp, referenceTimestamp));
+  }
+
+  private async scanRawRecords(
+    providers: ProviderId[] | undefined,
+    warningScope: "history" | "today",
+    warnings: ScanWarning[]
+  ): Promise<TokenRecord[]> {
+    if (!this.skipPricing) {
+      try {
+        await this.pricing.init();
+      } catch (error) {
+        warnings.push({
+          scope: warningScope,
+          message: `Pricing initialization failed — continuing without pricing (${this.toErrorMessage(error)}).`,
+        });
+      }
+    }
+
+    const parsers = getParsers(providers);
+    const results = await Promise.all(
+      parsers.map(async (parser) => {
+        try {
+          return await parser.scan(this.homeDir);
+        } catch (error) {
+          warnings.push({
+            scope: "provider",
+            provider: parser.providerId,
+            message: `${parser.providerId} scan failed — skipped (${this.toErrorMessage(error)}).`,
+          });
+          return [] as TokenRecord[];
+        }
+      })
+    );
+
+    const records = results.flat();
+
+    if (records.length > 0 && !this.skipPricing) {
+      await this.enrichCosts(records, warningScope, warnings);
+    }
+
+    saveRecordCacheToDisk();
+    return records;
+  }
+
+  private resolveTodayState(
+    records: TokenRecord[],
+    todayWarnings: ScanWarning[],
+    isTodayOnlyScan: boolean
+  ): ScanMeta["todayState"] {
+    if (todayWarnings.length === 0) {
+      return "live";
+    }
+
+    if (records.length > 0 || isTodayOnlyScan) {
+      return "degraded";
+    }
+
+    return "snapshot-only";
+  }
+
+  private toErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

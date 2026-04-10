@@ -4,6 +4,7 @@
 
 import React from "react";
 import Plot from "react-plotly.js";
+import { webTheme } from "../theme.js";
 
 interface Props {
   providers: { provider: string; cost: number; percentageOfTotal: number }[];
@@ -11,7 +12,9 @@ interface Props {
 
 export function ProviderPieChart({ providers }: Props) {
   if (providers.length === 0) {
-    return <div style={{ color: "#8b949e", padding: 24 }}>No provider data to display.</div>;
+    return (
+      <div style={{ color: webTheme.text.muted, padding: 24 }}>No provider data to display.</div>
+    );
   }
 
   return React.createElement(Plot, {
@@ -22,20 +25,7 @@ export function ProviderPieChart({ providers }: Props) {
         type: "pie",
         hole: 0.4,
         marker: {
-          colors: [
-            "#39d353",
-            "#006d32",
-            "#26a641",
-            "#0e4429",
-            "#2ea043",
-            "#56d364",
-            "#58a6ff",
-            "#f0883e",
-            "#d2a8ff",
-            "#f85149",
-            "#79c0ff",
-            "#ffa657",
-          ],
+          colors: webTheme.charts.providerPalette,
         },
         textinfo: "label+percent",
       },
@@ -44,7 +34,7 @@ export function ProviderPieChart({ providers }: Props) {
       title: "Cost by Provider",
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: "#8b949e" },
+      font: { color: webTheme.text.muted },
       showlegend: false,
     },
     config: { responsive: true },

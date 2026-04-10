@@ -4,6 +4,7 @@
  * Reads from ~/.pi/agent/sessions/<encoded-cwd>/*.jsonl
  */
 
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
@@ -47,7 +48,7 @@ export class PiParser implements SessionParser {
       for (const line of lines) {
         if (line.type === "session") {
           const header = line as PiSessionHeader;
-          project = header.cwd ? header.cwd.split("/").pop() || "pi" : "pi";
+          project = header.cwd ? canonicalizeProjectName(header.cwd, "pi") : "pi";
           continue;
         }
 

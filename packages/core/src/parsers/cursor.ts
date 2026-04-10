@@ -6,6 +6,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, findFiles } from "./utils.js";
 
@@ -33,7 +34,7 @@ export class CursorParser implements SessionParser {
               timestamp: cols[0] ? new Date(cols[0]).getTime() : Date.now(),
               provider: "cursor",
               model: cols[1] || "unknown",
-              project: cols[2] || "cursor",
+              project: canonicalizeProjectName(cols[2] || "cursor", "cursor"),
               sourceFile: file,
               inputTokens: Number(cols[3]) || 0,
               outputTokens: Number(cols[4]) || 0,

@@ -5,6 +5,7 @@
 import React from "react";
 import Plot from "react-plotly.js";
 import type { TokmeterDailyEntry } from "../hooks/useTokmeterData.js";
+import { webTheme } from "../theme.js";
 
 interface Props {
   daily: TokmeterDailyEntry[];
@@ -21,7 +22,7 @@ export function DailyTrendChart({ daily }: Props) {
         type: "scatter",
         mode: "lines+markers",
         name: "Total Tokens",
-        line: { color: "#39d353" },
+        line: { color: webTheme.colors.olive },
         yaxis: "y",
       },
       {
@@ -30,7 +31,7 @@ export function DailyTrendChart({ daily }: Props) {
         type: "scatter",
         mode: "lines+markers",
         name: "Cost ($)",
-        line: { color: "#f0883e" },
+        line: { color: webTheme.colors.rose },
         yaxis: "y2",
       },
     ],
@@ -42,7 +43,7 @@ export function DailyTrendChart({ daily }: Props) {
       legend: { orientation: "h", y: -0.15 },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: "#8b949e" },
+      font: { color: webTheme.text.muted },
     },
     config: { responsive: true },
     style: { width: "100%", height: 400 },

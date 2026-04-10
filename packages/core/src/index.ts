@@ -29,9 +29,29 @@ export {
   filterByProject,
 } from "./aggregator.js";
 export {
+  endOfLocalDay,
+  isBeforeToday,
+  isSameLocalDay,
+  localDateKey,
+  startOfLocalDay,
+  yesterdayDateKey,
+} from "./date-utils.js";
+export {
+  invalidateSummaryCache,
+  loadSummaryCache,
+  saveSummaryCache,
+} from "./summary-cache.js";
+export {
   invalidateRecordCache,
   clearRecordCache,
 } from "./parsers/utils.js";
+export { invalidateHistorySnapshot } from "./history-snapshot.js";
+export {
+  canonicalizeProjectName,
+  projectMatchKey,
+  projectNameIncludes,
+  projectNamesMatch,
+} from "./project-name.js";
 export {
   BUILT_IN_THEMES,
   getTheme,
@@ -49,8 +69,12 @@ export type {
   ModelSummary,
   ProviderSummary,
   DailyEntry,
+  ScanMeta,
   ScanOptions,
+  ScanWarning,
   TokmeterConfig,
+  TokmeterStats,
+  TokmeterSummary,
   SessionParser,
   ProviderId,
   SessionCleaner,

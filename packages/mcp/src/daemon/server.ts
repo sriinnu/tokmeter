@@ -12,6 +12,8 @@ import {
   type ServerResponse,
   createServer as createHttpServer,
 } from "node:http";
+import { homedir } from "node:os";
+import type { ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter-core";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
@@ -373,6 +375,7 @@ let _httpCoreReady = false;
  * non-backward-compatible way (renamed field, removed field, type change).
  */
 const DRISHTI_API_VERSION = 1;
+const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
 
 async function getHttpCore(): Promise<any> {
   const now = Date.now();
@@ -399,6 +402,41 @@ async function getHttpCore(): Promise<any> {
   return _httpCorePromise;
 }
 
+async function getHttpSummaryPayload(): Promise<{
+  summary: TokmeterSummary;
+  source: "live" | "cache";
+}> {
+  try {
+    const core = await getHttpCore();
+    return {
+      summary: core.getSummary(),
+      source: "live",
+    };
+  } catch (error) {
+    const { loadSummaryCache } = await import("@sriinnu/tokmeter-core");
+    const cached = loadSummaryCache(homedir());
+
+    if (cached.summary) {
+      return {
+        summary: appendSummaryWarnings(
+          cached.summary,
+          [
+            ...cached.warnings,
+            {
+              scope: "cache",
+              message: `Live summary refresh failed — serving persisted cache (${toErrorMessage(error)}).`,
+            },
+          ],
+          "snapshot-only"
+        ),
+        source: "cache",
+      };
+    }
+
+    throw error;
+  }
+}
+
 function startHttpApi(): void {
   httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS: localhost only — prevents malicious websites from hitting the API
@@ -407,7 +445,7 @@ function startHttpApi(): void {
     res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.setHeader("Access-Control-Expose-Headers", "X-Drishti-API");
+    res.setHeader("Access-Control-Expose-Headers", `X-Drishti-API, ${SUMMARY_SOURCE_HEADER}`);
     res.setHeader("Content-Type", "application/json");
     res.setHeader("X-Drishti-API", `drishti-api/${DRISHTI_API_VERSION}`);
     // Hardening headers
@@ -464,6 +502,13 @@ function startHttpApi(): void {
         }
 
         // Slow endpoints — wait for the core to be ready.
+        if (url === "/api/summary") {
+          const { summary, source } = await getHttpSummaryPayload();
+          res.setHeader(SUMMARY_SOURCE_HEADER, source);
+          json(res, summary);
+          return;
+        }
+
         const core = await getHttpCore();
 
         if (url === "/api/projects") {
@@ -500,6 +545,7 @@ function startHttpApi(): void {
             endpoints: [
               "/api/ready",
               "/api/quick",
+              "/api/summary",
               "/api/projects",
               "/api/sessions",
               "/api/stats",
@@ -522,7 +568,7 @@ function startHttpApi(): void {
         if (!checkAuth(req)) {
           res.writeHead(401);
           json(res, {
-            error: "Unauthorized — include Authorization: Bearer <token> from " + DAEMON_TOKEN_FILE,
+            error: `Unauthorized — include Authorization: Bearer <token> from ${DAEMON_TOKEN_FILE}`,
           });
           return;
         }
@@ -579,7 +625,7 @@ function startHttpApi(): void {
 
       res.writeHead(405);
       json(res, { error: "Method not allowed" });
-    } catch (err) {
+    } catch {
       res.writeHead(500);
       json(res, { error: "Internal server error" });
     }
@@ -601,6 +647,25 @@ function startHttpApi(): void {
 
 function json(res: ServerResponse, data: unknown): void {
   res.end(JSON.stringify(data));
+}
+
+function appendSummaryWarnings(
+  summary: TokmeterSummary,
+  warnings: ScanWarning[],
+  todayState: TokmeterSummary["meta"]["todayState"]
+): TokmeterSummary {
+  return {
+    ...summary,
+    meta: {
+      ...summary.meta,
+      todayState,
+      warnings: [...summary.meta.warnings, ...warnings],
+    },
+  };
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function readBody(req: IncomingMessage): Promise<any> {

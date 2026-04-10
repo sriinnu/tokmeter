@@ -28,7 +28,7 @@ export class SqliteCleaner implements SessionCleaner {
     this.config = config;
   }
 
-  async resolveTargets(sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]> {
+  async resolveTargets(_sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]> {
     // For SQLite providers, sourceFile points to the .db file itself.
     // We count rows that would be deleted rather than deleting the file.
     const dbPath = this.config.dbPath(homeDir);

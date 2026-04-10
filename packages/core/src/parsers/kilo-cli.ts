@@ -10,6 +10,7 @@
  * isn't installed, we gracefully return an empty array.
  */
 
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, fileExists } from "./utils.js";
 
@@ -129,7 +130,7 @@ export class KiloCliParser implements SessionParser {
       for (const row of rows) {
         const project = row.path || row.cwd || row.title || undefined;
         if (project) {
-          map.set(row.id, project);
+          map.set(row.id, canonicalizeProjectName(project, "kilo-cli"));
         }
       }
     } catch {

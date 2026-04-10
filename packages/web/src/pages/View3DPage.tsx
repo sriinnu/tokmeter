@@ -1,6 +1,7 @@
 import React from "react";
 import Plot from "react-plotly.js";
 import { useTokmeterData } from "../hooks/useTokmeterData.js";
+import { webTheme } from "../theme.js";
 
 /**
  * 3D contribution graph — isometric surface plot.
@@ -8,10 +9,12 @@ import { useTokmeterData } from "../hooks/useTokmeterData.js";
 export function View3DPage() {
   const { data, loading, error } = useTokmeterData();
 
-  if (loading) return <div style={{ color: "#8b949e" }}>Loading...</div>;
-  if (error) return <div style={{ color: "#f85149" }}>Error: {error}</div>;
+  if (loading) return <div style={{ color: webTheme.text.muted }}>Loading...</div>;
+  if (error) return <div style={{ color: webTheme.text.danger }}>Error: {error}</div>;
   if (!data || data.daily.length === 0) {
-    return <div style={{ color: "#8b949e" }}>No data available for 3D visualization.</div>;
+    return (
+      <div style={{ color: webTheme.text.muted }}>No data available for 3D visualization.</div>
+    );
   }
 
   const { daily } = data;
@@ -51,7 +54,7 @@ export function View3DPage() {
     for (let d = 0; d < 7; d++) {
       const cellDate = new Date(startDate);
       cellDate.setDate(cellDate.getDate() + w * 7 + d);
-      const dateStr = cellDate.toISOString().slice(0, 10);
+      const dateStr = toLocalDateKey(cellDate);
       row.push(valueByDate.get(dateStr) ?? 0);
     }
     z.push(row);
@@ -59,7 +62,7 @@ export function View3DPage() {
 
   return (
     <div>
-      <h2 style={{ color: "#39d353" }}>3D Contribution Graph</h2>
+      <h2 style={{ color: webTheme.colors.olive }}>3D Contribution Graph</h2>
 
       {React.createElement(Plot, {
         data: [
@@ -68,13 +71,7 @@ export function View3DPage() {
             x: xLabels,
             y: yLabels,
             type: "surface",
-            colorscale: [
-              [0, "#161b22"],
-              [0.25, "#0e4429"],
-              [0.5, "#006d32"],
-              [0.75, "#26a641"],
-              [1, "#39d353"],
-            ],
+            colorscale: webTheme.charts.heatmapScale,
             showscale: true,
             colorbar: { title: "Tokens" },
           },
@@ -88,7 +85,7 @@ export function View3DPage() {
             camera: { eye: { x: 1.8, y: 1.8, z: 0.8 } },
           },
           paper_bgcolor: "transparent",
-          font: { color: "#8b949e" },
+          font: { color: webTheme.text.muted },
           width: 900,
           height: 600,
         },
@@ -96,4 +93,11 @@ export function View3DPage() {
       })}
     </div>
   );
+}
+
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

@@ -5,9 +5,18 @@
  */
 
 import type { Dirent } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { localDateKey } from "../date-utils.js";
+import { canonicalizeProjectName } from "../project-name.js";
 import type { TokenRecord } from "../types.js";
 
 // ─── Record Cache (append-aware, disk-persisted) ───────────────────
@@ -166,15 +175,30 @@ export function invalidateRecordCache(paths: string[]): void {
   const cache = loadRecordCache();
   for (const p of paths) {
     cache.delete(p);
+
+    const directoryPrefix = p.endsWith("/") || p.endsWith("\\") ? p : `${p}/`;
+    const windowsDirectoryPrefix = p.endsWith("\\") || p.endsWith("/") ? p : `${p}\\`;
+
+    for (const key of cache.keys()) {
+      if (key.startsWith(directoryPrefix) || key.startsWith(windowsDirectoryPrefix)) {
+        cache.delete(key);
+      }
+    }
   }
   saveRecordCache();
 }
 
 /** Clear the entire record cache, forcing a full rescan. */
 export function clearRecordCache(): void {
-  if (recordCache) recordCache.clear();
+  const cache = loadRecordCache();
+  cache.clear();
+  recordCache = cache;
   cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
-  saveRecordCache();
+  try {
+    if (existsSync(CACHE_FILE)) {
+      unlinkSync(CACHE_FILE);
+    }
+  } catch {}
 }
 
 /** Read only the tail of a file from a byte offset (for append-only parsing). */
@@ -220,6 +244,14 @@ export function expandHome(path: string, homeDir: string): string {
     return join(homeDir, path.slice(1));
   }
   return path;
+}
+
+/** Extract the last path segment from either POSIX or Windows-style paths. */
+export function lastPathSegment(path: string, fallback = "unknown"): string {
+  const normalizedPath = path.replace(/[\\/]+$/g, "");
+  const segments = normalizedPath.split(/[\\/]+/).filter(Boolean);
+
+  return segments[segments.length - 1] || fallback;
 }
 
 /**
@@ -300,14 +332,14 @@ export async function readJsonlFile<T>(path: string): Promise<T[]> {
 export function extractProjectFromPath(filePath: string): string {
   // ~/.claude/projects/-Users-me-myapp/session.jsonl → -Users-me-myapp
   // or just use the parent directory name
-  const parts = filePath.split("/");
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
   // Find "projects" in path and take next segment
   const projectsIdx = parts.indexOf("projects");
   if (projectsIdx >= 0 && parts[projectsIdx + 1]) {
-    return parts[projectsIdx + 1];
+    return canonicalizeProjectName(parts[projectsIdx + 1], "unknown");
   }
   // Fallback: use parent directory name
-  return parts[parts.length - 2] || "unknown";
+  return canonicalizeProjectName(parts[parts.length - 2] || "unknown", "unknown");
 }
 
 /** Create a base token record with sensible defaults. */
@@ -333,7 +365,7 @@ export function createRecord(
 
 /** Format a timestamp (ms) to YYYY-MM-DD. */
 export function toDateStr(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+  return localDateKey(ts);
 }
 
 /** Check if a file exists. */

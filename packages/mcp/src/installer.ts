@@ -253,14 +253,6 @@ export function installStatusline(editors?: string[]): void {
 
 // ─── MCP Installer ──────────────────────────────────────────────────────────
 
-interface SettingsWithMCP {
-  mcpServers?: Record<string, { command: string; args?: string[] }>;
-}
-
-interface MCPConfig {
-  mcpServers?: Record<string, { command: string; args?: string[] }>;
-}
-
 export function installMCP(editors?: string[]): void {
   const targetEditors = editors
     ? EDITORS.filter((e) => editors.some((t) => e.name.toLowerCase().includes(t.toLowerCase())))
@@ -423,7 +415,6 @@ export function uninstallMCP(editors?: string[]): void {
     delete servers.drishti;
 
     if (Object.keys(servers).length === 0) {
-      // biome-ignore lint/performance/noDelete: required to remove property from object
       delete config![mcpKey];
     } else {
       config![mcpKey] = servers;
