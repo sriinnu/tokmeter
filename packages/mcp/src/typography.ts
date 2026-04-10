@@ -1,15 +1,34 @@
 /**
  * @sriinnu/drishti — Unicode typography engine
  *
- * Instead of three parallel functions, we define a Transform type
- * and build a small algebra around it. Themes become first-class.
- * Composition is explicit. Special cases are declared, not hidden.
+ * Three-register visual hierarchy for terminal statuslines.
+ * No font configuration needed — all glyphs present in SF Mono,
+ * Cascadia, JetBrains Mono, Hack, Iosevka, Menlo.
  *
- * Design principles:
- *   - One abstraction (CharTransform), three concrete transforms
- *   - Exceptions are data, not comments
- *   - compose() enables mixed typography in a single pass
- *   - Theme objects let consumers name intent, not mechanism
+ * Registers:
+ *   projectName()  : Fraktur initial + Math Script body
+ *                    𝔳𝒶𝒶𝓎𝓊  𝔰𝓅𝒶𝓃𝒹𝒶  𝔨𝒶𝓇𝓎𝒶
+ *                    Carved first char, flowing body.
+ *                    Illuminated manuscript logic — the scribe drew
+ *                    the initial with ceremony, wrote the rest in
+ *                    running hand. Semantically correct for Sanskrit
+ *                    names with open vowels and flowing phonemes.
+ *
+ *   italicMath()   : Math Italic (U+1D44E / U+1D434)
+ *                    𝑡𝑜𝑑𝑎𝑦  𝑛𝑜𝑤  𝑠𝑡𝑎𝑙𝑒
+ *                    Ephemeral, transient, changing. Thin strokes
+ *                    signal "this value will be different soon."
+ *
+ *   boldMath()     : Math Bold (U+1D41A / U+1D400)
+ *                    Reserved for hero emphasis. Available for theme
+ *                    variants that need a heavier weight signal.
+ *
+ * Pixar magazine rule: never more than 3 typefaces in one composition.
+ * We use exactly 3. Each earns its place.
+ *
+ * Full statusline example:
+ *   𝔳𝒶𝒶𝓎𝓊  ·  𝑡𝑜𝑑𝑎𝑦  ·  3 tasks  ·  𝑛𝑜𝑤
+ *   𝔰𝓅𝒶𝓃𝒹𝒶  ·  𝑠𝑡𝑎𝑙𝑒  ·  idle  ·  2h ago
  */
 
 // ─── Core abstraction ────────────────────────────────────────────────────────
@@ -17,15 +36,15 @@
 type CharTransform = (char: string) => string;
 
 /**
- * Build a transform from Unicode Math block offsets.
- * Handles the surrogate pair reality of codePointAt/fromCodePoint.
- * Exceptions map specific codepoints to specific replacements
- * (e.g. the Planck constant hole at U+1D455).
+ * Build a transform from contiguous Unicode Math block offsets.
+ * Handles surrogate pairs correctly via codePointAt / fromCodePoint.
+ * Exceptions map specific codepoints to their out-of-band replacements
+ * (Unicode reserves certain slots and places the glyph elsewhere).
  */
 function mathBlockTransform(
   lowercaseBase: number,
   uppercaseBase: number,
-  exceptions: ReadonlyMap<number, string> = new Map()
+  exceptions: ReadonlyMap<number, string> = new Map(),
 ): CharTransform {
   return (char: string): string => {
     const code = char.codePointAt(0) ?? 0;
@@ -45,115 +64,143 @@ function mathBlockTransform(
 
 /**
  * Apply a CharTransform to every grapheme in a string.
- * Uses proper codePoint iteration — safe for surrogate pairs,
- * though our target range (Basic Latin) doesn't need it.
+ * Spread operator on a string iterates by codepoint — safe for
+ * characters outside the BMP (which all math blocks are).
  */
 function applyTransform(transform: CharTransform, s: string): string {
   return [...s].map(transform).join("");
 }
 
-// ─── Exceptions ──────────────────────────────────────────────────────────────
+// ─── Exception maps ──────────────────────────────────────────────────────────
 
 /**
- * U+1D455 is undefined (reserved). Math italic lowercase 'h' maps to
- * U+210E (Planck constant ℎ) per Unicode spec. Declared as data.
+ * Math Italic: U+1D455 is undefined. Lowercase 'h' maps to
+ * U+210E (Planck constant ℎ) per Unicode spec.
  */
-const ITALIC_EXCEPTIONS = new Map<number, string>([
+const ITALIC_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
   [0x68, "\u210E"], // h → ℎ
 ]);
 
-// ─── Small caps: different mechanism, same interface ─────────────────────────
-
 /**
- * Small caps don't live in a contiguous Unicode block — they're
- * scattered across IPA Extensions and Latin Extended-D.
- * We express this as a sparse map and fall back to identity.
+ * Math Script: several uppercase letters are placed outside the
+ * main block. None of these hit the current project namespace
+ * (vaayu, chitragupta, pakt, spanda, karya, smriti) but declared
+ * for correctness.
  */
-const SMALL_CAPS: ReadonlyMap<string, string> = new Map([
-  ["a", "ᴀ"],
-  ["b", "ʙ"],
-  ["c", "ᴄ"],
-  ["d", "ᴅ"],
-  ["e", "ᴇ"],
-  ["f", "ꜰ"],
-  ["g", "ɢ"],
-  ["h", "ʜ"],
-  ["i", "ɪ"],
-  ["j", "ᴊ"],
-  ["k", "ᴋ"],
-  ["l", "ʟ"],
-  ["m", "ᴍ"],
-  ["n", "ɴ"],
-  ["o", "ᴏ"],
-  ["p", "ᴘ"],
-  ["q", "ǫ"],
-  ["r", "ʀ"],
-  ["s", "s"],
-  ["t", "ᴛ"],
-  ["u", "ᴜ"],
-  ["v", "ᴠ"],
-  ["w", "ᴡ"],
-  ["x", "x"],
-  ["y", "ʏ"],
-  ["z", "ᴢ"],
+const SCRIPT_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
+  [0x42, "\u212C"], // B → ℬ
+  [0x45, "\u2130"], // E → ℰ
+  [0x46, "\u2131"], // F → ℱ
+  [0x48, "\u210B"], // H → ℋ
+  [0x49, "\u2110"], // I → ℐ
+  [0x4c, "\u2112"], // L → ℒ
+  [0x4d, "\u2133"], // M → ℳ
+  [0x52, "\u211B"], // R → ℛ
 ]);
 
-const smallCapsTransform: CharTransform = (char) => SMALL_CAPS.get(char.toLowerCase()) ?? char;
+/**
+ * Math Fraktur: exception slots for uppercase.
+ * C, H, I, R, Z are placed outside the main block.
+ * None hit the current project namespace.
+ */
+const FRAKTUR_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
+  [0x43, "\u212D"], // C → ℭ
+  [0x48, "\u210C"], // H → ℌ
+  [0x49, "\u2111"], // I → ℑ
+  [0x52, "\u211C"], // R → ℜ
+  [0x5a, "\u2128"], // Z → ℨ
+]);
 
-// ─── Concrete transforms ─────────────────────────────────────────────────────
+// ─── Transforms ──────────────────────────────────────────────────────────────
 
 const italicTransform = mathBlockTransform(0x1d44e, 0x1d434, ITALIC_EXCEPTIONS);
 const boldTransform = mathBlockTransform(0x1d41a, 0x1d400);
-const monoTransform = mathBlockTransform(0x1d670, 0x1d670 - 32); // monospace block
+const scriptTransform = mathBlockTransform(0x1d4b6, 0x1d49c, SCRIPT_EXCEPTIONS);
+const frakturTransform = mathBlockTransform(0x1d51e, 0x1d504, FRAKTUR_EXCEPTIONS);
+const sansBoldTransform = mathBlockTransform(0x1d5ee, 0x1d5d4); // 𝘁𝗼𝗸𝗺𝗲𝘁𝗲𝗿
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export const smallCaps = (s: string) => applyTransform(smallCapsTransform, s);
-export const italicMath = (s: string) => applyTransform(italicTransform, s);
-export const boldMath = (s: string) => applyTransform(boldTransform, s);
-export const monoMath = (s: string) => applyTransform(monoTransform, s); // bonus
-
-// ─── Composition ─────────────────────────────────────────────────────────────
-
 /**
- * compose(f, g)(s) — apply g first, then f.
- * Standard right-to-left function composition.
+ * Project name register: Fraktur initial + Math Script body.
  *
- * Why? Because "bold italic" is a real thing in Unicode math blocks
- * (U+1D468 / U+1D482). You can't get there by chaining the above —
- * each transform expects ASCII input. So compose at the intent level,
- * not the character level.
+ * The first character is carved — dense Fraktur strokes, scribal weight.
+ * The rest flows — cursive Script, open and alive.
  *
- * Future: add boldItalicTransform for that block when needed.
+ *   projectName("vaayu")       → 𝔳𝒶𝒶𝓎𝓊
+ *   projectName("chitragupta") → 𝔠𝒽𝒾𝓉𝓇𝒶𝑔𝓊𝓅𝓉𝒶
+ *   projectName("spanda")      → 𝔰𝓅𝒶𝓃𝒹𝒶
+ *   projectName("karya")       → 𝔨𝒶𝓇𝓎𝒶
+ *   projectName("smriti")      → 𝔰𝓂𝓇𝒾𝓉𝒾
+ *   projectName("pakt")        → 𝔭𝒶𝓀𝓉
  */
-export const compose =
-  (...fns: Array<(s: string) => string>) =>
-  (s: string) =>
-    fns.reduceRight((acc, fn) => fn(acc), s);
-
-// ─── Themes — intent over mechanism ──────────────────────────────────────────
+export function projectName(s: string): string {
+  if (!s) return s;
+  const [first, ...rest] = [...s]; // codePoint-safe spread
+  return applyTransform(frakturTransform, first)
+       + applyTransform(scriptTransform, rest.join(""));
+}
 
 /**
- * A Theme is a named set of semantic roles → transforms.
- * Callers say "project name" not "small caps function."
+ * Ephemeral register: Math Italic.
+ * Use for values that change — "today", "now", "stale", timestamps.
+ * Thin strokes signal transience.
+ *
+ *   italicMath("today") → 𝑡𝑜𝑑𝑎𝑦
+ *   italicMath("now")   → 𝑛𝑜𝑤
+ *   italicMath("stale") → 𝑠𝑡𝑎𝑙𝑒
+ */
+export function italicMath(s: string): string {
+  return applyTransform(italicTransform, s);
+}
+
+/**
+ * Emphasis register: Math Bold.
+ * Reserved — currently unused in default rendering.
+ * Available for theme variants requiring hero weight.
+ */
+export function boldMath(s: string): string {
+  return applyTransform(boldTransform, s);
+}
+
+// ─── Theme interface ──────────────────────────────────────────────────────────
+
+/**
+ * A Theme maps semantic roles to transforms.
+ * Callers express intent ("project name"), not mechanism ("fraktur+script").
+ * Swap themes per context without touching rendering logic.
+ *
+ * Usage:
+ *   const t = defaultTheme;
+ *   `${t.name("vaayu")} · ${t.ephemeral("today")} · 3 tasks · ${t.ephemeral("now")}`
+ *   → 𝔳𝒶𝒶𝓎𝓊 · 𝑡𝑜𝑑𝑎𝑦 · 3 tasks · 𝑛𝑜𝑤
  */
 export interface StatuslineTheme {
-  projectName: (s: string) => string;
+  name: (s: string) => string;
   ephemeral: (s: string) => string;
   emphasis: (s: string) => string;
-  code: (s: string) => string;
+}
+
+/**
+ * Sans-serif bold register: clean, modern, reads as real text.
+ * Works for ANY project name — English, Sanskrit, anything.
+ *
+ *   sansBold("tokmeter") → 𝘁𝗼𝗸𝗺𝗲𝘁𝗲𝗿
+ *   sansBold("vaayu")    → 𝘃𝗮𝗮𝘆𝘂
+ */
+export function sansBold(s: string): string {
+  return applyTransform(sansBoldTransform, s);
 }
 
 export const defaultTheme: StatuslineTheme = {
-  projectName: smallCaps,
+  name: sansBold,         // reads as text, visually distinct
   ephemeral: italicMath,
   emphasis: boldMath,
-  code: monoMath,
 };
 
-/**
- * Usage:
- *   const t = defaultTheme;
- *   `${t.projectName("vaayu")} · ${t.ephemeral("today")} · ${t.emphasis("3 tasks")}`
- *   → "ᴠᴀᴀʏᴜ · 𝑡𝑜𝑑𝑎𝑦 · 𝟯 𝘁𝗮𝘀𝗸𝘀"
- */
+/** Sanskrit theme — Fraktur+Script for flowing open-vowel names. */
+export const sanskritTheme: StatuslineTheme = {
+  name: projectName,
+  ephemeral: italicMath,
+  emphasis: boldMath,
+};

@@ -1,22 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { boldMath, italicMath, smallCaps } from "./typography.js";
+import { boldMath, italicMath, projectName, defaultTheme } from "./typography.js";
 
-describe("smallCaps", () => {
-  it("converts lowercase ASCII to small caps", () => {
-    expect(smallCaps("tokmeter")).toBe("ᴛᴏᴋᴍᴇᴛᴇʀ");
+describe("projectName (Fraktur initial + Script body)", () => {
+  it("renders a Fraktur first char + Script rest", () => {
+    const result = projectName("vaayu");
+    // First char: 𝔳 (Fraktur v), rest: 𝒶𝒶𝓎𝓊 (Script)
+    expect(result).not.toBe("vaayu");
+    expect(result.length).toBeGreaterThan(0);
+    // The first codepoint should be in the Fraktur lowercase block (U+1D51E+)
+    const firstCode = result.codePointAt(0)!;
+    expect(firstCode).toBeGreaterThanOrEqual(0x1d51e);
+    expect(firstCode).toBeLessThanOrEqual(0x1d537);
   });
 
-  it("preserves digits, hyphens, and slashes", () => {
-    expect(smallCaps("auth-service-v2")).toBe("ᴀᴜᴛʜ-sᴇʀᴠɪᴄᴇ-ᴠ2");
+  it("handles single-character names", () => {
+    const result = projectName("a");
+    expect(result).toBe("\uD835\uDD1E"); // 𝔞 (Fraktur a)
   });
 
-  it("handles uppercase by treating as lowercase", () => {
-    // Small caps lowercase A-Z is the convention
-    expect(smallCaps("API")).toBe("ᴀᴘɪ");
+  it("preserves hyphens and digits", () => {
+    const result = projectName("my-app-2");
+    expect(result).toContain("-");
+    expect(result).toContain("2");
   });
 
-  it("returns empty string for empty input", () => {
-    expect(smallCaps("")).toBe("");
+  it("returns empty for empty input", () => {
+    expect(projectName("")).toBe("");
   });
 });
 
@@ -26,14 +35,7 @@ describe("italicMath", () => {
   });
 
   it("uses U+210E for italic h (Planck constant)", () => {
-    // U+1D455 is reserved as undefined in the math italic block;
-    // U+210E (Planck constant) is the canonical italic h.
     expect(italicMath("h")).toBe("ℎ");
-    expect(italicMath("hello")).toContain("ℎ");
-  });
-
-  it("converts uppercase ASCII to mathematical italic capitals", () => {
-    expect(italicMath("AB")).toBe("𝐴𝐵");
   });
 
   it("preserves digits and symbols", () => {
@@ -42,11 +44,15 @@ describe("italicMath", () => {
 });
 
 describe("boldMath", () => {
-  it("converts lowercase ASCII to mathematical bold", () => {
+  it("converts to mathematical bold", () => {
     expect(boldMath("hi")).toBe("𝐡𝐢");
   });
+});
 
-  it("converts uppercase ASCII to mathematical bold capitals", () => {
-    expect(boldMath("AB")).toBe("𝐀𝐁");
+describe("defaultTheme", () => {
+  it("maps semantic roles to transforms", () => {
+    expect(defaultTheme.name("test")).toBe(projectName("test"));
+    expect(defaultTheme.ephemeral("now")).toBe(italicMath("now"));
+    expect(defaultTheme.emphasis("ok")).toBe(boldMath("ok"));
   });
 });

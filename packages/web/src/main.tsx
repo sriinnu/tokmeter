@@ -16,6 +16,12 @@ function App() {
   return (
     <BrowserRouter>
       <div style={appShellStyle}>
+        <style>{`
+          @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
         <BackgroundAura />
 
         <nav style={navShellStyle}>
@@ -69,12 +75,13 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
         border: isActive
           ? `1px solid ${withAlpha(webTheme.colors.cream, 0.24)}`
           : "1px solid transparent",
-        borderRadius: 999,
+        borderRadius: webTheme.radii.pill,
         color: isActive ? webTheme.text.primary : webTheme.text.secondary,
         textDecoration: "none",
-        fontSize: 14,
+        fontSize: webTheme.typography.body.size,
         fontWeight: isActive ? 700 : 600,
-        padding: "10px 14px",
+        padding: `10px ${webTheme.spacing.md}`,
+        transition: `background ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, border ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, color ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
       }}
     >
       {children}
@@ -100,9 +107,9 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ color: webTheme.text.danger, padding: 24 }}>
+        <div style={{ color: webTheme.text.danger, padding: webTheme.spacing.xl }}>
           <h2>Something went wrong</h2>
-          <pre style={{ color: webTheme.text.muted, fontSize: 13 }}>
+          <pre style={{ color: webTheme.text.muted, fontSize: webTheme.typography.mono.size }}>
             {this.state.error?.message}
           </pre>
         </div>
@@ -134,13 +141,14 @@ function LiveIndicator({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        fontSize: 13,
+        gap: webTheme.spacing.sm,
+        fontSize: webTheme.typography.mono.size,
         color: isLive ? webTheme.status.live : webTheme.text.secondary,
         background: webTheme.surfaces.cardBackground,
         border: `1px solid ${webTheme.surfaces.cardBorder}`,
-        borderRadius: 999,
-        padding: "10px 14px",
+        borderRadius: webTheme.radii.pill,
+        padding: `10px ${webTheme.spacing.md}`,
+        transition: `color ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
       }}
     >
       <span
@@ -151,7 +159,8 @@ function LiveIndicator({
           borderRadius: "50%",
           backgroundColor: dotColor,
           boxShadow: isLive ? `0 0 10px ${webTheme.status.live}` : "none",
-          animation: isLive ? "pulse 2s ease-in-out infinite" : "none",
+          animation: isLive ? `pulse ${webTheme.motion.duration.glacial} ${webTheme.motion.easing.smooth} infinite` : "none",
+          transition: `background-color ${webTheme.motion.duration.normal} ${webTheme.motion.easing.default}`,
         }}
       />
       <span>{label}</span>
@@ -160,9 +169,9 @@ function LiveIndicator({
           style={{
             background: withAlpha(webTheme.colors.teal, 0.32),
             border: `1px solid ${withAlpha(webTheme.colors.cream, 0.12)}`,
-            borderRadius: 10,
-            padding: "1px 8px",
-            fontSize: 11,
+            borderRadius: webTheme.radii.pill,
+            padding: `1px ${webTheme.spacing.sm}`,
+            fontSize: webTheme.typography.micro.size,
             color: webTheme.text.muted,
           }}
         >
@@ -207,6 +216,7 @@ const backgroundAuraStyle = {
   zIndex: 0,
 } as const;
 
+/** Top-left olive aura — 420×420 orb, offset into the corner */
 const leftAuraStyle = {
   background: `radial-gradient(circle, ${withAlpha(webTheme.colors.olive, 0.18)}, transparent 62%)`,
   filter: "blur(18px)",
@@ -217,6 +227,7 @@ const leftAuraStyle = {
   width: 420,
 } as const;
 
+/** Right teal aura — 360×360 orb, offset right edge */
 const rightAuraStyle = {
   background: `radial-gradient(circle, ${withAlpha(webTheme.colors.teal, 0.16)}, transparent 62%)`,
   filter: "blur(24px)",
@@ -227,6 +238,7 @@ const rightAuraStyle = {
   width: 360,
 } as const;
 
+/** Bottom rose aura — 420×420 orb, anchored at 25% from left */
 const bottomAuraStyle = {
   background: `radial-gradient(circle, ${withAlpha(webTheme.colors.rose, 0.14)}, transparent 62%)`,
   bottom: -180,
@@ -250,17 +262,17 @@ const navInnerStyle = {
   alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
-  gap: 20,
+  gap: webTheme.spacing.xl,
   justifyContent: "space-between",
   margin: "0 auto",
   maxWidth: 1580,
-  padding: "16px 24px",
+  padding: `${webTheme.spacing.lg} ${webTheme.spacing.xl}`,
 } as const;
 
 const brandEyebrowStyle = {
   color: webTheme.text.muted,
-  fontSize: 11,
-  fontWeight: 700,
+  fontSize: webTheme.typography.micro.size,
+  fontWeight: webTheme.typography.micro.weight,
   letterSpacing: "0.1em",
   textTransform: "uppercase",
 } as const;
@@ -275,14 +287,15 @@ const navLinksStyle = {
   alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
-  gap: 10,
+  gap: webTheme.spacing.md,
   justifyContent: "center",
 } as const;
 
 const mainStyle = {
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
   margin: "0 auto",
   maxWidth: 1580,
-  padding: "28px 24px 56px",
+  padding: `${webTheme.spacing["2xl"]} ${webTheme.spacing.xl} ${webTheme.spacing["3xl"]}`,
   position: "relative",
   width: "100%",
   zIndex: 1,

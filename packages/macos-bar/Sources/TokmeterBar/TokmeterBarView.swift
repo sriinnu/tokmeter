@@ -36,11 +36,25 @@ private enum Typography {
 struct TokmeterBarView: View {
     @ObservedObject var loader: TokmeterLoader
     @ObservedObject var updater: UpdaterController
+    @Environment(\.colorScheme) private var colorScheme
 
     // Local UI state — not persisted
     @State private var showAllSessions = false
     @State private var phase: CGFloat = 0  // breathing gradient phase
     @State private var heartbeatPhase: CGFloat = 0  // 0.8s heartbeat pulse
+    @State private var showSettings = false
+
+    /// Stat card fill opacity adapts to light/dark mode — light backgrounds
+    /// need more contrast so we bump from 0.08 → 0.12.
+    private var cardFillOpacity: Double { colorScheme == .light ? 0.12 : 0.08 }
+
+    /// Session row background opacity — same reasoning.
+    private var rowFillOpacity: Double { colorScheme == .light ? 0.10 : 0.06 }
+
+    /// App version string pulled from the bundle's Info.plist at runtime.
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -294,7 +308,7 @@ struct TokmeterBarView: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(color.opacity(0.08))
+                .fill(color.opacity(cardFillOpacity))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(color.opacity(0.2), lineWidth: 1)
@@ -317,10 +331,15 @@ struct TokmeterBarView: View {
                 let maxCost = loader.topModels.first?.cost ?? 1
                 ForEach(loader.topModels) { model in
                     HStack(spacing: 8) {
-                        Text(shortModelName(model.model))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .lineLimit(1)
-                            .frame(width: 110, alignment: .leading)
+                        HStack(spacing: 3) {
+                            Image(systemName: "waveform.circle")
+                                .font(.system(size: 10))
+                                .foregroundColor(Palette.twilightBright)
+                            Text(shortModelName(model.model))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        .frame(width: 110, alignment: .leading)
                         GeometryReader { geo in
                             let pct = CGFloat(min(model.cost / max(maxCost, 0.01), 1.0))
                             Capsule()
@@ -468,7 +487,7 @@ struct TokmeterBarView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.gray.opacity(0.06))
+                .fill(Color.gray.opacity(rowFillOpacity))
         )
     }
 
@@ -485,39 +504,110 @@ struct TokmeterBarView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            // Daemon status heartbeat — green pulse when connected, red dot when offline
-            daemonHeartbeat
+        VStack(spacing: 6) {
+            // Credits + version line
+            HStack(spacing: 4) {
+                Text("Built by sriinnu")
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .onTapGesture { NSWorkspace.shared.open(URL(string: "https://github.com/sriinnu")!) }
+                Text("·")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("v\(appVersion)")
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
 
-            Button(action: { Task { await loader.loadData() } }) {
-                Label(loader.isLoading ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
+            HStack(spacing: 10) {
+                // Daemon status heartbeat — green pulse when connected, red dot when offline
+                daemonHeartbeat
+
+                Button(action: { Task { await loader.loadData() } }) {
+                    Label(loader.isLoading ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 11, design: .rounded))
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .disabled(loader.isLoading)
+                .accessibilityLabel("Refresh data")
+
+                Spacer()
+
+                // Settings gear — opens a stub popover with placeholder controls
+                Button(action: { showSettings.toggle() }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .help("Settings")
+                .popover(isPresented: $showSettings) {
+                    settingsPopover
+                }
+
+                Button(action: { updater.checkForUpdates() }) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .disabled(!updater.canCheckForUpdates)
+                .accessibilityLabel("Check for updates")
+                .help("Check for updates")
+
+                Button(action: { NSApplication.shared.terminate(nil) }) {
+                    Image(systemName: "power")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .help("Quit Tokmeter")
+            }
+        }
+    }
+
+    /// Stub settings popover — placeholder controls for theme, refresh
+    /// interval, and opening the config file. These will be wired up later.
+    private var settingsPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Settings")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Theme")
+                        .font(.system(size: 11, design: .rounded))
+                    Spacer()
+                    Text("System")
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("Refresh interval")
+                        .font(.system(size: 11, design: .rounded))
+                    Spacer()
+                    Text("30s")
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Divider()
+
+            Button(action: {
+                // Open ~/.tokmeter or the nearest config if it exists
+                let configPath = NSHomeDirectory() + "/.tokmeter/config.json"
+                NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+            }) {
+                Label("Open Config File", systemImage: "doc.text")
                     .font(.system(size: 11, design: .rounded))
             }
             .buttonStyle(.borderless)
-            .foregroundColor(.secondary)
-            .disabled(loader.isLoading)
-            .accessibilityLabel("Refresh data")
-
-            Spacer()
-
-            Button(action: { updater.checkForUpdates() }) {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .foregroundColor(.secondary)
-            .disabled(!updater.canCheckForUpdates)
-            .accessibilityLabel("Check for updates")
-            .help("Check for updates")
-
-            Button(action: { NSApplication.shared.terminate(nil) }) {
-                Image(systemName: "power")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .foregroundColor(.secondary)
-            .help("Quit Tokmeter")
         }
+        .padding(14)
+        .frame(width: 200)
     }
 
     /// Green pulsing heartbeat when daemon is alive, red static dot when offline.

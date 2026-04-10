@@ -10,10 +10,14 @@ interface Props {
   providers: { provider: string; cost: number; percentageOfTotal: number }[];
 }
 
+/** Shared Plotly font sizes derived from theme typography tokens */
+const baseFontSize = Number.parseInt(webTheme.typography.body.size);
+const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
+
 export function ProviderPieChart({ providers }: Props) {
   if (providers.length === 0) {
     return (
-      <div style={{ color: webTheme.text.muted, padding: 24 }}>No provider data to display.</div>
+      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>No provider data to display.</div>
     );
   }
 
@@ -28,13 +32,14 @@ export function ProviderPieChart({ providers }: Props) {
           colors: webTheme.charts.providerPalette,
         },
         textinfo: "label+percent",
+        textfont: { color: webTheme.text.primary, size: baseFontSize },
       },
     ],
     layout: {
-      title: "Cost by Provider",
+      title: { text: "Cost by Provider", font: { color: webTheme.text.primary, size: titleFontSize } },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
-      font: { color: webTheme.text.muted },
+      font: { color: webTheme.text.muted, size: baseFontSize },
       showlegend: false,
     },
     config: { responsive: true },

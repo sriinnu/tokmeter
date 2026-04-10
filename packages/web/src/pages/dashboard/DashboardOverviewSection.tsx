@@ -47,8 +47,15 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
         </div>
 
         <div style={heroMetricsStyle}>
-          {insights.heroMetrics.map((metric) => (
-            <div key={metric.label} style={heroMetricCardStyle}>
+          {insights.heroMetrics.map((metric, index) => (
+            <div
+              key={metric.label}
+              style={{
+                ...heroMetricCardStyle,
+                animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
+                animationDelay: `calc(${index} * ${webTheme.motion.stagger})`,
+              }}
+            >
               <div style={heroMetricLabelStyle}>{metric.label}</div>
               <div style={heroMetricValueStyle}>{metric.value}</div>
               <div style={heroMetricNoteStyle}>{metric.note}</div>
@@ -58,8 +65,15 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
       </section>
 
       <div style={kpiGridStyle}>
-        {insights.kpis.map((kpi) => (
-          <div key={kpi.label} style={kpiCardStyle}>
+        {insights.kpis.map((kpi, index) => (
+          <div
+            key={kpi.label}
+            style={{
+              ...kpiCardStyle,
+              animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
+              animationDelay: `calc(${index} * ${webTheme.motion.stagger})`,
+            }}
+          >
             <div style={kpiLabelStyle}>{kpi.label}</div>
             <div style={{ ...kpiValueStyle, color: kpi.accent }}>{kpi.value}</div>
             <div style={kpiHelperStyle}>{kpi.helper}</div>
@@ -484,104 +498,107 @@ function EmptyPanelState({ message }: { message: string }) {
 
 const sectionStackStyle: CSSProperties = {
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
 };
 
 const dualColumnGridStyle: CSSProperties = {
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
   gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
 };
 
 const heroCardStyle: CSSProperties = {
+  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
   background: webTheme.surfaces.panelHighlight,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 32,
-  boxShadow: `0 28px 110px ${webTheme.surfaces.shadow}`,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.high,
   display: "grid",
-  gap: 24,
+  gap: webTheme.spacing.xl,
   gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-  padding: 28,
+  padding: webTheme.spacing.xl,
 };
 
 const heroEyebrowStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
+  fontSize: webTheme.typography.caption.size,
   fontWeight: 700,
   letterSpacing: "0.12em",
-  marginBottom: 10,
+  marginBottom: webTheme.spacing.md,
   textTransform: "uppercase",
 };
 
 const heroTitleStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 36,
-  fontWeight: 800,
-  letterSpacing: "-0.03em",
-  lineHeight: 1.08,
+  fontSize: webTheme.typography.hero.size,
+  fontWeight: webTheme.typography.hero.weight,
+  letterSpacing: webTheme.typography.hero.letterSpacing,
+  lineHeight: webTheme.typography.hero.lineHeight,
   margin: 0,
 };
 
 const heroBodyStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 15,
+  fontSize: webTheme.typography.body.size,
   lineHeight: 1.8,
-  margin: "14px 0 0",
+  margin: `${webTheme.spacing.md} 0 0`,
   maxWidth: 760,
 };
 
 const chipRowStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
-  gap: 10,
-  marginTop: 18,
+  gap: webTheme.spacing.md,
+  marginTop: webTheme.spacing.lg,
 };
 
 const spotlightChipStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 999,
+  borderRadius: webTheme.radii.pill,
   color: webTheme.text.primary,
-  fontSize: 12,
+  fontSize: webTheme.typography.caption.size,
   fontWeight: 600,
-  padding: "9px 14px",
+  padding: `9px ${webTheme.spacing.md}`,
 };
 
 const heroMetricsStyle: CSSProperties = {
   display: "grid",
-  gap: 12,
+  gap: webTheme.spacing.md,
 };
 
 const heroMetricCardStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 20,
-  padding: 18,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.low,
+  padding: webTheme.spacing.lg,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, transform ${webTheme.motion.duration.fast} ${webTheme.motion.easing.spring}`,
 };
 
 const heroMetricLabelStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
-  marginBottom: 6,
+  fontSize: webTheme.typography.caption.size,
+  marginBottom: webTheme.spacing.xs,
   textTransform: "uppercase",
 };
 
 const heroMetricValueStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 20,
-  fontWeight: 700,
+  fontSize: webTheme.typography.h2.size,
+  fontWeight: webTheme.typography.h2.weight,
 };
 
 const heroMetricNoteStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 13,
+  fontSize: webTheme.typography.mono.size,
   lineHeight: 1.6,
-  marginTop: 6,
+  marginTop: webTheme.spacing.xs,
 };
 
 const kpiGridStyle: CSSProperties = {
   display: "grid",
-  gap: 16,
+  gap: webTheme.spacing.lg,
   gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
 };
 
@@ -592,89 +609,92 @@ const kpiCardStyle: CSSProperties = {
     0.52
   )})`,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 22,
-  boxShadow: `0 18px 48px ${withAlpha(webTheme.colors.shadow, 0.22)}`,
-  padding: 18,
+  borderRadius: webTheme.radii.xl,
+  boxShadow: webTheme.elevation.low,
+  padding: webTheme.spacing.lg,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, transform ${webTheme.motion.duration.fast} ${webTheme.motion.easing.spring}`,
 };
 
 const kpiLabelStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
-  fontWeight: 600,
-  marginBottom: 8,
+  fontSize: webTheme.typography.caption.size,
+  fontWeight: webTheme.typography.micro.weight,
+  marginBottom: webTheme.spacing.sm,
   textTransform: "uppercase",
 };
 
 const kpiValueStyle: CSSProperties = {
-  fontSize: 28,
-  fontWeight: 700,
-  lineHeight: 1.1,
+  fontSize: webTheme.typography.h1.size,
+  fontWeight: webTheme.typography.h1.weight,
+  lineHeight: webTheme.typography.h1.lineHeight,
 };
 
 const kpiHelperStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 13,
+  fontSize: webTheme.typography.mono.size,
   lineHeight: 1.6,
-  marginTop: 8,
+  marginTop: webTheme.spacing.sm,
 };
 
 const metricBadgeStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${withAlpha(webTheme.colors.cream, 0.18)}`,
-  borderRadius: 18,
+  borderRadius: webTheme.radii.lg,
   minWidth: 132,
-  padding: "10px 14px",
+  padding: `10px ${webTheme.spacing.md}`,
 };
 
 const metricBadgeLabelStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 11,
-  marginBottom: 4,
+  fontSize: webTheme.typography.micro.size,
+  marginBottom: webTheme.spacing.xs,
   textTransform: "uppercase",
 };
 
 const metricBadgeValueStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 15,
+  fontSize: webTheme.typography.body.size,
   fontWeight: 700,
 };
 
 const contentStackStyle: CSSProperties = {
   display: "grid",
-  gap: 16,
+  gap: webTheme.spacing.lg,
 };
 
 const statsBadgeGridStyle: CSSProperties = {
   display: "grid",
-  gap: 12,
+  gap: webTheme.spacing.md,
   gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
 };
 
 const miniStatCardStyle: CSSProperties = {
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${withAlpha(webTheme.colors.cream, 0.12)}`,
-  borderRadius: 16,
-  padding: 14,
+  borderRadius: webTheme.radii.lg,
+  boxShadow: webTheme.elevation.low,
+  padding: webTheme.spacing.md,
+  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, transform ${webTheme.motion.duration.fast} ${webTheme.motion.easing.spring}`,
 };
 
 const miniStatLabelStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 11,
-  marginBottom: 6,
+  fontSize: webTheme.typography.micro.size,
+  marginBottom: webTheme.spacing.xs,
   textTransform: "uppercase",
 };
 
 const miniStatValueStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 18,
-  fontWeight: 700,
+  fontSize: webTheme.typography.h3.size,
+  fontWeight: webTheme.typography.h3.weight,
 };
 
 const miniStatHelperStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 12,
-  lineHeight: 1.5,
-  marginTop: 6,
+  fontSize: webTheme.typography.caption.size,
+  lineHeight: webTheme.typography.caption.lineHeight,
+  marginTop: webTheme.spacing.xs,
 };
 
 const offlineCardStyle: CSSProperties = {
@@ -683,37 +703,37 @@ const offlineCardStyle: CSSProperties = {
     0.58
   )})`,
   border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: 20,
-  padding: 20,
+  borderRadius: webTheme.radii.xl,
+  padding: webTheme.spacing.xl,
 };
 
 const offlineTitleStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 18,
-  fontWeight: 700,
-  marginBottom: 8,
+  fontSize: webTheme.typography.h3.size,
+  fontWeight: webTheme.typography.h3.weight,
+  marginBottom: webTheme.spacing.sm,
 };
 
 const offlineBodyStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 14,
+  fontSize: webTheme.typography.body.size,
   lineHeight: 1.7,
 };
 
 const listSectionStyle: CSSProperties = {
   display: "grid",
-  gap: 16,
+  gap: webTheme.spacing.lg,
   gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
 };
 
 const listColumnStyle: CSSProperties = {
   display: "grid",
-  gap: 12,
+  gap: webTheme.spacing.md,
 };
 
 const listTitleStyle: CSSProperties = {
   color: webTheme.text.muted,
-  fontSize: 12,
+  fontSize: webTheme.typography.caption.size,
   fontWeight: 700,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
@@ -723,23 +743,23 @@ const rankedRowStyle: CSSProperties = {
   alignItems: "center",
   background: webTheme.surfaces.cardBackground,
   border: `1px solid ${withAlpha(webTheme.colors.cream, 0.1)}`,
-  borderRadius: 18,
+  borderRadius: webTheme.radii.lg,
   display: "flex",
-  gap: 12,
+  gap: webTheme.spacing.md,
   justifyContent: "space-between",
-  padding: "12px 14px",
+  padding: `${webTheme.spacing.md} ${webTheme.spacing.md}`,
 };
 
 const rankedPrimaryStyle: CSSProperties = {
   color: webTheme.text.primary,
-  fontSize: 14,
+  fontSize: webTheme.typography.body.size,
   fontWeight: 600,
 };
 
 const rankedSecondaryStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 12,
-  lineHeight: 1.5,
+  fontSize: webTheme.typography.caption.size,
+  lineHeight: webTheme.typography.caption.lineHeight,
 };
 
 const rankedValueColumnStyle: CSSProperties = {
@@ -748,13 +768,13 @@ const rankedValueColumnStyle: CSSProperties = {
 
 const rankedValueStyle: CSSProperties = {
   color: webTheme.colors.cream,
-  fontSize: 14,
+  fontSize: webTheme.typography.body.size,
   fontWeight: 700,
 };
 
 const emptyStateStyle: CSSProperties = {
   color: webTheme.text.secondary,
-  fontSize: 14,
+  fontSize: webTheme.typography.body.size,
   lineHeight: 1.7,
-  padding: "8px 0",
+  padding: `${webTheme.spacing.sm} 0`,
 };

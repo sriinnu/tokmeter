@@ -1,0 +1,150 @@
+name: Release macOS Bar
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+
+env:
+  APP_NAME: TokmeterBar
+  BUNDLE_ID: com.sriinnu.tokmeterbar
+
+jobs:
+  build-sign-notarize:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"  # strip leading 'v'
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Building version: ${VERSION}"
+
+      - name: Import signing certificate
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
+        run: |
+          # Create a temporary keychain for CI
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import the certificate
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -P "$APPLE_DEVELOPER_ID_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm -f /tmp/cert.p12
+
+          # Allow codesign to access the keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+
+      - name: Build release binary
+        working-directory: packages/macos-bar
+        run: swift build -c release
+
+      - name: Bundle .app
+        working-directory: packages/macos-bar
+        env:
+          DEV_ID: "Developer ID Application: Srinivas Pendela (RSH5FK4MB6)"
+          SUPUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          CFBundleShortVersionString: ${{ env.VERSION }}
+          CFBundleVersion: ${{ github.run_number }}
+        run: |
+          # Use the --signed mode (not --release, we handle notarize separately)
+          ./bundle.sh --signed --no-install
+
+      - name: Notarize
+        working-directory: packages/macos-bar
+        env:
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          # Write API key to temp file
+          echo "$APP_STORE_CONNECT_API_KEY_P8" | sed 's/\\n/\n/g' > /tmp/api-key.p8
+
+          # Create zip for notarization
+          /usr/bin/ditto --norsrc -c -k --keepParent ${APP_NAME}.app /tmp/notarize.zip
+
+          # Submit and wait
+          xcrun notarytool submit /tmp/notarize.zip \
+            --key /tmp/api-key.p8 \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait
+
+          # Staple
+          xcrun stapler staple ${APP_NAME}.app
+
+          # Verify
+          spctl -a -t exec -vv ${APP_NAME}.app
+          xcrun stapler validate ${APP_NAME}.app
+
+          # Clean up
+          rm -f /tmp/api-key.p8 /tmp/notarize.zip
+
+      - name: Create distribution zip
+        working-directory: packages/macos-bar
+        run: |
+          xattr -cr ${APP_NAME}.app 2>/dev/null || true
+          find ${APP_NAME}.app -name '._*' -delete 2>/dev/null || true
+          /usr/bin/ditto --norsrc -c -k --keepParent ${APP_NAME}.app ${APP_NAME}-${VERSION}.zip
+          echo "ZIP_PATH=${APP_NAME}-${VERSION}.zip" >> "$GITHUB_ENV"
+          echo "ZIP_SIZE=$(stat -f%z ${APP_NAME}-${VERSION}.zip)" >> "$GITHUB_ENV"
+
+      - name: Sign with Sparkle
+        working-directory: packages/macos-bar
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          # Write Sparkle private key to temp file
+          echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle.key
+          chmod 600 /tmp/sparkle.key
+
+          # Find sign_update tool
+          SIGN_TOOL=$(find .build -name "sign_update" -type f -perm +111 2>/dev/null | head -1)
+          if [[ -z "$SIGN_TOOL" ]]; then
+            echo "WARNING: sign_update not found, skipping Sparkle signing"
+          else
+            ED_SIG=$("$SIGN_TOOL" -f /tmp/sparkle.key "${APP_NAME}-${VERSION}.zip")
+            echo "Sparkle signature: ${ED_SIG}"
+            echo "ED_SIG=${ED_SIG}" >> "$GITHUB_ENV"
+          fi
+          rm -f /tmp/sparkle.key
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: packages/macos-bar
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${APP_NAME}-${VERSION}.zip" \
+            --clobber
+
+      - name: Upload artifact (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TokmeterBar-${{ env.VERSION }}
+          path: packages/macos-bar/TokmeterBar-${{ env.VERSION }}.zip
