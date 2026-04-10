@@ -153,24 +153,26 @@ final class TokmeterLoader: ObservableObject {
             return
         }
 
-        // Spawn the CLI. macOS apps launched from LaunchServices get a minimal
-        // PATH that doesn't include homebrew, nvm, bun, etc. We resolve `node`
-        // via the user's login shell so it finds the same binary they use in
-        // Terminal.app. The -l flag loads .zshrc/.bashrc which sets up PATH.
+        // Spawn the CLI with JUST stats output (not the full 150MB summary).
+        // `tokmeter stats --json` returns ~500 bytes of aggregated stats.
+        // `tokmeter --json` returns ALL records which can be 150MB+ — way too
+        // large for a 30s subprocess timeout + Swift JSONDecoder.
+        //
+        // macOS apps launched from LaunchServices get a minimal PATH. We resolve
+        // `node` via the user's login shell (-l flag loads .zshrc/.bashrc).
         let localBin = NSHomeDirectory() + "/Sriinnu/Personal/tokmeter/packages/cli/dist/cli.js"
         let cliScript: String
         if FileManager.default.fileExists(atPath: localBin) {
-            cliScript = "node '\(localBin)' --json"
+            cliScript = "node '\(localBin)' stats --json"
         } else {
-            cliScript = "npx -y @sriinnu/tokmeter --json"
+            cliScript = "npx -y @sriinnu/tokmeter stats --json"
         }
-        // Use the user's default shell with login mode to get their full PATH.
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let execPath = shell
         let args = ["-l", "-c", cliScript]
 
         do {
-            let output = try await runProcess(executable: execPath, arguments: args, timeout: 30)
+            let output = try await runProcess(executable: execPath, arguments: args, timeout: 120)
             guard let data = output.data(using: .utf8) else {
                 self.lastError = "CLI returned non-UTF8 output"
                 return
@@ -179,12 +181,22 @@ final class TokmeterLoader: ObservableObject {
             // Write to disk cache for the next 120s
             writeBarCache(data: data, path: cacheFile)
 
-            let decoded = try JSONDecoder().decode(TokmeterFullJSON.self, from: data)
-            applyTokmeterJSON(decoded)
+            // Try full summary first (tokmeter --json), fall back to stats-only
+            if let full = try? JSONDecoder().decode(TokmeterFullJSON.self, from: data) {
+                applyTokmeterJSON(full)
+            } else if let statsOnly = try? JSONDecoder().decode(StatsData.self, from: data) {
+                // stats --json returns just the StatsData shape (tiny, fast)
+                self.stats = statsOnly
+                self.totalCost = statsOnly.totalCost
+                self.totalTokens = statsOnly.totalTokens
+            } else {
+                self.lastError = "CLI returned unparseable output"
+                return
+            }
             self.lastError = nil
             self.hasFreshData = true
         } catch {
-            self.lastError = "Daemon offline · CLI scan failed: \(error.localizedDescription)"
+            self.lastError = "Daemon offline · CLI: \(error.localizedDescription)"
             self.hasFreshData = false
         }
     }
