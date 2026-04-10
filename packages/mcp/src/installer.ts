@@ -13,8 +13,30 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { C } from "./formatter.js";
+
+// ─── CLI Command Resolution ────────────────────────────────────────────────
+// Prefer the local compiled dist (node). Fall back to npx @sriinnu/drishti.
+// We always use node + dist/cli.js for installed commands because:
+//  1. node is always in PATH (bun may not be in Claude Code's subprocess env)
+//  2. dist/cli.js works without a TypeScript runtime
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOCAL_DIST_CLI = resolve(__dirname, "..", "dist", "cli.js");
+const IS_LOCAL = existsSync(LOCAL_DIST_CLI);
+
+function cliCommand(subcommand: string): { command: string; args?: string[] } {
+  if (IS_LOCAL) {
+    return { command: "node", args: [LOCAL_DIST_CLI, subcommand] };
+  }
+  return { command: "npx", args: ["-y", "@sriinnu/drishti", subcommand] };
+}
+
+function cliCommandString(subcommand: string): string {
+  if (IS_LOCAL) return `node ${LOCAL_DIST_CLI} ${subcommand}`;
+  return `npx -y @sriinnu/drishti ${subcommand}`;
+}
 
 // ─── Editor Configurations ───────────────────────────────────────────────────
 
@@ -22,6 +44,7 @@ interface EditorConfig {
   name: string;
   settingsPath: string;
   mcpPath?: string;
+  mcpKey?: string; // JSON key for MCP servers (default: "mcpServers", Zed uses "context_servers")
   configPath?: string; // For editors that use a different config file for MCP (e.g., Codex uses config.toml)
   configFormat?: "json" | "toml";
   supportsStatusline: boolean;
@@ -66,6 +89,7 @@ const EDITORS: EditorConfig[] = [
   {
     name: "Zed",
     settingsPath: `${homedir()}/.config/zed/settings.json`,
+    mcpKey: "context_servers", // Zed uses context_servers, not mcpServers
     supportsStatusline: false,
     supportsMCP: true,
   },
@@ -86,14 +110,33 @@ function ensureDir(path: string): void {
   }
 }
 
+/**
+ * Read a JSON config file. Returns null if missing or corrupt.
+ * If corrupt, prints a warning and sets `_lastReadCorrupt` so callers can skip.
+ */
+let _lastReadCorrupt = false;
+
 function readJSON<T>(path: string): T | null {
+  _lastReadCorrupt = false;
   if (!existsSync(path)) return null;
   try {
     const content = readFileSync(path, "utf-8");
     return JSON.parse(content) as T;
   } catch {
+    _lastReadCorrupt = true;
     return null;
   }
+}
+
+/** Returns true (and prints a warning) if the last readJSON hit a corrupt file. */
+function wasCorrupt(filePath: string, editorName: string): boolean {
+  if (_lastReadCorrupt) {
+    console.log(
+      C.danger(`  ✗ ${editorName} — ${filePath} has a JSON syntax error, refusing to modify`)
+    );
+    return true;
+  }
+  return false;
 }
 
 function writeJSON<T>(path: string, data: T): void {
@@ -170,7 +213,7 @@ export function installStatusline(editors?: string[]): void {
 
   console.log(C.title("\n【♾️】 Installing Statusline\n"));
 
-  const command = "npx -y @sriinnu/drishti statusline";
+  const command = cliCommandString("statusline");
   let installed = 0;
   let skipped = 0;
 
@@ -181,10 +224,15 @@ export function installStatusline(editors?: string[]): void {
       continue;
     }
 
-    const settings = readJSON<SettingsWithStatusLine>(editor.settingsPath) ?? {};
+    const raw = readJSON<SettingsWithStatusLine>(editor.settingsPath);
+    if (wasCorrupt(editor.settingsPath, editor.name)) {
+      skipped++;
+      continue;
+    }
+    const settings = raw ?? {};
 
-    // Check if already installed
-    if (settings.statusLine?.command?.includes("@sriinnu/drishti")) {
+    // Check if already installed with the LOCAL command
+    if (settings.statusLine?.command === command) {
       console.log(C.accent(`  ✓ ${editor.name} — already installed`));
       continue;
     }
@@ -204,14 +252,6 @@ export function installStatusline(editors?: string[]): void {
 }
 
 // ─── MCP Installer ──────────────────────────────────────────────────────────
-
-interface SettingsWithMCP {
-  mcpServers?: Record<string, { command: string; args?: string[] }>;
-}
-
-interface MCPConfig {
-  mcpServers?: Record<string, { command: string; args?: string[] }>;
-}
 
 export function installMCP(editors?: string[]): void {
   const targetEditors = editors
@@ -243,10 +283,7 @@ export function installMCP(editors?: string[]): void {
       }
 
       // Generate and write TOML config
-      const newContent = generateMcpToml(existingContent, serverName, {
-        command: "npx",
-        args: ["-y", "@sriinnu/drishti", "mcp"],
-      });
+      const newContent = generateMcpToml(existingContent, serverName, cliCommand("mcp"));
 
       ensureDir(configPath);
       writeFileSync(configPath, newContent, "utf-8");
@@ -260,15 +297,17 @@ export function installMCP(editors?: string[]): void {
     // Handle JSON-based configs (other editors)
     // Some editors use a separate mcp.json file
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
+    const mcpKey = editor.mcpKey ?? "mcpServers";
 
     // For editors with separate MCP files, read that; otherwise read settings
-    const config = editor.mcpPath
-      ? (readJSON<MCPConfig>(editor.mcpPath) ?? { mcpServers: {} })
-      : ((readJSON<SettingsWithMCP>(editor.settingsPath) as SettingsWithMCP | null) ?? {
-          mcpServers: {},
-        });
+    const rawMcp = readJSON<Record<string, unknown>>(mcpPath);
+    if (wasCorrupt(mcpPath, editor.name)) {
+      skipped++;
+      continue;
+    }
+    const config = rawMcp ?? {};
 
-    const existingServers = config.mcpServers ?? {};
+    const existingServers = (config[mcpKey] ?? {}) as Record<string, unknown>;
 
     // Check if already installed
     if (existingServers[serverName]) {
@@ -276,13 +315,10 @@ export function installMCP(editors?: string[]): void {
       continue;
     }
 
-    // Add the MCP server
-    config.mcpServers = {
+    // Add the MCP server under the correct key for this editor
+    config[mcpKey] = {
       ...existingServers,
-      [serverName]: {
-        command: "npx",
-        args: ["-y", "@sriinnu/drishti", "mcp"],
-      },
+      [serverName]: cliCommand("mcp"),
     };
 
     writeJSON(mcpPath, config);
@@ -366,27 +402,149 @@ export function uninstallMCP(editors?: string[]): void {
 
     // Handle JSON-based configs (other editors)
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
-    const config = editor.mcpPath
-      ? readJSON<MCPConfig>(mcpPath)
-      : readJSON<SettingsWithMCP>(mcpPath);
+    const mcpKey = editor.mcpKey ?? "mcpServers";
+    const config = readJSON<Record<string, unknown>>(mcpPath);
 
-    if (!config?.mcpServers?.drishti) {
+    const servers = (config?.[mcpKey] ?? {}) as Record<string, unknown>;
+    if (!servers.drishti) {
       console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
       continue;
     }
 
     // biome-ignore lint/performance/noDelete: required to remove property from object
-    delete config.mcpServers!.drishti;
+    delete servers.drishti;
 
-    if (Object.keys(config.mcpServers!).length === 0) {
-      config.mcpServers = undefined;
+    if (Object.keys(servers).length === 0) {
+      delete config![mcpKey];
+    } else {
+      config![mcpKey] = servers;
     }
 
-    writeJSON(mcpPath, config);
+    writeJSON(mcpPath, config!);
     console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
   }
 
   console.log();
+}
+
+// ─── Hooks Installer (Claude Code only) ─────────────────────────────────────
+
+interface HookEntry {
+  type: string;
+  command: string;
+}
+
+interface HookMatcher {
+  matcher: string;
+  hooks: HookEntry[];
+}
+
+interface SettingsWithHooks {
+  hooks?: Record<string, HookMatcher[]>;
+}
+
+/** Guard hooks config — references ~/Sriinnu/Personal/script-helpers/ */
+function getGuardHooks(): Record<string, HookMatcher[]> {
+  const dir = `${homedir()}/Sriinnu/Personal/script-helpers`;
+  return {
+    PreToolUse: [
+      {
+        matcher: "Bash",
+        hooks: [
+          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"` },
+          { type: "command", command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"` },
+        ],
+      },
+      {
+        matcher: "",
+        hooks: [
+          {
+            type: "command",
+            command: `bash ${dir}/sensitive-guard.sh "$CLAUDE_TOOL_NAME" "$CLAUDE_TOOL_INPUT"`,
+          },
+          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"` },
+        ],
+      },
+    ],
+  };
+}
+
+export function installHooks(): void {
+  console.log(C.title("\n【♾️】 Installing Guard Hooks\n"));
+
+  const editor = EDITORS.find((e) => e.name === "Claude Code")!;
+  const rawSettings = readJSON<Record<string, unknown>>(editor.settingsPath);
+  if (wasCorrupt(editor.settingsPath, "Claude Code")) {
+    console.log();
+    return;
+  }
+  const settings = rawSettings ?? {};
+  const expected = getGuardHooks();
+
+  // Check if guard hooks are already present and up to date
+  const existing = (settings.hooks ?? {}) as Record<string, unknown[]>;
+  const guardMatchers = expected.PreToolUse;
+  const existingPre = (existing.PreToolUse ?? []) as HookMatcher[];
+
+  // Check if our guard matchers are already in PreToolUse
+  const guardJson = JSON.stringify(guardMatchers);
+  const hasGuards =
+    existingPre.length >= guardMatchers.length &&
+    JSON.stringify(existingPre.slice(0, guardMatchers.length)) === guardJson;
+
+  if (hasGuards) {
+    console.log(C.accent("  ✓ Claude Code — hooks already installed and up to date"));
+    console.log();
+    return;
+  }
+
+  // Merge: replace our guard matchers at the start, preserve any user-added hooks
+  const userHooks = existingPre.filter(
+    (m) => !guardMatchers.some((g) => JSON.stringify(g) === JSON.stringify(m))
+  );
+  settings.hooks = {
+    ...existing,
+    PreToolUse: [...guardMatchers, ...userHooks],
+  };
+  writeJSON(editor.settingsPath, settings);
+
+  console.log(C.success("  ✓ Claude Code — guard hooks installed"));
+  console.log(C.dim(`    ${editor.settingsPath}`));
+  console.log();
+  console.log(C.dim("Hooks installed:"));
+  console.log(C.dim("  • danger-guard.sh  — blocks destructive commands"));
+  console.log(C.dim("  • network-guard.sh — blocks unauthorized network access"));
+  console.log(C.dim("  • sensitive-guard.sh — guards sensitive file access\n"));
+}
+
+export function uninstallHooks(): void {
+  console.log(C.title("\n【♾️】 Uninstalling Guard Hooks\n"));
+
+  const editor = EDITORS.find((e) => e.name === "Claude Code")!;
+  const settings = readJSON<SettingsWithHooks>(editor.settingsPath);
+
+  if (!settings?.hooks) {
+    console.log(C.dim("  ⊘ Claude Code — no hooks installed"));
+    console.log();
+    return;
+  }
+
+  // biome-ignore lint/performance/noDelete: required to remove property from object
+  delete settings.hooks;
+  writeJSON(editor.settingsPath, settings);
+
+  console.log(C.success("  ✓ Claude Code — hooks removed"));
+  console.log();
+}
+
+// ─── Install All ────────────────────────────────────────────────────────────
+
+export function installAll(): void {
+  console.log(C.title("\n【♾️】 Full Restore — Statusline + MCP + Hooks\n"));
+  installStatusline();
+  installMCP();
+  installHooks();
+  console.log(C.accent("Done. Restart your editor(s) to activate everything.\n"));
 }
 
 // ─── List Editors ───────────────────────────────────────────────────────────

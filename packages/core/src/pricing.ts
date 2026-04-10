@@ -146,17 +146,21 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
   ["claude-3-sonnet", { inputPerMillion: 3, outputPerMillion: 15 }],
   ["claude-3-haiku", { inputPerMillion: 0.25, outputPerMillion: 1.25 }],
   // ── OpenAI GPT / O-series ────────────────────────────────────────
-  ["gpt-5", { inputPerMillion: 10, outputPerMillion: 40 }],
-  ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6 }],
-  ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10 }],
-  ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30 }],
-  ["gpt-4", { inputPerMillion: 30, outputPerMillion: 60 }],
-  ["gpt-3.5-turbo", { inputPerMillion: 0.5, outputPerMillion: 1.5 }],
+  // GPT-5 family resolves through kosha-discovery (OpenRouter mirror).
+  // OpenAI caches at 50% of input (NOT 10% like Anthropic). Every OpenAI
+  // model gets explicit cacheReadPerMillion to avoid the 10% universal
+  // fallback undercharging by 5x.
+  ["gpt-4o-mini", { inputPerMillion: 0.15, outputPerMillion: 0.6, cacheReadPerMillion: 0.075 }],
+  ["gpt-4o", { inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25 }],
+  ["gpt-4-turbo", { inputPerMillion: 10, outputPerMillion: 30, cacheReadPerMillion: 5 }],
+  ["gpt-4", { inputPerMillion: 30, outputPerMillion: 60, cacheReadPerMillion: 15 }],
+  ["gpt-3.5-turbo", { inputPerMillion: 0.5, outputPerMillion: 1.5, cacheReadPerMillion: 0.25 }],
   [
     "o4-mini",
     {
       inputPerMillion: 1.1,
       outputPerMillion: 4.4,
+      cacheReadPerMillion: 0.55,
       reasoningInputPerMillion: 1.1,
       reasoningOutputPerMillion: 4.4,
     },
@@ -166,6 +170,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 1.1,
       outputPerMillion: 4.4,
+      cacheReadPerMillion: 0.55,
       reasoningInputPerMillion: 1.1,
       reasoningOutputPerMillion: 4.4,
     },
@@ -175,6 +180,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 10,
       outputPerMillion: 40,
+      cacheReadPerMillion: 5,
       reasoningInputPerMillion: 10,
       reasoningOutputPerMillion: 40,
     },
@@ -184,6 +190,7 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 3,
       outputPerMillion: 12,
+      cacheReadPerMillion: 1.5,
       reasoningInputPerMillion: 3,
       reasoningOutputPerMillion: 12,
     },
@@ -193,31 +200,48 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 15,
       outputPerMillion: 60,
+      cacheReadPerMillion: 7.5,
       reasoningInputPerMillion: 15,
       reasoningOutputPerMillion: 60,
     },
   ],
   // ── Google Gemini ─────────────────────────────────────────────────
-  ["gemini-2.5-pro", { inputPerMillion: 1.25, outputPerMillion: 10 }],
+  // Gemini caches at ~25% of input rate (NOT 10% like OpenAI/Anthropic).
+  // Explicit cacheReadPerMillion entries prevent the universal 10% fallback
+  // from undercharging Gemini sessions.
+  [
+    "gemini-2.5-pro",
+    {
+      inputPerMillion: 1.25,
+      outputPerMillion: 10,
+      cacheReadPerMillion: 0.31, // 25% of input
+    },
+  ],
   [
     "gemini-2.5-flash",
     {
       inputPerMillion: 0.15,
       outputPerMillion: 0.6,
+      cacheReadPerMillion: 0.0375, // 25% of input
       reasoningInputPerMillion: 3.5,
       reasoningOutputPerMillion: 3.5,
     },
   ],
-  ["gemini-2.0-flash", { inputPerMillion: 0.1, outputPerMillion: 0.4 }],
-  ["gemini-1.5-pro", { inputPerMillion: 1.25, outputPerMillion: 5 }],
-  ["gemini-1.5-flash", { inputPerMillion: 0.075, outputPerMillion: 0.3 }],
+  ["gemini-2.0-flash", { inputPerMillion: 0.1, outputPerMillion: 0.4, cacheReadPerMillion: 0.025 }],
+  ["gemini-1.5-pro", { inputPerMillion: 1.25, outputPerMillion: 5, cacheReadPerMillion: 0.3125 }],
+  [
+    "gemini-1.5-flash",
+    { inputPerMillion: 0.075, outputPerMillion: 0.3, cacheReadPerMillion: 0.01875 },
+  ],
   ["gemini-pro", { inputPerMillion: 0.125, outputPerMillion: 0.375 }],
   // ── DeepSeek ──────────────────────────────────────────────────────
+  // DeepSeek caches at ~26% of input rate ($0.07/M cached vs $0.27/M input).
   [
     "deepseek-reasoner",
     {
       inputPerMillion: 0.55,
       outputPerMillion: 2.19,
+      cacheReadPerMillion: 0.14,
       reasoningInputPerMillion: 0.55,
       reasoningOutputPerMillion: 2.19,
     },
@@ -227,13 +251,14 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
     {
       inputPerMillion: 0.55,
       outputPerMillion: 2.19,
+      cacheReadPerMillion: 0.14,
       reasoningInputPerMillion: 0.55,
       reasoningOutputPerMillion: 2.19,
     },
   ],
-  ["deepseek-v3", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
-  ["deepseek-chat", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
-  ["deepseek-coder", { inputPerMillion: 0.27, outputPerMillion: 1.1 }],
+  ["deepseek-v3", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
+  ["deepseek-chat", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
+  ["deepseek-coder", { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 }],
   // ── xAI Grok ─────────────────────────────────────────────────────
   ["grok-4", { inputPerMillion: 3, outputPerMillion: 15 }],
   [
@@ -419,10 +444,19 @@ export class PricingService {
     let cost = 0;
     cost += inputTokens * perToken(pricing.inputPerMillion);
     cost += outputTokens * perToken(pricing.outputPerMillion);
-    if (pricing.cacheReadPerMillion && cacheReadTokens) {
-      cost += cacheReadTokens * perToken(pricing.cacheReadPerMillion);
+    if (cacheReadTokens) {
+      // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
+      // Fall back to that ratio if the resolver didn't supply an explicit rate.
+      // Gemini and DeepSeek have explicit ~25% rates in the static table — they
+      // don't fall back here so they aren't undercharged.
+      const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
+      cost += cacheReadTokens * perToken(cacheRate);
     }
-    if (pricing.cacheWritePerMillion && cacheWriteTokens) {
+    if (cacheWriteTokens && pricing.cacheWritePerMillion) {
+      // Cache writes only fire when an explicit rate exists. Anthropic has them
+      // (1.25× input). OpenAI/Gemini don't charge for cache writes — caching is
+      // free or implicit, only reads are discounted. We don't synthesize a
+      // fallback because the wrong default would silently overcharge.
       cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);
     }
     if (reasoningTokens) {
@@ -491,9 +525,24 @@ export class PricingService {
     return eff ? this.roundPricing(eff) : null;
   }
 
-  /** Round all pricing fields to 6 decimal places to eliminate float noise. */
-  private roundPricing(p: ModelPricing): FullPricing {
+  /**
+   * Round all pricing fields to 6 decimal places to eliminate float noise.
+   * Returns null if any required field is NaN or Infinity (treat as unpriced).
+   */
+  private roundPricing(p: ModelPricing): FullPricing | null {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+    // Guard: if any field is NaN or Infinity, bail — this model is unpriced.
+    const allValues = [
+      p.inputPerMillion,
+      p.outputPerMillion,
+      p.cacheReadPerMillion,
+      p.cacheWritePerMillion,
+      p.reasoningInputPerMillion,
+      p.reasoningOutputPerMillion,
+    ];
+    for (const v of allValues) {
+      if (v !== undefined && !Number.isFinite(v)) return null;
+    }
     return {
       inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),

@@ -1,12 +1,19 @@
 {
   "name": "@sriinnu/tokmeter-cli",
   "version": "0.1.0",
-  "description": "Token usage tracking CLI — table and JSON output",
+  "description": "Token usage tracking CLI and automation helpers",
   "type": "module",
   "bin": {
     "tokmeter": "dist/cli.js"
   },
-  "main": "dist/cli.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": ["dist"],
   "scripts": {
     "build": "tsc",

@@ -53,6 +53,45 @@ tokmeter
 | [`@sriinnu/tokmeter-web`](packages/web/) | React + Plotly web dashboard with live mode | See [Web App](#web-app) |
 | [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + daemon | `npx @sriinnu/drishti` |
 
+## Consume Tokmeter From Other Apps
+
+Use the surface that matches the job:
+
+| Need | Use | Notes |
+| --- | --- | --- |
+| Local programmatic access in Node/Bun | `@sriinnu/tokmeter-core` | Lowest-level scan + aggregation + cleanup API |
+| Shell / CI automation | `@sriinnu/tokmeter-cli --json` | Best machine-readable contract for scripts |
+| Convenience helpers without shelling out | `@sriinnu/tokmeter-cli` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
+| Live in-session token/cost answers | `@sriinnu/drishti` | MCP + daemon + statusline + live tracker |
+
+### Programmatic convenience helpers
+
+```ts
+import {
+  loadTokmeterSummary,
+  loadTokmeterProjects,
+  loadTokmeterModels,
+  loadTokmeterStats,
+  lookupTokmeterPricing,
+} from "@sriinnu/tokmeter-cli";
+
+const summary = await loadTokmeterSummary({ month: true });
+const projects = await loadTokmeterProjects({ project: "tokmeter" });
+const models = await loadTokmeterModels({ providers: ["codex"] });
+const stats = await loadTokmeterStats({ week: true, light: true });
+const pricing = await lookupTokmeterPricing("claude-sonnet-4-20250514");
+```
+
+### Stable shell contract
+
+```bash
+npx @sriinnu/tokmeter-cli --json
+npx @sriinnu/tokmeter-cli models --json --project tokmeter
+npx @sriinnu/tokmeter-cli digest --json --period week
+```
+
+For a deeper integration guide, see [`docs/consuming-tokmeter.md`](docs/consuming-tokmeter.md).
+
 ## CLI Usage
 
 ```bash

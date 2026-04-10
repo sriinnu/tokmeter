@@ -8,6 +8,7 @@
  * Token data comes from event_msg with type "token_count".
  */
 
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
@@ -65,8 +66,7 @@ function defaultState(): CodexParseState {
 
 /** Extract project name from cwd path (last directory component). */
 function projectFromCwd(cwd: string): string {
-  const parts = cwd.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || "codex";
+  return canonicalizeProjectName(cwd, "codex");
 }
 
 /** Compute delta between current and previous cumulative totals. */
@@ -125,31 +125,39 @@ export class CodexParser implements SessionParser {
         const info = payload.info;
         if (!info) continue;
 
-        // Prefer delta from total_token_usage for accuracy
+        // Prefer delta from total_token_usage for accuracy.
         let usage: CodexTokenUsage;
         if (info.total_token_usage) {
           usage = computeDelta(info.total_token_usage, state.prevTotal);
           state.prevTotal = { ...info.total_token_usage };
 
-          // If delta is all zeros but last_token_usage has data, use that
-          const deltaSum = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
-          if (deltaSum === 0 && info.last_token_usage) {
-            const lastSum =
-              (info.last_token_usage.input_tokens ?? 0) +
-              (info.last_token_usage.output_tokens ?? 0);
-            if (lastSum > 0) {
-              usage = info.last_token_usage;
-            }
-          }
+          // If delta is all zeros, skip this event — no new tokens were consumed.
+          // The old code fell back to last_token_usage here, but last_token_usage
+          // is per-turn CUMULATIVE (not a delta), so using it when the total hasn't
+          // changed creates exact duplicates (~7% of Codex records were duped).
+          const deltaSum =
+            (usage.input_tokens ?? 0) +
+            (usage.output_tokens ?? 0) +
+            (usage.cached_input_tokens ?? 0) +
+            (usage.reasoning_output_tokens ?? 0);
+          if (deltaSum === 0) continue;
         } else if (info.last_token_usage) {
+          // Fallback: some events only have last_token_usage (no cumulative).
+          // This path fires for events where total_token_usage is absent.
           usage = info.last_token_usage;
         } else {
           continue;
         }
 
-        const inputTokens = usage.input_tokens ?? 0;
+        // OpenAI reports input_tokens as TOTAL (including cached). Subtract the
+        // cached portion so we match Anthropic semantics: inputTokens = uncached,
+        // cacheReadTokens = cached. This prevents the cost calculator from double-
+        // charging cached tokens (once at full rate, once at cache rate).
+        const totalInput = usage.input_tokens ?? 0;
+        const cached = usage.cached_input_tokens ?? 0;
+        const inputTokens = Math.max(0, totalInput - cached);
         const outputTokens = usage.output_tokens ?? 0;
-        if (inputTokens === 0 && outputTokens === 0) continue;
+        if (inputTokens === 0 && outputTokens === 0 && cached === 0) continue;
 
         records.push(
           createRecord({
@@ -160,7 +168,7 @@ export class CodexParser implements SessionParser {
             sourceFile: file,
             inputTokens,
             outputTokens,
-            cacheReadTokens: usage.cached_input_tokens ?? 0,
+            cacheReadTokens: cached,
             reasoningTokens: usage.reasoning_output_tokens ?? 0,
           })
         );

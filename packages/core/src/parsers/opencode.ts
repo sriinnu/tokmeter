@@ -5,6 +5,7 @@
  * or ~/.local/share/opencode/storage/message/ (legacy JSON).
  */
 
+import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, fileExists, findFiles, readJsonFile } from "./utils.js";
 
@@ -22,6 +23,25 @@ interface OpenCodeMessage {
   time?: { created?: number };
 }
 
+interface OpenCodeMessageRow {
+  model_id?: string;
+  provider_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  reasoning_tokens?: number;
+  cache_read?: number;
+  cache_write?: number;
+  created_at?: number;
+  session_id?: string;
+}
+
+interface OpenCodeSessionRow {
+  id: string;
+  title?: string;
+  path?: string;
+  cwd?: string;
+}
+
 export class OpenCodeParser implements SessionParser {
   readonly providerId = "opencode" as const;
 
@@ -36,27 +56,22 @@ export class OpenCodeParser implements SessionParser {
       if (await fileExists(dbPath)) {
         const db = new Database(dbPath, { readonly: true });
         try {
+          const sessionProjects = this.loadSessionProjects(db);
           const rows = db
             .prepare(
-              "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at FROM messages WHERE role = 'assistant'"
+              "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id FROM messages WHERE role = 'assistant'"
             )
-            .all() as Array<{
-            model_id?: string;
-            provider_id?: string;
-            input_tokens?: number;
-            output_tokens?: number;
-            reasoning_tokens?: number;
-            cache_read?: number;
-            cache_write?: number;
-            created_at?: number;
-          }>;
+            .all() as OpenCodeMessageRow[];
           for (const row of rows) {
+            const project = (row.session_id && sessionProjects.get(row.session_id)) || "opencode";
+
             records.push(
               createRecord({
                 timestamp: row.created_at ?? Date.now(),
                 provider: "opencode",
                 model: row.model_id || "unknown",
-                project: "opencode",
+                project,
+                sourceFile: dbPath,
                 inputTokens: row.input_tokens ?? 0,
                 outputTokens: row.output_tokens ?? 0,
                 reasoningTokens: row.reasoning_tokens ?? 0,
@@ -98,5 +113,35 @@ export class OpenCodeParser implements SessionParser {
       );
     }
     return records;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private loadSessionProjects(db: any): Map<string, string> {
+    const map = new Map<string, string>();
+
+    try {
+      const tableCheck = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        .get() as { name: string } | undefined;
+
+      if (!tableCheck) {
+        return map;
+      }
+
+      const rows = db
+        .prepare("SELECT id, title, path, cwd FROM sessions")
+        .all() as OpenCodeSessionRow[];
+
+      for (const row of rows) {
+        const project = row.path || row.cwd || row.title || undefined;
+        if (project) {
+          map.set(row.id, canonicalizeProjectName(project, "opencode"));
+        }
+      }
+    } catch {
+      return map;
+    }
+
+    return map;
   }
 }

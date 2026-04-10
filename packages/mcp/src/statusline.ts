@@ -8,9 +8,95 @@
  */
 
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
+import { localDateKey } from "@sriinnu/tokmeter-core";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
-import { C, FALLBACK_STATUSLINE, formatCost, formatNumber, formatPercent } from "./formatter.js";
+import {
+  C,
+  FALLBACK_STATUSLINE,
+  formatCost,
+  formatNumber,
+  formatPercent,
+  powerline,
+  segmentColors,
+  useNerdFont,
+} from "./formatter.js";
+import { defaultTheme, italicMath } from "./typography.js";
+
+// ─── Hot-path caches ────────────────────────────────────────────────────
+// The statusline runs as a fresh subprocess every ~200ms. To avoid
+// re-doing expensive work (git execSync, full disk scan), we persist
+// short-lived results to a per-user cache dir and read them back if fresh.
+//
+// Per-user dir is critical: a shared /tmp file would leak one user's
+// totals to another on multi-user systems. Mode 0700 on the dir.
+
+function getCacheDir(): string {
+  let uid = "unknown";
+  try {
+    uid = String(userInfo().uid);
+  } catch {}
+  const dir = join(tmpdir(), `drishti-${uid}`);
+  if (!existsSync(dir)) {
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch {}
+  }
+  return dir;
+}
+
+const CACHE_DIR = getCacheDir();
+
+interface CacheWrapper<T> {
+  ts: number;
+  data: T;
+  /** Optional invalidation key — e.g. file mtime — for content-aware caches. */
+  key?: string;
+}
+
+function readCache<T>(path: string, ttlMs: number, expectedKey?: string): T | null {
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const wrapper = JSON.parse(raw) as CacheWrapper<T>;
+    // Content-aware invalidation: if the key changed (e.g. .git/HEAD mtime),
+    // discard immediately even if within TTL.
+    if (expectedKey !== undefined && wrapper.key !== expectedKey) return null;
+    if (Date.now() - wrapper.ts > ttlMs) return null;
+    return wrapper.data;
+  } catch {
+    // Corrupt cache file — delete it so it doesn't keep failing.
+    try {
+      unlinkSync(path);
+    } catch {}
+    return null;
+  }
+}
+
+function writeCache<T>(path: string, data: T, key?: string): void {
+  try {
+    const wrapper: CacheWrapper<T> = { ts: Date.now(), data };
+    if (key !== undefined) wrapper.key = key;
+    writeFileSync(path, JSON.stringify(wrapper), { encoding: "utf-8", mode: 0o600 });
+  } catch {}
+}
+
+function cwdHash(cwd: string): string {
+  return createHash("sha1").update(cwd).digest("hex").slice(0, 12);
+}
+
+/** mtime of a file as a string, or "" if it doesn't exist. */
+function safeMtimeKey(path: string): string {
+  try {
+    return String(statSync(path).mtimeMs);
+  } catch {
+    return "";
+  }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -36,105 +122,10 @@ function frame(): number {
   return Math.floor((Date.now() / 200) % 8);
 }
 
-/** Particle effects using braille patterns for fine-grained animation */
+/** Particle effects — only pulse is used (agent activity dot). */
 const PARTICLES = {
-  spark: ["✦", "✧", "✶", "✷", "✸", "✹", "✺", "✻"],
   pulse: ["○", "◐", "◑", "●", "◑", "◐", "○", "◌"],
-  wave: ["░", "▒", "▓", "█", "▓", "▒", "░", " "],
-  orbit: ["◌", " ○", "  ●", "   ◉", "  ●", " ○", "◌", ""],
-  dots: ["⠁", "⠃", "⠇", "⡇", "⣇", "⣧", "⣷", "⣿"],
 };
-
-/** Rainbow color cycle */
-function rainbow(text: string, offset = 0): string {
-  const colors = [
-    "\x1b[38;5;196m", // red
-    "\x1b[38;5;208m", // orange
-    "\x1b[38;5;226m", // yellow
-    "\x1b[38;5;46m", // green
-    "\x1b[38;5;51m", // cyan
-    "\x1b[38;5;21m", // blue
-    "\x1b[38;5;129m", // purple
-    "\x1b[38;5;201m", // magenta
-  ];
-  const f = (frame() + offset) % colors.length;
-  return `${colors[f]}${text}\x1b[0m`;
-}
-
-/** Token flow visualization with animated arrows and intensity */
-function animTokenFlow(
-  value: number,
-  type: "in" | "out" | "cache"
-): { arrow: string; intensity: string } {
-  const f = frame();
-  const v = Math.max(0, value || 0);
-
-  // Animated arrows
-  const arrows = {
-    in: ["↗", "↑", "⬆", "↑", "↗", "↑", "⬆", "↑"],
-    out: ["↘", "↓", "⬇", "↓", "↘", "↓", "⬇", "↓"],
-    cache: ["↺", "⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳"],
-  };
-
-  // Intensity bar (grows/shrinks based on value)
-  const logScale = Math.min(4, Math.floor(Math.log10(v + 1) / 1.5));
-  const intensityChars = ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"];
-  const intensity = intensityChars[(f + logScale) % intensityChars.length].repeat(
-    Math.max(1, logScale)
-  );
-
-  return { arrow: arrows[type][f], intensity };
-}
-
-/** Animated cost display with pulsing effect */
-function animCost(cost: number): string {
-  const f = frame();
-  const icons = ["⚡", "✨", "⚡", "💫", "⚡", "✨", "⚡", "🌟"];
-  const icon = icons[f];
-
-  // Color based on cost intensity
-  if (cost > 10) return `${C.danger(icon)}${C.cost(formatCost(cost))}`;
-  if (cost > 5) return `${C.warn(icon)}${C.cost(formatCost(cost))}`;
-  return `${C.accent(icon)}${C.cost(formatCost(cost))}`;
-}
-
-/** Context window as animated progress bar with wave effect */
-function animContextBar(used: number, max: number): string {
-  if (!(max > 0)) return "";
-  const pct = (used / max) * 100;
-  const f = frame();
-
-  // Animated wave inside the bar
-  const width = 6;
-  const filled = Math.round((pct / 100) * width);
-
-  // Color gradient based on usage
-  let barColor: (s: string) => string;
-  if (pct > 80) barColor = C.danger;
-  else if (pct > 50) barColor = C.warn;
-  else barColor = C.accent;
-
-  // Wave animation in filled portion
-  const waveChars = ["▓", "▒", "░", "▒", "▓", "█", "▓", "▒"];
-  let bar = "";
-  for (let i = 0; i < width; i++) {
-    if (i < filled) {
-      bar += barColor(waveChars[(f + i) % waveChars.length]);
-    } else {
-      bar += C.muted("░");
-    }
-  }
-
-  return `${bar} ${barColor(`${pct.toFixed(0)}%`)}${C.dim(`/${formatNumber(max)}`)}`;
-}
-
-/** Burn rate with fire animation */
-function animBurnRate(costPerHour: number): string {
-  const f = frame();
-  const flames = ["🔥", "🔥", "🔥", "🔥"];
-  const flame = flames[f % flames.length];
-  return `${C.warn(flame)}${C.cost(`${formatCost(costPerHour)}/hr`)}`;
-}
 
 /** Cache hit rate with color-coded efficiency indicator */
 function animCacheRate(cacheRead: number, cacheWrite: number): string {
@@ -154,6 +145,18 @@ function animCacheRate(cacheRead: number, cacheWrite: number): string {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+/** Compact context bar for powerline segment: ▓▓▓▓░░░░ */
+function formatContextMini(used: number, max: number): string {
+  if (!(max > 0)) return "";
+  const w = 8;
+  // Clamp pct to [0, 1] so over-budget contexts don't crash .repeat() with a
+  // negative count. This happens when a tool reports more used than the
+  // window size (e.g. mid-conversation context measurement).
+  const pct = Math.max(0, Math.min(1, used / max));
+  const filled = Math.round(pct * w);
+  return "▓".repeat(filled) + "░".repeat(w - filled);
+}
 
 function shortModelName(id: string | undefined): string {
   if (!id) return "?";
@@ -193,11 +196,36 @@ async function readStdin(): Promise<string> {
   });
 }
 
-function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
+interface GitInfo {
+  branch: string;
+  dirty: number;
+}
+
+/**
+ * Get git branch + dirty count for a repo.
+ *
+ * Cache invalidation is content-aware: we key on the mtime of `.git/HEAD`,
+ * which changes on every checkout/commit/rebase. This means a branch
+ * switch is reflected instantly (no polling delay) AND we still get the
+ * cache hit benefit when nothing changed. TTL is a safety net at 10s.
+ *
+ * Two execSync calls would otherwise block the statusline ~50–300ms on a
+ * busy repo; the cache cuts that to a single fs read on the hot path.
+ */
+function getGitInfo(cwd: string): GitInfo | null {
+  const headPath = join(cwd, ".git", "HEAD");
+  // If .git/HEAD doesn't exist, we're not in a git repo. Skip the cache.
+  if (!existsSync(headPath)) return null;
+
+  const headKey = safeMtimeKey(headPath);
+  const cachePath = join(CACHE_DIR, `git-${cwdHash(cwd)}.json`);
+  const cached = readCache<GitInfo>(cachePath, 10_000, headKey);
+  if (cached) return cached;
+
   try {
     const branch = execSync("git rev-parse --abbrev-ref HEAD", {
       cwd,
-      timeout: 2000,
+      timeout: 1500,
       stdio: ["ignore", "pipe", "ignore"],
     })
       .toString()
@@ -206,14 +234,66 @@ function getGitInfo(cwd: string): { branch: string; dirty: number } | null {
     try {
       const status = execSync("git status --porcelain", {
         cwd,
-        timeout: 2000,
+        timeout: 1500,
         stdio: ["ignore", "pipe", "ignore"],
       })
         .toString()
         .trim();
       if (status) dirty = status.split("\n").length;
     } catch {}
-    return { branch, dirty };
+    const info = { branch, dirty };
+    writeCache(cachePath, info, headKey);
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+interface TodayTotals {
+  cost: number;
+  in: number;
+  out: number;
+  /** YYYY-MM-DD of when this was computed — invalidates after midnight. */
+  day: string;
+}
+
+function todayKey(): string {
+  return localDateKey();
+}
+
+/**
+ * Today's totals across all providers, cached for 60s.
+ *
+ * Cache key is the YYYY-MM-DD date — at midnight rollover the cache is
+ * invalidated automatically so yesterday's number doesn't linger as
+ * "today's." TTL is the secondary defense for intra-day refresh.
+ *
+ * Fetching fresh requires a full disk scan which costs hundreds of ms on
+ * power users — utterly unacceptable for a 200ms hot path. The 60s TTL
+ * means today's number lags reality by up to a minute, which is fine
+ * for an at-a-glance display.
+ */
+async function getTodayTotalsCached(): Promise<TodayTotals | null> {
+  const cachePath = join(CACHE_DIR, "today.json");
+  const dayKey = todayKey();
+  const cached = readCache<TodayTotals>(cachePath, 60_000, dayKey);
+  if (cached) return cached;
+
+  try {
+    const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+    const core = new TokmeterCore();
+    const records = await core.scan({ today: true });
+    let cost = 0;
+    let inT = 0;
+    let outT = 0;
+    for (const r of records) {
+      cost += r.cost;
+      inT += r.inputTokens;
+      outT += r.outputTokens;
+    }
+    const totals: TodayTotals = { cost, in: inT, out: outT, day: dayKey };
+    writeCache(cachePath, totals, dayKey);
+    return totals;
   } catch {
     return null;
   }
@@ -238,42 +318,17 @@ export async function runStatusline(): Promise<void> {
       return;
     }
 
-    const parts: string[] = [];
-    const sep = ` ${C.chevron("❯")} `;
-
-    // ── Animated Logo with particle effect ──
-    const f = frame();
-    const pulse = PARTICLES.pulse[f];
-    const logo = `${C.title("【")}${rainbow("♾️")}${C.title("】")}${C.chevron(pulse)}`;
-    parts.push(logo);
-
-    // ── Project + Git with animated indicators ──
+    // ── Gather data ──
     const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
     const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
     const git = projectDir ? getGitInfo(projectDir) : null;
-
-    if (projectName) {
-      parts.push(`${C.accent(`📂${projectName}`)}`);
-      if (git) {
-        parts.push(`${C.input(`🌿${git.branch}`)}`);
-        if (git.dirty > 0) {
-          const dirtyIcon = f % 2 === 0 ? "✎" : "✏";
-          parts.push(`${C.warn(`${dirtyIcon}${git.dirty}`)}`);
-        }
-      }
-    }
-
-    // ── Model with activity indicator ──
     const modelId = input.model?.id ?? input.model?.display_name;
-    const modelIcon = PARTICLES.dots[f];
-    parts.push(`${C.think(`${modelIcon} ${shortModelName(modelId)}`)}`);
-
-    // ── Animated Cost ──
     const sessionCost = input.cost?.total_cost_usd ?? 0;
-    parts.push(animCost(sessionCost));
-
-    // ── Token Flow with Animation ──
+    const durationMs = input.cost?.total_duration_ms ?? 0;
     const tc = input.token_counts;
+    const ctxUsed = input.context_window?.total_input_tokens ?? 0;
+    const ctxMax = input.context_window?.context_window_size ?? 0;
+
     const tokens: TokenUsage = {
       inputTokens: tc?.input_tokens ?? 0,
       outputTokens: tc?.output_tokens ?? 0,
@@ -281,45 +336,7 @@ export async function runStatusline(): Promise<void> {
       cacheWriteTokens: tc?.cache_write_tokens ?? 0,
     };
 
-    if (tc) {
-      const tokenParts: string[] = [];
-
-      if (tc.input_tokens) {
-        const { arrow, intensity } = animTokenFlow(tc.input_tokens, "in");
-        tokenParts.push(`${C.input(`${arrow}${formatNumber(tc.input_tokens)}${intensity}`)}`);
-      }
-      if (tc.output_tokens) {
-        const { arrow, intensity } = animTokenFlow(tc.output_tokens, "out");
-        tokenParts.push(`${C.output(`${arrow}${formatNumber(tc.output_tokens)}${intensity}`)}`);
-      }
-      const cacheTotal = (tc.cache_read_tokens ?? 0) + (tc.cache_write_tokens ?? 0);
-      if (cacheTotal > 0) {
-        const { arrow, intensity } = animTokenFlow(cacheTotal, "cache");
-        tokenParts.push(`${C.cache(`${arrow}${formatNumber(cacheTotal)}${intensity}`)}`);
-      }
-
-      if (tokenParts.length > 0) parts.push(tokenParts.join(" "));
-
-      // ── Cache Hit Rate ──
-      const cacheRate = animCacheRate(tc.cache_read_tokens ?? 0, tc.cache_write_tokens ?? 0);
-      if (cacheRate) parts.push(cacheRate);
-    }
-
-    // ── Animated Context Bar ──
-    const ctxUsed = input.context_window?.total_input_tokens ?? 0;
-    const ctxMax = input.context_window?.context_window_size ?? 0;
-    if (ctxMax > 0) {
-      parts.push(animContextBar(ctxUsed, ctxMax));
-    }
-
-    // ── Burn Rate (after 1+ min) ──
-    const durationMs = input.cost?.total_duration_ms ?? 0;
-    if (durationMs > 60_000) {
-      const costPerHour = sessionCost / (durationMs / 3_600_000);
-      parts.push(animBurnRate(costPerHour));
-    }
-
-    // ── Daemon: Cross-Provider Aggregation (lazy import — ws may not be available) ──
+    // ── Daemon sync (background, non-blocking) ──
     const sessionId = input.session_id ?? `session-${Date.now()}`;
     let daemonResponse: DaemonResponse = { connected: false };
     try {
@@ -338,77 +355,167 @@ export async function runStatusline(): Promise<void> {
       );
     } catch {}
 
-    // ── Display Aggregated Stats (if daemon connected) ──
-    if (daemonResponse.connected && daemonResponse.aggregated) {
-      const agg = daemonResponse.aggregated;
+    // ── Build Powerline Segments ──
+    // One clean bar — no duplication. Each segment = one piece of info.
+    const seg = segmentColors();
+    const pl: { text: string; bg: string }[] = [];
 
-      // Show aggregated totals from all providers
-      if (agg.sessions > 1) {
-        const aggIcon = f % 2 === 0 ? "🌐" : "🔗";
-        const allTokens = `${C.input(`↑${formatNumber(agg.totalInputTokens)}`)} ${C.output(`↓${formatNumber(agg.totalOutputTokens)}`)}`;
-        const providers =
-          agg.providers.length > 1 ? `${C.dim("│")}${agg.providers.length} providers` : "";
-        parts.push(
-          `${C.title(`${aggIcon} All:`)}${C.cost(formatCost(agg.totalCost))} ${allTokens} ${providers}`
-        );
-      }
+    // Icon sets — Nerd Font (opt-in) or animated Unicode (default, works everywhere)
+    // Each icon is an 8-frame animation array. frame() cycles 0-7 at ~200ms, so
+    // each statusline invocation picks a different frame — creating the shimmer.
+    const nf = useNerdFont();
+    const af = frame(); // animation frame for icon cycling
 
-      // Show per-model breakdown from all sessions
-      if (agg.byModel.length > 1) {
-        const modelSegment = agg.byModel
-          .slice(0, 4)
-          .map((m) => `${C.think(m.model)} ${C.cost(formatCost(m.cost))}`)
-          .join(C.dim(" · "));
-        parts.push(modelSegment);
-      }
-    } else {
-      // ── Fallback: Today's Totals from disk scan (lazy import) ──
-      try {
-        const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
-        const core = new TokmeterCore();
-        const todayRecords = await core.scan({ today: true });
-        if (todayRecords.length > 0) {
-          let todayCost = 0;
-          let todayIn = 0;
-          let todayOut = 0;
-          const byModel = new Map<string, { cost: number; in: number; out: number }>();
-
-          for (const r of todayRecords) {
-            todayCost += r.cost;
-            todayIn += r.inputTokens;
-            todayOut += r.outputTokens;
-
-            const shortModel = r.model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
-            const entry = byModel.get(shortModel) ?? { cost: 0, in: 0, out: 0 };
-            entry.cost += r.cost;
-            entry.in += r.inputTokens;
-            entry.out += r.outputTokens;
-            byModel.set(shortModel, entry);
-          }
-
-          // Animated today summary
-          const todayIcon = f % 2 === 0 ? "📊" : "📈";
-          const todayStr = `${C.accent(`${todayIcon} today ${formatCost(todayCost)}`)} ${C.dim("│")} ${C.input(`↑${formatNumber(todayIn)}`)} ${C.output(`↓${formatNumber(todayOut)}`)}`;
-          parts.push(todayStr);
-
-          // Per-model breakdown
-          const activeModels = [...byModel.entries()]
-            .filter(([, m]) => m.in + m.out > 0)
-            .sort((a, b) => b[1].cost - a[1].cost);
-
-          if (activeModels.length > 1) {
-            const modelSegment = activeModels
-              .slice(0, 3)
-              .map(([model, m]) => `${C.think(model)} ${C.cost(formatCost(m.cost))}`)
-              .join(C.dim(" · "));
-            parts.push(modelSegment);
-          }
+    const ICON = nf
+      ? {
+          infinity: "【♾️】",
+          agent: "\uDB83\uDD70", // 󰍰 nf-md-robot
+          git: "\uF113", //  nf-fa-git
+          turn: "\uF148", //  nf-fa-level_up
+          context: "\uDB80\uDF5B", // 󰍛 nf-md-memory
+          folder: "\uDB82\uDCDE", // 󰳞 nf-md-folder
+          dollar: "\uF155", //  nf-fa-dollar
+          flame: "\uF490", //  nf-oct-flame
+          up: "\uF062", //  nf-fa-arrow_up
+          down: "\uF063", //  nf-fa-arrow_down
+          refresh: "\uF021", //  nf-fa-refresh
+          bolt: "\uF0E7", //  nf-fa-bolt
+          calendar: "\uF073", //  nf-fa-calendar
         }
-      } catch {}
+      : {
+          // Disney pixel animation: width-stable, anchored, no horizontal jitter.
+          //
+          // Width-stability rules:
+          //   - Every animation frame must occupy the same number of terminal cells.
+          //   - Emoji are width-2 (sometimes 1 on legacy terminals); when paired
+          //     with text characters, the total width can shift. We avoid mixing.
+          //   - Sparkle accents use the same emoji-style chars as the base so the
+          //     trailing slot stays width-2 in every frame.
+          //
+          // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
+          // emoji. The infinity NEVER shifts position — only the trailing accent
+          // changes. (No more leading-space frames that shift the whole logo.)
+          infinity: ["♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧"][af],
+          // The Genie — both frames are width-stable (genie + sparkle emoji slot).
+          // Frame 0: genie + invisible joiner (width 2 + 1)
+          // Frame 1: genie + sparkle (width 2 + 1)
+          // Both slots are exactly 1 visual cell wide.
+          agent: ["🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞"][af],
+          git: "🌿",
+          turn: ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
+          context: "",
+          folder: "",
+          dollar: "💰",
+          flame: "🔥",
+          // Token arrows: stick to 1-cell text chars (no emoji ⬆⬇ which cause jitter).
+          up: ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
+          down: ["↓", "↓", "↓", "↘", "↓", "↓", "↓", "↘"][af],
+          refresh: ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
+          bolt: ["⚡", "↯", "⚡", "↯", "⚡", "↯", "⚡", "↯"][af],
+          calendar: "",
+        };
+
+    // Hero logo bg: breathes through purple shades (indigo → violet → magenta → back).
+    // Asymmetric timing — slow rise (frames 0-3), peak (4), slow fall (5-7).
+    const logoBgCycle = [
+      "#4338ca", // indigo (rest)
+      "#5b21b6", // deep violet
+      "#6d28d9", // violet
+      "#7c3aed", // bright violet
+      "#8b5cf6", // peak — radiant violet
+      "#7c3aed", // bright violet
+      "#6d28d9", // violet
+      "#5b21b6", // deep violet
+    ];
+    const logoBg = logoBgCycle[af];
+
+    // Helper: prefix icon only if non-empty
+    const ic = (icon: string, text: string) => (icon ? `${icon} ${text}` : text);
+
+    // 1. Logo — its own segment with breathing purple bg cycle
+    pl.push({ text: ICON.infinity, bg: logoBg });
+
+    // 2. Project — small caps typography (Pixar-magazine type system).
+    // Truncate long names so the bar doesn't wrap on 80-col terms.
+    if (projectName) {
+      const trunc = projectName.length > 24 ? `${projectName.slice(0, 23)}…` : projectName;
+      pl.push({ text: ic(ICON.folder, defaultTheme.name(trunc)), bg: seg.project });
     }
 
-    // ── Output ──
-    process.stdout.write(parts.join(sep));
+    // 3. Model / Agent — pulsing activity indicator
+    if (modelId) {
+      pl.push({ text: `${ICON.agent} ${shortModelName(modelId)}`, bg: seg.model });
+    }
+
+    // 4. Context — bar speaks for itself, no redundant icon needed
+    if (ctxMax > 0) {
+      const pctLeft = Math.max(0, 100 - (ctxUsed / ctxMax) * 100);
+      const ctxBar = formatContextMini(ctxUsed, ctxMax);
+      pl.push({ text: ic(ICON.context, `${ctxBar} ${pctLeft.toFixed(1)}% left`), bg: seg.context });
+    }
+
+    // 5. Git —  git icon (like Codex)
+    if (git) {
+      const dirty = git.dirty > 0 ? ` ${ICON.turn}${git.dirty}` : "";
+      pl.push({ text: `${ICON.git} ${git.branch}${dirty}`, bg: seg.git });
+    }
+
+    // 6. Cost
+    if (sessionCost > 0) {
+      pl.push({ text: `${ICON.dollar} ${formatCost(sessionCost)}`, bg: seg.cost });
+    }
+
+    // ── Suffix: token flow + extras (plain text after powerline) ──
+    const suffix: string[] = [];
+
+    // Token flow with Nerd Font arrows
+    if (tc) {
+      const tParts: string[] = [];
+      if (tc.input_tokens) tParts.push(C.input(`${ICON.up}${formatNumber(tc.input_tokens)}`));
+      if (tc.output_tokens) tParts.push(C.output(`${ICON.down}${formatNumber(tc.output_tokens)}`));
+      const cacheTotal = (tc.cache_read_tokens ?? 0) + (tc.cache_write_tokens ?? 0);
+      if (cacheTotal > 0) tParts.push(C.cache(`${ICON.refresh}${formatNumber(cacheTotal)}`));
+      if (tParts.length > 0) suffix.push(tParts.join(" "));
+
+      // Cache hit rate
+      const cacheRate = animCacheRate(tc.cache_read_tokens ?? 0, tc.cache_write_tokens ?? 0);
+      if (cacheRate) suffix.push(cacheRate);
+    }
+
+    // Burn rate
+    if (durationMs > 60_000 && sessionCost > 0) {
+      const rate = sessionCost / (durationMs / 3_600_000);
+      suffix.push(C.warn(`${ICON.flame}${formatCost(rate)}/hr`));
+    }
+
+    // Daemon aggregated stats — only if daemon is reachable AND has data.
+    let showedAggregated = false;
+    if (daemonResponse.connected && daemonResponse.aggregated) {
+      const agg = daemonResponse.aggregated;
+      if (agg.sessions > 1) {
+        suffix.push(
+          `${C.title("⊕")}${C.cost(formatCost(agg.totalCost))} ${C.input(`${ICON.up}${formatNumber(agg.totalInputTokens)}`)} ${C.output(`${ICON.down}${formatNumber(agg.totalOutputTokens)}`)}`
+        );
+        showedAggregated = true;
+      }
+    }
+
+    // Today's totals — cached for 60s so we don't full-scan every 200ms.
+    // Only fetch when we didn't already show aggregated multi-session data.
+    if (!showedAggregated) {
+      const today = await getTodayTotalsCached();
+      if (today && today.cost > 0) {
+        // "today" in italic math — ephemeral typography for transient data
+        suffix.push(
+          `${C.accent(italicMath("today"))} ${C.cost(formatCost(today.cost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+        );
+      }
+    }
+
+    // ── Output: powerline bar + suffix ──
+    const bar = powerline(pl);
+    const trail = suffix.length > 0 ? ` ${suffix.join(` ${C.dim("│")} `)}` : "";
+    process.stdout.write(bar + trail);
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
     try {

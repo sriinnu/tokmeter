@@ -51,10 +51,18 @@ export class ClaudeCodeParser implements SessionParser {
           : await readJsonlFile<ClaudeMessage>(file);
 
       const newRecords: TokenRecord[] = [];
+      // Dedup: Claude Code streaming events can emit identical usage blocks
+      // for the same assistant message. Track the last usage key per file
+      // and skip consecutive duplicates.
+      let lastUsageKey = "";
       for (const msg of lines) {
         if (msg.type !== "assistant" || !msg.message?.usage) continue;
 
         const usage = msg.message.usage;
+        const usageKey = `${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`;
+        if (usageKey === lastUsageKey) continue;
+        lastUsageKey = usageKey;
+
         newRecords.push(
           createRecord({
             timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
