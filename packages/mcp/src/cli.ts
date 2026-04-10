@@ -147,7 +147,7 @@ switch (command) {
   case "daemon": {
     const { runDaemonCLI } = await import("./daemon/server.js");
     const daemonCmd = process.argv[3] ?? "status";
-    runDaemonCLI(daemonCmd);
+    await runDaemonCLI(daemonCmd);
     break;
   }
 
