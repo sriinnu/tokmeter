@@ -694,15 +694,26 @@ async function readBody(req: IncomingMessage): Promise<any> {
 
 // ─── CLI Entry Point ────────────────────────────────────────────────────
 
-export function runDaemonCLI(command: string): void {
+/**
+ * Internal flag: when the process is the DETACHED daemon child, it runs
+ * `startDaemon()` in the foreground. The parent (the CLI the user ran)
+ * forks, prints a confirmation, and exits immediately so the terminal
+ * isn't left hanging.
+ */
+const DAEMON_CHILD_FLAG = "__DRISHTI_DAEMON_CHILD__";
+
+export async function runDaemonCLI(command: string): Promise<void> {
   switch (command) {
     case "start":
       if (isDaemonRunning()) {
         console.log("Daemon is already running");
         console.log(getDaemonStatus());
-      } else {
+        break;
+      }
+
+      // If we ARE the detached child, run the daemon in the foreground.
+      if (process.env[DAEMON_CHILD_FLAG] === "1") {
         startDaemon();
-        // Keep process alive
         process.on("SIGINT", () => {
           stopDaemon();
           process.exit(0);
@@ -711,6 +722,35 @@ export function runDaemonCLI(command: string): void {
           stopDaemon();
           process.exit(0);
         });
+        break;
+      }
+
+      // Otherwise, fork a detached child and exit the parent immediately.
+      // This is the classic Unix daemonization pattern — the user's terminal
+      // gets its prompt back right away, the daemon runs in the background,
+      // and closing the terminal doesn't kill the daemon.
+      //
+      // We use spawn() instead of fork() because fork() inherits the ESM
+      // module graph and can't be combined with top-level require(). spawn()
+      // starts a clean Node process with the same argv.
+      {
+        const { spawn } = await import("node:child_process");
+        const child = spawn(process.execPath, [process.argv[1], "daemon", "start"], {
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, [DAEMON_CHILD_FLAG]: "1" },
+        });
+        child.unref();
+
+        // Give the child a moment to write the PID file, then confirm.
+        await new Promise((r) => setTimeout(r, 800));
+        if (isDaemonRunning()) {
+          console.log("【♾️】 Drishti Daemon started (background)");
+          console.log(getDaemonStatus());
+        } else {
+          console.log("【♾️】 Daemon starting… (check `drishti daemon status` in a moment)");
+        }
+        process.exit(0);
       }
       break;
 
@@ -719,7 +759,13 @@ export function runDaemonCLI(command: string): void {
         const { pid } = getDaemonStatus();
         if (pid) {
           process.kill(pid, "SIGTERM");
-          console.log("Daemon stopped");
+          // Wait for the daemon to actually exit and clean up its PID file.
+          let stopRetries = 10;
+          while (stopRetries > 0 && isDaemonRunning()) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+            stopRetries--;
+          }
+          console.log(isDaemonRunning() ? "Daemon still shutting down…" : "Daemon stopped");
         }
       } else {
         console.log("Daemon is not running");
@@ -733,15 +779,20 @@ export function runDaemonCLI(command: string): void {
     case "restart":
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
-        if (pid) process.kill(pid, "SIGTERM");
+        if (pid) {
+          process.kill(pid, "SIGTERM");
+          // Wait for old process to die
+          let retries = 10;
+          while (retries > 0 && isDaemonRunning()) {
+            // Busy-wait 200ms — can't use require() in ESM, and this
+            // only runs during an explicit user-initiated restart.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+            retries--;
+          }
+        }
       }
-      setTimeout(() => {
-        startDaemon();
-        process.on("SIGINT", () => {
-          stopDaemon();
-          process.exit(0);
-        });
-      }, 1000);
+      // Delegate to "start" which handles forking
+      await runDaemonCLI("start");
       break;
 
     default:
