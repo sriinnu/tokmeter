@@ -13,7 +13,7 @@ import {
   createServer as createHttpServer,
 } from "node:http";
 import { homedir } from "node:os";
-import type { ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter-core";
+import type { ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
@@ -388,7 +388,7 @@ async function getHttpCore(): Promise<any> {
 
   _httpCorePromise = (async () => {
     try {
-      const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+      const { TokmeterCore } = await import("@sriinnu/tokmeter");
       const core = new TokmeterCore();
       await core.scan();
       _httpCore = { core, ts: Date.now() };
@@ -413,7 +413,7 @@ async function getHttpSummaryPayload(): Promise<{
       source: "live",
     };
   } catch (error) {
-    const { loadSummaryCache } = await import("@sriinnu/tokmeter-core");
+    const { loadSummaryCache } = await import("@sriinnu/tokmeter");
     const cached = loadSummaryCache(homedir());
 
     if (cached.summary) {
@@ -461,7 +461,7 @@ function startHttpApi(): void {
     const url = req.url ?? "/";
 
     try {
-      const { CleanupService } = await import("@sriinnu/tokmeter-core");
+      const { CleanupService } = await import("@sriinnu/tokmeter");
 
       // GET endpoints
       if (req.method === "GET") {
@@ -536,7 +536,7 @@ function startHttpApi(): void {
           const service = new CleanupService(core);
           json(res, service.listBackups());
         } else if (url === "/api/themes") {
-          const { listThemes } = await import("@sriinnu/tokmeter-core");
+          const { listThemes } = await import("@sriinnu/tokmeter");
           json(res, listThemes());
         } else {
           res.writeHead(404);
@@ -594,7 +594,7 @@ function startHttpApi(): void {
             json(res, { error: "confirm must be 'DELETE'" });
             return;
           }
-          const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+          const { TokmeterCore } = await import("@sriinnu/tokmeter");
           const core = new TokmeterCore();
           const service = new CleanupService(core);
           const { project, providers, since, until, today, week, month, backup } = body;
@@ -610,7 +610,7 @@ function startHttpApi(): void {
             json(res, { error: "confirm must be 'RESTORE'" });
             return;
           }
-          const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+          const { TokmeterCore } = await import("@sriinnu/tokmeter");
           const core = new TokmeterCore({ skipPricing: true });
           const service = new CleanupService(core);
           const result = service.restore(body.backup_id);

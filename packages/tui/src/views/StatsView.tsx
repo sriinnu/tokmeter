@@ -1,4 +1,4 @@
-import type { DailyEntry } from "@sriinnu/tokmeter-core";
+import type { DailyEntry } from "@sriinnu/tokmeter";
 import { Box, Text } from "ink";
 import { Heatmap } from "../components/Heatmap.js";
 import { T } from "../theme.js";

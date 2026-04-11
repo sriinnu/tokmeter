@@ -3,7 +3,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter-core";
+import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 
 function ask(question: string): Promise<string> {

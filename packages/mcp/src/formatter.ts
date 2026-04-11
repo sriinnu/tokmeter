@@ -5,7 +5,7 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
-import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tokmeter-core";
+import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tokmeter";
 import chalk, { type Chalk } from "chalk";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */

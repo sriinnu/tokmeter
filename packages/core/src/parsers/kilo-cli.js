@@ -1,0 +1,99 @@
+/**
+ * @sriinnu/tokmeter-core — Kilo CLI session parser.
+ *
+ * Reads from ~/.local/share/kilo/kilo.db (SQLite, fork of OpenCode).
+ * Kilo CLI shares the same database schema as OpenCode — a `messages` table
+ * with per-message token breakdowns and an optional `sessions` table for
+ * project/path context.
+ *
+ * Requires `better-sqlite3` as an optional peer dependency. If the dep
+ * isn't installed, we gracefully return an empty array.
+ */
+import { canonicalizeProjectName } from "../project-name.js";
+import { createRecord, expandHome, fileExists } from "./utils.js";
+export class KiloCliParser {
+  providerId = "kilo-cli";
+  async scan(homeDir) {
+    const dbPath = expandHome("~/.local/share/kilo/kilo.db", homeDir);
+    if (!(await fileExists(dbPath))) return [];
+    try {
+      // better-sqlite3 is an optional dependency — bail gracefully if missing
+      // @ts-ignore — optional import
+      const { default: Database } = await import("better-sqlite3");
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        return this.readMessages(db, dbPath);
+      } finally {
+        db.close();
+      }
+    } catch {
+      // better-sqlite3 not installed or DB read failed
+      return [];
+    }
+  }
+  /**
+   * Queries the `messages` table for assistant responses and maps each row
+   * to a TokenRecord. If a `sessions` table exists, we join on session_id
+   * to extract project paths.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readMessages(db, dbPath) {
+    const records = [];
+    // Build a session-id -> project-path lookup if the sessions table exists
+    const sessionProjects = this.loadSessionProjects(db);
+    const rows = db
+      .prepare(`SELECT model_id, provider_id, input_tokens, output_tokens,
+                reasoning_tokens, cache_read, cache_write, created_at,
+                session_id
+         FROM messages
+         WHERE role = 'assistant'`)
+      .all();
+    for (const row of rows) {
+      // Resolve project from session path, falling back to "kilo-cli"
+      const project = (row.session_id && sessionProjects.get(row.session_id)) || "kilo-cli";
+      records.push(
+        createRecord({
+          timestamp: row.created_at ?? Date.now(),
+          provider: "kilo-cli",
+          model: row.model_id || "unknown",
+          project,
+          sourceFile: dbPath,
+          inputTokens: row.input_tokens ?? 0,
+          outputTokens: row.output_tokens ?? 0,
+          reasoningTokens: row.reasoning_tokens ?? 0,
+          cacheReadTokens: row.cache_read ?? 0,
+          cacheWriteTokens: row.cache_write ?? 0,
+        })
+      );
+    }
+    return records;
+  }
+  /**
+   * Attempts to load project paths from a `sessions` table.
+   * Returns a Map<session_id, project_name>. If the table doesn't exist
+   * (schema variation), returns an empty map — no error.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loadSessionProjects(db) {
+    const map = new Map();
+    try {
+      // Check if the sessions table exists before querying
+      const tableCheck = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        .get();
+      if (!tableCheck) return map;
+      // Try path first, then cwd, then title — different forks may use different columns
+      const rows = db.prepare("SELECT id, title, path, cwd FROM sessions").all();
+      for (const row of rows) {
+        const project = row.path || row.cwd || row.title || undefined;
+        if (project) {
+          map.set(row.id, canonicalizeProjectName(project, "kilo-cli"));
+        }
+      }
+    } catch {
+      // Sessions table missing or has a different schema — that's fine,
+      // we'll just use the default "kilo-cli" project name
+    }
+    return map;
+  }
+}

@@ -11,7 +11,7 @@ import {
   CleanupService,
   type ProjectSummary,
   type TokmeterCore,
-} from "@sriinnu/tokmeter-core";
+} from "@sriinnu/tokmeter";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { T } from "../theme.js";

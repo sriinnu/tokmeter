@@ -1,0 +1,97 @@
+/**
+ * @sriinnu/tokmeter-core — OpenCode session parser.
+ *
+ * Reads from ~/.local/share/opencode/opencode.db (SQLite, v1.2+)
+ * or ~/.local/share/opencode/storage/message/ (legacy JSON).
+ */
+import { canonicalizeProjectName } from "../project-name.js";
+import { createRecord, expandHome, fileExists, findFiles, readJsonFile } from "./utils.js";
+export class OpenCodeParser {
+  providerId = "opencode";
+  async scan(homeDir) {
+    const records = [];
+    // Try SQLite first (v1.2+) — requires better-sqlite3 or similar optional dep
+    const dbPath = expandHome("~/.local/share/opencode/opencode.db", homeDir);
+    try {
+      // @ts-ignore — better-sqlite3 is optional
+      const { default: Database } = await import("better-sqlite3");
+      if (await fileExists(dbPath)) {
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          const sessionProjects = this.loadSessionProjects(db);
+          const rows = db
+            .prepare(
+              "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id FROM messages WHERE role = 'assistant'"
+            )
+            .all();
+          for (const row of rows) {
+            const project = (row.session_id && sessionProjects.get(row.session_id)) || "opencode";
+            records.push(
+              createRecord({
+                timestamp: row.created_at ?? Date.now(),
+                provider: "opencode",
+                model: row.model_id || "unknown",
+                project,
+                sourceFile: dbPath,
+                inputTokens: row.input_tokens ?? 0,
+                outputTokens: row.output_tokens ?? 0,
+                reasoningTokens: row.reasoning_tokens ?? 0,
+                cacheReadTokens: row.cache_read ?? 0,
+                cacheWriteTokens: row.cache_write ?? 0,
+              })
+            );
+          }
+        } finally {
+          db.close();
+        }
+        return records;
+      }
+    } catch {
+      // better-sqlite3 not available or DB read failed — fall through to legacy JSON
+    }
+    // Legacy JSON format
+    const storageDir = expandHome("~/.local/share/opencode/storage/message", homeDir);
+    const jsonFiles = await findFiles(storageDir, (f) => f.endsWith(".json"), 3);
+    for (const file of jsonFiles) {
+      const msg = await readJsonFile(file);
+      if (!msg || msg.role !== "assistant" || !msg.tokens) continue;
+      records.push(
+        createRecord({
+          timestamp: msg.time?.created ?? Date.now(),
+          provider: "opencode",
+          model: msg.modelID || "unknown",
+          project: "opencode",
+          sourceFile: file,
+          inputTokens: msg.tokens.input ?? 0,
+          outputTokens: msg.tokens.output ?? 0,
+          reasoningTokens: msg.tokens.reasoning ?? 0,
+          cacheReadTokens: msg.tokens.cache?.read ?? 0,
+          cacheWriteTokens: msg.tokens.cache?.write ?? 0,
+        })
+      );
+    }
+    return records;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loadSessionProjects(db) {
+    const map = new Map();
+    try {
+      const tableCheck = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        .get();
+      if (!tableCheck) {
+        return map;
+      }
+      const rows = db.prepare("SELECT id, title, path, cwd FROM sessions").all();
+      for (const row of rows) {
+        const project = row.path || row.cwd || row.title || undefined;
+        if (project) {
+          map.set(row.id, canonicalizeProjectName(project, "opencode"));
+        }
+      }
+    } catch {
+      return map;
+    }
+    return map;
+  }
+}
