@@ -1,6 +1,9 @@
 node_modules/
 dist/
 *.tsbuildinfo
+# Prevent tsc emit from leaking into src dirs
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
 .DS_Store
 .env
 .env.local
