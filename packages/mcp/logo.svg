@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Background — deep twilight sky -->
+    <radialGradient id="sky" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#2D1B69"/>
+      <stop offset="60%" stop-color="#1A0E3E"/>
+      <stop offset="100%" stop-color="#0D0821"/>
+    </radialGradient>
+
+    <!-- Eye outer gradient — cosmic iris -->
+    <radialGradient id="iris-outer" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7B68EE"/>
+      <stop offset="50%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#4834D4"/>
+    </radialGradient>
+
+    <!-- Eye inner gradient — warm amber pupil -->
+    <radialGradient id="pupil" cx="45%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#FFD93D"/>
+      <stop offset="40%" stop-color="#FF8C00"/>
+      <stop offset="100%" stop-color="#CC5500"/>
+    </radialGradient>
+
+    <!-- Observatory dome gradient -->
+    <linearGradient id="dome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9B8CE8"/>
+      <stop offset="100%" stop-color="#6C5CE7"/>
+    </linearGradient>
+
+    <!-- Observatory base gradient -->
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4834D4"/>
+      <stop offset="100%" stop-color="#2D1B69"/>
+    </linearGradient>
+
+    <!-- Glow around the eye -->
+    <radialGradient id="eye-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD93D" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#FFD93D" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Vision beam gradient -->
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFD93D" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#FFD93D" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Shadow filter -->
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+
+    <!-- Glow filter for the eye -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft star glow -->
+    <filter id="star-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle — night sky -->
+  <circle cx="128" cy="128" r="120" fill="url(#sky)" stroke="#4834D4" stroke-width="2"/>
+
+  <!-- Stars scattered across the sky -->
+  <g fill="#FFF" opacity="0.8">
+    <circle cx="45" cy="38" r="1.5"/>
+    <circle cx="198" cy="52" r="1"/>
+    <circle cx="72" cy="28" r="1"/>
+    <circle cx="165" cy="30" r="1.5"/>
+    <circle cx="210" cy="85" r="1"/>
+    <circle cx="35" cy="80" r="1"/>
+    <circle cx="88" cy="48" r="0.8"/>
+    <circle cx="145" cy="22" r="0.8"/>
+    <circle cx="220" cy="42" r="1.2"/>
+    <circle cx="28" cy="55" r="0.8"/>
+    <circle cx="112" cy="18" r="1"/>
+  </g>
+  <!-- Glowing stars -->
+  <g filter="url(#star-glow)" fill="#FFD93D" opacity="0.6">
+    <circle cx="55" cy="45" r="2"/>
+    <circle cx="190" cy="38" r="2.5"/>
+    <circle cx="215" cy="70" r="1.8"/>
+    <circle cx="38" cy="95" r="2"/>
+  </g>
+
+  <!-- Vision beam — triangular light cone below the eye -->
+  <path d="M 100 148 L 128 128 L 156 148 L 180 220 L 76 220 Z" fill="url(#beam)" opacity="0.35"/>
+
+  <!-- Observatory dome structure -->
+  <g filter="url(#shadow)">
+    <!-- Dome (semicircle) -->
+    <path d="M 70 142 A 58 50 0 0 1 186 142 L 186 142 L 70 142 Z" fill="url(#dome)"/>
+
+    <!-- Dome slit (opening for the eye) -->
+    <rect x="124" y="92" width="8" height="50" fill="#1A0E3E" opacity="0.5" rx="2"/>
+
+    <!-- Dome ring / equator band -->
+    <ellipse cx="128" cy="142" rx="60" ry="8" fill="#4834D4" stroke="#5B4BD4" stroke-width="1"/>
+  </g>
+
+  <!-- Observatory base / pedestal -->
+  <g filter="url(#shadow)">
+    <rect x="72" y="142" width="112" height="45" rx="4" fill="url(#base)"/>
+    <!-- Base detail lines (pixel art bands) -->
+    <rect x="76" y="152" width="104" height="2" rx="1" fill="#5B4BD4" opacity="0.4"/>
+    <rect x="76" y="170" width="104" height="2" rx="1" fill="#5B4BD4" opacity="0.4"/>
+    <!-- Base bottom with wider foundation -->
+    <rect x="60" y="183" width="136" height="16" rx="6" fill="#2D1B69" stroke="#4834D4" stroke-width="1"/>
+  </g>
+
+  <!-- The Eye — दृष्टि -->
+  <g transform="translate(128, 118)">
+    <!-- Eye glow aura -->
+    <ellipse cx="0" cy="0" rx="48" ry="32" fill="url(#eye-glow)"/>
+
+    <!-- Eye white (almond shape) -->
+    <ellipse cx="0" cy="0" rx="38" ry="24" fill="#F0E6FF" stroke="#9B8CE8" stroke-width="1.5"/>
+
+    <!-- Iris — large cosmic purple -->
+    <circle cx="0" cy="0" r="20" fill="url(#iris-outer)" filter="url(#glow)"/>
+
+    <!-- Iris detail rings -->
+    <circle cx="0" cy="0" r="17" fill="none" stroke="#8B7AE8" stroke-width="0.5" opacity="0.6"/>
+    <circle cx="0" cy="0" r="14" fill="none" stroke="#9B8CE8" stroke-width="0.3" opacity="0.4"/>
+
+    <!-- Iris texture — radial lines -->
+    <g stroke="#5B4BD4" stroke-width="0.4" opacity="0.3">
+      <line x1="0" y1="-20" x2="0" y2="-10"/>
+      <line x1="10" y1="-17" x2="5" y2="-9"/>
+      <line x1="17" y1="-10" x2="9" y2="-5"/>
+      <line x1="20" y1="0" x2="10" y2="0"/>
+      <line x1="17" y1="10" x2="9" y2="5"/>
+      <line x1="10" y1="17" x2="5" y2="9"/>
+      <line x1="0" y1="20" x2="0" y2="10"/>
+      <line x1="-10" y1="17" x2="-5" y2="9"/>
+      <line x1="-17" y1="10" x2="-9" y2="5"/>
+      <line x1="-20" y1="0" x2="-10" y2="0"/>
+      <line x1="-17" y1="-10" x2="-9" y2="-5"/>
+      <line x1="-10" y1="-17" x2="-5" y2="-9"/>
+    </g>
+
+    <!-- Pupil — warm amber center -->
+    <circle cx="0" cy="0" r="9" fill="url(#pupil)"/>
+
+    <!-- Inner pupil (deep center) -->
+    <circle cx="0" cy="0" r="4" fill="#1A0E3E"/>
+
+    <!-- Eye highlights — Pixar-style reflections -->
+    <ellipse cx="-5" cy="-6" rx="4" ry="3" fill="#FFF" opacity="0.85" transform="rotate(-15, -5, -6)"/>
+    <circle cx="5" cy="4" r="2" fill="#FFF" opacity="0.4"/>
+
+    <!-- Subtle eyelid shadow at top -->
+    <path d="M -38 0 Q -20 -28 0 -24 Q 20 -28 38 0" fill="#2D1B69" opacity="0.15"/>
+  </g>
+
+  <!-- Cute eyebrow — one expressive arch -->
+  <path d="M 96 82 Q 128 68 160 82" fill="none" stroke="#9B8CE8" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Tiny antenna on the dome -->
+  <line x1="128" y1="92" x2="128" y2="72" stroke="#9B8CE8" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="128" cy="70" r="4" fill="#FFD93D" stroke="#FF8C00" stroke-width="1"/>
+  <!-- Antenna glow -->
+  <circle cx="128" cy="70" r="7" fill="#FFD93D" opacity="0.15"/>
+
+  <!-- Ground / horizon line -->
+  <line x1="20" y1="200" x2="236" y2="200" stroke="#4834D4" stroke-width="1" opacity="0.3"/>
+
+  <!-- Small ground details — pixel art hills/terrain -->
+  <path d="M 18 210 Q 50 195 80 210 Q 110 200 140 210 Q 170 196 200 210 Q 225 202 240 210" fill="none" stroke="#2D1B69" stroke-width="2" opacity="0.5"/>
+
+  <!-- दृष्टि text at the bottom -->
+  <text x="128" y="230" text-anchor="middle" font-family="'Courier New', monospace" font-size="12" font-weight="bold" fill="#9B8CE8" letter-spacing="2" opacity="0.8">DRISHTI</text>
+  <text x="128" y="244" text-anchor="middle" font-family="serif" font-size="10" fill="#FFD93D" opacity="0.6">&#x0926;&#x0943;&#x0937;&#x094D;&#x091F;&#x093F;</text>
+</svg>

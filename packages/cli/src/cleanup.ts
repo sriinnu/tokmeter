@@ -8,14 +8,14 @@
  */
 
 import { createInterface } from "node:readline";
-import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter-core";
+import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
 import type {
   CleanupFilter,
   CleanupPreview,
   ProjectSummary,
   ProviderId,
   ScanOptions,
-} from "@sriinnu/tokmeter-core";
+} from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 
 // ─── Formatters ──────────────────────────────────────────────────────────

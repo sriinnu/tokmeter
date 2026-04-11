@@ -1,0 +1,62 @@
+{
+  "name": "@sriinnu/tokmeter",
+  "version": "0.3.0",
+  "description": "Token usage tracking for AI coding agents — parsers, CLI, and TUI",
+  "type": "module",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui/index.d.ts",
+      "import": "./dist/tui/index.js"
+    }
+  },
+  "bin": {
+    "tokmeter": "dist/cli/cli.js",
+    "tokmeter-tui": "dist/tui/index.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist/core dist/cli dist/tui && cp -r ../core/dist/* dist/core/ && cp -r ../cli/dist/* dist/cli/ && cp -r ../tui/dist/* dist/tui/"
+  },
+  "dependencies": {
+    "@sriinnu/kosha-discovery": "^0.6.0",
+    "cli-table3": "^0.6.5",
+    "chalk": "^5.3.0",
+    "ink": "^5.0.0",
+    "react": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sriinnu/tokmeter.git",
+    "directory": "packages/tokmeter"
+  },
+  "keywords": [
+    "tokens",
+    "ai",
+    "llm",
+    "usage-tracking",
+    "pricing",
+    "cli",
+    "tui",
+    "claude",
+    "anthropic"
+  ],
+  "engines": { "node": ">=18.0.0" },
+  "publishConfig": { "access": "public" }
+}

@@ -88,18 +88,8 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Publish @sriinnu/tokmeter-core
-        run: cd packages/core && npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @sriinnu/tokmeter-cli
-        run: cd packages/cli && npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @sriinnu/tokmeter-tui
-        run: cd packages/tui && npm publish --provenance --access public
+      - name: Publish @sriinnu/tokmeter
+        run: cd packages/tokmeter && npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

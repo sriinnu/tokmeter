@@ -1,4 +1,4 @@
-import type { ModelSummary } from "@sriinnu/tokmeter-core";
+import type { ModelSummary } from "@sriinnu/tokmeter";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
 import { T } from "../theme.js";

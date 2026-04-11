@@ -18,7 +18,7 @@ import {
   type TokenRecord,
   TokmeterCore,
   localDateKey,
-} from "@sriinnu/tokmeter-core";
+} from "@sriinnu/tokmeter";
 
 // ─── Types ──────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@
  *   startLive();
  */
 
-import type { DailyEntry, ModelSummary, ProviderSummary } from "@sriinnu/tokmeter-core";
+import type { DailyEntry, ModelSummary, ProviderSummary } from "@sriinnu/tokmeter";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useState, useEffect, useMemo } from "react";
 import {

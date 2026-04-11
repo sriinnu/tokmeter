@@ -1,6 +1,7 @@
 {
   "name": "@sriinnu/tokmeter-tui",
   "version": "0.2.0",
+  "private": true,
   "description": "Token usage tracking TUI — interactive terminal UI with charts",
   "type": "module",
   "bin": {
@@ -12,7 +13,7 @@
     "dev": "bun src/index.tsx"
   },
   "dependencies": {
-    "@sriinnu/tokmeter-core": "workspace:*",
+    "@sriinnu/tokmeter": "workspace:*",
     "ink": "^5.0.0",
     "react": "^18.3.0"
   },

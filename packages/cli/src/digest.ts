@@ -6,8 +6,8 @@
  * JSON output for programmatic consumption.
  */
 
-import type { ScanOptions, TokenRecord } from "@sriinnu/tokmeter-core";
-import { TokmeterCore } from "@sriinnu/tokmeter-core";
+import type { ScanOptions, TokenRecord } from "@sriinnu/tokmeter";
+import { TokmeterCore } from "@sriinnu/tokmeter";
 import chalk from "chalk";
 import Table from "cli-table3";
 

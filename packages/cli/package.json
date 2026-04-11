@@ -1,6 +1,7 @@
 {
   "name": "@sriinnu/tokmeter-cli",
   "version": "0.2.0",
+  "private": true,
   "description": "Token usage tracking CLI and automation helpers",
   "type": "module",
   "bin": {
@@ -20,7 +21,7 @@
     "dev": "bun src/cli.ts"
   },
   "dependencies": {
-    "@sriinnu/tokmeter-core": "workspace:*",
+    "@sriinnu/tokmeter": "workspace:*",
     "@sriinnu/drishti": "workspace:*",
     "cli-table3": "^0.6.5",
     "chalk": "^5.3.0"

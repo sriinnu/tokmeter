@@ -1,9 +1,4 @@
-import type {
-  DailyEntry,
-  ModelSummary,
-  ProviderSummary,
-  TokmeterStats,
-} from "@sriinnu/tokmeter-core";
+import type { DailyEntry, ModelSummary, ProviderSummary, TokmeterStats } from "@sriinnu/tokmeter";
 import { Box, Text } from "ink";
 import { BarChart } from "../components/BarChart.js";
 import { Sparkline } from "../components/Sparkline.js";
