@@ -124,7 +124,13 @@ export const webTheme = {
     body: { size: "14px", weight: 500, lineHeight: 1.5, letterSpacing: "0" } as const,
     caption: { size: "12px", weight: 500, lineHeight: 1.5, letterSpacing: "0.01em" } as const,
     micro: { size: "11px", weight: 600, lineHeight: 1.4, letterSpacing: "0.02em" } as const,
-    mono: { size: "13px", weight: 500, lineHeight: 1.5, letterSpacing: "0", fontFamily: "'JetBrains Mono', 'SF Mono', monospace" } as const,
+    mono: {
+      size: "13px",
+      weight: 500,
+      lineHeight: 1.5,
+      letterSpacing: "0",
+      fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+    } as const,
   },
 
   /** Spacing scale — 4px base, 8 stops */

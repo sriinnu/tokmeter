@@ -64,7 +64,16 @@ export class SqliteCleaner implements SessionCleaner {
       // DB not available or better-sqlite3 not installed
     }
 
-    return targets;
+    //
+    // Do not emit sqlite-row cleanup targets here. This method does not receive
+    // any date/project/session filter or matched-row identifiers, so the only
+    // target we can describe is an unscoped delete such as:
+    //   WHERE role = 'assistant'
+    // That is unsafe because filtered cleanups could be widened into deleting
+    // unrelated rows from the entire messages table. Fail closed until scoped
+    // identifiers can be plumbed into the cleaner.
+    void homeDir;
+    return [];
   }
 
   /**

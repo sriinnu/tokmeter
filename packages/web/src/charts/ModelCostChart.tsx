@@ -17,7 +17,11 @@ const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
 
 export function ModelCostChart({ models }: Props) {
   if (models.length === 0) {
-    return <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>No model data to display.</div>;
+    return (
+      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>
+        No model data to display.
+      </div>
+    );
   }
 
   const top = models.slice(0, 15);
@@ -33,9 +37,22 @@ export function ModelCostChart({ models }: Props) {
       },
     ],
     layout: {
-      title: { text: "Model Cost Comparison", font: { color: webTheme.text.primary, size: titleFontSize } },
-      xaxis: { title: "Model", tickangle: -45, gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
-      yaxis: { title: "Cost ($)", rangemode: "tozero", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+      title: {
+        text: "Model Cost Comparison",
+        font: { color: webTheme.text.primary, size: titleFontSize },
+      },
+      xaxis: {
+        title: "Model",
+        tickangle: -45,
+        gridcolor: webTheme.charts.grid,
+        color: webTheme.charts.axis,
+      },
+      yaxis: {
+        title: "Cost ($)",
+        rangemode: "tozero",
+        gridcolor: webTheme.charts.grid,
+        color: webTheme.charts.axis,
+      },
       margin: { b: 120 },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
