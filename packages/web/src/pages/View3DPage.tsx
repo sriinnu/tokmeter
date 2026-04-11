@@ -78,15 +78,28 @@ export function View3DPage() {
           },
         ],
         layout: {
-          title: { text: "3D Token Usage Surface", font: { color: webTheme.text.primary, size: Number.parseInt(webTheme.typography.h3.size) } },
+          title: {
+            text: "3D Token Usage Surface",
+            font: {
+              color: webTheme.text.primary,
+              size: Number.parseInt(webTheme.typography.h3.size),
+            },
+          },
           scene: {
             xaxis: { title: "Day", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
             yaxis: { title: "Week", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
-            zaxis: { title: "Tokens", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+            zaxis: {
+              title: "Tokens",
+              gridcolor: webTheme.charts.grid,
+              color: webTheme.charts.axis,
+            },
             camera: { eye: { x: 1.8, y: 1.8, z: 0.8 } },
           },
           paper_bgcolor: "transparent",
-          font: { color: webTheme.text.muted, size: Number.parseInt(webTheme.typography.body.size) },
+          font: {
+            color: webTheme.text.muted,
+            size: Number.parseInt(webTheme.typography.body.size),
+          },
           width: 900,
           height: 600,
         },

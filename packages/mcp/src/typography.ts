@@ -44,7 +44,7 @@ type CharTransform = (char: string) => string;
 function mathBlockTransform(
   lowercaseBase: number,
   uppercaseBase: number,
-  exceptions: ReadonlyMap<number, string> = new Map(),
+  exceptions: ReadonlyMap<number, string> = new Map()
 ): CharTransform {
   return (char: string): string => {
     const code = char.codePointAt(0) ?? 0;
@@ -137,8 +137,7 @@ const sansBoldTransform = mathBlockTransform(0x1d5ee, 0x1d5d4); // 𝘁𝗼𝗸�
 export function projectName(s: string): string {
   if (!s) return s;
   const [first, ...rest] = [...s]; // codePoint-safe spread
-  return applyTransform(frakturTransform, first)
-       + applyTransform(scriptTransform, rest.join(""));
+  return applyTransform(frakturTransform, first) + applyTransform(scriptTransform, rest.join(""));
 }
 
 /**
@@ -193,7 +192,7 @@ export function sansBold(s: string): string {
 }
 
 export const defaultTheme: StatuslineTheme = {
-  name: sansBold,         // reads as text, visually distinct
+  name: sansBold, // reads as text, visually distinct
   ephemeral: italicMath,
   emphasis: boldMath,
 };

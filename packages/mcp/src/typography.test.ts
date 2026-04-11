@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boldMath, italicMath, projectName, defaultTheme } from "./typography.js";
+import { boldMath, defaultTheme, italicMath, projectName } from "./typography.js";
 
 describe("projectName (Fraktur initial + Script body)", () => {
   it("renders a Fraktur first char + Script rest", () => {

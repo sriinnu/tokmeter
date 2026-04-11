@@ -156,7 +156,8 @@ describe("CodexParser", () => {
     // Note: the parser falls back to last_token_usage when delta is zero.
     // This test confirms the deduplication logic doesn't double-count.
     // The actual count depends on the fallback path — if last_token_usage
-    // is missing on the duplicate, only one record is emitted.
+    // The duplicate event produces zero deltas across all token buckets,
+    // so the parser skips it and avoids double-counting usage.
     expect(records.length).toBeGreaterThanOrEqual(1);
   });
 });
