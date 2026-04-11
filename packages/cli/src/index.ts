@@ -1,4 +1,4 @@
-import { PricingService, TokmeterCore } from "@sriinnu/tokmeter-core";
+import { PricingService, TokmeterCore } from "@sriinnu/tokmeter";
 import type {
   DailyEntry,
   ModelSummary,
@@ -6,7 +6,7 @@ import type {
   ScanOptions,
   TokmeterStats,
   TokmeterSummary,
-} from "@sriinnu/tokmeter-core";
+} from "@sriinnu/tokmeter";
 import { type CleanupArgs, runCleanup } from "./cleanup.js";
 import { type DigestArgs, runDigest } from "./digest.js";
 import { type RestoreArgs, runRestore } from "./restore.js";

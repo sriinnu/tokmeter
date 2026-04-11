@@ -3,7 +3,10 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@sriinnu/tokmeter": ["../core/dist/index.d.ts"]
+    }
   },
   "include": ["src"]
 }

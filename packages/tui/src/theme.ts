@@ -1,13 +1,13 @@
 /**
  * tokmeter-tui — Theme adapter.
  *
- * Loads the user's theme via @sriinnu/tokmeter-core and exposes a flat
+ * Loads the user's theme via @sriinnu/tokmeter and exposes a flat
  * map of role names → hex colors that can be passed directly to Ink's
  * Text `color` prop. Ink supports both color names ("cyan") and hex
  * strings ("#7c3aed"), so this adapter just substitutes one for the other.
  */
 
-import { loadUserTheme } from "@sriinnu/tokmeter-core";
+import { loadUserTheme } from "@sriinnu/tokmeter";
 
 const _theme = loadUserTheme();
 const c = _theme.colors;

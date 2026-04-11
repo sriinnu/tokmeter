@@ -14,8 +14,8 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { TokmeterCore } from "@sriinnu/tokmeter-core";
-import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter-core";
+import { TokmeterCore } from "@sriinnu/tokmeter";
+import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 
 // ---- Arg parser (lightweight, no deps) ----
@@ -452,7 +452,7 @@ async function main() {
   }
 
   if (args.command === "pricing") {
-    const { PricingService } = await import("@sriinnu/tokmeter-core");
+    const { PricingService } = await import("@sriinnu/tokmeter");
     const pricing = new PricingService();
     await pricing.init();
     const modelId = args.pricingModel;

@@ -16,7 +16,7 @@ import {
   type ScanOptions,
   type TokenRecord,
   TokmeterCore,
-} from "@sriinnu/tokmeter-core";
+} from "@sriinnu/tokmeter";
 import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────
@@ -122,8 +122,8 @@ function buildCleanupFilter(params: {
   since?: string;
   until?: string;
   scope?: string;
-}): import("@sriinnu/tokmeter-core").CleanupFilter {
-  const filter: import("@sriinnu/tokmeter-core").CleanupFilter = {};
+}): import("@sriinnu/tokmeter").CleanupFilter {
+  const filter: import("@sriinnu/tokmeter").CleanupFilter = {};
   if (params.project) filter.project = params.project;
   if (params.providers?.length) filter.providers = params.providers as ProviderId[];
   if (params.since) filter.since = params.since;
@@ -2844,7 +2844,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       try {
-        const { CleanupService } = await import("@sriinnu/tokmeter-core");
+        const { CleanupService } = await import("@sriinnu/tokmeter");
         const opts = buildScanOptions(params);
         const core = await getCore(opts);
         const service = new CleanupService(core);
@@ -2977,7 +2977,7 @@ export function createServer(): McpServer {
       }
 
       try {
-        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter");
         // Fresh core for destructive ops — never use stale cache
         const core = new Core();
         const service = new CleanupService(core);
@@ -3025,7 +3025,7 @@ export function createServer(): McpServer {
     "List available cleanup backups with metadata (date, size, providers, projects).",
     {},
     async () => {
-      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+      const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter");
       const core = new Core({ skipPricing: true });
       const service = new CleanupService(core);
       const backups = service.listBackups();
@@ -3071,7 +3071,7 @@ export function createServer(): McpServer {
       }
 
       try {
-        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter-core");
+        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter");
         const core = new Core({ skipPricing: true });
         const service = new CleanupService(core);
         const result = service.restore(params.backup_id);

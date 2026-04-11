@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { localDateKey } from "@sriinnu/tokmeter-core";
+import { localDateKey } from "@sriinnu/tokmeter";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
 import {
@@ -280,7 +280,7 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
   if (cached) return cached;
 
   try {
-    const { TokmeterCore } = await import("@sriinnu/tokmeter-core");
+    const { TokmeterCore } = await import("@sriinnu/tokmeter");
     const core = new TokmeterCore();
     const records = await core.scan({ today: true });
     let cost = 0;

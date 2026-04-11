@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Background gradient — warm sunset glow -->
+    <radialGradient id="bg" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#FFF8E7"/>
+      <stop offset="100%" stop-color="#FFE4B5"/>
+    </radialGradient>
+
+    <!-- Meter body gradient — rich teal -->
+    <linearGradient id="meter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4ECDC4"/>
+      <stop offset="100%" stop-color="#2B9A8F"/>
+    </linearGradient>
+
+    <!-- Meter face gradient — cream dial -->
+    <radialGradient id="face" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" stop-color="#FFFDF5"/>
+      <stop offset="100%" stop-color="#F5ECD7"/>
+    </radialGradient>
+
+    <!-- Needle gradient — coral orange -->
+    <linearGradient id="needle" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF6B6B"/>
+      <stop offset="100%" stop-color="#FF8E53"/>
+    </linearGradient>
+
+    <!-- Token coin gradient — golden -->
+    <linearGradient id="coin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="50%" stop-color="#FFA500"/>
+      <stop offset="100%" stop-color="#FF8C00"/>
+    </linearGradient>
+
+    <!-- Shadow filter -->
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#2B9A8F" flood-opacity="0.25"/>
+    </filter>
+
+    <!-- Subtle inner glow for the face -->
+    <filter id="glow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="120" fill="url(#bg)" stroke="#E8D5A3" stroke-width="2"/>
+
+  <!-- Meter body — rounded rectangle with character -->
+  <g filter="url(#shadow)">
+    <!-- Main meter body -->
+    <rect x="48" y="58" width="160" height="130" rx="24" ry="24" fill="url(#meter)"/>
+
+    <!-- Meter bezel ring -->
+    <rect x="52" y="62" width="152" height="122" rx="20" ry="20" fill="none" stroke="#3DBDB4" stroke-width="2" opacity="0.6"/>
+  </g>
+
+  <!-- Meter face (dial area) -->
+  <ellipse cx="128" cy="110" rx="56" ry="52" fill="url(#face)" stroke="#D4C9A8" stroke-width="1.5"/>
+
+  <!-- Scale tick marks (pixel-art style — small rectangles) -->
+  <!-- Far left -->
+  <rect x="80" y="118" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(-55, 84, 119)"/>
+  <!-- Left -->
+  <rect x="82" y="100" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(-35, 86, 101)"/>
+  <!-- Top-left -->
+  <rect x="90" y="82" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(-15, 94, 83)"/>
+  <!-- Top center -->
+  <rect x="124" y="68" width="8" height="3" rx="1" fill="#A89F8A"/>
+  <!-- Top-right -->
+  <rect x="158" y="82" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(15, 162, 83)"/>
+  <!-- Right -->
+  <rect x="166" y="100" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(35, 170, 101)"/>
+  <!-- Far right -->
+  <rect x="168" y="118" width="8" height="3" rx="1" fill="#A89F8A" transform="rotate(55, 172, 119)"/>
+
+  <!-- Color zones on the dial (green → yellow → red arc approximation) -->
+  <path d="M 82 130 A 50 46 0 0 1 108 72" fill="none" stroke="#4CAF50" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 108 72 A 50 46 0 0 1 148 72" fill="none" stroke="#FFC107" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+  <path d="M 148 72 A 50 46 0 0 1 174 130" fill="none" stroke="#FF5722" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- Needle — pointing to yellow zone (about 60% usage) -->
+  <g transform="rotate(15, 128, 125)">
+    <rect x="126" y="72" width="4" height="54" rx="2" fill="url(#needle)"/>
+    <!-- Needle cap -->
+    <circle cx="128" cy="125" r="6" fill="#FF6B6B" stroke="#E85555" stroke-width="1"/>
+    <circle cx="128" cy="125" r="3" fill="#FFF" opacity="0.7"/>
+  </g>
+
+  <!-- Token coin character — sitting on top of the meter -->
+  <g transform="translate(128, 42)">
+    <!-- Coin body -->
+    <circle cx="0" cy="0" r="22" fill="url(#coin)" stroke="#CC8400" stroke-width="1.5"/>
+    <!-- Inner ring -->
+    <circle cx="0" cy="0" r="16" fill="none" stroke="#FFE066" stroke-width="1.5" opacity="0.8"/>
+
+    <!-- "T" letter on coin (for Token) -->
+    <rect x="-7" y="-10" width="14" height="3" rx="1" fill="#8B6914"/>
+    <rect x="-1.5" y="-10" width="3" height="18" rx="1" fill="#8B6914"/>
+
+    <!-- Cute eyes on the coin -->
+    <ellipse cx="-7" cy="-1" rx="3.5" ry="4" fill="#FFF"/>
+    <ellipse cx="7" cy="-1" rx="3.5" ry="4" fill="#FFF"/>
+    <ellipse cx="-6" cy="0" rx="2" ry="2.5" fill="#2D2D2D"/>
+    <ellipse cx="8" cy="0" rx="2" ry="2.5" fill="#2D2D2D"/>
+    <!-- Eye highlights -->
+    <circle cx="-5.5" cy="-1" r="0.8" fill="#FFF"/>
+    <circle cx="8.5" cy="-1" r="0.8" fill="#FFF"/>
+
+    <!-- Cheerful smile -->
+    <path d="M -4 5 Q 0 9 4 5" fill="none" stroke="#8B6914" stroke-width="1.5" stroke-linecap="round"/>
+
+    <!-- Tiny blush marks -->
+    <ellipse cx="-10" cy="4" rx="2.5" ry="1.5" fill="#FFB3B3" opacity="0.5"/>
+    <ellipse cx="10" cy="4" rx="2.5" ry="1.5" fill="#FFB3B3" opacity="0.5"/>
+  </g>
+
+  <!-- Little feet at the bottom of the meter -->
+  <rect x="68" y="184" width="20" height="10" rx="5" fill="#2B9A8F" stroke="#238079" stroke-width="1"/>
+  <rect x="168" y="184" width="20" height="10" rx="5" fill="#2B9A8F" stroke="#238079" stroke-width="1"/>
+
+  <!-- Tiny arms (pixel-art rectangles) -->
+  <!-- Left arm waving -->
+  <g transform="rotate(-20, 48, 120)">
+    <rect x="30" y="115" width="22" height="8" rx="4" fill="#3DBDB4"/>
+    <!-- Left hand (small circle) -->
+    <circle cx="30" cy="119" r="5" fill="#FFD700" stroke="#CC8400" stroke-width="1"/>
+  </g>
+  <!-- Right arm -->
+  <g transform="rotate(10, 208, 120)">
+    <rect x="204" y="115" width="22" height="8" rx="4" fill="#3DBDB4"/>
+    <circle cx="226" cy="119" r="5" fill="#FFD700" stroke="#CC8400" stroke-width="1"/>
+  </g>
+
+  <!-- Sparkle effects (pixel-art style) -->
+  <g fill="#FFD700" opacity="0.7">
+    <!-- Top-right sparkle -->
+    <rect x="192" y="28" width="3" height="10" rx="1"/>
+    <rect x="189" y="32" width="10" height="3" rx="1"/>
+    <!-- Top-left sparkle -->
+    <rect x="60" y="22" width="2" height="8" rx="1"/>
+    <rect x="57" y="25" width="8" height="2" rx="1"/>
+    <!-- Small diamond sparkles -->
+    <rect x="205" y="60" width="4" height="4" rx="0.5" transform="rotate(45, 207, 62)"/>
+    <rect x="38" y="70" width="4" height="4" rx="0.5" transform="rotate(45, 40, 72)"/>
+  </g>
+
+  <!-- "tok" label on the meter body -->
+  <text x="128" y="168" text-anchor="middle" font-family="'Courier New', monospace" font-size="18" font-weight="bold" fill="#FFFDF5" letter-spacing="3" opacity="0.9">tok</text>
+  <text x="128" y="182" text-anchor="middle" font-family="'Courier New', monospace" font-size="10" fill="#FFFDF5" letter-spacing="2" opacity="0.6">METER</text>
+
+  <!-- Bottom decorative dots (pixel art touch) -->
+  <circle cx="108" cy="198" r="2" fill="#3DBDB4" opacity="0.4"/>
+  <circle cx="128" cy="200" r="2" fill="#3DBDB4" opacity="0.4"/>
+  <circle cx="148" cy="198" r="2" fill="#3DBDB4" opacity="0.4"/>
+</svg>

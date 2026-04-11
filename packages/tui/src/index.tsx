@@ -14,8 +14,8 @@ process.on("uncaughtException", (error) => {
   console.error("Uncaught exception:", error);
 });
 
-import type { ProviderSummary, TokmeterSummary } from "@sriinnu/tokmeter-core";
-import { TokmeterCore } from "@sriinnu/tokmeter-core";
+import type { ProviderSummary, TokmeterSummary } from "@sriinnu/tokmeter";
+import { TokmeterCore } from "@sriinnu/tokmeter";
 import { Box, Text, render, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "./theme.js";
