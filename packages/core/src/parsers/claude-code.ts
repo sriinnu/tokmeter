@@ -61,7 +61,19 @@ export class ClaudeCodeParser implements SessionParser {
         const usage = msg.message.usage;
         const usageKey = `${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`;
         if (usageKey === lastUsageKey) continue;
-        lastUsageKey = usageKey;
+      // using both usage values and a stable per-message discriminator so
+      // distinct consecutive assistant messages with identical usage are kept.
+      let lastUsageKey = "";
+      for (const msg of lines) {
+        if (msg.type !== "assistant" || !msg.message?.usage) continue;
+
+        const usage = msg.message.usage;
+        const messageDiscriminator = msg.timestamp ?? "";
+        const usageKey = messageDiscriminator
+          ? `${messageDiscriminator}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
+          : "";
+        if (usageKey && usageKey === lastUsageKey) continue;
+        if (usageKey) lastUsageKey = usageKey;
 
         newRecords.push(
           createRecord({
