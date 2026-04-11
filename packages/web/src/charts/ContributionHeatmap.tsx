@@ -19,7 +19,9 @@ const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
 export function ContributionHeatmap({ daily }: Props) {
   if (daily.length === 0) {
     return (
-      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>No activity data to display.</div>
+      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>
+        No activity data to display.
+      </div>
     );
   }
 
@@ -74,7 +76,10 @@ export function ContributionHeatmap({ daily }: Props) {
       },
     ],
     layout: {
-      title: { text: "Contribution Heatmap", font: { color: webTheme.text.primary, size: titleFontSize } },
+      title: {
+        text: "Contribution Heatmap",
+        font: { color: webTheme.text.primary, size: titleFontSize },
+      },
       xaxis: {
         tickangle: 0,
         tickfont: { color: webTheme.charts.axis, size: baseFontSize },

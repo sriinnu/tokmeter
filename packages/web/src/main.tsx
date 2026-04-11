@@ -159,7 +159,9 @@ function LiveIndicator({
           borderRadius: "50%",
           backgroundColor: dotColor,
           boxShadow: isLive ? `0 0 10px ${webTheme.status.live}` : "none",
-          animation: isLive ? `pulse ${webTheme.motion.duration.glacial} ${webTheme.motion.easing.smooth} infinite` : "none",
+          animation: isLive
+            ? `pulse ${webTheme.motion.duration.glacial} ${webTheme.motion.easing.smooth} infinite`
+            : "none",
           transition: `background-color ${webTheme.motion.duration.normal} ${webTheme.motion.easing.default}`,
         }}
       />

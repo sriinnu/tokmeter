@@ -53,14 +53,28 @@ export function ModelsPage() {
           },
         ],
         layout: {
-          title: { text: "Token Breakdown by Model", font: { color: webTheme.text.primary, size: Number.parseInt(webTheme.typography.h3.size) } },
+          title: {
+            text: "Token Breakdown by Model",
+            font: {
+              color: webTheme.text.primary,
+              size: Number.parseInt(webTheme.typography.h3.size),
+            },
+          },
           barmode: "stack",
-          xaxis: { title: "Model", tickangle: -45, gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+          xaxis: {
+            title: "Model",
+            tickangle: -45,
+            gridcolor: webTheme.charts.grid,
+            color: webTheme.charts.axis,
+          },
           yaxis: { title: "Tokens", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
           margin: { b: 120 },
           paper_bgcolor: "transparent",
           plot_bgcolor: "transparent",
-          font: { color: webTheme.text.muted, size: Number.parseInt(webTheme.typography.body.size) },
+          font: {
+            color: webTheme.text.muted,
+            size: Number.parseInt(webTheme.typography.body.size),
+          },
         },
         config: { responsive: true },
         style: { width: "100%", height: 500 },

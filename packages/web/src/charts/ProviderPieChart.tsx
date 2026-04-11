@@ -17,7 +17,9 @@ const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
 export function ProviderPieChart({ providers }: Props) {
   if (providers.length === 0) {
     return (
-      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>No provider data to display.</div>
+      <div style={{ color: webTheme.text.muted, padding: webTheme.spacing.xl }}>
+        No provider data to display.
+      </div>
     );
   }
 
@@ -36,7 +38,10 @@ export function ProviderPieChart({ providers }: Props) {
       },
     ],
     layout: {
-      title: { text: "Cost by Provider", font: { color: webTheme.text.primary, size: titleFontSize } },
+      title: {
+        text: "Cost by Provider",
+        font: { color: webTheme.text.primary, size: titleFontSize },
+      },
       paper_bgcolor: "transparent",
       plot_bgcolor: "transparent",
       font: { color: webTheme.text.muted, size: baseFontSize },
