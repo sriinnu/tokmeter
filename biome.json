@@ -14,7 +14,7 @@
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100,
-    "lineEnding": "crlf"
+    "lineEnding": "lf"
   },
   "linter": {
     "enabled": true,
@@ -52,16 +52,6 @@
       },
       "linter": {
         "enabled": false
-      }
-    },
-    {
-      "include": [
-        "packages/core/src/cleaners/index.ts",
-        "packages/core/src/cleaners/task-dir-cleaner.ts",
-        "packages/core/src/cleaners/openclaw.ts"
-      ],
-      "formatter": {
-        "lineEnding": "lf"
       }
     }
   ]
