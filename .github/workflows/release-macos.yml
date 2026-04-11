@@ -1,3 +1,20 @@
+# ============================================================================
+# Release macOS Bar — build, sign, notarize, and upload
+# ============================================================================
+#
+# Requires these secrets for code signing + notarization:
+#   APPLE_DEVELOPER_ID_P12        — .p12 cert, base64-encoded
+#   APPLE_DEVELOPER_ID_PASSWORD   — password for the .p12
+#   APP_STORE_CONNECT_API_KEY_P8  — App Store Connect API key
+#   APP_STORE_CONNECT_KEY_ID      — API key ID
+#   APP_STORE_CONNECT_ISSUER_ID   — Issuer ID
+#   SPARKLE_PRIVATE_KEY           — Ed25519 key for Sparkle auto-updates
+#   SPARKLE_PUBLIC_KEY            — Public key embedded in the app
+#
+# When secrets are missing, the workflow skips signing/notarization
+# and produces an unsigned build artifact instead.
+# ============================================================================
+
 name: Release macOS Bar
 
 on:
@@ -6,9 +23,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version (e.g. 0.1.0)"
+        description: "Version (e.g. 0.2.0)"
         required: true
-        default: "0.1.0"
+        default: "0.2.0"
 
 env:
   APP_NAME: TokmeterBar
@@ -21,25 +38,36 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Resolve version
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             VERSION="${{ github.event.release.tag_name }}"
-            VERSION="${VERSION#v}"  # strip leading 'v'
+            VERSION="${VERSION#v}"
           else
             VERSION="${{ inputs.version }}"
           fi
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${VERSION}"
 
+      - name: Check signing secrets
+        id: check-secrets
+        run: |
+          if [[ -n "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" ]]; then
+            echo "has_signing=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Apple signing secrets found"
+          else
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  Apple signing secrets not configured — building unsigned"
+          fi
+
       - name: Import signing certificate
+        if: steps.check-secrets.outputs.has_signing == 'true'
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
         run: |
-          # Create a temporary keychain for CI
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
 
@@ -47,13 +75,11 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import the certificate
           echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > /tmp/cert.p12
           security import /tmp/cert.p12 -P "$APPLE_DEVELOPER_ID_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           rm -f /tmp/cert.p12
 
-          # Allow codesign to access the keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
@@ -62,45 +88,46 @@ jobs:
         working-directory: packages/macos-bar
         run: swift build -c release
 
-      - name: Bundle .app
+      - name: Bundle .app (signed)
+        if: steps.check-secrets.outputs.has_signing == 'true'
         working-directory: packages/macos-bar
         env:
           DEV_ID: "Developer ID Application: Srinivas Pendela (RSH5FK4MB6)"
           SUPUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
           CFBundleShortVersionString: ${{ env.VERSION }}
           CFBundleVersion: ${{ github.run_number }}
-        run: |
-          # Use the --signed mode (not --release, we handle notarize separately)
-          ./bundle.sh --signed --no-install
+        run: ./bundle.sh --signed --no-install
+
+      - name: Bundle .app (unsigned)
+        if: steps.check-secrets.outputs.has_signing != 'true'
+        working-directory: packages/macos-bar
+        env:
+          CFBundleShortVersionString: ${{ env.VERSION }}
+          CFBundleVersion: ${{ github.run_number }}
+        run: ./bundle.sh --no-install
 
       - name: Notarize
+        if: steps.check-secrets.outputs.has_signing == 'true'
         working-directory: packages/macos-bar
         env:
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          # Write API key to temp file
           echo "$APP_STORE_CONNECT_API_KEY_P8" | sed 's/\\n/\n/g' > /tmp/api-key.p8
 
-          # Create zip for notarization
           /usr/bin/ditto --norsrc -c -k --keepParent ${APP_NAME}.app /tmp/notarize.zip
 
-          # Submit and wait
           xcrun notarytool submit /tmp/notarize.zip \
             --key /tmp/api-key.p8 \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
             --wait
 
-          # Staple
           xcrun stapler staple ${APP_NAME}.app
-
-          # Verify
           spctl -a -t exec -vv ${APP_NAME}.app
           xcrun stapler validate ${APP_NAME}.app
 
-          # Clean up
           rm -f /tmp/api-key.p8 /tmp/notarize.zip
 
       - name: Create distribution zip
@@ -113,15 +140,14 @@ jobs:
           echo "ZIP_SIZE=$(stat -f%z ${APP_NAME}-${VERSION}.zip)" >> "$GITHUB_ENV"
 
       - name: Sign with Sparkle
+        if: steps.check-secrets.outputs.has_signing == 'true'
         working-directory: packages/macos-bar
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          # Write Sparkle private key to temp file
           echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle.key
           chmod 600 /tmp/sparkle.key
 
-          # Find sign_update tool
           SIGN_TOOL=$(find .build -name "sign_update" -type f -perm +111 2>/dev/null | head -1)
           if [[ -z "$SIGN_TOOL" ]]; then
             echo "WARNING: sign_update not found, skipping Sparkle signing"
@@ -144,7 +170,7 @@ jobs:
 
       - name: Upload artifact (manual trigger)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TokmeterBar-${{ env.VERSION }}
           path: packages/macos-bar/TokmeterBar-${{ env.VERSION }}.zip
