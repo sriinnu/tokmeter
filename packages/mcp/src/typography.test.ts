@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boldMath, defaultTheme, italicMath, projectName } from "./typography.js";
+import { boldMath, defaultTheme, italicMath, projectName, sansBold } from "./typography.js";
 
 describe("projectName (Fraktur initial + Script body)", () => {
   it("renders a Fraktur first char + Script rest", () => {
@@ -51,7 +51,7 @@ describe("boldMath", () => {
 
 describe("defaultTheme", () => {
   it("maps semantic roles to transforms", () => {
-    expect(defaultTheme.name("test")).toBe(projectName("test"));
+    expect(defaultTheme.name("test")).toBe(sansBold("test"));
     expect(defaultTheme.ephemeral("now")).toBe(italicMath("now"));
     expect(defaultTheme.emphasis("ok")).toBe(boldMath("ok"));
   });
