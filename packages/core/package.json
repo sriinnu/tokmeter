@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Token usage tracking core — session parsers, aggregation, and pricing",
   "type": "module",
   "main": "dist/index.js",
