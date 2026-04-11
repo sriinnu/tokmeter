@@ -42,8 +42,9 @@ final class TokmeterLoader: ObservableObject {
         // Refresh every 30 seconds. Timer is retained by the run loop and
         // we hold it here so it can be invalidated on deinit.
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let loader = self else { return }
             Task { @MainActor in
-                await self?.loadData()
+                await loader.loadData()
             }
         }
     }
