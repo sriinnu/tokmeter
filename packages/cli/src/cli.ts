@@ -41,7 +41,9 @@ interface CliArgs extends ScanOptions {
     | "editors"
     | "digest"
     | "cleanup"
-    | "restore";
+    | "restore"
+    | "kosha-refresh"
+    | "kosha-update";
   pricingModel?: string;
   daemonCmd?: string;
   digestPeriod?: "today" | "week" | "month";
@@ -267,6 +269,8 @@ Output:
       case "digest":
       case "cleanup":
       case "restore":
+      case "kosha-refresh":
+      case "kosha-update":
         args.command = arg;
         break;
       case "weekly":
@@ -451,6 +455,31 @@ async function main() {
     return;
   }
 
+  if (args.command === "kosha-refresh" || args.command === "kosha-update") {
+    // Force a fresh discovery pass against kosha's upstream providers, then
+    // invalidate tokmeter's scan cache so today's records reprice with the
+    // new rates on the next scan. This is the "I just updated my pricing,
+    // tell tokmeter" button.
+    try {
+      const { refreshKoshaRegistry, clearRecordCache } = await import("@sriinnu/tokmeter");
+      console.log("Refreshing kosha registry...");
+      await refreshKoshaRegistry();
+      // Throw away the in-memory + on-disk scan cache so the next scan sees
+      // the updated kosha mtime and reprices today's records from scratch.
+      // Historical records remain frozen (per project immutability rule) —
+      // they get reparsed and repriced but the enrichCosts path skips any
+      // entry with cost > 0, so nothing written yesterday changes.
+      clearRecordCache();
+      console.log("Kosha registry refreshed. Next scan will reprice today's records.");
+    } catch (error) {
+      console.error(
+        `Failed to refresh kosha: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exit(1);
+    }
+    return;
+  }
+
   if (args.command === "pricing") {
     const { PricingService } = await import("@sriinnu/tokmeter");
     const pricing = new PricingService();
@@ -462,7 +491,7 @@ async function main() {
       process.exit(1);
     }
     const p = await pricing.getPricing(modelId);
-    if (!p) {
+    if (!p || p.inputPerMillion <= 0 || p.outputPerMillion <= 0) {
       console.log(`No pricing found for model: ${modelId}`);
       process.exit(1);
     }
