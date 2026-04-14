@@ -41,6 +41,12 @@ interface CacheFile {
   version: number;
   createdAt: string;
   lastScanAt: string;
+  /**
+   * mtime of ~/.kosha/registry.json at the time records were priced. When
+   * the current kosha mtime is newer, TokmeterCore knows to reprice on load
+   * instead of trusting the frozen `cost` field on cached records.
+   */
+  koshaMtime?: number;
   stats: {
     files: number;
     records: number;
@@ -54,6 +60,7 @@ interface CacheFile {
 let recordCache: Map<string, RecordCacheEntry> | null = null;
 let cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
 let cacheCreatedAt: string | null = null;
+let cacheKoshaMtime = 0;
 const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
 const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 
@@ -68,13 +75,20 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      to match Anthropic semantics (was double-counting cached tokens)
  *  3 — codex parser fixed duplicate records from last_token_usage fallback
  *      (~7% of Codex records were phantom duplicates inflating cost by ~10%)
+ *  4 — scan-cache now tracks koshaMtime for reactive repricing when the user
+ *      updates ~/.kosha/registry.json (cost field is recomputed on load)
+ *  5 — codex parser dedupes forked/replayed rollout files by root ancestor
+ *      (fixes 5-10× cost inflation from `codex resume` creating siblings of
+ *      the same session) — old caches have duplicated records and must be
+ *      discarded to reflect the corrected totals
  */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 5;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
   recordCache = new Map();
   cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  cacheKoshaMtime = 0;
   try {
     if (existsSync(CACHE_FILE)) {
       const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
@@ -85,6 +99,7 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
         return recordCache;
       }
       cacheCreatedAt = data.createdAt;
+      cacheKoshaMtime = data.koshaMtime ?? 0;
       for (const [k, v] of Object.entries(data.files)) {
         recordCache.set(k, v);
       }
@@ -101,6 +116,7 @@ function saveRecordCache(): void {
       version: CACHE_VERSION,
       createdAt: cacheCreatedAt || new Date().toISOString(),
       lastScanAt: new Date().toISOString(),
+      koshaMtime: cacheKoshaMtime,
       stats: {
         ...cacheStats,
         files: recordCache.size,
@@ -113,6 +129,18 @@ function saveRecordCache(): void {
     writeFileSync(tmpFile, JSON.stringify(data));
     renameSync(tmpFile, CACHE_FILE);
   } catch {}
+}
+
+/** Kosha registry mtime associated with the currently-loaded cache, or 0. */
+export function getCachedKoshaMtime(): number {
+  loadRecordCache();
+  return cacheKoshaMtime;
+}
+
+/** Record the kosha registry mtime that cached `cost` fields were priced against. */
+export function setCachedKoshaMtime(mtimeMs: number): void {
+  loadRecordCache();
+  cacheKoshaMtime = mtimeMs;
 }
 
 /**

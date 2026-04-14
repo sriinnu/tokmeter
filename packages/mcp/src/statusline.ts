@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { localDateKey } from "@sriinnu/tokmeter";
+import { getKoshaRegistryMtime, localDateKey } from "@sriinnu/tokmeter";
 import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
 import {
@@ -163,6 +163,9 @@ function shortModelName(id: string | undefined): string {
   let name = id;
   if (name.startsWith("claude-")) name = name.slice(7);
   name = name.replace(/-\d{8}$/, "");
+  // Claude Code tags 1M-context variants as `...[1m]` — render as ∞ so the
+  // bar shows the capability instead of an opaque square token.
+  name = name.replace(/\[1m\]$/i, " ∞");
   return name;
 }
 
@@ -249,10 +252,18 @@ function getGitInfo(cwd: string): GitInfo | null {
   }
 }
 
+interface ProjectTotal {
+  cost: number;
+  in: number;
+  out: number;
+}
+
 interface TodayTotals {
   cost: number;
   in: number;
   out: number;
+  /** Per-project cost/token totals, keyed by the record's project field. */
+  projects: Record<string, ProjectTotal>;
   /** YYYY-MM-DD of when this was computed — invalidates after midnight. */
   day: string;
 }
@@ -275,8 +286,11 @@ function todayKey(): string {
  */
 async function getTodayTotalsCached(): Promise<TodayTotals | null> {
   const cachePath = join(CACHE_DIR, "today.json");
-  const dayKey = todayKey();
-  const cached = readCache<TodayTotals>(cachePath, 60_000, dayKey);
+  // Cache key: day rollover AND kosha registry mtime. Editing kosha
+  // invalidates the 60s cache on the next hot-path pass so updated pricing
+  // reflects immediately in the statusline without a manual clear.
+  const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}`;
+  const cached = readCache<TodayTotals>(cachePath, 60_000, contentKey);
   if (cached) return cached;
 
   try {
@@ -286,17 +300,46 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
     let cost = 0;
     let inT = 0;
     let outT = 0;
+    const projects: Record<string, ProjectTotal> = {};
     for (const r of records) {
       cost += r.cost;
       inT += r.inputTokens;
       outT += r.outputTokens;
+      const pkey = r.project || "unknown";
+      const p = projects[pkey] ?? (projects[pkey] = { cost: 0, in: 0, out: 0 });
+      p.cost += r.cost;
+      p.in += r.inputTokens;
+      p.out += r.outputTokens;
     }
-    const totals: TodayTotals = { cost, in: inT, out: outT, day: dayKey };
-    writeCache(cachePath, totals, dayKey);
+    const totals: TodayTotals = { cost, in: inT, out: outT, projects, day: todayKey() };
+    writeCache(cachePath, totals, contentKey);
     return totals;
   } catch {
     return null;
   }
+}
+
+/**
+ * Match the current cwd-derived project name against TodayTotals.projects keys.
+ * Parsers store `project` as a flattened path or full path (e.g.
+ * `-Users-srinivaspendela-Sriinnu-Personal-tokmeter`); a straightforward
+ * case-insensitive suffix/contains match is enough to pin the active project.
+ */
+function findProjectTotal(
+  totals: TodayTotals,
+  projectName: string
+): ProjectTotal | null {
+  if (!projectName) return null;
+  const needle = projectName.toLowerCase();
+  let hit: ProjectTotal | null = null;
+  for (const [key, v] of Object.entries(totals.projects)) {
+    const k = key.toLowerCase();
+    if (k === needle || k.endsWith(needle) || k.includes(needle)) {
+      // Prefer the strongest match if multiple keys hit.
+      if (!hit || k.endsWith(needle)) hit = v;
+    }
+  }
+  return hit;
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────
@@ -488,26 +531,29 @@ export async function runStatusline(): Promise<void> {
       suffix.push(C.warn(`${ICON.flame}${formatCost(rate)}/hr`));
     }
 
-    // Daemon aggregated stats — only if daemon is reachable AND has data.
-    let showedAggregated = false;
+    // Daemon aggregated stats — concurrent-session indicator. Kept compact.
     if (daemonResponse.connected && daemonResponse.aggregated) {
       const agg = daemonResponse.aggregated;
       if (agg.sessions > 1) {
-        suffix.push(
-          `${C.title("⊕")}${C.cost(formatCost(agg.totalCost))} ${C.input(`${ICON.up}${formatNumber(agg.totalInputTokens)}`)} ${C.output(`${ICON.down}${formatNumber(agg.totalOutputTokens)}`)}`
-        );
-        showedAggregated = true;
+        suffix.push(`${C.title("⊕")}${C.dim(`${agg.sessions}`)}`);
       }
     }
 
-    // Today's totals — cached for 60s so we don't full-scan every 200ms.
-    // Only fetch when we didn't already show aggregated multi-session data.
-    if (!showedAggregated) {
-      const today = await getTodayTotalsCached();
-      if (today && today.cost > 0) {
-        // "today" in italic math — ephemeral typography for transient data
+    // Today's totals — always shown (cached 60s). This is the cross-provider
+    // roll-up across Claude Code, Codex, Qwen, etc., for the local calendar
+    // day. Cache resets at midnight via the dayKey invalidation.
+    const today = await getTodayTotalsCached();
+    if (today && today.cost > 0) {
+      suffix.push(
+        `${C.accent(italicMath("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+      );
+      // Project roll-up — only show when it's a meaningful subset of today's
+      // total (not identical to the day total, not zero). Gives you "what has
+      // this repo cost me today" across every model you ran against it.
+      const proj = findProjectTotal(today, projectName);
+      if (proj && proj.cost > 0 && proj.cost < today.cost - 0.005) {
         suffix.push(
-          `${C.accent(italicMath("today"))} ${C.cost(formatCost(today.cost))} ${C.dim("│")} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+          `${C.accent(italicMath("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
         );
       }
     }
