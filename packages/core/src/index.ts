@@ -6,7 +6,11 @@
  */
 
 export { TokmeterCore } from "./tokmeter-core.js";
-export { PricingService } from "./pricing.js";
+export {
+  PricingService,
+  getKoshaRegistryMtime,
+  refreshKoshaRegistry,
+} from "./pricing.js";
 export { CleanupService } from "./cleanup-service.js";
 export {
   ALL_PARSERS,
