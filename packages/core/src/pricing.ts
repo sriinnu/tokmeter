@@ -25,6 +25,10 @@
  *   Moonshot   — https://platform.moonshot.cn/docs/pricing
  */
 
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type { ModelPricing } from "@sriinnu/kosha-discovery";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -316,12 +320,17 @@ const STATIC_PRICING: Array<[prefix: string, pricing: FullPricing]> = [
 // Sorted once at module load — longest prefix wins
 const SORTED_STATIC = STATIC_PRICING.slice().sort((a, b) => b[0].length - a[0].length);
 
+// Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
+// inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
+const DATE_SUFFIX_RE =
+  /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
+
 /**
  * Resolve static pricing for a model ID by longest-prefix match.
- * Strips date suffixes (e.g. "-20250514") before matching.
+ * Strips any recognizable date suffix before matching.
  */
 function staticPricing(modelId: string): FullPricing | null {
-  const id = modelId.toLowerCase().replace(/-\d{8}$/, "");
+  const id = modelId.toLowerCase().replace(DATE_SUFFIX_RE, "");
   for (const [prefix, pricing] of SORTED_STATIC) {
     if (id.startsWith(prefix)) return pricing;
   }
@@ -330,12 +339,55 @@ function staticPricing(modelId: string): FullPricing | null {
 
 // ─── PricingService ──────────────────────────────────────────────────
 
+/**
+ * Freshness signal for the kosha pricing registry.
+ *
+ * Kosha writes two things on discovery:
+ *   1. `~/.kosha/registry.json` — the canonical manifest, rewritten only when
+ *      the aggregated snapshot actually changes content
+ *   2. `~/.kosha/cache/provider_*.json` — per-provider caches, always rewritten
+ *      on discovery runs even if content is unchanged
+ *
+ * We take the max of the manifest mtime and the cache directory mtime so a
+ * refresh (via `kosha-update` or the `kosha` CLI) always bumps the signal,
+ * even when the manifest itself happens to be byte-identical.
+ */
+export function getKoshaRegistryMtime(): number {
+  const home = homedir();
+  let maxMtime = 0;
+  try {
+    const manifest = statSync(join(home, ".kosha", "registry.json")).mtimeMs;
+    if (manifest > maxMtime) maxMtime = manifest;
+  } catch {}
+  try {
+    const cacheDir = statSync(join(home, ".kosha", "cache")).mtimeMs;
+    if (cacheDir > maxMtime) maxMtime = cacheDir;
+  } catch {}
+  return maxMtime;
+}
+
+/**
+ * Force kosha-discovery to rerun discovery against upstream providers and
+ * overwrite `~/.kosha/registry.json` with the latest model + pricing data.
+ *
+ * Tokmeter's scan cache will notice the mtime bump on the next scan and
+ * reprice today's records automatically.
+ */
+export async function refreshKoshaRegistry(cacheDir?: string): Promise<void> {
+  const { createKosha } = await import("@sriinnu/kosha-discovery");
+  const registry = (await createKosha(cacheDir ? { cacheDir } : undefined)) as unknown as {
+    refresh: (providerId?: string) => Promise<void>;
+  };
+  await registry.refresh();
+}
+
 /** Cached pricing lookup: modelId → FullPricing or null. */
 export class PricingService {
   private cache = new Map<string, FullPricing | null>();
   private registry: any = null;
   private initialized = false;
   private cacheDir?: string;
+  private registryMtime = 0;
 
   /** True if kosha-discovery failed to load (e.g. not installed). */
   public pricingUnavailable = false;
@@ -344,16 +396,36 @@ export class PricingService {
     this.cacheDir = cacheDir;
   }
 
-  /** Initialize the kosha-discovery registry (idempotent). */
+  /**
+   * mtime of ~/.kosha/registry.json observed at the last successful init.
+   * Consumers (e.g. the record cache and statusline) use this to decide
+   * whether previously-priced records need to be repriced.
+   */
+  getRegistryMtime(): number {
+    return this.registryMtime;
+  }
+
+  /**
+   * Initialize the kosha-discovery registry. Safe to call repeatedly — if the
+   * registry file has been updated since the last init, the in-memory lookup
+   * cache is cleared so the next `getPricing()` call returns fresh rates.
+   */
   async init(): Promise<void> {
-    if (this.initialized) return;
+    const currentMtime = getKoshaRegistryMtime();
+    if (this.initialized && currentMtime === this.registryMtime) return;
+    // Registry file changed (or first init) — drop stale lookups.
+    if (this.initialized && currentMtime !== this.registryMtime) {
+      this.cache.clear();
+    }
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
       this.registry = await createKosha(this.cacheDir ? { cacheDir: this.cacheDir } : undefined);
+      this.pricingUnavailable = false;
     } catch {
       this.registry = null;
       this.pricingUnavailable = true;
     }
+    this.registryMtime = currentMtime;
     this.initialized = true;
   }
 
@@ -389,7 +461,10 @@ export class PricingService {
           | undefined;
         // originPricing = direct-provider rate on proxied routes (preferred)
         const raw = card?.originPricing ?? card?.pricing;
-        if (raw) {
+        // Reject zero-priced hits — kosha's canonical resolver sometimes maps
+        // a bare ID to a `:free` variant, which would silently bill at $0.
+        // Fall through to fuzzy so we can find the paid variant.
+        if (raw && raw.inputPerMillion > 0 && raw.outputPerMillion > 0) {
           const p = this.roundPricing(raw);
           this.cache.set(modelId, p);
           return p;
@@ -490,7 +565,7 @@ export class PricingService {
   private koshaFuzzySearch(modelId: string): FullPricing | null {
     const normalized = modelId
       .toLowerCase()
-      .replace(/-\d{8}$/, "")
+      .replace(DATE_SUFFIX_RE, "")
       .replace(/-latest$/, "")
       .replace(/\./g, "-");
 

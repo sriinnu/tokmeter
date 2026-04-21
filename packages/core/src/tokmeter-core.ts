@@ -18,7 +18,11 @@ import {
 import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
 import { loadHistorySnapshot, saveHistorySnapshot } from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
-import { saveRecordCacheToDisk } from "./parsers/utils.js";
+import {
+  getCachedKoshaMtime,
+  saveRecordCacheToDisk,
+  setCachedKoshaMtime,
+} from "./parsers/utils.js";
 import { PricingService } from "./pricing.js";
 import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
 import { saveSummaryCache } from "./summary-cache.js";
@@ -76,6 +80,21 @@ export class TokmeterCore {
       !options?.week &&
       !options?.month &&
       !options?.year;
+
+    // Detect kosha registry updates. If the user edited ~/.kosha/registry.json
+    // since the last scan, every cached `cost` field is suspect — force a
+    // reprice so new/updated rates flow through without a full re-parse.
+    if (!this.skipPricing) {
+      try {
+        await this.pricing.init();
+      } catch {
+        // enrichCosts will re-warn if pricing stays unavailable
+      }
+    }
+    const currentKoshaMtime = this.pricing.getRegistryMtime();
+    const cachedKoshaMtime = getCachedKoshaMtime();
+    const koshaChanged =
+      !this.skipPricing && currentKoshaMtime > 0 && currentKoshaMtime !== cachedKoshaMtime;
 
     let records: TokenRecord[];
     let historySource: ScanMeta["historySource"] = "none";
@@ -140,12 +159,33 @@ export class TokmeterCore {
         (record) => !isBeforeToday(record.timestamp, referenceTimestamp)
       );
 
+      // Historical records are FROZEN — whatever cost was calculated when
+      // they were first priced is what they stay at forever. If yesterday's
+      // Qwen was $0 because the model wasn't in kosha, it stays $0. You don't
+      // retroactively rebill the past when today's rates change, same as you
+      // don't go back to the gas station when petrol gets cheaper.
+      //
+      // Only today's records get repriced when kosha is updated — today is
+      // still "in flight" so updated rates should flow through.
+      if (koshaChanged && todayRecords.length > 0) {
+        for (const r of todayRecords) {
+          r.cost = 0;
+        }
+      }
+
       if (historicalRecords.length > 0) {
         await this.enrichCosts(historicalRecords, "history", historyWarnings);
       }
 
       if (todayRecords.length > 0) {
         await this.enrichCosts(todayRecords, "today", todayWarnings);
+      }
+
+      // Persist the kosha mtime tied to the cost values we just wrote so
+      // subsequent runs know whether another reprice is needed.
+      if (currentKoshaMtime > 0) {
+        setCachedKoshaMtime(currentKoshaMtime);
+        saveRecordCacheToDisk();
       }
     }
 

@@ -6,7 +6,22 @@
  *
  * Format: RolloutItem events (session_meta, turn_context, event_msg, etc.)
  * Token data comes from event_msg with type "token_count".
+ *
+ * ─── Fork dedup ─────────────────────────────────────────────────────────
+ * Codex writes a separate rollout file for every `codex resume` or branched
+ * session. Each fork's `session_meta.forked_from_id` points back to a common
+ * ancestor. When a session is resumed, the new rollout replays / re-traces
+ * much of the parent history, so naively summing all sibling files double-
+ * counts tokens by 5-10× on heavy days.
+ *
+ * To dedupe, we group files by their root ancestor (the transitive closure of
+ * `forked_from_id` back to a session with no parent) and keep only the latest
+ * sibling per group. This matches the invariant that a "session" represents
+ * one logical continuous run of Codex, regardless of how many times it was
+ * resumed or branched in the UI.
  */
+
+import { stat } from "node:fs/promises";
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
@@ -35,6 +50,8 @@ interface CodexEvent {
     type?: string;
     info?: CodexTokenCountInfo;
     // session_meta fields (payload when type is "session_meta")
+    id?: string;
+    forked_from_id?: string;
     cwd?: string;
     source?: string;
     model_provider?: string;
@@ -85,6 +102,110 @@ function computeDelta(current: CodexTokenUsage, prev: CodexTokenUsage): CodexTok
   };
 }
 
+/**
+ * Lightweight session fingerprint read from the first few lines of a rollout
+ * file — enough to group siblings without parsing the whole file twice.
+ */
+interface CodexFileMeta {
+  file: string;
+  sessionId: string;
+  forkedFromId: string | null;
+  mtimeMs: number;
+}
+
+/**
+ * Read just the first handful of lines of a codex rollout to extract the
+ * `session_meta` event. We cap the read at 64 KB so this stays cheap on
+ * 86 MB files — `session_meta` is always one of the first events emitted.
+ */
+async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
+  const { open } = await import("node:fs/promises");
+  let sessionId = "";
+  let forkedFromId: string | null = null;
+  let mtimeMs = 0;
+  try {
+    const st = await stat(file);
+    mtimeMs = st.mtimeMs;
+    const fd = await open(file, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(65_536, st.size));
+      await fd.read(buf, 0, buf.length, 0);
+      const text = buf.toString("utf-8");
+      // Scan the first few JSONL lines for a session_meta event.
+      const lines = text.split("\n").slice(0, 20);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line) as CodexEvent;
+          if (evt.type === "session_meta" && evt.payload) {
+            sessionId = evt.payload.id ?? "";
+            forkedFromId = evt.payload.forked_from_id ?? null;
+            break;
+          }
+        } catch {
+          // partial line — ignore
+        }
+      }
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return null;
+  }
+  if (!sessionId) {
+    // No session_meta found — fall back to the file path as a stable key so
+    // the file is still parsed standalone (no dedup group, keeps it safe).
+    sessionId = file;
+  }
+  return { file, sessionId, forkedFromId, mtimeMs };
+}
+
+/**
+ * Walk the fork chain back to the root ancestor. If a file's forked_from_id
+ * points to a session we have on disk, keep climbing. Otherwise the current
+ * session is its own root.
+ */
+function resolveRoot(
+  meta: CodexFileMeta,
+  bySessionId: Map<string, CodexFileMeta>
+): string {
+  let current: CodexFileMeta | undefined = meta;
+  const seen = new Set<string>();
+  while (current?.forkedFromId) {
+    if (seen.has(current.sessionId)) break; // cycle guard
+    seen.add(current.sessionId);
+    const parent = bySessionId.get(current.forkedFromId);
+    if (!parent) return current.forkedFromId; // root is upstream-only
+    current = parent;
+  }
+  return current?.sessionId ?? meta.sessionId;
+}
+
+/**
+ * Given a list of rollout files, keep only one file per root-ancestor session
+ * group. The winner is the most-recently-modified sibling — that's the file
+ * representing the latest post-resume state, which is typically the one the
+ * user actually cares about.
+ */
+async function dedupForkedFiles(files: string[]): Promise<string[]> {
+  const metas = (
+    await Promise.all(files.map((f) => readSessionMeta(f)))
+  ).filter((m): m is CodexFileMeta => m !== null);
+
+  const bySessionId = new Map<string, CodexFileMeta>();
+  for (const m of metas) bySessionId.set(m.sessionId, m);
+
+  const latestByRoot = new Map<string, CodexFileMeta>();
+  for (const m of metas) {
+    const root = resolveRoot(m, bySessionId);
+    const existing = latestByRoot.get(root);
+    if (!existing || m.mtimeMs > existing.mtimeMs) {
+      latestByRoot.set(root, m);
+    }
+  }
+  return [...latestByRoot.values()].map((m) => m.file);
+}
+
 export class CodexParser implements SessionParser {
   readonly providerId = "codex" as const;
 
@@ -96,7 +217,8 @@ export class CodexParser implements SessionParser {
     const sessionsDir = `${codexHome}/sessions`;
 
     // Sessions are in YYYY/MM/DD/ subdirectories — need depth 5
-    const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 5);
+    const allFiles = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 5);
+    const files = await dedupForkedFiles(allFiles);
     const records: TokenRecord[] = [];
 
     for (const file of files) {
