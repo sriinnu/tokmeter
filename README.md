@@ -410,6 +410,10 @@ bun run bar:signed             # Developer ID signed — Gatekeeper-friendly for
 bun run bar:release            # Signed + notarized + stapled + appcast.xml updated
                                # Requires packages/macos-bar/.env with Apple credentials.
                                # See packages/macos-bar/RELEASE.md for the full pipeline.
+bun run bar:publish            # Upload the built TokmeterBar-<version>.zip to a
+                               # GitHub release v<version>. Run after bar:release.
+bun run bar:ship               # One-shot: clean → bar:release → bar:publish.
+                               # Bump CFBundleShortVersionString in bundle.sh first.
 
 # Cleanup
 bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.zip, *.dSYM,
