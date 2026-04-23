@@ -21,8 +21,8 @@
 #                                # e.g. https://github.com/owner/repo/releases/download/vX.Y.Z/TokmeterBar.zip
 #
 # Optional:
-#   CFBundleShortVersionString   # semver, default 0.1.0
-#   CFBundleVersion              # build number (integer), default 1
+#   CFBundleShortVersionString   # semver, default 0.4.0
+#   CFBundleVersion              # build number (integer), default 4
 #   APP_NAME                     # default "TokmeterBar"
 #
 # Outputs:
@@ -58,8 +58,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-0.1.0}"
-BUILD_VERSION="${CFBundleVersion:-1}"
+SHORT_VERSION="${CFBundleShortVersionString:-0.4.0}"
+BUILD_VERSION="${CFBundleVersion:-4}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
