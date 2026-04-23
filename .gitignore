@@ -40,3 +40,4 @@ packages/macos-bar/.*.env
 packages/macos-bar/sparkle_ed25519_priv
 packages/macos-bar/sparkle_ed25519_priv.pub
 packages/macos-bar/generate_keys.out
+.mcp.json
