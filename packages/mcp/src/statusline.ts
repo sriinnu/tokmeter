@@ -25,7 +25,7 @@ import {
   segmentColors,
   useNerdFont,
 } from "./formatter.js";
-import { defaultTheme, italicMath } from "./typography.js";
+import { monoTheme } from "./typography.js";
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
 // The statusline runs as a fresh subprocess every ~200ms. To avoid
@@ -126,6 +126,30 @@ function frame(): number {
 const PARTICLES = {
   pulse: ["○", "◐", "◑", "●", "◑", "◐", "○", "◌"],
 };
+
+/**
+ * Brand logo: bracket-framed emoji infinity with shimmer accents.
+ *
+ * Single ♾️ emoji at center — emojis render at the cell's full visual bounds
+ * (≈2 cells wide, rich color/weight), structurally thicker than the thin
+ * text-presentation ∞. Fullwidth brackets ［ ］ (U+FF3B/U+FF3D, 2 cells each)
+ * frame it with matching heft. Sparkles ✦/✧ on each side swap per frame for
+ * a gentle shimmer halo.
+ *
+ * The breathing violet bg cycle still runs underneath. The emoji carries its
+ * own color from the system emoji font; the sparkles take chalk's white-bold
+ * from segmentBody and pop against the violet.
+ *
+ * Width-stable across frames: ［(2) + space(1) + ✦(1) + space(1) + ♾️(2) +
+ * space(1) + ✧(1) + space(1) + ］(2) = 12 cells.
+ */
+const LOGO_SPARKLES = ["✦", "✧"];
+
+function logoIcon(af: number): string {
+  const sparkLeft = LOGO_SPARKLES[af % 2];
+  const sparkRight = LOGO_SPARKLES[(af + 1) % 2];
+  return `［ ${sparkLeft} ♾️ ${sparkRight} ］`;
+}
 
 /** Cache hit rate with color-coded efficiency indicator */
 function animCacheRate(cacheRead: number, cacheWrite: number): string {
@@ -356,7 +380,7 @@ export async function runStatusline(): Promise<void> {
       const f = frame();
       const dots = ".".repeat(f % 4);
       process.stdout.write(
-        `${C.title("【♾️】")} ${C.accent(PARTICLES.pulse[f])}${C.dim(`waiting${dots}`)}`
+        `${logoIcon(f)} ${C.accent(PARTICLES.pulse[f])}${C.dim(`waiting${dots}`)}`
       );
       return;
     }
@@ -411,7 +435,7 @@ export async function runStatusline(): Promise<void> {
 
     const ICON = nf
       ? {
-          infinity: "【♾️】",
+          infinity: logoIcon(af),
           agent: "\uDB83\uDD70", // 󰍰 nf-md-robot
           git: "\uF113", //  nf-fa-git
           turn: "\uF148", //  nf-fa-level_up
@@ -438,17 +462,21 @@ export async function runStatusline(): Promise<void> {
           // Logo: ♾️ anchored at left; the trailing slot animates between sparkle
           // emoji. The infinity NEVER shifts position — only the trailing accent
           // changes. (No more leading-space frames that shift the whole logo.)
-          infinity: ["♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧", "♾️✦", "♾️✧"][af],
-          // The Genie — both frames are width-stable (genie + sparkle emoji slot).
-          // Frame 0: genie + invisible joiner (width 2 + 1)
-          // Frame 1: genie + sparkle (width 2 + 1)
-          // Both slots are exactly 1 visual cell wide.
-          agent: ["🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞", "🧞"][af],
+          infinity: logoIcon(af),
+          // Magic wand — "the agent casts code." Disney castle-intro signature
+          // emoji, semantically perfect for an AI assistant, single cell with
+          // no jitter. Warm gold/brown handle + sparkle tip pops against the
+          // blue model-segment background.
+          agent: "🪄",
           git: "🌿",
           turn: ["✎", "✏", "✎", "✏", "✎", "✏", "✎", "✏"][af],
           context: "",
           folder: "",
-          dollar: "💰",
+          // Cut diamond — clean treasure motif. The 💰 money-bag was cluttered
+          // at small size (sack texture + $ glyph fighting); 💎 reads as one
+          // bright faceted shape. Cyan/blue glint contrasts beautifully with
+          // the amber cost-segment bg, keeping the bar's color story coherent.
+          dollar: "💎",
           flame: "🔥",
           // Token arrows: stick to 1-cell text chars (no emoji ⬆⬇ which cause jitter).
           up: ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
@@ -482,7 +510,7 @@ export async function runStatusline(): Promise<void> {
     // Truncate long names so the bar doesn't wrap on 80-col terms.
     if (projectName) {
       const trunc = projectName.length > 24 ? `${projectName.slice(0, 23)}…` : projectName;
-      pl.push({ text: ic(ICON.folder, defaultTheme.name(trunc)), bg: seg.project });
+      pl.push({ text: ic(ICON.folder, monoTheme.name(trunc)), bg: seg.project });
     }
 
     // 3. Model / Agent — pulsing activity indicator
@@ -545,7 +573,7 @@ export async function runStatusline(): Promise<void> {
     const today = await getTodayTotalsCached();
     if (today && today.cost > 0) {
       suffix.push(
-        `${C.accent(italicMath("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+        `${C.accent(monoTheme.ephemeral("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
       );
       // Project roll-up — only show when it's a meaningful subset of today's
       // total (not identical to the day total, not zero). Gives you "what has
@@ -553,7 +581,7 @@ export async function runStatusline(): Promise<void> {
       const proj = findProjectTotal(today, projectName);
       if (proj && proj.cost > 0 && proj.cost < today.cost - 0.005) {
         suffix.push(
-          `${C.accent(italicMath("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
+          `${C.accent(monoTheme.ephemeral("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
         );
       }
     }

@@ -1,4 +1,4 @@
-# @tokmeter/cli
+# @sriinnu/tokmeter-cli
 
 Command-line interface for token usage tracking. Displays usage in formatted tables or JSON.
 
