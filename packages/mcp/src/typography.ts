@@ -203,3 +203,21 @@ export const sanskritTheme: StatuslineTheme = {
   ephemeral: italicMath,
   emphasis: boldMath,
 };
+
+/**
+ * Monospace theme — identity transforms.
+ *
+ * Why: the Math/Sans-Bold/Italic Unicode blocks (𝘁𝗼𝗸𝗺𝗲𝘁𝗲𝗿, 𝑡𝑜𝑑𝑎𝑦) are
+ * absent from most monospace fonts (SF Mono, Menlo, Cascadia, JetBrains
+ * Mono). Terminals fall back to a proportional system font for those
+ * codepoints, breaking column alignment in the statusline.
+ *
+ * This theme keeps every glyph inside ASCII so the terminal's actual
+ * monospace font renders it. Use when width-stable rendering matters
+ * more than typographic flair.
+ */
+export const monoTheme: StatuslineTheme = {
+  name: (s) => s,
+  ephemeral: (s) => s,
+  emphasis: (s) => s,
+};
