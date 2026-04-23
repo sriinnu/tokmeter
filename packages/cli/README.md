@@ -2,7 +2,7 @@
   <img src="../../logo.svg" alt="tokmeter" width="80" />
 </p>
 
-<h1 align="center">@tokmeter/cli</h1>
+<h1 align="center">@sriinnu/tokmeter-cli</h1>
 
 <p align="center"><strong>Token usage tracker CLI -- table and JSON output</strong></p>
 
@@ -14,10 +14,10 @@ Command-line interface for tokmeter. Scans all local AI agent sessions and displ
 
 ```bash
 # Run directly
-npx @tokmeter/cli
+npx @sriinnu/tokmeter-cli
 
 # Or install globally
-npm install -g @tokmeter/cli
+npm install -g @sriinnu/tokmeter-cli
 tokmeter
 ```
 

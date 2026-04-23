@@ -50,7 +50,16 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+
+    "bar": "cd packages/macos-bar && ./bundle.sh",
+    "bar:build": "cd packages/macos-bar && ./bundle.sh --no-install",
+    "bar:signed": "cd packages/macos-bar && set -a && . ./.env && set +a && ./bundle.sh --signed",
+    "bar:release": "cd packages/macos-bar && set -a && . ./.env && set +a && ./bundle.sh --release",
+    "bar:publish": "cd packages/macos-bar && ./publish.sh",
+    "bar:ship": "bun run clean && bun run bar:release && bun run bar:publish",
+
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo packages/macos-bar/.build packages/macos-bar/*.app packages/macos-bar/*.zip packages/macos-bar/*.dSYM packages/macos-bar/*.dSYM.zip && find packages -path '*/src/*' \\( -name '*.js' -o -name '*.d.ts' \\) -delete 2>/dev/null; true"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

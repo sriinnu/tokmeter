@@ -403,6 +403,22 @@ bun run install:statusline     # Install statusline for all editors
 bun run install:mcp            # Install MCP for all editors
 bun run list:editors           # List supported editors
 
+# macOS menu bar (Swift app)
+bun run bar                    # Build + install to /Applications + launch (ad-hoc signed)
+bun run bar:build              # Build only — produces ./packages/macos-bar/TokmeterBar.app
+bun run bar:signed             # Developer ID signed — Gatekeeper-friendly for AirDrop
+bun run bar:release            # Signed + notarized + stapled + appcast.xml updated
+                               # Requires packages/macos-bar/.env with Apple credentials.
+                               # See packages/macos-bar/RELEASE.md for the full pipeline.
+bun run bar:publish            # Upload the built TokmeterBar-<version>.zip to a
+                               # GitHub release v<version>. Run after bar:release.
+bun run bar:ship               # One-shot: clean → bar:release → bar:publish.
+                               # Bump CFBundleShortVersionString in bundle.sh first.
+
+# Cleanup
+bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.zip, *.dSYM,
+                               # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
+
 # Quality
 bun run test                   # Run tests (30 tests)
 bun run lint                   # Lint
