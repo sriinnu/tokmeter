@@ -173,7 +173,7 @@ final class TokmeterLoader: ObservableObject {
         let args = ["-l", "-c", cliScript]
 
         do {
-            let output = try await runProcess(executable: execPath, arguments: args, timeout: 120)
+            let output = try await runProcess(executable: execPath, arguments: args, timeout: 15)
             guard let data = output.data(using: .utf8) else {
                 self.lastError = "CLI returned non-UTF8 output"
                 return
@@ -250,38 +250,50 @@ final class TokmeterLoader: ObservableObject {
 
     private func runProcess(executable: String, arguments: [String], timeout: TimeInterval) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: executable)
-                proc.arguments = arguments
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: executable)
+            proc.arguments = arguments
 
-                let pipe = Pipe()
-                proc.standardOutput = pipe
-                proc.standardError = FileHandle.nullDevice
+            let outPipe = Pipe()
+            proc.standardOutput = outPipe
+            proc.standardError = FileHandle.nullDevice
 
-                do {
-                    try proc.run()
-                } catch {
-                    continuation.resume(throwing: error)
+            // Double-resume guard: termination handler and timeout both race to
+            // resume the continuation. Only the first caller wins.
+            var resumed = false
+            let lock = NSLock()
+            @Sendable func finish(_ result: Result<String, Error>) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                switch result {
+                case .success(let output): continuation.resume(returning: output)
+                case .failure(let error):  continuation.resume(throwing: error)
+                }
+            }
+
+            proc.terminationHandler = { _ in
+                let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+                guard let output = String(data: data, encoding: .utf8) else {
+                    finish(.failure(DaemonError.decodingError("non-UTF8 CLI output")))
                     return
                 }
+                finish(.success(output))
+            }
 
-                let deadline = Date().addingTimeInterval(timeout)
-                while proc.isRunning && Date() < deadline {
-                    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-                }
-                if proc.isRunning {
-                    proc.terminate()
-                    continuation.resume(throwing: DaemonError.networkError("CLI timed out after \(Int(timeout))s"))
-                    return
-                }
+            do {
+                try proc.run()
+            } catch {
+                finish(.failure(error))
+                return
+            }
 
-                let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
-                guard let output = String(data: outputData, encoding: .utf8) else {
-                    continuation.resume(throwing: DaemonError.decodingError("non-UTF8 CLI output"))
-                    return
-                }
-                continuation.resume(returning: output)
+            // One-shot timeout — no RunLoop spinning, no thread held hostage
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+                guard proc.isRunning else { return }
+                proc.terminate()
+                finish(.failure(DaemonError.networkError("CLI timed out after \(Int(timeout))s")))
             }
         }
     }

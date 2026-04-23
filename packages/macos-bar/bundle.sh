@@ -274,7 +274,22 @@ if [[ "${MODE}" == "release" ]]; then
     if [[ -z "${RELEASE_DOWNLOAD_URL:-}" ]]; then
         echo "ERROR: --release requires RELEASE_DOWNLOAD_URL env var"
         echo "       This is the public URL where the .zip will be hosted."
-        echo "       Example: https://github.com/owner/repo/releases/download/vX.Y.Z/${APP_NAME}-${SHORT_VERSION}.zip"
+        echo "       Use {VERSION} as a placeholder for the semver — it gets"
+        echo "       substituted with \$SHORT_VERSION so the URL never drifts."
+        echo "       Example: https://github.com/owner/repo/releases/download/v{VERSION}/${APP_NAME}-{VERSION}.zip"
+        exit 4
+    fi
+    # Substitute {VERSION} → $SHORT_VERSION so the URL tracks the build automatically.
+    # Without this, .env hardcodes a version literal and quietly drifts every release.
+    RELEASE_DOWNLOAD_URL="${RELEASE_DOWNLOAD_URL//\{VERSION\}/${SHORT_VERSION}}"
+    # Sanity check: URL must contain $SHORT_VERSION literally now. If user hardcoded
+    # an old version and forgot to use the placeholder, fail loudly BEFORE notarizing.
+    if [[ "${RELEASE_DOWNLOAD_URL}" != *"${SHORT_VERSION}"* ]]; then
+        echo "ERROR: RELEASE_DOWNLOAD_URL does not contain SHORT_VERSION=${SHORT_VERSION}"
+        echo "       URL: ${RELEASE_DOWNLOAD_URL}"
+        echo "       Either use {VERSION} placeholder in .env or update the URL."
+        echo "       Bailing now — submitting to Apple notary with a wrong-version"
+        echo "       URL would publish an appcast item that points nowhere."
         exit 4
     fi
     if [[ ! -f "${PRIV_KEY_PATH}" ]]; then
@@ -455,7 +470,13 @@ fi
 echo ""
 echo "Done."
 case "${MODE}" in
-    dev)     echo "Status: installed to /Applications/${APP_DIR} and launched." ;;
+    dev)
+        if [[ "${INSTALL}" == "1" ]]; then
+            echo "Status: installed to /Applications/${APP_DIR} and launched."
+        else
+            echo "Status: built ./${APP_DIR} (ad-hoc signed). Pass --install to deposit to /Applications."
+        fi
+        ;;
     signed)  echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install." ;;
     release) echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml." ;;
 esac
