@@ -5,14 +5,24 @@ This is the full pipeline from source to a notarized, Sparkle-updatable
 
 ## TL;DR for a release
 
+From the monorepo root — one command:
+
 ```sh
-set -a; source .env; set +a
-./bundle.sh --release
-gh release create v0.1.0 TokmeterBar-0.1.0.zip --title "v0.1.0" --notes "..."
-git add appcast.xml && git commit -m "release: v0.1.0" && git push
+bun run bar:ship      # clean → notarized build → GitHub release upload
 ```
 
-That's it. Existing users get the update automatically within 24h via Sparkle.
+Then commit + push the updated `appcast.xml` on your branch and merge to `main`
+so Sparkle clients pick it up. Existing users get the update automatically
+within 24h.
+
+Or run the steps by hand if you need to control each one:
+
+```sh
+bun run clean                 # wipe old artifacts
+bun run bar:release           # sign + notarize + staple + sparkle-sign + appcast
+bun run bar:publish           # upload TokmeterBar-<version>.zip to GitHub release
+git add packages/macos-bar/appcast.xml && git commit && git push
+```
 
 ## One-time setup
 

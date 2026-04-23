@@ -42,7 +42,7 @@ struct TokmeterBarView: View {
     private var rowFillOpacity: Double { colorScheme == .light ? 0.10 : 0.06 }
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.0"
     }
 
     var body: some View {

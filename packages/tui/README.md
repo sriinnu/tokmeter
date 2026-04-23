@@ -2,7 +2,7 @@
   <img src="../../logo.svg" alt="tokmeter" width="80" />
 </p>
 
-<h1 align="center">@tokmeter/tui</h1>
+<h1 align="center">@sriinnu/tokmeter-tui</h1>
 
 <p align="center"><strong>Interactive terminal UI with charts, sparklines, and heatmaps</strong></p>
 
@@ -13,7 +13,7 @@ A full-screen terminal dashboard for exploring token usage. Built with [Ink](htt
 ## Install
 
 ```bash
-npx @tokmeter/tui
+npx @sriinnu/tokmeter-tui
 ```
 
 ## Views
