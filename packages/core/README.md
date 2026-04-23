@@ -2,7 +2,7 @@
   <img src="../../logo.svg" alt="tokmeter" width="80" />
 </p>
 
-<h1 align="center">@tokmeter/core</h1>
+<h1 align="center">@sriinnu/tokmeter-core</h1>
 
 <p align="center"><strong>Session parsers, aggregation, and pricing for 16+ AI coding agents</strong></p>
 
@@ -13,13 +13,13 @@ The engine behind tokmeter. Scans local session files, parses token records from
 ## Install
 
 ```bash
-npm install @tokmeter/core
+npm install @sriinnu/tokmeter-core
 ```
 
 ## Usage
 
 ```typescript
-import { TokmeterCore } from "@tokmeter/core";
+import { TokmeterCore } from "@sriinnu/tokmeter-core";
 
 const core = new TokmeterCore();
 const records = await core.scan();

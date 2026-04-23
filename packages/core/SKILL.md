@@ -1,4 +1,4 @@
-# @tokmeter/core
+# @sriinnu/tokmeter-core
 
 Core engine for token usage tracking. Provides session parsers for 16+ AI agent formats, token aggregation, and model pricing via kosha-discovery.
 
@@ -13,7 +13,7 @@ Core engine for token usage tracking. Provides session parsers for 16+ AI agent 
 ## API
 
 ```typescript
-import { TokmeterCore } from "@tokmeter/core";
+import { TokmeterCore } from "@sriinnu/tokmeter-core";
 const core = new TokmeterCore();
 const records = await core.scan({ today: true });
 const stats = core.getStats();

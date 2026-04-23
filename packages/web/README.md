@@ -2,7 +2,7 @@
   <img src="../../logo.svg" alt="tokmeter" width="80" />
 </p>
 
-<h1 align="center">@tokmeter/web</h1>
+<h1 align="center">@sriinnu/tokmeter-web</h1>
 
 <p align="center"><strong>React + Plotly web dashboard for token usage visualization</strong></p>
 

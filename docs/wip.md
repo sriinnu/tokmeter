@@ -1,6 +1,6 @@
 # Production Readiness — Work in Progress
 
-> Status: **Pre-release (v0.1.0)** | Last updated: 2026-04-01
+> Status: **Pre-release (v0.4.0)** | Last updated: 2026-04-23
 
 This document tracks everything needed before tokmeter packages can be published to npm and considered production-ready for general use.
 
@@ -18,11 +18,11 @@ The codebase is well-architected with good error handling, TypeScript strict mod
 
 All 5 packages now have essential npm fields:
 
-- [x] `@tokmeter/core` — `packages/core/package.json`
-- [x] `@tokmeter/cli` — `packages/cli/package.json`
-- [x] `@tokmeter/tui` — `packages/tui/package.json`
-- [x] `@tokmeter/web` — `packages/web/package.json`
-- [x] `@tokmeter/drishti` — `packages/mcp/package.json`
+- [x] `@sriinnu/tokmeter-core` — `packages/core/package.json`
+- [x] `@sriinnu/tokmeter-cli` — `packages/cli/package.json`
+- [x] `@sriinnu/tokmeter-tui` — `packages/tui/package.json`
+- [x] `@sriinnu/tokmeter-web` — `packages/web/package.json`
+- [x] `@sriinnu/drishti` — `packages/mcp/package.json`
 
 Each package now includes: `license`, `author`, `repository`, `keywords`, `engines`, `publishConfig`.
 
@@ -131,7 +131,7 @@ New CLI commands for installing statusline and MCP across ALL editors:
 ### 8. Documentation Site
 
 Consider a docs site (VitePress, Nextra, or GitHub Pages) for:
-- API reference for `@tokmeter/core`
+- API reference for `@sriinnu/tokmeter-core`
 - MCP tool documentation for drishti
 - Screenshots / GIFs of TUI and statusline
 - Configuration guides per CLI (Claude Code, Codex, Cursor, etc.)
@@ -200,16 +200,16 @@ gh release create v0.1.0 --title "v0.1.0 — Initial Release" --notes "See CHANG
 
 ### Install statusline for ALL editors:
 ```bash
-npx -y @tokmeter/drishti install-statusline
+npx -y @sriinnu/drishti install-statusline
 ```
 
 ### Install MCP for ALL editors:
 ```bash
-npx -y @tokmeter/drishti install-mcp
+npx -y @sriinnu/drishti install-mcp
 ```
 
 ### Install for specific editor:
 ```bash
-npx -y @tokmeter/drishti install-statusline claude cursor
-npx -y @tokmeter/drishti install-mcp claude opencode
+npx -y @sriinnu/drishti install-statusline claude cursor
+npx -y @sriinnu/drishti install-mcp claude opencode
 ```

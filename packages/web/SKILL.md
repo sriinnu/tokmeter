@@ -1,4 +1,4 @@
-# @tokmeter/web
+# @sriinnu/tokmeter-web
 
 React + Plotly web dashboard for token usage visualization.
 

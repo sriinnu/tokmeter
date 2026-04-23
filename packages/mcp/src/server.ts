@@ -285,7 +285,7 @@ const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for cust
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "drishti",
-    version: "0.1.0",
+    version: "0.4.0",
     description: "∞ — Token usage observatory for AI coding agents",
   });
 

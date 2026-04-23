@@ -1,4 +1,4 @@
-# @tokmeter/tui
+# @sriinnu/tokmeter-tui
 
 Interactive terminal UI for token usage tracking. Full-screen dashboard with charts, sparklines, and heatmaps.
 
@@ -13,5 +13,5 @@ Interactive terminal UI for token usage tracking. Full-screen dashboard with cha
 ## Usage
 
 ```bash
-npx @tokmeter/tui
+npx @sriinnu/tokmeter-tui
 ```

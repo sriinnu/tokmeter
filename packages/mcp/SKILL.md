@@ -1,4 +1,4 @@
-# @tokmeter/drishti
+# @sriinnu/drishti
 
 MCP server + live token observatory for AI coding agents.
 
