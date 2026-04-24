@@ -53,7 +53,8 @@ struct HeroBackground: View {
     }
 
     // MARK: - Nocturne
-    /// Solid deep indigo with a single corner glow and a faint starfield.
+    /// Solid deep indigo with a slowly-pulsing corner glow and a faint
+    /// starfield. The pulse breathes between 0.6 and 1.0 opacity over 5s.
     private var nocturne: some View {
         ZStack(alignment: .topTrailing) {
             c.primary
@@ -61,6 +62,12 @@ struct HeroBackground: View {
                 colors: [c.accent.opacity(0.35), c.accent.opacity(0.0)],
                 center: .topTrailing, startRadius: 20, endRadius: 260
             )
+            // Soft breathing — opacity oscillates so the glow feels alive
+            // without changing color or position. Keyed off breathToggle so
+            // it shares the same rhythm as the hero's other ambient motion.
+            .opacity(breathToggle ? 1.0 : 0.55)
+            .animation(.easeInOut(duration: 5).repeatForever(autoreverses: true), value: breathToggle)
+
             GeometryReader { geo in
                 ForEach(0..<8, id: \.self) { i in
                     Circle()
@@ -77,11 +84,15 @@ struct HeroBackground: View {
     }
 
     // MARK: - Daylight
-    /// Cream paper washed with a soft multi-color gradient bloom, plus a
-    /// subtle top light sheen. Dark foreground text makes this readable.
+    /// Cream paper washed with a soft multi-color gradient bloom that drifts
+    /// slowly between two start anchors, plus a top light sheen. Reads as
+    /// clouds passing over paper.
     private var daylight: some View {
         ZStack {
             Color(red: 0.975, green: 0.955, blue: 0.925)
+            // The bloom anchor swaps between topLeading and topTrailing on
+            // breathToggle — combined with a long ease the gradient appears
+            // to drift across the paper rather than just fade.
             LinearGradient(
                 colors: [
                     c.primary.opacity(0.35),
@@ -89,9 +100,11 @@ struct HeroBackground: View {
                     c.accent.opacity(0.28),
                     c.highlight.opacity(0.25),
                 ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
+                startPoint: breathToggle ? .topTrailing : .topLeading,
+                endPoint: breathToggle ? .bottomLeading : .bottomTrailing
             )
             .blur(radius: 36).opacity(0.95)
+            .animation(.easeInOut(duration: 7).repeatForever(autoreverses: true), value: breathToggle)
             LinearGradient(
                 colors: [Color.white.opacity(0.35), Color.clear],
                 startPoint: .top, endPoint: .center
@@ -100,8 +113,9 @@ struct HeroBackground: View {
     }
 
     // MARK: - Synthwave
-    /// Magenta sky, setting sun with three horizontal band slits, and a
-    /// perspective grid fading toward the vanishing point at the horizon.
+    /// Magenta sky, setting sun with three horizontal band slits, a
+    /// perspective grid fading to the vanishing point, AND a slow sun pulse
+    /// (radius modulated via shadow blur) so the horizon feels alive.
     private var synthwave: some View {
         ZStack {
             LinearGradient(
@@ -136,15 +150,17 @@ struct HeroBackground: View {
                     }
                 }
                 .stroke(c.secondary.opacity(0.35), lineWidth: 0.5)
-                // Setting sun
+                // Setting sun — outer glow radius pulses subtly with the
+                // breath rhythm so the horizon feels alive.
                 Circle()
                     .fill(LinearGradient(
                         colors: [c.warm, c.highlight, c.primary],
                         startPoint: .top, endPoint: .bottom))
                     .frame(width: min(w * 0.42, 140), height: min(w * 0.42, 140))
                     .position(x: w * 0.72, y: horizon + 4)
-                    .shadow(color: c.warm.opacity(0.6), radius: 18)
-                    .shadow(color: c.primary.opacity(0.5), radius: 30)
+                    .shadow(color: c.warm.opacity(0.6), radius: breathToggle ? 22 : 14)
+                    .shadow(color: c.primary.opacity(0.5), radius: breathToggle ? 34 : 26)
+                    .animation(.easeInOut(duration: 4.5).repeatForever(autoreverses: true), value: breathToggle)
                 // Sun band slits
                 Path { p in
                     let cx = w * 0.72; let cy = horizon + 4
@@ -262,7 +278,8 @@ struct HeroBackground: View {
     }
 
     // MARK: - Glass
-    /// Translucent regular-material panel + color tint + top gloss highlight.
+    /// Translucent regular-material + color tint + a top gloss that gently
+    /// shimmers — the glass appears to catch and lose light over a slow cycle.
     private var glass: some View {
         ZStack {
             Rectangle().fill(.regularMaterial)
@@ -274,10 +291,13 @@ struct HeroBackground: View {
                 ],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
+            // Top gloss with breathing intensity — opacity oscillates 0.14↔0.28
+            // so the glass plate "catches the light" subtly over 6s.
             LinearGradient(
-                colors: [Color.white.opacity(0.22), Color.clear],
+                colors: [Color.white.opacity(breathToggle ? 0.28 : 0.14), Color.clear],
                 startPoint: .top, endPoint: .center
             )
+            .animation(.easeInOut(duration: 6).repeatForever(autoreverses: true), value: breathToggle)
         }
     }
 }

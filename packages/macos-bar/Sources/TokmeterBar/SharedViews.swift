@@ -33,12 +33,44 @@ struct ShimmerBar: View {
     }
 }
 
+/// Staged entrance modifier — content fades in and settles down from a small
+/// upward offset after the given delay. Used to cascade the popover's sections
+/// so the whole UI doesn't pop at once. Set per-view delay to stage the sequence:
+/// hero @ 0.02s, cards @ 0.12s, models @ 0.20s, week @ 0.28s, sessions @ 0.36s,
+/// footer @ 0.44s.
+struct CascadeIn: ViewModifier {
+    let delay: Double
+    @State private var appeared = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 12)
+            .animation(.spring(response: 0.55, dampingFraction: 0.82), value: appeared)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    appeared = true
+                }
+            }
+    }
+}
+
+extension View {
+    /// Apply a staged cascade entrance. See `CascadeIn`.
+    func cascadeIn(delay: Double) -> some View {
+        modifier(CascadeIn(delay: delay))
+    }
+}
+
 /// Generic section header with an optional count pill. Every data section in
 /// the popover uses this so labels stay consistent.
 struct SectionHeader: View {
     let label: String
     let count: Int
     let theme: AppTheme
+
+    /// Briefly bumped to >1 when `count` changes so the pill catches the eye.
+    @State private var pulseScale: CGFloat = 1.0
 
     var body: some View {
         HStack {
@@ -53,6 +85,14 @@ struct SectionHeader: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color.gray.opacity(0.15)))
+                    .contentTransition(.numericText())
+                    .scaleEffect(pulseScale)
+                    .onChange(of: count) { _, _ in
+                        pulseScale = 1.18
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) {
+                            pulseScale = 1.0
+                        }
+                    }
             }
             Spacer()
         }

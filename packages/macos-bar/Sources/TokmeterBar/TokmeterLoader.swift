@@ -156,24 +156,25 @@ final class TokmeterLoader: ObservableObject {
 
         // Spawn the CLI with JUST stats output (not the full 150MB summary).
         // `tokmeter stats --json` returns ~500 bytes of aggregated stats.
-        // `tokmeter --json` returns ALL records which can be 150MB+ — way too
-        // large for a 30s subprocess timeout + Swift JSONDecoder.
         //
-        // macOS apps launched from LaunchServices get a minimal PATH. We resolve
-        // `node` via the user's login shell (-l flag loads .zshrc/.bashrc).
-        let localBin = NSHomeDirectory() + "/Sriinnu/Personal/tokmeter/packages/cli/dist/cli.js"
-        let cliScript: String
-        if FileManager.default.fileExists(atPath: localBin) {
-            cliScript = "node '\(localBin)' stats --json"
-        } else {
-            cliScript = "npx -y @sriinnu/tokmeter stats --json"
+        // Security: we DO NOT shell out via `$SHELL -l -c` — that loads the
+        // user's .zshrc/.bashrc which is a code-execution path any malicious
+        // dotfile-writer can abuse. Instead we resolve `npx` at known
+        // root-owned system paths and exec it directly with a fixed argv.
+        // No user-writable PATH entries, no interpolation, no shell metacharacters.
+        let npxCandidates = [
+            "/opt/homebrew/bin/npx",   // Homebrew (Apple Silicon) — root-owned
+            "/usr/local/bin/npx",      // Homebrew (Intel) — root-owned
+        ]
+        guard let npxPath = npxCandidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            self.lastError = "Daemon offline; no node toolchain found at /opt/homebrew or /usr/local."
+            self.hasFreshData = false
+            return
         }
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let execPath = shell
-        let args = ["-l", "-c", cliScript]
+        let args = ["-y", "@sriinnu/tokmeter", "stats", "--json"]
 
         do {
-            let output = try await runProcess(executable: execPath, arguments: args, timeout: 15)
+            let output = try await runProcess(executable: npxPath, arguments: args, timeout: 15)
             guard let data = output.data(using: .utf8) else {
                 self.lastError = "CLI returned non-UTF8 output"
                 return
