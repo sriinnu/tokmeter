@@ -33,9 +33,49 @@ tokmeter pricing sonnet           # lookup model pricing
 tokmeter cleanup                  # interactive wipe with pre-delete backup
 tokmeter snapshot                 # portable backup (no deletion)
 tokmeter restore [--latest|--id]  # restore from ~/.cache/tokmeter/backups/
+tokmeter alias ...                # manage project display names, tags, hidden (see below)
 ```
 
 See the top-level README for the full cross-machine backup/restore workflow.
+
+## Aliases
+
+Collapse variants of the same project (e.g. `Vortex` on Mac vs `vortex` on Linux),
+rename noisy canonical names (`WeatherApp/frontend` → `WeatherApp`),
+attach tags (`work`/`client`/`self`), or hide archived projects.
+
+File: `~/.tokmeter/aliases.json` (also included in `snapshot` bundles so aliases
+travel with your data across machines).
+
+```bash
+# List current aliases
+tokmeter alias list
+
+# Rename a single canonical project
+tokmeter alias set "WeatherApp/frontend" "WeatherApp"
+
+# Merge multiple canonical keys under one display name
+tokmeter alias merge "Vortex" "Vortex" "vortex"
+
+# Tag a project (keyed by display — applies to all merged raw keys)
+tokmeter alias tag add    "WeatherApp" work client
+tokmeter alias tag remove "WeatherApp" client
+tokmeter alias tag set    "Vortex" self
+
+# Hide / unhide from per-project tables (totals still include them)
+tokmeter alias hide   "old-scratch"
+tokmeter alias unhide "old-scratch"
+
+# Remove an alias entry — project reverts to its raw canonical name
+tokmeter alias remove "Vortex"
+
+# Interactive auto-suggest: scans your project names, proposes case-insensitive
+# and path-tail duplicates, walks through each with keep / edit / reject.
+tokmeter alias suggest
+```
+
+Alias entries carry a `modifiedBy` flag (`user` vs `tokmeter`). Auto-suggest
+only proposes for unaliased keys and **never overwrites** a user-flagged entry.
 
 ## Filters
 

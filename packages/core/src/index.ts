@@ -57,6 +57,20 @@ export {
   projectNamesMatch,
 } from "./project-name.js";
 export {
+  aliasFilePath,
+  applyTagOp,
+  isProjectHidden,
+  loadAliases,
+  mergeAliases,
+  removeAlias,
+  resolveProjectName,
+  saveAliases,
+  setAlias,
+  setHidden,
+  suggestAliases,
+} from "./alias-service.js";
+export type { AliasEntry, AliasMap, AliasSuggestion } from "./alias-service.js";
+export {
   BUILT_IN_THEMES,
   getTheme,
   listThemeIds,

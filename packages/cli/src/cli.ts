@@ -43,8 +43,12 @@ interface CliArgs extends ScanOptions {
     | "cleanup"
     | "restore"
     | "snapshot"
+    | "alias"
     | "kosha-refresh"
     | "kosha-update";
+  /** Alias sub-command and its positional arguments. */
+  aliasSub?: string;
+  aliasRest?: string[];
   pricingModel?: string;
   daemonCmd?: string;
   digestPeriod?: "today" | "week" | "month";
@@ -219,11 +223,22 @@ Live & Daemon:
 Cleanup:
   cleanup         Delete session data by project/date/provider
   restore         Restore from a cleanup backup
+  snapshot        Non-destructive backup (no deletion)
   --dry-run       Preview what would be deleted (no deletion)
   --backup        Create tar.gz backup before deleting
   --force         Skip confirmation prompt
   --id ID         Restore specific backup by ID
   --latest        Restore most recent backup
+
+Aliases (merge variants, tag, hide):
+  alias list                      Show current aliases
+  alias set     <raw> <display>   Rename one canonical project
+  alias merge   <display> <raws>  Merge several canonical projects into one
+  alias remove  <raw>             Delete a single alias entry
+  alias tag     add|remove|set <display> <tag>...
+  alias hide    <display>         Hide project from per-project tables
+  alias unhide  <display>
+  alias suggest                   Interactive: auto-detect candidates, keep/edit/reject each
 
 Installer:
   install-statusline   Install statusline hook for ALL editors
@@ -301,6 +316,15 @@ Output:
       case "kosha-refresh":
       case "kosha-update":
         args.command = arg;
+        break;
+      case "alias":
+        args.command = "alias";
+        // Consume the remaining tokens as sub-cmd + positional args.
+        // Everything left in rest[] (after this index) is alias-specific and
+        // should NOT be parsed as top-level flags.
+        args.aliasSub = rest[++i] ?? "list";
+        args.aliasRest = rest.slice(i + 1);
+        i = rest.length; // stop consuming — alias owns the rest
         break;
       case "weekly":
       case "report":
@@ -591,6 +615,17 @@ async function main() {
     await runRestore({
       id: args.restoreId,
       latest: args.restoreLatest,
+      json: args.json,
+    });
+    return;
+  }
+
+  // Alias command — manage project display names, tags, and hidden flags.
+  if (args.command === "alias") {
+    const { runAlias } = await import("./alias.js");
+    await runAlias({
+      sub: args.aliasSub ?? "list",
+      rest: args.aliasRest ?? [],
       json: args.json,
     });
     return;

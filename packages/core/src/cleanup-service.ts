@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { getCleaners } from "./cleaners/index.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
@@ -304,6 +305,13 @@ export class CleanupService {
 
       let renamedCount = 0;
 
+      // Capture the user's current aliases BEFORE the extract so we can
+      // merge them back after restore completes. The backup tarball contains
+      // a snapshot of `.tokmeter/aliases.json` from backup-creation time; a
+      // naive tar-extract would silently clobber any aliases the user has
+      // edited since. Merge-on-restore preserves both sides.
+      const aliasesBeforeRestore: AliasMap = loadAliases(currentHome);
+
       if (sameHome || !sourceHome) {
         // Same machine (or can't infer) — extract straight to /. This is how
         // restore has always behaved; preserves paths verbatim.
@@ -370,6 +378,16 @@ export class CleanupService {
             rmSync(sandbox, { recursive: true, force: true });
           } catch {}
         }
+      }
+
+      // Merge pre-restore aliases with the just-extracted ones so the user
+      // never loses edits they made after the backup was taken. Precedence:
+      //   1. `modifiedBy: "user"` wins over `"tokmeter"`.
+      //   2. If both have same flag, latest `modifiedAt` wins.
+      const aliasesAfterRestore: AliasMap = loadAliases(currentHome);
+      const mergedAliases = mergeAliasMaps(aliasesBeforeRestore, aliasesAfterRestore);
+      if (Object.keys(mergedAliases).length > 0) {
+        saveAliases(mergedAliases, currentHome);
       }
 
       // Clear entire cache after restore so next scan picks up restored files
@@ -561,7 +579,15 @@ export class CleanupService {
       }
     }
 
-    const allPaths = [...filePaths, ...sqlDumpFiles];
+    // Include the user's alias file in every backup so cross-machine restore
+    // preserves project renames, merges, tags, and hide flags. Tiny (<10KB);
+    // adding it unconditionally is cheaper than a conditional check.
+    const aliasPath = join(this.homeDir, ".tokmeter", "aliases.json");
+    const allPaths = [
+      ...filePaths,
+      ...sqlDumpFiles,
+      ...(existsSync(aliasPath) ? [aliasPath] : []),
+    ];
 
     if (allPaths.length > 0) {
       // Archive with paths relative to root. Running tar from cwd=/ with stripped
@@ -638,6 +664,35 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
  */
 function normaliseHome(path: string): string {
   return path.replace(/\/+$/, "");
+}
+
+/**
+ * Merge two alias maps with user-safe precedence so restore never silently
+ * drops aliases the user edited after the backup was taken.
+ *
+ *   - user flag beats tokmeter flag (regardless of timestamp)
+ *   - within the same flag class, the newer `modifiedAt` wins
+ *   - keys only in one side are kept verbatim
+ */
+function mergeAliasMaps(a: AliasMap, b: AliasMap): AliasMap {
+  const out: AliasMap = { ...a };
+  for (const [key, right] of Object.entries(b)) {
+    const left = out[key];
+    if (!left) {
+      out[key] = right;
+      continue;
+    }
+    if (left.modifiedBy === "user" && right.modifiedBy !== "user") continue;
+    if (left.modifiedBy !== "user" && right.modifiedBy === "user") {
+      out[key] = right;
+      continue;
+    }
+    // Same flag class — newer timestamp wins
+    const leftTs = Date.parse(left.modifiedAt) || 0;
+    const rightTs = Date.parse(right.modifiedAt) || 0;
+    out[key] = rightTs >= leftTs ? right : left;
+  }
+  return out;
 }
 
 /**
