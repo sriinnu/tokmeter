@@ -21,26 +21,37 @@ struct HeroHeader: View {
     /// with the hero glow and any shimmer placeholders.
     let breathToggle: Bool
 
+    /// Briefly bumped to >1 / non-zero degrees when `todayCost` changes so
+    /// the hero number reacts visibly to fresh data — secondary action that
+    /// reinforces the ECG's "live" message.
+    @State private var costWiggleScale: CGFloat = 1.0
+    @State private var costWiggleAngle: Double = 0
+
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        // The hero content dictates the height — background paints behind via
+        // .background(), so HeroBackground's unbounded fills (Color.black,
+        // LinearGradient, etc) don't stretch the hero vertically. Previously
+        // the background was a sibling ZStack layer and ate all available
+        // space the VStack parent gave it.
+        VStack(alignment: .leading, spacing: 0) {
+            topRow
+            valueRow
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(
             HeroBackground(theme: theme, breathToggle: breathToggle)
                 .clipShape(notchShape)
                 .overlay(innerHighlight)
                 .overlay(borderOverlay)
-                // Layered shadow — tight contact + soft ambient = real depth.
-                .shadow(color: ambientShadow, radius: 18, x: 0, y: 10)
-                .shadow(color: contactShadow, radius: 3,  x: 0, y: 1)
-
-            VStack(alignment: .leading, spacing: 2) {
-                topRow
-                valueRow
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
-            .padding(.bottom, 14)
-        }
+        )
+        // Layered shadow — tight contact + soft ambient = real depth.
+        .shadow(color: ambientShadow, radius: 18, x: 0, y: 10)
+        .shadow(color: contactShadow, radius: 3,  x: 0, y: 1)
     }
 
     // MARK: - Rows
@@ -63,7 +74,8 @@ struct HeroHeader: View {
     }
 
     /// Main value row. Hero number + "today" inline at the value baseline so
-    /// we spend one row instead of two. Feels confident, not busy.
+    /// we spend one row instead of two. Tight line-spacing keeps the whole
+    /// hero from ballooning with leading whitespace around the glyphs.
     private var valueRow: some View {
         HStack(alignment: .lastTextBaseline, spacing: 6) {
             if loader.isWarming {
@@ -73,9 +85,27 @@ struct HeroHeader: View {
                     .font(theme.fonts.hero(size: heroFontSize))
                     .foregroundColor(foreground)
                     .contentTransition(.numericText())
+                    .scaleEffect(costWiggleScale)
+                    .rotationEffect(.degrees(costWiggleAngle))
+                    // Tighten the text's intrinsic leading so large fonts don't
+                    // leave vertical padding around glyphs. Caps the line height
+                    // to the actual font size.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
                     .animation(.spring(response: 0.55, dampingFraction: 0.70), value: loader.todayCost)
+                    .onChange(of: loader.todayCost) { _, _ in
+                        // Two-step wiggle: pop up + tilt, then settle back.
+                        // The seed-driven tilt direction adds organic variance.
+                        let tiltDirection: Double = Bool.random() ? 1.0 : -1.0
+                        costWiggleScale = 1.04
+                        costWiggleAngle = 0.6 * tiltDirection
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.50)) {
+                            costWiggleScale = 1.0
+                            costWiggleAngle = 0
+                        }
+                    }
                 Text("today")
-                    .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
+                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
                     .italic()
                     .foregroundColor(foreground.opacity(0.65))
             }
@@ -185,10 +215,11 @@ struct HeroHeader: View {
     }
 
     /// Synthwave and Paper go a hair larger for display effect.
+    /// Most themes sit at 32pt — enough to dominate without inflating the hero.
     private var heroFontSize: CGFloat {
         switch theme {
-        case .synthwave, .paper: return 40
-        default:                 return 38
+        case .synthwave, .paper: return 34
+        default:                 return 32
         }
     }
 
