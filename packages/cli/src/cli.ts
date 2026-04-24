@@ -42,8 +42,17 @@ interface CliArgs extends ScanOptions {
     | "digest"
     | "cleanup"
     | "restore"
+    | "snapshot"
+    | "alias"
+    | "config"
     | "kosha-refresh"
     | "kosha-update";
+  /** Alias sub-command and its positional arguments. */
+  aliasSub?: string;
+  aliasRest?: string[];
+  /** Config sub-command and its positional arguments. */
+  configSub?: string;
+  configRest?: string[];
   pricingModel?: string;
   daemonCmd?: string;
   digestPeriod?: "today" | "week" | "month";
@@ -52,6 +61,23 @@ interface CliArgs extends ScanOptions {
   force?: boolean;
   restoreId?: string;
   restoreLatest?: boolean;
+  olderThan?: string;
+}
+
+/**
+ * Parse an --older-than value (e.g. "30d", "2w", "1m") into a cutoff ISO timestamp.
+ * Records with timestamp before the cutoff are "older than" the given window.
+ * Returns undefined on bad input; caller should error out.
+ */
+function olderThanToIsoCutoff(raw: string): string | undefined {
+  const m = raw.trim().match(/^(\d+)\s*([dwm])?$/i);
+  if (!m) return undefined;
+  const n = Number.parseInt(m[1], 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const unit = (m[2] || "d").toLowerCase();
+  const days = unit === "w" ? n * 7 : unit === "m" ? n * 30 : n;
+  const cutoffMs = Date.now() - days * 86_400_000;
+  return new Date(cutoffMs).toISOString();
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -90,6 +116,15 @@ function parseArgs(argv: string[]): CliArgs {
           process.exit(1);
         }
         break;
+      case "--older-than": {
+        const raw = rest[++i];
+        if (!raw) {
+          console.error("Error: --older-than requires a value (e.g. 30d, 2w, 1m)");
+          process.exit(1);
+        }
+        args.olderThan = raw;
+        break;
+      }
       case "--year":
         if (!rest[i + 1] || Number.isNaN(Number(rest[i + 1]))) {
           console.error("Error: --year requires a numeric argument");
@@ -192,11 +227,29 @@ Live & Daemon:
 Cleanup:
   cleanup         Delete session data by project/date/provider
   restore         Restore from a cleanup backup
+  snapshot        Non-destructive backup (no deletion)
   --dry-run       Preview what would be deleted (no deletion)
   --backup        Create tar.gz backup before deleting
   --force         Skip confirmation prompt
   --id ID         Restore specific backup by ID
   --latest        Restore most recent backup
+
+Aliases (merge variants, tag, hide):
+  alias list                      Show current aliases
+  alias set     <raw> <display>   Rename one canonical project
+  alias merge   <display> <raws>  Merge several canonical projects into one
+  alias remove  <raw>             Delete a single alias entry
+  alias tag     add|remove|set <display> <tag>...
+  alias hide    <display>         Hide project from per-project tables
+  alias unhide  <display>
+  alias suggest                   Interactive: auto-detect candidates, keep/edit/reject each
+
+Config (knobs in ~/.tokmeter/config.json):
+  config list                     Show all knobs with current + default values
+  config get    <key>             Read one value
+  config set    <key> <value>     Update one value (validated + persisted)
+  config reset  [<key>]           Restore defaults (one key or all)
+  config path                     Print config file path
 
 Installer:
   install-statusline   Install statusline hook for ALL editors
@@ -212,6 +265,7 @@ Date Filters:
   --year N        Specific year
   --since D       From date (YYYY-MM-DD or ISO)
   --until D       To date (inclusive)
+  --older-than N  Anything older than N (e.g. 30d, 2w, 1m)
 
 Digest Options:
   --period P      Period for digest: today, week (default), month
@@ -269,9 +323,25 @@ Output:
       case "digest":
       case "cleanup":
       case "restore":
+      case "snapshot":
       case "kosha-refresh":
       case "kosha-update":
         args.command = arg;
+        break;
+      case "alias":
+        args.command = "alias";
+        // Consume the remaining tokens as sub-cmd + positional args.
+        // Everything left in rest[] (after this index) is alias-specific and
+        // should NOT be parsed as top-level flags.
+        args.aliasSub = rest[++i] ?? "list";
+        args.aliasRest = rest.slice(i + 1);
+        i = rest.length; // stop consuming — alias owns the rest
+        break;
+      case "config":
+        args.command = "config";
+        args.configSub = rest[++i] ?? "list";
+        args.configRest = rest.slice(i + 1);
+        i = rest.length; // stop consuming — config owns the rest
         break;
       case "weekly":
       case "report":
@@ -392,6 +462,24 @@ function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
 
 async function main() {
   const args = parseArgs(process.argv);
+
+  // Translate --older-than Nx into an ISO --until cutoff. "Older than N days"
+  // means records with timestamp before (now - N days), i.e. until = that cutoff.
+  if (args.olderThan) {
+    const cutoff = olderThanToIsoCutoff(args.olderThan);
+    if (!cutoff) {
+      console.error(
+        `Error: invalid --older-than value "${args.olderThan}" (expected e.g. 30d, 2w, 1m)`
+      );
+      process.exit(1);
+    }
+    if (args.until) {
+      console.error("Error: --older-than and --until are mutually exclusive; pick one.");
+      process.exit(1);
+    }
+    args.until = cutoff;
+  }
+
   const core = new TokmeterCore({ skipPricing: args.light });
 
   // Handle special commands first
@@ -545,6 +633,45 @@ async function main() {
       id: args.restoreId,
       latest: args.restoreLatest,
       json: args.json,
+    });
+    return;
+  }
+
+  // Alias command — manage project display names, tags, and hidden flags.
+  if (args.command === "alias") {
+    const { runAlias } = await import("./alias.js");
+    await runAlias({
+      sub: args.aliasSub ?? "list",
+      rest: args.aliasRest ?? [],
+      json: args.json,
+    });
+    return;
+  }
+
+  // Config command — get/set user config knobs (refresh cadence, CLI defaults).
+  if (args.command === "config") {
+    const { runConfig } = await import("./config.js");
+    await runConfig({
+      sub: args.configSub ?? "list",
+      rest: args.configRest ?? [],
+      json: args.json,
+    });
+    return;
+  }
+
+  // Snapshot command — back up all (or filtered) session data without deleting.
+  if (args.command === "snapshot") {
+    const { runSnapshot } = await import("./snapshot.js");
+    await runSnapshot({
+      project: args.project,
+      providers: args.providers,
+      since: args.since,
+      until: args.until,
+      today: args.today,
+      week: args.week,
+      month: args.month,
+      json: args.json,
+      light: args.light,
     });
     return;
   }

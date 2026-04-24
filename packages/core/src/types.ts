@@ -45,6 +45,8 @@ export interface TokenRecord {
   cost: number;
   /** Original session file path (for debugging). */
   sourceFile?: string;
+  /** Actual working directory the session ran in (not the session log path). */
+  cwd?: string;
 }
 
 /** Summary of token usage for a single model within a context. */
@@ -330,6 +332,17 @@ export interface BackupInfo {
   providers: ProviderId[];
   /** Projects affected. */
   projects: string[];
+  /**
+   * Source machine's home directory at backup time (e.g. "/home/alice").
+   * Used by restore to auto-remap paths when restoring on a machine with a
+   * different homedir (cross-platform, different username, etc.).
+   * Optional for backward compat with legacy backups.
+   */
+  sourceHomeDir?: string;
+  /** Source machine's username at backup time. */
+  sourceUser?: string;
+  /** Source platform identifier ("linux", "darwin", "win32"). */
+  sourcePlatform?: string;
 }
 
 /** Result of a restore operation. */
@@ -338,4 +351,11 @@ export interface RestoreResult {
   restoredCount: number;
   /** Errors encountered during restore. */
   errors: { file: string; error: string }[];
+  /**
+   * Count of UUIDs re-minted during cross-home restore because the target
+   * path already existed on the destination machine. Each remap renames the
+   * session's seven associated paths (transcript, subagents, file-history,
+   * tasks, todos, session-env) consistently.
+   */
+  renamedCount?: number;
 }

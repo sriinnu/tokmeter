@@ -6,6 +6,7 @@
  */
 
 import { homedir } from "node:os";
+import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
 import {
   aggregateByDate,
   aggregateByModel,
@@ -54,11 +55,28 @@ export class TokmeterCore {
   private homeDir: string;
   private skipPricing: boolean;
   private scanMeta: ScanMeta = EMPTY_SCAN_META;
+  /**
+   * Cached alias map. Loaded lazily on first call that needs it and
+   * refreshable via `reloadAliases()`. Each aggregation call resolves
+   * raw canonical project names through this map.
+   */
+  private aliases: AliasMap | null = null;
 
   constructor(config?: TokmeterConfig) {
     this.homeDir = config?.homeDir || homedir();
     this.skipPricing = config?.skipPricing ?? false;
     this.pricing = new PricingService(config?.cacheDir);
+  }
+
+  /** Lazy load the user's alias map. */
+  private getAliases(): AliasMap {
+    if (!this.aliases) this.aliases = loadAliases(this.homeDir);
+    return this.aliases;
+  }
+
+  /** Force a reload from disk — call after CLI mutations write the file. */
+  reloadAliases(): void {
+    this.aliases = loadAliases(this.homeDir);
   }
 
   /**
@@ -69,6 +87,13 @@ export class TokmeterCore {
    * @returns Array of parsed token usage records.
    */
   async scan(options?: ScanOptions): Promise<TokenRecord[]> {
+    // Re-read aliases from disk at the start of every scan so the daemon
+    // picks up edits to ~/.tokmeter/aliases.json without needing a restart.
+    // Aliases are a display-layer only (records are unchanged) so this
+    // doesn't invalidate any history/cache — it just changes how the next
+    // aggregateByProject() call groups the rows.
+    this.reloadAliases();
+
     const referenceTimestamp = Date.now();
     const historyWarnings: ScanWarning[] = [];
     const todayWarnings: ScanWarning[] = [];
@@ -222,9 +247,15 @@ export class TokmeterCore {
     };
   }
 
-  /** Get summaries for all projects. */
+  /** Get summaries for all projects. Respects user aliases (merge + hide). */
   getAllProjects(): ProjectSummary[] {
-    return aggregateByProject(this.records);
+    return aggregateByProject(this.records, this.getAliases());
+  }
+
+  /** All raw canonical project names seen during scan (pre-alias). Used by
+   *  the `alias suggest` command to detect case-insensitive duplicates. */
+  getRawProjectNames(): string[] {
+    return Array.from(new Set(this.records.map((r) => r.project)));
   }
 
   /** Get summary for a specific project (by exact name or substring match). */
@@ -278,6 +309,13 @@ export class TokmeterCore {
     let firstUsed = Number.POSITIVE_INFINITY;
     let lastUsed = Number.NEGATIVE_INFINITY;
 
+    // Count distinct projects by their RESOLVED display name, but skip raws
+    // that are entirely hidden — so stats.projects always matches the number
+    // of rows in the per-project table. A display is hidden only when EVERY
+    // raw contributing to it is hidden; any non-hidden contributor keeps it
+    // visible (same rule as aggregateByProject).
+    const aliases = this.getAliases();
+    const displayVisible = new Map<string, boolean>();
     const projectSet = new Set<string>();
     const modelSet = new Set<string>();
     const providerSet = new Set<unknown>();
@@ -292,10 +330,18 @@ export class TokmeterCore {
       totalCost += r.cost;
       if (r.timestamp < firstUsed) firstUsed = r.timestamp;
       if (r.timestamp > lastUsed) lastUsed = r.timestamp;
-      projectSet.add(r.project);
+      const display = resolveProjectName(r.project, aliases);
+      // A display stays "visible" as long as at least one of its raws is
+      // not hidden. Track visibility incrementally across the single pass.
+      const isHidden = aliases[r.project]?.hidden === true;
+      if (!isHidden) displayVisible.set(display, true);
+      else if (!displayVisible.has(display)) displayVisible.set(display, false);
       modelSet.add(r.model);
       providerSet.add(r.provider);
       daySet.add(localDateKey(r.timestamp));
+    }
+    for (const [display, visible] of displayVisible) {
+      if (visible) projectSet.add(display);
     }
 
     const totalTokens =

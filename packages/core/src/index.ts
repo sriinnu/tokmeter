@@ -57,6 +57,36 @@ export {
   projectNamesMatch,
 } from "./project-name.js";
 export {
+  aliasFilePath,
+  applyTagOp,
+  isProjectHidden,
+  loadAliases,
+  mergeAliases,
+  removeAlias,
+  resolveProjectName,
+  saveAliases,
+  setAlias,
+  setHidden,
+  suggestAliases,
+} from "./alias-service.js";
+export type { AliasEntry, AliasMap, AliasSuggestion } from "./alias-service.js";
+export {
+  CONFIG_FIELDS,
+  DEFAULT_CONFIG,
+  configFilePath,
+  getConfigValue,
+  loadConfig,
+  mergeConfigs,
+  saveConfig,
+  setConfigValue,
+} from "./config-service.js";
+export type {
+  ConfigFieldMeta,
+  DefaultRange,
+  DefaultSort,
+  UserConfig,
+} from "./config-service.js";
+export {
   BUILT_IN_THEMES,
   getTheme,
   listThemeIds,
