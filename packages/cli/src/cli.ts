@@ -42,6 +42,7 @@ interface CliArgs extends ScanOptions {
     | "digest"
     | "cleanup"
     | "restore"
+    | "snapshot"
     | "kosha-refresh"
     | "kosha-update";
   pricingModel?: string;
@@ -52,6 +53,23 @@ interface CliArgs extends ScanOptions {
   force?: boolean;
   restoreId?: string;
   restoreLatest?: boolean;
+  olderThan?: string;
+}
+
+/**
+ * Parse an --older-than value (e.g. "30d", "2w", "1m") into a cutoff ISO timestamp.
+ * Records with timestamp before the cutoff are "older than" the given window.
+ * Returns undefined on bad input; caller should error out.
+ */
+function olderThanToIsoCutoff(raw: string): string | undefined {
+  const m = raw.trim().match(/^(\d+)\s*([dwm])?$/i);
+  if (!m) return undefined;
+  const n = Number.parseInt(m[1], 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const unit = (m[2] || "d").toLowerCase();
+  const days = unit === "w" ? n * 7 : unit === "m" ? n * 30 : n;
+  const cutoffMs = Date.now() - days * 86_400_000;
+  return new Date(cutoffMs).toISOString();
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -90,6 +108,15 @@ function parseArgs(argv: string[]): CliArgs {
           process.exit(1);
         }
         break;
+      case "--older-than": {
+        const raw = rest[++i];
+        if (!raw) {
+          console.error("Error: --older-than requires a value (e.g. 30d, 2w, 1m)");
+          process.exit(1);
+        }
+        args.olderThan = raw;
+        break;
+      }
       case "--year":
         if (!rest[i + 1] || Number.isNaN(Number(rest[i + 1]))) {
           console.error("Error: --year requires a numeric argument");
@@ -212,6 +239,7 @@ Date Filters:
   --year N        Specific year
   --since D       From date (YYYY-MM-DD or ISO)
   --until D       To date (inclusive)
+  --older-than N  Anything older than N (e.g. 30d, 2w, 1m)
 
 Digest Options:
   --period P      Period for digest: today, week (default), month
@@ -269,6 +297,7 @@ Output:
       case "digest":
       case "cleanup":
       case "restore":
+      case "snapshot":
       case "kosha-refresh":
       case "kosha-update":
         args.command = arg;
@@ -392,6 +421,24 @@ function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
 
 async function main() {
   const args = parseArgs(process.argv);
+
+  // Translate --older-than Nx into an ISO --until cutoff. "Older than N days"
+  // means records with timestamp before (now - N days), i.e. until = that cutoff.
+  if (args.olderThan) {
+    const cutoff = olderThanToIsoCutoff(args.olderThan);
+    if (!cutoff) {
+      console.error(
+        `Error: invalid --older-than value "${args.olderThan}" (expected e.g. 30d, 2w, 1m)`
+      );
+      process.exit(1);
+    }
+    if (args.until) {
+      console.error("Error: --older-than and --until are mutually exclusive; pick one.");
+      process.exit(1);
+    }
+    args.until = cutoff;
+  }
+
   const core = new TokmeterCore({ skipPricing: args.light });
 
   // Handle special commands first
@@ -545,6 +592,23 @@ async function main() {
       id: args.restoreId,
       latest: args.restoreLatest,
       json: args.json,
+    });
+    return;
+  }
+
+  // Snapshot command — back up all (or filtered) session data without deleting.
+  if (args.command === "snapshot") {
+    const { runSnapshot } = await import("./snapshot.js");
+    await runSnapshot({
+      project: args.project,
+      providers: args.providers,
+      since: args.since,
+      until: args.until,
+      today: args.today,
+      week: args.week,
+      month: args.month,
+      json: args.json,
+      light: args.light,
     });
     return;
   }
