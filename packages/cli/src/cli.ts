@@ -44,11 +44,15 @@ interface CliArgs extends ScanOptions {
     | "restore"
     | "snapshot"
     | "alias"
+    | "config"
     | "kosha-refresh"
     | "kosha-update";
   /** Alias sub-command and its positional arguments. */
   aliasSub?: string;
   aliasRest?: string[];
+  /** Config sub-command and its positional arguments. */
+  configSub?: string;
+  configRest?: string[];
   pricingModel?: string;
   daemonCmd?: string;
   digestPeriod?: "today" | "week" | "month";
@@ -240,6 +244,13 @@ Aliases (merge variants, tag, hide):
   alias unhide  <display>
   alias suggest                   Interactive: auto-detect candidates, keep/edit/reject each
 
+Config (knobs in ~/.tokmeter/config.json):
+  config list                     Show all knobs with current + default values
+  config get    <key>             Read one value
+  config set    <key> <value>     Update one value (validated + persisted)
+  config reset  [<key>]           Restore defaults (one key or all)
+  config path                     Print config file path
+
 Installer:
   install-statusline   Install statusline hook for ALL editors
   install-mcp          Install MCP server for ALL editors
@@ -325,6 +336,12 @@ Output:
         args.aliasSub = rest[++i] ?? "list";
         args.aliasRest = rest.slice(i + 1);
         i = rest.length; // stop consuming — alias owns the rest
+        break;
+      case "config":
+        args.command = "config";
+        args.configSub = rest[++i] ?? "list";
+        args.configRest = rest.slice(i + 1);
+        i = rest.length; // stop consuming — config owns the rest
         break;
       case "weekly":
       case "report":
@@ -626,6 +643,17 @@ async function main() {
     await runAlias({
       sub: args.aliasSub ?? "list",
       rest: args.aliasRest ?? [],
+      json: args.json,
+    });
+    return;
+  }
+
+  // Config command — get/set user config knobs (refresh cadence, CLI defaults).
+  if (args.command === "config") {
+    const { runConfig } = await import("./config.js");
+    await runConfig({
+      sub: args.configSub ?? "list",
+      rest: args.configRest ?? [],
       json: args.json,
     });
     return;

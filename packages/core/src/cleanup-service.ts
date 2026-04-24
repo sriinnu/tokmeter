@@ -22,6 +22,13 @@ import {
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
+import {
+  type UserConfig,
+  configFilePath,
+  loadConfig,
+  mergeConfigs,
+  saveConfig,
+} from "./config-service.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { getCleaners } from "./cleaners/index.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
@@ -311,6 +318,7 @@ export class CleanupService {
       // naive tar-extract would silently clobber any aliases the user has
       // edited since. Merge-on-restore preserves both sides.
       const aliasesBeforeRestore: AliasMap = loadAliases(currentHome);
+      const configBeforeRestore: UserConfig = loadConfig(currentHome);
 
       if (sameHome || !sourceHome) {
         // Same machine (or can't infer) — extract straight to /. This is how
@@ -389,6 +397,12 @@ export class CleanupService {
       if (Object.keys(mergedAliases).length > 0) {
         saveAliases(mergedAliases, currentHome);
       }
+
+      // Same merge story for config.json — user-flagged edits on this machine
+      // survive a restore from a snapshot that carries an older tokmeter default.
+      const configAfterRestore: UserConfig = loadConfig(currentHome);
+      const mergedConfig = mergeConfigs(configBeforeRestore, configAfterRestore);
+      saveConfig(mergedConfig, currentHome);
 
       // Clear entire cache after restore so next scan picks up restored files
       clearRecordCache();
@@ -579,14 +593,17 @@ export class CleanupService {
       }
     }
 
-    // Include the user's alias file in every backup so cross-machine restore
-    // preserves project renames, merges, tags, and hide flags. Tiny (<10KB);
-    // adding it unconditionally is cheaper than a conditional check.
+    // Include the user's alias + config files in every backup so cross-machine
+    // restore preserves project renames, merges, tags, hide flags, and all the
+    // knobs in config.json. Both are tiny; adding unconditionally is cheaper
+    // than a conditional check.
     const aliasPath = join(this.homeDir, ".tokmeter", "aliases.json");
+    const configPath = configFilePath(this.homeDir);
     const allPaths = [
       ...filePaths,
       ...sqlDumpFiles,
       ...(existsSync(aliasPath) ? [aliasPath] : []),
+      ...(existsSync(configPath) ? [configPath] : []),
     ];
 
     if (allPaths.length > 0) {
