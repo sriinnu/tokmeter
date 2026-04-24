@@ -83,6 +83,10 @@ struct WeekSection: View {
     @ObservedObject var loader: TokmeterLoader
     let theme: AppTheme
 
+    /// 0→1 over ~0.9s on first appear. Drives a leading-edge mask so the
+    /// chart reveals left-to-right like an ink pen drawing the line.
+    @State private var drawProgress: CGFloat = 0
+
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
@@ -123,7 +127,19 @@ struct WeekSection: View {
                         }
                     }
                 }
+                // Leading-edge mask animates from 0 to full width on first render.
+                // Wrapped here so the chart's own animation modifier still handles
+                // data updates after the initial draw-in.
+                .mask(
+                    GeometryReader { geo in
+                        Rectangle()
+                            .frame(width: geo.size.width * drawProgress)
+                    }
+                )
                 .animation(.spring(response: 0.7, dampingFraction: 0.80), value: loader.recentDaily.map(\.cost))
+                .onAppear {
+                    withAnimation(.easeOut(duration: 0.9)) { drawProgress = 1.0 }
+                }
             }
         }
     }
@@ -171,26 +187,58 @@ struct SessionsSection: View {
     }
 
     private func row(_ session: ProjectData) -> some View {
-        HStack(spacing: 10) {
-            Circle().fill(c.secondary).frame(width: 6, height: 6)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(Fmt.projectBasename(session.project))
-                    .font(.system(size: 12, weight: .medium, design: theme.fonts.bodyDesign))
-                    .foregroundColor(theme.backgroundMode.primaryTextColor)
-                    .lineLimit(1)
-                    .help(session.project)
-                Text("\(session.activeDays)d  ·  \(Fmt.number(session.totalTokens)) tokens")
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
+        SessionRow(session: session, theme: theme, rowBackground: AnyView(rowBackground))
+    }
+
+    /// A single project row. Has its own @State for hover so only THIS row
+    /// re-renders when hovered, not the whole session list.
+    private struct SessionRow: View {
+        let session: ProjectData
+        let theme: AppTheme
+        let rowBackground: AnyView
+
+        @State private var hovered = false
+
+        private var c: ThemeColors { theme.colors }
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Circle().fill(c.secondary).frame(width: 6, height: 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(Fmt.projectBasename(session.project))
+                        .font(.system(size: 12, weight: .medium, design: theme.fonts.bodyDesign))
+                        .foregroundColor(theme.backgroundMode.primaryTextColor)
+                        .lineLimit(1)
+                        .help(session.project)
+                    Text("\(session.activeDays)d  ·  \(Fmt.number(session.totalTokens)) tokens")
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                }
+                Spacer()
+                Text(Fmt.cost(session.totalCost))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(c.highlight)
             }
-            Spacer()
-            Text(Fmt.cost(session.totalCost))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(c.highlight)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                // Hover flourish: a 1.5pt accent bar fades in on the leading
+                // edge. Layered under the theme-aware rowBackground so the
+                // chrome stays consistent across themes.
+                rowBackground
+                    .overlay(alignment: .leading) {
+                        if hovered {
+                            Rectangle()
+                                .fill(c.accent)
+                                .frame(width: 1.5)
+                                .transition(.opacity)
+                        }
+                    }
+            )
+            .offset(y: hovered ? -1 : 0)
+            .animation(.spring(response: 0.32, dampingFraction: 0.80), value: hovered)
+            .onHover { hovered = $0 }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(rowBackground)
     }
 
     /// Row background adapted per theme's card language — papery on Paper,

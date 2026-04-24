@@ -58,16 +58,63 @@ struct SettingsPopover: View {
     }
 
     private func themeCell(for t: AppTheme) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.30)) { theme = t }
-        } label: {
+        ThemePickerCell(theme: t, isSelected: theme == t) {
+            // Spring switch — the parent's `.animation(value: theme)` modifier
+            // catches this and propagates a smooth retint across the tree.
+            withAnimation(.spring(response: 0.50, dampingFraction: 0.78)) { theme = t }
+        }
+    }
+
+    // MARK: - Actions
+
+    /// Open the user's `~/.tokmeter/config.json` in the default editor. If
+    /// that path has been replaced with a symlink escaping ~/.tokmeter/
+    /// (e.g. to `~/.ssh/id_rsa`), we silently refuse rather than leak the
+    /// target file into an editor. Resolved via `realpath(3)`.
+    private func openConfigFile() {
+        let tokmeterDir = NSHomeDirectory() + "/.tokmeter"
+        let configPath = tokmeterDir + "/config.json"
+
+        // No file yet — nothing to open, and nothing to spoof.
+        guard FileManager.default.fileExists(atPath: configPath) else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+            return
+        }
+
+        // Canonicalize via realpath, which follows all symlinks. If the
+        // target escapes our own directory, bail — an attacker with write
+        // access to ~/.tokmeter/ must not be able to leak anything else.
+        var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(configPath, &resolved) != nil else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+            return
+        }
+        let resolvedStr = String(cString: resolved)
+        guard resolvedStr.hasPrefix(tokmeterDir + "/") else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: resolvedStr))
+    }
+}
+
+// MARK: - Picker cell + swatch
+
+/// One row in the theme picker grid: swatch + name + tagline. Has its own
+/// hover/select animation so only the touched cell re-renders.
+struct ThemePickerCell: View {
+    let theme: AppTheme
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var hovered: Bool = false
+
+    var body: some View {
+        Button(action: onTap) {
             HStack(spacing: 8) {
-                ThemeSwatch(theme: t, isSelected: theme == t)
+                ThemeSwatch(theme: theme, isSelected: isSelected)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(t.displayName)
+                    Text(theme.displayName)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundColor(theme == t ? .primary : .secondary)
-                    Text(t.tagline)
+                        .foregroundColor(isSelected ? .primary : .secondary)
+                    Text(theme.tagline)
                         .font(.system(size: 8, design: .rounded))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -78,21 +125,22 @@ struct SettingsPopover: View {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(theme == t ? t.colors.secondary : Color.clear, lineWidth: 1.5)
+                    .fill(hovered ? Color.primary.opacity(0.06) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(isSelected ? theme.colors.secondary : Color.clear, lineWidth: 1.5)
+                    )
             )
+            // Subtle hover lift — same idiom as the KPI cards so the whole app
+            // feels consistent.
+            .scaleEffect(hovered ? 1.04 : 1.0)
+            .offset(y: hovered ? -1 : 0)
+            .animation(.spring(response: 0.30, dampingFraction: 0.75), value: hovered)
         }
         .buttonStyle(.borderless)
-    }
-
-    // MARK: - Actions
-
-    private func openConfigFile() {
-        let configPath = NSHomeDirectory() + "/.tokmeter/config.json"
-        NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+        .onHover { hovered = $0 }
     }
 }
-
-// MARK: - Swatch
 
 /// Small preview of the theme's gradient with its icon centered — shown in
 /// the settings picker. Selection is a bright ring around the swatch.

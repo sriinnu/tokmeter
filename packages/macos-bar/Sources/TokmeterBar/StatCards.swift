@@ -106,6 +106,13 @@ struct StatCard: View {
     @State private var sparkProgress: CGFloat = 0
     /// Opacity/scale enter state. Drops to 0/0.92 then springs into 1/1.
     @State private var appeared: Bool = false
+    /// Hover tracking — adds a small lift + role glow.
+    @State private var hovered: Bool = false
+    /// Press tracking — scales slightly down so the card feels tactile.
+    @State private var pressed: Bool = false
+    /// Flash opacity briefly bumped on value change — a colored ring-glow
+    /// behind the card announces "this number just updated."
+    @State private var flashOpacity: Double = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -152,8 +159,33 @@ struct StatCard: View {
         }
         .frame(height: 108)
         .background(CardBackground(role: role, cardMode: theme.cardMode, themeColors: theme.colors))
-        .scaleEffect(appeared ? 1.0 : 0.92)
+        // Flash ring — appears briefly when the value changes, fades out.
+        // Stacked behind the card's shadow so it reads as a role-colored halo.
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.cardMode.cornerRadius)
+                .stroke(role, lineWidth: 2)
+                .opacity(flashOpacity)
+                .blur(radius: 2)
+                .allowsHitTesting(false)
+        )
+        .onChange(of: value) { _, _ in
+            // Skip the initial set-to-real-data transition — only flash on live updates.
+            guard appeared else { return }
+            flashOpacity = 0.6
+            withAnimation(.easeOut(duration: 0.55)) { flashOpacity = 0 }
+        }
+        .shadow(color: hovered ? role.opacity(0.35) : Color.clear, radius: hovered ? 10 : 0)
+        // Compose transforms: enter scale × hover lift × press squeeze.
+        // Multiplying is idempotent when each state is 1.0 at rest.
+        .scaleEffect(appeared ? (pressed ? 0.97 : (hovered ? 1.02 : 1.0)) : 0.92)
+        .offset(y: hovered && !pressed ? -1.5 : 0)
         .opacity(appeared ? 1.0 : 0.0)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: hovered)
+        .animation(.spring(response: 0.18, dampingFraction: 0.62), value: pressed)
+        .onHover { hovered = $0 }
+        .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { isPressing in
+            pressed = isPressing
+        }, perform: {})
         .onAppear {
             // Staggered entry so the cards cascade in — left then center then right.
             let delay = Double(index) * 0.06
@@ -208,6 +240,10 @@ struct IconBadge: View {
 struct DeltaPill: View {
     let percent: Double
 
+    /// Signs-flipped detector: when the sign changes (e.g. trend reversed),
+    /// we briefly scale the pill so the user's eye catches the shift.
+    @State private var pulseScale: CGFloat = 1.0
+
     var body: some View {
         let positive = percent >= 0
         let color: Color = positive
@@ -223,6 +259,14 @@ struct DeltaPill: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
         .background(Capsule().fill(color.opacity(0.18)))
+        .scaleEffect(pulseScale)
+        // Bump scale → spring back on any sign change (positive flag toggles).
+        .onChange(of: positive) { _, _ in
+            pulseScale = 1.25
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) {
+                pulseScale = 1.0
+            }
+        }
     }
 }
 
@@ -284,6 +328,15 @@ struct InlineSparkline: View {
                     .trim(from: 0, to: progress)
                     .stroke(color.opacity(0.85),
                             style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    // End dot — a colored bead at the latest value. Fades in with
+                    // the line's progress so it "catches up" to the pen stroke.
+                    // Signals which end of the sparkline is "now."
+                    Circle()
+                        .fill(color)
+                        .frame(width: 4, height: 4)
+                        .position(point(values.count - 1, values.last!))
+                        .opacity(Double(progress))
+                        .shadow(color: color.opacity(0.6), radius: 2)
                 }
             }
         }

@@ -7,15 +7,20 @@ import Foundation
 
 // MARK: - View models (UI consumes these)
 
-struct DailyUsage: Identifiable {
-    let id = UUID()
+struct DailyUsage: Identifiable, Equatable {
+    // Use the date string as the stable ID — a fresh fetch that returns the
+    // same days should reuse the existing SwiftUI rows (prevents Chart + row
+    // re-renders on every 30s poll).
+    var id: String { date }
     let date: String
     let tokens: Int
     let cost: Double
 }
 
-struct ModelUsage: Identifiable {
-    let id = UUID()
+struct ModelUsage: Identifiable, Equatable {
+    // Model name is the natural stable ID — SwiftUI diffs rows when models
+    // are added/removed or reorder, rather than rebuilding them all.
+    var id: String { model }
     let model: String
     let cost: Double
     let tokens: Int
