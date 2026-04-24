@@ -30,7 +30,12 @@ tokmeter daily                    # daily usage over time
 tokmeter projects                 # per-project summary
 tokmeter stats                    # overall statistics
 tokmeter pricing sonnet           # lookup model pricing
+tokmeter cleanup                  # interactive wipe with pre-delete backup
+tokmeter snapshot                 # portable backup (no deletion)
+tokmeter restore [--latest|--id]  # restore from ~/.cache/tokmeter/backups/
 ```
+
+See the top-level README for the full cross-machine backup/restore workflow.
 
 ## Filters
 

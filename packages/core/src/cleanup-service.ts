@@ -6,9 +6,12 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -16,8 +19,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, platform, tmpdir, userInfo } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { getCleaners } from "./cleaners/index.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
@@ -192,6 +195,36 @@ export class CleanupService {
     };
   }
 
+  /**
+   * Snapshot current session data into a backup archive without deleting
+   * anything. Useful for portable snapshots — run on machine A, restore on
+   * machine B to merge the data in.
+   *
+   * Uses the same tar.gz + meta.json format as `execute`, so `listBackups`
+   * and `restore` work against snapshots identically.
+   */
+  async snapshot(
+    filter: CleanupFilter = {},
+    options: { backupDir?: string } = {}
+  ): Promise<{ archivePath: string; recordCount: number; targetCount: number }> {
+    const preview = await this.preview(filter);
+    if (preview.targets.length === 0) {
+      return { archivePath: "", recordCount: 0, targetCount: 0 };
+    }
+    const projectNames = preview.byProject.map((p) => p.project);
+    const archivePath = await this.createBackup(
+      preview.targets,
+      filter,
+      options.backupDir,
+      projectNames
+    );
+    return {
+      archivePath,
+      recordCount: preview.recordCount,
+      targetCount: preview.targets.length,
+    };
+  }
+
   /** List available backups. */
   listBackups(backupDir?: string): BackupInfo[] {
     const dir = backupDir || DEFAULT_BACKUP_DIR;
@@ -261,17 +294,90 @@ export class CleanupService {
         };
       }
 
-      // --no-absolute-names strips leading / from archive entries
-      execFileSync("tar", ["xzf", archivePath, "--no-absolute-names", "-C", "/"], {
-        timeout: 60_000,
-      });
+      // Decide between fast-path (same home) and sandbox-remap (different home).
+      // Source home comes from meta when the backup was created by a modern
+      // build; otherwise we sniff it from archive entries for legacy compat.
+      const currentHome = this.homeDir;
+      const sourceHome = meta.sourceHomeDir || sniffSourceHomeFromListing(listing);
+
+      const sameHome = sourceHome && normaliseHome(sourceHome) === normaliseHome(currentHome);
+
+      let renamedCount = 0;
+
+      if (sameHome || !sourceHome) {
+        // Same machine (or can't infer) — extract straight to /. This is how
+        // restore has always behaved; preserves paths verbatim.
+        execFileSync("tar", ["xzf", archivePath, "-C", "/"], {
+          timeout: 60_000,
+        });
+      } else {
+        // Cross-home restore: extract into a sandbox, then walk + copy the
+        // source home subtree into the current user's home. On path conflicts
+        // we mint a fresh UUID for the colliding session so all 7 associated
+        // paths (transcript, subagents, file-history, tasks, todos, session-env)
+        // rename consistently — preserving both machines' work.
+        const sandbox = mkdtempSync(join(tmpdir(), "tokmeter-restore-"));
+        try {
+          execFileSync("tar", ["xzf", archivePath, "-C", sandbox], {
+            timeout: 60_000,
+          });
+
+          // Archive entries had their leading "/" stripped; mirror that here.
+          const sourceHomeInSandbox = join(sandbox, sourceHome.replace(/^\/+/, ""));
+
+          if (!existsSync(sourceHomeInSandbox)) {
+            return {
+              restoredCount: 0,
+              errors: [
+                {
+                  file: sourceHome,
+                  error: `Archive does not contain source home "${sourceHome}" — cannot remap`,
+                },
+              ],
+            };
+          }
+
+          const sandboxFiles = walkFiles(sourceHomeInSandbox);
+
+          // Pass 1: detect UUIDs in paths that would collide on the target.
+          // Build a stable old→new map so every associated path renames the same way.
+          const uuidMap = new Map<string, string>();
+          for (const filePath of sandboxFiles) {
+            const rel = relative(sourceHomeInSandbox, filePath);
+            const target = join(currentHome, rel);
+            if (!existsSync(target)) continue;
+            const matches = rel.match(UUID_RE) || [];
+            for (const raw of matches) {
+              const key = raw.toLowerCase();
+              if (!uuidMap.has(key)) uuidMap.set(key, randomUUID());
+            }
+          }
+          renamedCount = uuidMap.size;
+
+          // Pass 2: copy each file, rewriting any mapped UUID in its relative path.
+          for (const filePath of sandboxFiles) {
+            let rel = relative(sourceHomeInSandbox, filePath);
+            if (uuidMap.size > 0) {
+              rel = rel.replace(UUID_RE, (m) => uuidMap.get(m.toLowerCase()) || m);
+            }
+            const target = join(currentHome, rel);
+            mkdirSync(dirname(target), { recursive: true });
+            copyFileSync(filePath, target);
+          }
+        } finally {
+          // Always clean up the sandbox, even on partial failure.
+          try {
+            rmSync(sandbox, { recursive: true, force: true });
+          } catch {}
+        }
+      }
 
       // Clear entire cache after restore so next scan picks up restored files
       clearRecordCache();
       invalidateHistorySnapshot(this.homeDir);
       invalidateSummaryCache(this.homeDir);
 
-      return { restoredCount: meta.recordCount, errors: [] };
+      return { restoredCount: meta.recordCount, errors: [], renamedCount };
     } catch (err) {
       return {
         restoredCount: 0,
@@ -458,8 +564,15 @@ export class CleanupService {
     const allPaths = [...filePaths, ...sqlDumpFiles];
 
     if (allPaths.length > 0) {
+      // Archive with paths relative to root. Running tar from cwd=/ with stripped
+      // leading slashes avoids the --no-absolute-names flag, which only newer GNU
+      // tar recognizes and BSD tar doesn't have at all. Default behaviour on every
+      // tar we care about (GNU, BSD, bsdtar on Windows) strips leading "/" already
+      // unless -P is passed — so we just normalise the input to match.
+      const relPaths = allPaths.map((p) => p.replace(/^\/+/, ""));
       try {
-        execFileSync("tar", ["czf", archivePath, "--no-absolute-names", ...allPaths], {
+        execFileSync("tar", ["czf", archivePath, ...relPaths], {
+          cwd: "/",
           timeout: 120_000,
         });
       } catch {
@@ -481,6 +594,15 @@ export class CleanupService {
       return "";
     }
 
+    // Capture source machine context so restore can auto-remap paths when
+    // the archive is moved to a machine with a different homedir/username.
+    let sourceUser = "";
+    try {
+      sourceUser = userInfo().username;
+    } catch {
+      // userInfo can throw on exotic FS; fall back to empty string.
+    }
+
     // Write metadata sidecar
     const meta: BackupInfo = {
       id,
@@ -494,10 +616,63 @@ export class CleanupService {
       ),
       providers: [...new Set(targets.map((t) => t.provider))],
       projects: projectNames,
+      sourceHomeDir: this.homeDir,
+      sourceUser,
+      sourcePlatform: platform(),
     };
 
     writeFileSync(join(dir, `${id}.meta.json`), `${JSON.stringify(meta, null, 2)}\n`, "utf-8");
 
     return archivePath;
   }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+/** UUID v4 (and any 36-char RFC-4122 shape) matcher. Case-insensitive. */
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Normalise a homedir for comparison — strips trailing slashes so
+ * "/home/sriinnu" and "/home/sriinnu/" compare equal.
+ */
+function normaliseHome(path: string): string {
+  return path.replace(/\/+$/, "");
+}
+
+/**
+ * For legacy backups without sourceHomeDir in meta, infer it from the archive
+ * listing by looking for the first entry that starts with a homedir-shaped
+ * prefix: "home/<user>/..." (Linux) or "Users/<user>/..." (macOS/WSL/Win).
+ *
+ * Returns an absolute path (with leading slash) so it can be compared against
+ * os.homedir() directly, or an empty string if nothing matches.
+ */
+function sniffSourceHomeFromListing(listing: string): string {
+  for (const raw of listing.split("\n")) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    const match = entry.match(/^(home|Users)\/([^/]+)\//);
+    if (match) {
+      return `/${match[1]}/${match[2]}`;
+    }
+  }
+  return "";
+}
+
+/**
+ * Recursively collect every file path under root. Skips symlinks for safety.
+ */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const entries = readdirSync(root, { withFileTypes: true });
+  for (const e of entries) {
+    const full = join(root, e.name);
+    if (e.isDirectory()) {
+      out.push(...walkFiles(full));
+    } else if (e.isFile()) {
+      out.push(full);
+    }
+  }
+  return out;
 }
