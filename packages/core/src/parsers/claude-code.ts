@@ -25,6 +25,21 @@ interface ClaudeMessage {
   costUSD?: number;
 }
 
+/**
+ * Claude Code slugs a cwd into its projects dir by replacing `/` with `-`.
+ * `/Users/me/src/app` → `~/.claude/projects/-Users-me-src-app/`. We best-effort
+ * reverse it for display hints. Literal dashes in original dir names get
+ * folded into slashes — acceptable since this is purely an identification hint.
+ */
+function decodeClaudeSlugDir(filePath: string): string | undefined {
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
+  const projectsIdx = parts.indexOf("projects");
+  const slug = projectsIdx >= 0 ? parts[projectsIdx + 1] : undefined;
+  if (!slug) return undefined;
+  // Slug always starts with a leading dash representing the root `/`.
+  return slug.startsWith("-") ? `/${slug.slice(1).replace(/-/g, "/")}` : undefined;
+}
+
 export class ClaudeCodeParser implements SessionParser {
   readonly providerId = "claude-code" as const;
 
@@ -43,6 +58,7 @@ export class ClaudeCodeParser implements SessionParser {
       }
 
       const project = extractProjectFromPath(file);
+      const cwd = decodeClaudeSlugDir(file);
 
       // Append mode: only parse new bytes from where we left off
       const lines =
@@ -71,6 +87,7 @@ export class ClaudeCodeParser implements SessionParser {
             provider: "claude-code",
             model: msg.message.model || "unknown",
             project,
+            cwd,
             sourceFile: file,
             inputTokens: usage.input_tokens ?? 0,
             outputTokens: usage.output_tokens ?? 0,

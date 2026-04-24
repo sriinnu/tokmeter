@@ -2,6 +2,7 @@
  * tokmeter restore — Restore from cleanup backups.
  */
 
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
@@ -83,6 +84,23 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
   console.log(`   Size: ${fmtBytes(backup.sizeBytes)}`);
   console.log(`   Providers: ${backup.providers.join(", ")}`);
 
+  // Show source → target so cross-machine restores are transparent
+  const currentHome = homedir();
+  if (backup.sourceHomeDir) {
+    const sourceUser = backup.sourceUser ? ` (${backup.sourceUser})` : "";
+    const sourcePlatform = backup.sourcePlatform ? ` · ${backup.sourcePlatform}` : "";
+    console.log(`   Source:    ${backup.sourceHomeDir}${sourceUser}${sourcePlatform}`);
+    console.log(`   Target:    ${currentHome}`);
+    if (backup.sourceHomeDir !== currentHome) {
+      console.log("   Mode:      cross-home (paths will be auto-remapped into your homedir)");
+    } else {
+      console.log("   Mode:      same-home (direct extract)");
+    }
+  } else {
+    console.log("   Source:    (legacy backup — source home will be sniffed from archive)");
+    console.log(`   Target:    ${currentHome}`);
+  }
+
   const confirm = await ask("\n⚠  This will overwrite current data. Type RESTORE to confirm: ");
   if (confirm !== "RESTORE") {
     console.log("Cancelled.\n");
@@ -98,6 +116,11 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
     }
   } else {
     console.log(`\n✓ Restored ${result.restoredCount} items.`);
+    if (result.renamedCount && result.renamedCount > 0) {
+      console.log(
+        `  ↻ ${result.renamedCount} UUID(s) re-minted on conflict — local sessions with the same id stayed put; restored copies got fresh ids.`
+      );
+    }
     console.log(`  Run 'tokmeter' to verify data is back.\n`);
   }
 }
