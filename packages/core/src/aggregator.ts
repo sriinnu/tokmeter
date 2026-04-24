@@ -4,6 +4,7 @@
  * Groups parsed TokenRecords by project, model, provider, and date.
  */
 
+import { type AliasMap, isProjectHidden, resolveProjectName } from "./alias-service.js";
 import { toDateStr } from "./parsers/utils.js";
 import { projectNameIncludes } from "./project-name.js";
 import type {
@@ -107,34 +108,60 @@ function sumTokens(records: TokenRecord[]) {
   };
 }
 
-/** Aggregate records into per-project summaries. */
-export function aggregateByProject(records: TokenRecord[]): ProjectSummary[] {
-  const grouped = groupBy(records, (r) => r.project);
+/**
+ * Aggregate records into per-project summaries.
+ *
+ * If `aliases` is provided: records are first grouped by the resolved
+ * display name (so "Vaayu" + "vaayu" → one row), and projects flagged
+ * `hidden: true` are dropped from the output (totals still reflect them
+ * via `aggregator.sum*` callers that work on the raw record set).
+ */
+export function aggregateByProject(
+  records: TokenRecord[],
+  aliases?: AliasMap
+): ProjectSummary[] {
+  const resolve = aliases
+    ? (p: string) => resolveProjectName(p, aliases)
+    : (p: string) => p;
+
+  const grouped = groupBy(records, (r) => resolve(r.project));
   const totalCost = records.reduce((s, r) => s + r.cost, 0);
 
-  return Array.from(grouped.entries()).map(([project, recs]) => {
-    const sums = sumTokens(recs);
-    const models = aggregateByModel(recs, totalCost);
-    const providers = aggregateByProvider(recs, totalCost);
-    const daily = aggregateByDate(recs);
+  return Array.from(grouped.entries())
+    .filter(([, recs]) => {
+      if (!aliases) return true;
+      // Drop the row only when every raw project mapping to this display is
+      // hidden. Any non-hidden contributor keeps it visible. O(N) total —
+      // the group's own records already carry all raws for the display.
+      const rawsForDisplay = new Set(recs.map((r) => r.project));
+      for (const raw of rawsForDisplay) {
+        if (!isProjectHidden(raw, aliases)) return true;
+      }
+      return false;
+    })
+    .map(([project, recs]) => {
+      const sums = sumTokens(recs);
+      const models = aggregateByModel(recs, totalCost);
+      const providers = aggregateByProvider(recs, totalCost);
+      const daily = aggregateByDate(recs);
 
-    return {
-      project,
-      totalTokens: sums.total,
-      totalCost: sums.cost,
-      inputTokens: sums.input,
-      outputTokens: sums.output,
-      cacheReadTokens: sums.cacheRead,
-      cacheWriteTokens: sums.cacheWrite,
-      reasoningTokens: sums.reasoning,
-      models,
-      providers,
-      dailyBreakdown: daily,
-      activeDays: daily.length,
-      firstUsed: recs.reduce((min, r) => Math.min(min, r.timestamp), Number.POSITIVE_INFINITY),
-      lastUsed: recs.reduce((max, r) => Math.max(max, r.timestamp), Number.NEGATIVE_INFINITY),
-    };
-  });
+      return {
+        project,
+        totalTokens: sums.total,
+        totalCost: sums.cost,
+        inputTokens: sums.input,
+        outputTokens: sums.output,
+        cacheReadTokens: sums.cacheRead,
+        cacheWriteTokens: sums.cacheWrite,
+        reasoningTokens: sums.reasoning,
+        models,
+        providers,
+        dailyBreakdown: daily,
+        activeDays: daily.length,
+        firstUsed: recs.reduce((min, r) => Math.min(min, r.timestamp), Number.POSITIVE_INFINITY),
+        lastUsed: recs.reduce((max, r) => Math.max(max, r.timestamp), Number.NEGATIVE_INFINITY),
+      };
+    });
 }
 
 /** Aggregate records into per-model summaries. */

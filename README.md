@@ -174,6 +174,30 @@ Roo/Kilo) are backed up at the row level but not re-injected on restore —
 their data shows up in tokmeter stats once re-indexed, but isn't written back
 into the editor's SQLite DB.
 
+### Project Aliases
+
+Collapse variants of the same project (e.g. `Vaayu` on Mac and `vaayu` on
+Linux become one row), rename noisy canonical names
+(`CustomerCockpit/frontend` → `CustomerCockpit`), tag projects (`work`,
+`client`, `self`), or hide archived ones.
+
+File: `~/.tokmeter/aliases.json`. Included in `snapshot` bundles automatically,
+so your project renames and tags travel across machines with the rest of your
+data.
+
+```bash
+tokmeter alias list                              # show current aliases
+tokmeter alias set "Vaayu" "Vaayu"               # single rename
+tokmeter alias merge "Vaayu" "Vaayu" "vaayu"     # group keys under one display
+tokmeter alias tag add "CustomerCockpit" work client
+tokmeter alias hide "old-scratch"                # drop from per-project tables
+tokmeter alias suggest                           # interactive auto-detect
+```
+
+Every entry carries `modifiedBy: "user" | "tokmeter"`. Auto-suggest only
+proposes for unaliased keys; it **never overwrites** a user-flagged entry. User
+confirmations flip the flag so future scans leave it alone.
+
 ### Cost Digest
 
 The `digest` command gives you a cost report card:

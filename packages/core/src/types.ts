@@ -45,6 +45,8 @@ export interface TokenRecord {
   cost: number;
   /** Original session file path (for debugging). */
   sourceFile?: string;
+  /** Actual working directory the session ran in (not the session log path). */
+  cwd?: string;
 }
 
 /** Summary of token usage for a single model within a context. */

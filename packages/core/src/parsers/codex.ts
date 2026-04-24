@@ -70,6 +70,7 @@ interface CodexEvent {
 interface CodexParseState {
   currentModel: string;
   project: string;
+  cwd: string;
   prevTotal: CodexTokenUsage;
 }
 
@@ -77,6 +78,7 @@ function defaultState(): CodexParseState {
   return {
     currentModel: "gpt-4o",
     project: "codex",
+    cwd: "",
     prevTotal: {},
   };
 }
@@ -232,6 +234,7 @@ export class CodexParser implements SessionParser {
         if (evt.type === "session_meta" && evt.payload) {
           if (evt.payload.cwd) {
             state.project = projectFromCwd(evt.payload.cwd);
+            state.cwd = evt.payload.cwd;
           }
         }
 
@@ -287,6 +290,7 @@ export class CodexParser implements SessionParser {
             provider: "codex",
             model: state.currentModel,
             project: state.project,
+            cwd: state.cwd || undefined,
             sourceFile: file,
             inputTokens,
             outputTokens,
