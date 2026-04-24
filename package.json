@@ -17,6 +17,7 @@
     "build:web": "cd packages/web && bun run build",
     "build:mcp": "cd packages/mcp && bun run build",
     "build:tokmeter": "cd packages/tokmeter && bun run build",
+    "ensure:tokmeter": "test -f packages/tokmeter/dist/core/index.js || (bun run build:core && bun run build:cli && bun run build:tui && bun run build:tokmeter)",
 
     "cli": "cd packages/cli && bun src/cli.ts",
     "cli:models": "cd packages/cli && bun src/cli.ts models",
@@ -31,20 +32,20 @@
     "dev:web": "cd packages/web && bun run dev",
     "build:web:preview": "cd packages/web && bun run preview",
 
-    "drishti": "cd packages/mcp && bun src/cli.ts",
-    "drishti:live": "cd packages/mcp && bun src/cli.ts live",
-    "drishti:serve": "cd packages/mcp && bun src/cli.ts serve",
-    "drishti:statusline": "cd packages/mcp && bun src/cli.ts statusline",
+    "drishti": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts",
+    "drishti:live": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts live",
+    "drishti:serve": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts serve",
+    "drishti:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts statusline",
 
-    "daemon:start": "cd packages/mcp && bun src/cli.ts daemon start",
+    "daemon:start": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon start",
     "daemon:stop": "cd packages/mcp && bun src/cli.ts daemon stop",
     "daemon:status": "cd packages/mcp && bun src/cli.ts daemon status",
 
-    "install:statusline": "cd packages/mcp && bun src/cli.ts install-statusline",
-    "install:mcp": "cd packages/mcp && bun src/cli.ts install-mcp",
-    "uninstall:statusline": "cd packages/mcp && bun src/cli.ts uninstall-statusline",
-    "uninstall:mcp": "cd packages/mcp && bun src/cli.ts uninstall-mcp",
-    "list:editors": "cd packages/mcp && bun src/cli.ts editors",
+    "install:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-statusline",
+    "install:mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-mcp",
+    "uninstall:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts uninstall-statusline",
+    "uninstall:mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts uninstall-mcp",
+    "list:editors": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts editors",
 
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

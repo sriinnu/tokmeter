@@ -6,6 +6,7 @@
 //
 // All endpoints live at http://127.0.0.1:9877/api/*
 
+import Darwin   // proc_name() — used by isDaemonRunning to verify the PID
 import Foundation
 
 enum DaemonError: Error, LocalizedError {
@@ -56,15 +57,28 @@ final class DaemonClient {
         self.session = URLSession(configuration: config)
     }
 
-    /// True if the daemon's PID file exists and the process is alive.
+    /// True if the daemon's PID file exists, the process is alive, AND the
+    /// process actually looks like a node/bun runtime (not some other process
+    /// that happened to inherit the PID, or an attacker that pre-wrote the
+    /// PID file in /tmp).
     var isDaemonRunning: Bool {
         guard FileManager.default.fileExists(atPath: pidPath),
               let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
               let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return false
         }
-        // kill(pid, 0) succeeds if process exists
-        return kill(pid, 0) == 0
+        // Process must exist
+        guard kill(pid, 0) == 0 else { return false }
+
+        // Verify the PID belongs to a node/bun process. /tmp is world-writable,
+        // so any user could pre-create the PID file pointing at an unrelated
+        // process. proc_name() reads from kernel-maintained tables (not
+        // user-supplied data) so it can't be spoofed by writing to /tmp.
+        var nameBuf = [CChar](repeating: 0, count: 128)
+        let len = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
+        guard len > 0 else { return false }
+        let name = String(cString: nameBuf)
+        return name == "node" || name == "bun" || name.hasPrefix("drishti")
     }
 
     // MARK: - GET endpoints (read-only, no auth needed)
@@ -128,6 +142,12 @@ final class DaemonClient {
 
             guard (200..<300).contains(http.statusCode) else {
                 throw DaemonError.httpError(http.statusCode)
+            }
+            // Defensive cap: any single API response >10MB is suspicious.
+            // Protects against an OOM if something else binds 127.0.0.1:9877
+            // and returns an unbounded payload (security P1 from perf/security review).
+            guard data.count <= 10_000_000 else {
+                throw DaemonError.networkError("response too large (\(data.count) bytes)")
             }
             do {
                 return try JSONDecoder().decode(T.self, from: data)
