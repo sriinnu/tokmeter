@@ -1,91 +1,339 @@
-// Theme.swift — switchable color palettes for the menu bar popover.
+// Theme.swift — complete theme system for the menubar popover.
 //
-// Each theme defines six semantic colors that flow through every section
-// of the UI. The user picks a theme in Settings; the selection persists
-// via @AppStorage("appTheme").
+// Each theme is a full visual language, not just a palette. It defines:
+//   - six semantic color roles (primary/secondary/accent/highlight/warm/tertiary)
+//   - a background surface mode (dark, light cream, deep indigo, etc)
+//   - a hero header mode (gradient, calm, horizon, scanlines)
+//   - a card rendering mode (glossy, flat, paper, neon-outlined, HUD panel)
+//   - a typography hint (monospaced hero for HUD, rounded for the rest)
+//
+// Switching a theme re-dresses every surface without changing any view logic.
+// The user picks a theme in Settings; persisted via @AppStorage("appTheme").
+//
+// Themes:
+//   • Nebula    — purple→magenta→orange gradient, glossy dark cards (default)
+//   • Nocturne  — deep indigo, calm, no gradient, sparkline-friendly
+//   • Daylight  — cream/ivory light theme for light-mode Mac users
+//   • Synthwave — retrofuture horizon sun + grid + neon-outlined cards
+//   • HUD       — tactical sci-fi with mono typography and status overlays
+//   • Terminal  — pure CRT: black phosphor-green mono, scanlines, cursor
+//   • Paper     — editorial: warm cream, serif display numbers, hairlines
+//   • Glass     — translucent material panels + cool-neutral accents
 
 import SwiftUI
 
-// MARK: - Theme colors
+// MARK: - Color roles
 
-/// Six semantic color roles used across the popover. Each AppTheme
-/// provides its own instance so the entire UI recolors at once.
+/// Six semantic color roles used everywhere in the UI. Each theme provides
+/// its own values so changing themes re-tints the entire popover.
 struct ThemeColors {
-    let primary: Color    // hero gradient start, dominant tone
-    let secondary: Color  // hero gradient middle, model bars, session dots
-    let accent: Color     // bright accent, chart lines, interactive highlights
-    let highlight: Color  // cost/monetary color (amber/gold family)
-    let warm: Color       // warm gradient end, bar chart fill
-    let tertiary: Color   // third stat card (streak / days)
+    let primary: Color      // Hero gradient start, dominant tone
+    let secondary: Color    // Hero gradient middle, primary data emphasis
+    let accent: Color       // Bright accent, chart lines, links
+    let highlight: Color    // Monetary/cost color (amber/gold family)
+    let warm: Color         // Gradient end, bar fill, sparkline area
+    let tertiary: Color     // Streak / third stat card
+}
+
+// MARK: - Background surface
+
+/// How the whole popover surface paints itself.
+enum BackgroundMode {
+    case dark             // Standard macOS dark background
+    case darkGradient     // Subtle top→bottom dark gradient
+    case deepIndigo       // Near-black with cool blue tint (Nocturne)
+    case lightCream       // Light ivory/cream (Daylight)
+    case deepMagenta      // Very dark purple base (Synthwave)
+    case tactical         // Very dark with green-black tint (HUD)
+    case terminalBlack    // True black (Terminal)
+    case paperWarm        // Warm off-white editorial (Paper)
+    case glassBlur        // Translucent material — works over wallpaper (Glass)
+
+    /// The base surface color painted as the popover's background.
+    var surfaceColor: Color {
+        switch self {
+        case .dark, .darkGradient:
+            return Color(NSColor.windowBackgroundColor)
+        case .deepIndigo:
+            return Color(red: 0.04, green: 0.05, blue: 0.10)
+        case .lightCream:
+            return Color(red: 0.975, green: 0.955, blue: 0.925)
+        case .deepMagenta:
+            return Color(red: 0.07, green: 0.03, blue: 0.13)
+        case .tactical:
+            return Color(red: 0.02, green: 0.04, blue: 0.04)
+        case .terminalBlack:
+            return Color(red: 0.0, green: 0.02, blue: 0.01)
+        case .paperWarm:
+            return Color(red: 0.962, green: 0.943, blue: 0.904)
+        case .glassBlur:
+            // Base tint; the actual blur is provided by a Material layer in the view.
+            return Color(red: 0.18, green: 0.20, blue: 0.26).opacity(0.35)
+        }
+    }
+
+    /// Whether this surface is light (drives text color inversion).
+    var isLight: Bool {
+        switch self {
+        case .lightCream, .paperWarm: return true
+        default: return false
+        }
+    }
+
+    /// Whether this surface uses a translucent material layer (Glass).
+    /// The view renders a regular-material background + tint instead of a solid fill.
+    var usesMaterial: Bool {
+        if case .glassBlur = self { return true }
+        return false
+    }
+
+    /// Primary body text color appropriate for this surface.
+    var primaryTextColor: Color {
+        isLight ? Color.black.opacity(0.88) : Color.white.opacity(0.92)
+    }
+
+    /// Secondary/label text color.
+    var secondaryTextColor: Color {
+        isLight ? Color.black.opacity(0.55) : Color.white.opacity(0.55)
+    }
+
+    /// The subtle gradient pair applied to the outer background.
+    func gradientColors() -> [Color] {
+        let base = surfaceColor
+        switch self {
+        case .darkGradient:
+            return [base, base.opacity(0.92)]
+        case .deepIndigo:
+            return [base, Color(red: 0.02, green: 0.03, blue: 0.07)]
+        case .deepMagenta:
+            return [base, Color(red: 0.04, green: 0.02, blue: 0.08)]
+        case .tactical:
+            return [base, Color(red: 0.01, green: 0.02, blue: 0.02)]
+        case .lightCream:
+            return [base, Color(red: 0.96, green: 0.93, blue: 0.90)]
+        case .terminalBlack:
+            return [Color.black, Color(red: 0.01, green: 0.03, blue: 0.01)]
+        case .paperWarm:
+            return [base, Color(red: 0.948, green: 0.926, blue: 0.885)]
+        case .glassBlur:
+            return [base, base.opacity(0.55)]
+        case .dark:
+            return [base, base]
+        }
+    }
+}
+
+// MARK: - Hero header style
+
+/// How the giant "$48.95 / today" header renders. Branch on this in the view.
+enum HeroMode {
+    case nebulaGradient     // Classic purple→magenta→orange diagonal
+    case nocturneCalm       // Deep indigo solid with a faint accent glow
+    case daylightSoft       // Cream with soft color wave; dark foreground
+    case synthwaveHorizon   // Sunset horizon + perspective grid overlay
+    case hudScanlines       // Dark panel with scanline + OPERATIONAL pill
+    case terminalCRT        // Pure black + dense scanlines + green phosphor + cursor
+    case paperEditorial     // Cream, large serif display number, hairline rule
+    case glassMaterial      // Translucent material + soft tint + glossy highlight
+}
+
+// MARK: - Card style
+
+/// How KPI cards and list rows render — fill, border, corner radius, shadow.
+enum CardMode {
+    case glossyDark       // Nebula: color-tinted fill with soft glow
+    case flatDark         // Nocturne: gray-tinted flat fill
+    case lightPaper       // Daylight: white fill with soft shadow
+    case neonOutlined     // Synthwave: neon border, minimal fill, inner glow
+    case hudPanel         // HUD: rectangular, tactical, mono values
+    case terminalPanel    // Terminal: black fill, green hairline border, mono
+    case paperHairline    // Paper: no fill, thin black hairline border, serif
+    case glassFrost       // Glass: ultra-thin material with subtle border
+
+    /// Corner radius — HUD/Terminal go sharper for readout feel.
+    var cornerRadius: CGFloat {
+        switch self {
+        case .hudPanel, .terminalPanel: return 4
+        case .paperHairline: return 2
+        case .neonOutlined: return 10
+        case .glassFrost: return 14
+        default: return 12
+        }
+    }
+}
+
+// MARK: - Per-theme typography
+
+/// Font personality for a theme. Each role (hero number, stat value, label,
+/// body) can pick its own design so Paper can use serif, Terminal can use
+/// monospaced, Synthwave can use display, etc.
+struct ThemeFonts {
+    let heroDesign: Font.Design
+    let heroWeight: Font.Weight
+    let valueDesign: Font.Design
+    let valueWeight: Font.Weight
+    let labelDesign: Font.Design
+    let bodyDesign: Font.Design
+
+    func hero(size: CGFloat) -> Font {
+        Font.system(size: size, weight: heroWeight, design: heroDesign)
+    }
+    func value(size: CGFloat) -> Font {
+        Font.system(size: size, weight: valueWeight, design: valueDesign)
+    }
+    func label(size: CGFloat, weight: Font.Weight = .medium) -> Font {
+        Font.system(size: size, weight: weight, design: labelDesign)
+    }
+    func body(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        Font.system(size: size, weight: weight, design: bodyDesign)
+    }
 }
 
 // MARK: - Theme enum
 
 enum AppTheme: String, CaseIterable, Identifiable {
-    case twilight
-    case ember
-    case frost
-    case onyx
+    case nebula
+    case nocturne
+    case daylight
+    case synthwave
+    case hud
+    case terminal
+    case paper
+    case glass
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .twilight: return "Twilight"
-        case .ember:    return "Ember"
-        case .frost:    return "Frost"
-        case .onyx:     return "Onyx"
+        case .nebula:    return "Nebula"
+        case .nocturne:  return "Nocturne"
+        case .daylight:  return "Daylight"
+        case .synthwave: return "Synthwave"
+        case .hud:       return "HUD"
+        case .terminal:  return "Terminal"
+        case .paper:     return "Paper"
+        case .glass:     return "Glass"
         }
     }
 
-    var colors: ThemeColors {
+    var tagline: String {
         switch self {
-        case .twilight:
-            return ThemeColors(
-                primary:   Color(red: 0.263, green: 0.220, blue: 0.792),  // #4338ca
-                secondary: Color(red: 0.427, green: 0.157, blue: 0.851),  // #6d28d9
-                accent:    Color(red: 0.545, green: 0.361, blue: 0.965),  // #8b5cf6
-                highlight: Color(red: 0.706, green: 0.325, blue: 0.035),  // #b45309
-                warm:      Color(red: 0.961, green: 0.690, blue: 0.255),  // #f5b041
-                tertiary:  Color(red: 0.059, green: 0.463, blue: 0.431)   // #0f766e
-            )
-        case .ember:
-            return ThemeColors(
-                primary:   Color(red: 0.604, green: 0.204, blue: 0.071),  // #9a3412
-                secondary: Color(red: 0.760, green: 0.255, blue: 0.047),  // #c2410c
-                accent:    Color(red: 0.918, green: 0.345, blue: 0.047),  // #ea580c
-                highlight: Color(red: 0.851, green: 0.467, blue: 0.024),  // #d97706
-                warm:      Color(red: 0.984, green: 0.749, blue: 0.141),  // #fbbf24
-                tertiary:  Color(red: 0.020, green: 0.588, blue: 0.412)   // #059669
-            )
-        case .frost:
-            return ThemeColors(
-                primary:   Color(red: 0.118, green: 0.227, blue: 0.373),  // #1e3a5f
-                secondary: Color(red: 0.145, green: 0.388, blue: 0.918),  // #2563eb
-                accent:    Color(red: 0.376, green: 0.647, blue: 0.980),  // #60a5fa
-                highlight: Color(red: 0.031, green: 0.569, blue: 0.698),  // #0891b2
-                warm:      Color(red: 0.404, green: 0.910, blue: 0.976),  // #67e8f9
-                tertiary:  Color(red: 0.486, green: 0.227, blue: 0.929)   // #7c3aed
-            )
-        case .onyx:
-            return ThemeColors(
-                primary:   Color(red: 0.122, green: 0.122, blue: 0.137),  // #1f1f23
-                secondary: Color(red: 0.247, green: 0.247, blue: 0.275),  // #3f3f46
-                accent:    Color(red: 0.443, green: 0.443, blue: 0.478),  // #71717a
-                highlight: Color(red: 0.631, green: 0.631, blue: 0.667),  // #a1a1aa
-                warm:      Color(red: 0.831, green: 0.831, blue: 0.847),  // #d4d4d8
-                tertiary:  Color(red: 0.322, green: 0.322, blue: 0.357)   // #52525b
-            )
+        case .nebula:    return "Warm purple identity"
+        case .nocturne:  return "Calm dark focus"
+        case .daylight:  return "Cream daytime view"
+        case .synthwave: return "Retrofuture neon"
+        case .hud:       return "Tactical panel"
+        case .terminal:  return "CRT phosphor retro"
+        case .paper:     return "Editorial serif"
+        case .glass:     return "Translucent glass"
         }
     }
 
-    /// SF Symbol for the theme picker swatch.
     var icon: String {
         switch self {
-        case .twilight: return "moon.stars.fill"
-        case .ember:    return "flame.fill"
-        case .frost:    return "snowflake"
-        case .onyx:     return "circle.fill"
+        case .nebula:    return "sparkles"
+        case .nocturne:  return "moon.stars.fill"
+        case .daylight:  return "sun.max.fill"
+        case .synthwave: return "sunrise.fill"
+        case .hud:       return "scope"
+        case .terminal:  return "terminal.fill"
+        case .paper:     return "doc.text.fill"
+        case .glass:     return "circle.lefthalf.filled"
         }
     }
+
+    /// Convenience: whether the hero uses monospaced digits (HUD + Terminal).
+    /// Kept so the view has a quick readability signal.
+    var monoHero: Bool {
+        switch self {
+        case .hud, .terminal: return true
+        default: return false
+        }
+    }
+
+    var backgroundMode: BackgroundMode {
+        switch self {
+        case .nebula:    return .darkGradient
+        case .nocturne:  return .deepIndigo
+        case .daylight:  return .lightCream
+        case .synthwave: return .deepMagenta
+        case .hud:       return .tactical
+        case .terminal:  return .terminalBlack
+        case .paper:     return .paperWarm
+        case .glass:     return .glassBlur
+        }
+    }
+
+    var heroMode: HeroMode {
+        switch self {
+        case .nebula:    return .nebulaGradient
+        case .nocturne:  return .nocturneCalm
+        case .daylight:  return .daylightSoft
+        case .synthwave: return .synthwaveHorizon
+        case .hud:       return .hudScanlines
+        case .terminal:  return .terminalCRT
+        case .paper:     return .paperEditorial
+        case .glass:     return .glassMaterial
+        }
+    }
+
+    var cardMode: CardMode {
+        switch self {
+        case .nebula:    return .glossyDark
+        case .nocturne:  return .flatDark
+        case .daylight:  return .lightPaper
+        case .synthwave: return .neonOutlined
+        case .hud:       return .hudPanel
+        case .terminal:  return .terminalPanel
+        case .paper:     return .paperHairline
+        case .glass:     return .glassFrost
+        }
+    }
+
+    /// Type personality for each role. The view reads this to pick fonts.
+    var fonts: ThemeFonts {
+        switch self {
+        case .nebula:
+            return ThemeFonts(heroDesign: .rounded,    heroWeight: .bold,
+                              valueDesign: .rounded,   valueWeight: .bold,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        case .nocturne:
+            return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,
+                              valueDesign: .rounded,   valueWeight: .semibold,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        case .daylight:
+            return ThemeFonts(heroDesign: .default,    heroWeight: .bold,
+                              valueDesign: .default,   valueWeight: .bold,
+                              labelDesign: .default,   bodyDesign: .default)
+        case .synthwave:
+            // SF default with heavy weight reads "digital display" better than rounded
+            return ThemeFonts(heroDesign: .default,    heroWeight: .heavy,
+                              valueDesign: .default,   valueWeight: .heavy,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        case .hud:
+            return ThemeFonts(heroDesign: .monospaced, heroWeight: .bold,
+                              valueDesign: .monospaced, valueWeight: .bold,
+                              labelDesign: .monospaced, bodyDesign: .monospaced)
+        case .terminal:
+            // Terminal uses regular weight mono everywhere — CRT readability, not bold
+            return ThemeFonts(heroDesign: .monospaced, heroWeight: .regular,
+                              valueDesign: .monospaced, valueWeight: .regular,
+                              labelDesign: .monospaced, bodyDesign: .monospaced)
+        case .paper:
+            // Serif display numbers; clean sans for labels and body (editorial dual-font)
+            return ThemeFonts(heroDesign: .serif,      heroWeight: .bold,
+                              valueDesign: .serif,     valueWeight: .bold,
+                              labelDesign: .default,   bodyDesign: .default)
+        case .glass:
+            // Light weights read as "glass" — airy, not heavy
+            return ThemeFonts(heroDesign: .rounded,    heroWeight: .medium,
+                              valueDesign: .rounded,   valueWeight: .semibold,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        }
+    }
+
+    /// Six-role color palette per theme. Defined in ThemePalettes.swift to
+    /// keep this file focused on structure + personality; the palettes are
+    /// just data values that are likely to be tweaked independently.
+    var colors: ThemeColors { palette }
 }
