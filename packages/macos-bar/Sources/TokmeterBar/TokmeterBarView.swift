@@ -32,8 +32,10 @@ struct TokmeterBarView: View {
     /// Local UI state — never persisted.
     @State private var showAllSessions = false
     @State private var breathToggle = false
-    @State private var heartbeatPhase: CGFloat = 0
     @State private var showSettings = false
+    /// Top-anchored gradient ripple flashed briefly on theme change so the
+    /// transition reads as deliberate, not a glitch.
+    @State private var themeRipple: Bool = false
 
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
@@ -41,22 +43,28 @@ struct TokmeterBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HeroHeader(loader: loader, theme: theme, breathToggle: breathToggle)
+                .cascadeIn(delay: 0.02)
 
             errorBanner
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
+                .cascadeIn(delay: 0.08)
 
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     StatsGrid(loader: loader, theme: theme)
+                        .cascadeIn(delay: 0.14)
                     if !loader.topModels.isEmpty || loader.isWarming {
                         ModelsSection(loader: loader, theme: theme)
+                            .cascadeIn(delay: 0.22)
                     }
                     if loader.recentDaily.count > 1 || loader.isWarming {
                         WeekSection(loader: loader, theme: theme)
+                            .cascadeIn(delay: 0.30)
                     }
                     if !loader.sessions.isEmpty || loader.isWarming {
                         SessionsSection(loader: loader, theme: theme, showAll: $showAllSessions)
+                            .cascadeIn(delay: 0.38)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -70,19 +78,44 @@ struct TokmeterBarView: View {
                 loader: loader,
                 updater: updater,
                 theme: $theme,
-                heartbeatPhase: heartbeatPhase,
                 showSettings: $showSettings
             )
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .cascadeIn(delay: 0.46)
         }
         .frame(width: 400)
         .frame(minHeight: 620, maxHeight: 820)
         .background(popoverBackground)
+        // Theme-switch ripple — a top-anchored gradient that flashes the new
+        // theme's primary/secondary down from the menubar edge. Hint that the
+        // change was real and intentional, not a render glitch.
+        .overlay(alignment: .top) {
+            LinearGradient(
+                colors: [
+                    c.primary.opacity(0.55),
+                    c.secondary.opacity(0.30),
+                    Color.clear,
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 240)
+            .opacity(themeRipple ? 1 : 0)
+            .allowsHitTesting(false)
+        }
+        // Animate theme color updates throughout the tree.
+        .animation(.spring(response: 0.50, dampingFraction: 0.82), value: theme)
         // Force the color scheme to match the theme's surface so built-in
         // SwiftUI chrome (Divider, .secondary, system sheets) reads correctly.
         .preferredColorScheme(bg.isLight ? .light : .dark)
         .onAppear(perform: startAmbientAnimations)
+        .onChange(of: theme) { _, _ in
+            // Briefly flash the ripple, then fade it out smoothly.
+            themeRipple = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+                withAnimation(.easeOut(duration: 0.55)) { themeRipple = false }
+            }
+        }
     }
 
     // MARK: - Background
@@ -112,6 +145,7 @@ struct TokmeterBarView: View {
     /// Rendered between the hero and the scroll area. Shows a friendly
     /// collapsed form of the daemon error when there is one AND we're not
     /// still warming up (during warming, the error is normal transient noise).
+    /// Slides down from above with a spring when it first appears.
     @ViewBuilder
     private var errorBanner: some View {
         if let error = loader.lastError, !loader.isWarming {
@@ -130,18 +164,23 @@ struct TokmeterBarView: View {
             .background(Capsule().fill(Color.orange.opacity(0.12)))
             .padding(.bottom, 4)
             .accessibilityElement(children: .combine)
+            .transition(
+                .asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .move(edge: .top).combined(with: .opacity)
+                )
+            )
+            .animation(.spring(response: 0.5, dampingFraction: 0.78), value: loader.lastError)
         }
     }
 
     // MARK: - Animations
 
-    /// Kick off the two looping state machines that drive breath + heartbeat
-    /// across the whole popover. These live on the parent so children share
-    /// a common rhythm instead of each starting their own timers.
+    /// Kick off the slow breath cycle that hero ambient motion (gradient
+    /// breathing, sun pulse, glass shimmer, etc.) reads from. The footer's
+    /// LiveHeartbeat now drives its own TimelineView so we don't need a
+    /// repeatForever timer on parent state anymore.
     private func startAmbientAnimations() {
         breathToggle = true
-        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-            heartbeatPhase = 1
-        }
     }
 }
