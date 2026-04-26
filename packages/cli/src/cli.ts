@@ -46,7 +46,9 @@ interface CliArgs extends ScanOptions {
     | "alias"
     | "config"
     | "kosha-refresh"
-    | "kosha-update";
+    | "kosha-update"
+    | "update"
+    | "refresh";
   /** Alias sub-command and its positional arguments. */
   aliasSub?: string;
   aliasRest?: string[];
@@ -326,6 +328,8 @@ Output:
       case "snapshot":
       case "kosha-refresh":
       case "kosha-update":
+      case "update":
+      case "refresh":
         args.command = arg;
         break;
       case "alias":
@@ -543,7 +547,12 @@ async function main() {
     return;
   }
 
-  if (args.command === "kosha-refresh" || args.command === "kosha-update") {
+  if (
+    args.command === "update" ||
+    args.command === "refresh" ||
+    args.command === "kosha-refresh" ||
+    args.command === "kosha-update"
+  ) {
     // Force a fresh discovery pass against kosha's upstream providers, then
     // invalidate tokmeter's scan cache so today's records reprice with the
     // new rates on the next scan. This is the "I just updated my pricing,

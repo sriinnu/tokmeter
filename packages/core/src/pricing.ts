@@ -4,13 +4,31 @@
  * Resolves model pricing across 20+ AI providers. Resolution order:
  *
  *  1. In-memory cache
- *  2. kosha direct — `registry.model(id)` resolves canonical IDs.
+ *  2. User overrides (~/.tokmeter/pricing-overrides.json) — highest priority
+ *     after the cache. Lets users encode private/enterprise/custom rates that
+ *     no public catalog will ever know about.
+ *  3. kosha direct — `registry.model(id)` resolves canonical IDs.
  *     Uses `originPricing` (direct-provider rate) when available, else `pricing`.
- *  3. kosha fuzzy — searches all discovered models with an exact-first scorer.
+ *  4. kosha fuzzy — searches all discovered models with an exact-first scorer.
  *     Covers the long tail of providers automatically.
- *  4. null — no pricing available
+ *  5. null — no pricing available
  *
- * Why kosha is the single source of truth:
+ * User-overrides JSON schema (~/.tokmeter/pricing-overrides.json):
+ *
+ *   {
+ *     "claude-opus-4-7": { "inputPerMillion": 4, "outputPerMillion": 20 },
+ *     "my-internal-deployment": {
+ *       "inputPerMillion": 0,
+ *       "outputPerMillion": 0,
+ *       "cacheReadPerMillion": 0
+ *     }
+ *   }
+ *
+ * Keys are exact model ids. Values are partial ModelPricing objects
+ * (input/output required; cache + reasoning fields optional). Missing
+ * fields default to 0 — set them explicitly if your contract differs.
+ *
+ * Why kosha is the single source of truth (otherwise):
  *
  * Earlier versions of this file kept a hardcoded `STATIC_PRICING` table on top
  * of kosha. The original rationale was that some OpenRouter *proxy* prices
@@ -23,10 +41,10 @@
  * `claude-opus-4-7` to that stale row).
  *
  * One source of truth = no drift. kosha refreshes systematically; tokmeter
- * follows.
+ * follows. User overrides are the only sanctioned escape hatch.
  */
 
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -90,9 +108,91 @@ export async function refreshKoshaRegistry(cacheDir?: string): Promise<void> {
   await registry.refresh();
 }
 
+/** Default freshness window — beyond this we lazily kick off a background refresh. */
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Fire-and-forget background refresh if the kosha registry is older than
+ * `staleAfterMs`. The current call returns immediately — the refresh runs
+ * asynchronously and the *next* scan benefits from the new data via the
+ * mtime bump.
+ *
+ * Idempotent across concurrent callers: a single in-flight promise is
+ * shared so multiple `maybeBackgroundRefresh()` calls within the same
+ * process collapse into one network refresh.
+ *
+ * Safe to call on every scan — does nothing when the registry is fresh.
+ */
+let backgroundRefreshInFlight: Promise<void> | null = null;
+export function maybeBackgroundRefresh(
+  options: { staleAfterMs?: number; cacheDir?: string } = {},
+): void {
+  const staleAfter = options.staleAfterMs ?? STALE_AFTER_MS;
+  const mtime = getKoshaRegistryMtime();
+  if (mtime > 0 && Date.now() - mtime < staleAfter) return; // fresh
+  if (backgroundRefreshInFlight) return; // already refreshing
+  backgroundRefreshInFlight = refreshKoshaRegistry(options.cacheDir)
+    .catch(() => {
+      // Background refresh failures are non-fatal — the next scan still works
+      // off whatever cache we have, and a manual `tokmeter update` can retry.
+    })
+    .finally(() => {
+      backgroundRefreshInFlight = null;
+    });
+}
+
+/** Path to the user-config pricing override file. */
+function userOverridesPath(): string {
+  return join(homedir(), ".tokmeter", "pricing-overrides.json");
+}
+
+/** mtime of the user-overrides file (0 if absent). */
+function userOverridesMtime(): number {
+  try {
+    return statSync(userOverridesPath()).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Read user-config pricing overrides if the file exists. Returns an empty map
+ * on any error (missing file, malformed JSON, etc.) so a broken override file
+ * never breaks pricing resolution.
+ */
+function loadUserOverrides(): Map<string, FullPricing> {
+  const overrides = new Map<string, FullPricing>();
+  try {
+    const raw = readFileSync(userOverridesPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return overrides;
+    for (const [id, pricing] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof id !== "string" || id.length === 0 || id.length > 256) continue;
+      if (!pricing || typeof pricing !== "object") continue;
+      const p = pricing as Record<string, unknown>;
+      const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+      if (!isNum(p.inputPerMillion) || !isNum(p.outputPerMillion)) continue;
+      const out: FullPricing = {
+        inputPerMillion: p.inputPerMillion,
+        outputPerMillion: p.outputPerMillion,
+      };
+      if (isNum(p.cacheReadPerMillion)) out.cacheReadPerMillion = p.cacheReadPerMillion;
+      if (isNum(p.cacheWritePerMillion)) out.cacheWritePerMillion = p.cacheWritePerMillion;
+      if (isNum(p.reasoningInputPerMillion)) out.reasoningInputPerMillion = p.reasoningInputPerMillion;
+      if (isNum(p.reasoningOutputPerMillion)) out.reasoningOutputPerMillion = p.reasoningOutputPerMillion;
+      overrides.set(id, out);
+    }
+  } catch {
+    // missing or malformed — quietly fall through with empty map
+  }
+  return overrides;
+}
+
 /** Cached pricing lookup: modelId → FullPricing or null. */
 export class PricingService {
   private cache = new Map<string, FullPricing | null>();
+  private userOverrides = new Map<string, FullPricing>();
+  private userOverridesMtime = 0;
   private registry: any = null;
   private initialized = false;
   private cacheDir?: string;
@@ -121,11 +221,16 @@ export class PricingService {
    */
   async init(): Promise<void> {
     const currentMtime = getKoshaRegistryMtime();
-    if (this.initialized && currentMtime === this.registryMtime) return;
-    // Registry file changed (or first init) — drop stale lookups.
-    if (this.initialized && currentMtime !== this.registryMtime) {
-      this.cache.clear();
+    const overridesMtime = userOverridesMtime();
+    if (
+      this.initialized &&
+      currentMtime === this.registryMtime &&
+      overridesMtime === this.userOverridesMtime
+    ) {
+      return;
     }
+    // Registry file or overrides changed (or first init) — drop stale lookups.
+    if (this.initialized) this.cache.clear();
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
       this.registry = await createKosha(this.cacheDir ? { cacheDir: this.cacheDir } : undefined);
@@ -134,6 +239,8 @@ export class PricingService {
       this.registry = null;
       this.pricingUnavailable = true;
     }
+    this.userOverrides = loadUserOverrides();
+    this.userOverridesMtime = overridesMtime;
     this.registryMtime = currentMtime;
     this.initialized = true;
   }
@@ -153,13 +260,21 @@ export class PricingService {
    *
    * Resolution order:
    *  1. In-memory cache
-   *  2. kosha direct — `registry.model(id)` resolves canonical IDs;
+   *  2. User overrides (~/.tokmeter/pricing-overrides.json)
+   *  3. kosha direct — `registry.model(id)` resolves canonical IDs;
    *     prefers `card.originPricing` (direct-provider rate) over `card.pricing`
-   *  3. kosha fuzzy — exact-first search across all discovered models
-   *  4. null
+   *  4. kosha fuzzy — exact-first search across all discovered models
+   *  5. null
    */
   async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
+
+    // Tier 2: user-config overrides (highest priority after the cache).
+    const userOverride = this.userOverrides.get(modelId);
+    if (userOverride) {
+      this.cache.set(modelId, userOverride);
+      return userOverride;
+    }
 
     if (this.registry) {
       // Tier 2: kosha canonical lookup

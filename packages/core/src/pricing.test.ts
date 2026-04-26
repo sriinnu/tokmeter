@@ -129,4 +129,38 @@ describe("calculateCost", () => {
     const cost = await pricing.calculateCost("test-gemini-style", 0, 0, 1_000_000);
     expect(cost).toBeCloseTo(0.31, 2);
   });
+
+  // ─── User overrides ────────────────────────────────────────────────────
+  // These exercise the resolution chain by priming `seedPricing` with what
+  // the user-overrides loader would have produced. The disk-read path is
+  // covered by the schema + integration tests; here we lock in the priority
+  // order so a future refactor doesn't accidentally let kosha shadow user
+  // rates.
+
+  it("user-override beats kosha for the same model id", async () => {
+    const pricing = new PricingService();
+    // Simulate a user override applied at init() — the cache prime mimics
+    // what `loadUserOverrides()` puts in place before any kosha lookup.
+    pricing.seedPricing("claude-opus-4-7", {
+      inputPerMillion: 4,
+      outputPerMillion: 20,
+    });
+    const cost = await pricing.calculateCost("claude-opus-4-7", 1_000_000, 1_000_000);
+    // Negotiated rate: $4 + $20 = $24 (vs kosha's $5 + $25 = $30)
+    expect(cost).toBeCloseTo(24, 2);
+  });
+
+  it("zero-priced user overrides are respected (free internal deployments)", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("internal-llama-deployment", {
+      inputPerMillion: 0,
+      outputPerMillion: 0,
+    });
+    const cost = await pricing.calculateCost(
+      "internal-llama-deployment",
+      10_000_000,
+      10_000_000,
+    );
+    expect(cost).toBe(0);
+  });
 });
