@@ -42,82 +42,91 @@ describe("PricingService", () => {
 // the cost calculator's fallback math for cache reads/writes when the
 // resolver doesn't provide explicit rates. Don't remove these without
 // reading the relevant commit messages first.
+//
+// Tests use `seedPricing()` to inject known rates so they exercise the
+// math without depending on kosha's network calls or its current data.
 
 describe("calculateCost", () => {
-  // Use the static table directly so we don't depend on network/kosha.
-  // claude-opus-4-6 has explicit cache rates: $15 input, $75 output,
-  // $1.5 cache read, $18.75 cache write.
-  it("charges Anthropic models with explicit cache rates correctly", async () => {
+  it("charges Anthropic-style models with explicit cache rates correctly", async () => {
     const pricing = new PricingService();
+    // Seed with Anthropic-style rates ($5 input, $25 output, $0.5 read, $6.25 write).
+    pricing.seedPricing("test-anthropic", {
+      inputPerMillion: 5,
+      outputPerMillion: 25,
+      cacheReadPerMillion: 0.5,
+      cacheWritePerMillion: 6.25,
+    });
     // 1M input + 1M output + 1M cache read + 1M cache write
-    // = $15 + $75 + $1.5 + $18.75 = $110.25
+    // = $5 + $25 + $0.5 + $6.25 = $36.75
     const cost = await pricing.calculateCost(
-      "claude-opus-4-6",
-      1_000_000, // input
-      1_000_000, // output
-      1_000_000, // cache read
-      1_000_000 // cache write
+      "test-anthropic",
+      1_000_000,
+      1_000_000,
+      1_000_000,
+      1_000_000
     );
-    expect(cost).toBeCloseTo(110.25, 2);
+    expect(cost).toBeCloseTo(36.75, 2);
   });
 
   it("does not double-charge cached input as full input", async () => {
     const pricing = new PricingService();
+    pricing.seedPricing("test-anthropic", {
+      inputPerMillion: 5,
+      outputPerMillion: 25,
+      cacheReadPerMillion: 0.5,
+      cacheWritePerMillion: 6.25,
+    });
     // Anthropic semantics: input_tokens = uncached only.
-    // 100k uncached input + 900k cached input + 1k output for opus-4-6.
-    // = 100k * $15/M + 900k * $1.5/M + 1k * $75/M
-    // = $1.50 + $1.35 + $0.075 = $2.925
-    const cost = await pricing.calculateCost(
-      "claude-opus-4-6",
-      100_000, // uncached input
-      1_000, // output
-      900_000 // cache read
-    );
-    expect(cost).toBeCloseTo(2.925, 3);
+    // 100k uncached input + 900k cached input + 1k output.
+    // = 100k * $5/M + 900k * $0.5/M + 1k * $25/M
+    // = $0.50 + $0.45 + $0.025 = $0.975
+    const cost = await pricing.calculateCost("test-anthropic", 100_000, 1_000, 900_000);
+    expect(cost).toBeCloseTo(0.975, 3);
   });
 
   it("applies 10% cache-read fallback when no explicit rate", async () => {
     const pricing = new PricingService();
-    // grok-4 has $3/M input, $15/M output, no cacheReadPerMillion →
-    // fallback is 10% of input = $0.3/M cache read.
+    // No cacheReadPerMillion → fallback is 10% of input = $0.3/M cache read.
     // 100k cached → 100k * $0.3/M = $0.03
-    const cost = await pricing.calculateCost(
-      "grok-4",
-      0, // input
-      0, // output
-      100_000 // cache read
-    );
+    pricing.seedPricing("test-grok-style", {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+    });
+    const cost = await pricing.calculateCost("test-grok-style", 0, 0, 100_000);
     expect(cost).toBeCloseTo(0.03, 3);
   });
 
   it("does NOT apply cache-write fallback (must be explicit)", async () => {
     const pricing = new PricingService();
-    // grok-4 has no cacheWritePerMillion → cache writes should be free.
+    // No cacheWritePerMillion → cache writes should be free.
     // The 1.25x fallback is gated to Anthropic-only by requiring an
     // explicit rate; otherwise providers without cache write billing
     // would be wrongly charged.
-    const cost = await pricing.calculateCost(
-      "grok-4",
-      0,
-      0,
-      0,
-      100_000 // cache write
-    );
+    pricing.seedPricing("test-grok-style", {
+      inputPerMillion: 3,
+      outputPerMillion: 15,
+    });
+    const cost = await pricing.calculateCost("test-grok-style", 0, 0, 0, 100_000);
     expect(cost).toBe(0);
   });
 
-  it("returns 0 for unknown model (no static, no kosha hit)", async () => {
+  it("returns 0 for unknown model (no kosha hit)", async () => {
     const pricing = new PricingService();
     const cost = await pricing.calculateCost("totally-fake-model-xyz-9000", 1_000_000, 1_000_000);
     expect(cost).toBe(0);
   });
 
-  it("Gemini 2.5 pro uses explicit ~25% cache rate, not 10% fallback", async () => {
+  it("Gemini-style explicit ~25% cache rate is honored, not overridden by 10% fallback", async () => {
     const pricing = new PricingService();
-    // gemini-2.5-pro: $1.25 input, $10 output, $0.31 cache read (25% of input)
+    // $1.25 input, $10 output, $0.31 cache read (25% of input — explicit).
     // 1M cached → 1M * $0.31/M = $0.31
     // (If the 10% fallback fired wrongly, we'd get $0.125 — visibly different)
-    const cost = await pricing.calculateCost("gemini-2.5-pro", 0, 0, 1_000_000);
+    pricing.seedPricing("test-gemini-style", {
+      inputPerMillion: 1.25,
+      outputPerMillion: 10,
+      cacheReadPerMillion: 0.31,
+    });
+    const cost = await pricing.calculateCost("test-gemini-style", 0, 0, 1_000_000);
     expect(cost).toBeCloseTo(0.31, 2);
   });
 });
