@@ -274,10 +274,13 @@ export class TokmeterCore {
   }
 
   /** Get model summaries, optionally filtered by project. */
-  getModelCosts(options?: { project?: string }): ModelSummary[] {
+  getModelCosts(options?: { project?: string; since?: string; until?: string; today?: boolean }): ModelSummary[] {
     let records = this.records;
     if (options?.project) {
       records = filterByProject(records, options.project);
+    }
+    if (options?.today || options?.since || options?.until) {
+      records = filterByDate(records, options);
     }
     return aggregateByModel(records);
   }

@@ -96,6 +96,7 @@ export interface DashboardInsights {
   providerInsights: DashboardProviderInsight[];
   topProjects: DashboardProjectInsight[];
   topModels: DashboardModelInsight[];
+  todayModels: DashboardModelInsight[];
   recentDays: DashboardRecentDayInsight[];
   trendWindow: TokmeterDailyEntry[];
 }
@@ -104,7 +105,7 @@ export interface DashboardInsights {
  * Build the derived dashboard view-model from Tokmeter summary data and live daemon state.
  */
 export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): DashboardInsights {
-  const { stats, daily, projects, models } = data;
+  const { stats, daily, projects, models, records } = data;
   const cacheTokens = stats.cacheReadTokens + stats.cacheWriteTokens;
   const cacheShare = stats.totalTokens > 0 ? cacheTokens / stats.totalTokens : 0;
   const reasoningShare = stats.totalTokens > 0 ? stats.reasoningTokens / stats.totalTokens : 0;
@@ -142,6 +143,8 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       reasoningTokens: model.reasoningTokens,
       percentageOfTotal: model.percentageOfTotal,
     }));
+
+  const todayModels = buildTodayModels(records, today?.date ?? null);
 
   const recentDays = [...daily]
     .slice(-MAX_RECENT_DAYS)
@@ -304,6 +307,7 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
     providerInsights,
     topProjects,
     topModels,
+    todayModels,
     recentDays,
     trendWindow,
   };
@@ -423,4 +427,81 @@ function getAverageDailyCost(daily: TokmeterDailyEntry[]): number {
   }
 
   return daily.reduce((sum, entry) => sum + entry.cost, 0) / daily.length;
+}
+
+interface RawRecord {
+  timestamp: number;
+  model: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  cost: number;
+}
+
+function rawLocalDateKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function buildTodayModels(
+  rawRecords: Array<Record<string, unknown>>,
+  todayDate: string | null
+): DashboardModelInsight[] {
+  if (!todayDate) return [];
+
+  type Acc = {
+    model: string;
+    provider: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheTokens: number;
+    reasoningTokens: number;
+    cost: number;
+  };
+
+  const byKey = new Map<string, Acc>();
+
+  for (const raw of rawRecords) {
+    const r = raw as unknown as RawRecord;
+    if (rawLocalDateKey(r.timestamp) !== todayDate) continue;
+
+    const key = `${r.provider}::${r.model}`;
+    const cur = byKey.get(key);
+    if (cur) {
+      cur.cost += r.cost;
+      cur.inputTokens += r.inputTokens ?? 0;
+      cur.outputTokens += r.outputTokens ?? 0;
+      cur.cacheTokens += (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0);
+      cur.reasoningTokens += r.reasoningTokens ?? 0;
+    } else {
+      byKey.set(key, {
+        model: r.model,
+        provider: r.provider,
+        cost: r.cost ?? 0,
+        inputTokens: r.inputTokens ?? 0,
+        outputTokens: r.outputTokens ?? 0,
+        cacheTokens: (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0),
+        reasoningTokens: r.reasoningTokens ?? 0,
+      });
+    }
+  }
+
+  const todayTotal = [...byKey.values()].reduce((s, m) => s + m.cost, 0);
+
+  return [...byKey.values()]
+    .sort((a, b) => b.cost - a.cost)
+    .map((m) => ({
+      model: m.model,
+      provider: m.provider,
+      cost: m.cost,
+      totalTokens: m.inputTokens + m.outputTokens + m.cacheTokens + m.reasoningTokens,
+      inputTokens: m.inputTokens,
+      outputTokens: m.outputTokens,
+      cacheTokens: m.cacheTokens,
+      reasoningTokens: m.reasoningTokens,
+      percentageOfTotal: todayTotal > 0 ? (m.cost / todayTotal) * 100 : 0,
+    }));
 }

@@ -1,9 +1,9 @@
 import type { CSSProperties } from "react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { applyTypography, webTheme, withAlpha } from "../../theme.js";
 import { DashboardPanel } from "./DashboardPanel.js";
-import type { DashboardInsights } from "./buildDashboardInsights.js";
+import type { DashboardInsights, DashboardModelInsight } from "./buildDashboardInsights.js";
 import {
   formatDashboardCurrency,
   formatDashboardDate,
@@ -22,6 +22,9 @@ interface DashboardTablesSectionProps {
 export const DashboardTablesSection = memo(function DashboardTablesSection({
   insights,
 }: DashboardTablesSectionProps) {
+  const [modelTab, setModelTab] = useState<"top" | "today">("top");
+  const activeModels = modelTab === "today" ? insights.todayModels : insights.topModels;
+
   return (
     <div style={sectionStackStyle}>
       <div style={featureGridStyle}>
@@ -50,14 +53,34 @@ export const DashboardTablesSection = memo(function DashboardTablesSection({
       <DashboardPanel
         eyebrow="Model focus"
         title="Model leaderboard"
-        description="The top models are ranked with cost, token volume, cache use, and share-of-total so the dashboard stays analytical instead of decorative."
+        description={
+          modelTab === "today"
+            ? "Models you've hit today — reflects exactly what's running right now, local LLMs, Vertex, DeepSeek, anything."
+            : "All-time model rankings by cost, with token volume, cache use, and share-of-total."
+        }
         action={
-          <Link style={actionLinkStyle} to="/models">
-            Open model view
-          </Link>
+          <div style={modelPanelActionStyle}>
+            <div style={tabBarStyle}>
+              <button
+                style={modelTab === "top" ? activeTabStyle : inactiveTabStyle}
+                onClick={() => setModelTab("top")}
+              >
+                All time
+              </button>
+              <button
+                style={modelTab === "today" ? activeTabStyle : inactiveTabStyle}
+                onClick={() => setModelTab("today")}
+              >
+                Today
+              </button>
+            </div>
+            <Link style={actionLinkStyle} to="/models">
+              Open model view
+            </Link>
+          </div>
         }
       >
-        <ModelLeaderboardTable insights={insights} />
+        <ModelLeaderboardTable models={activeModels} isToday={modelTab === "today"} />
       </DashboardPanel>
     </div>
   );
@@ -159,11 +182,19 @@ function RecentActivityTable({ insights }: { insights: DashboardInsights }) {
   );
 }
 
-function ModelLeaderboardTable({ insights }: { insights: DashboardInsights }) {
-  if (insights.topModels.length === 0) {
+function ModelLeaderboardTable({
+  models,
+  isToday,
+}: {
+  models: DashboardModelInsight[];
+  isToday: boolean;
+}) {
+  if (models.length === 0) {
     return (
       <div style={emptyStateStyle}>
-        Model rankings appear here once Tokmeter has model-level activity.
+        {isToday
+          ? "No model activity yet today."
+          : "Model rankings appear here once Tokmeter has model-level activity."}
       </div>
     );
   }
@@ -179,11 +210,11 @@ function ModelLeaderboardTable({ insights }: { insights: DashboardInsights }) {
             <th style={headerCellStyle}>Tokens</th>
             <th style={headerCellStyle}>Cache</th>
             <th style={headerCellStyle}>Reasoning</th>
-            <th style={headerCellStyle}>Share</th>
+            <th style={headerCellStyle}>{isToday ? "Today %" : "Share"}</th>
           </tr>
         </thead>
         <tbody>
-          {insights.topModels.map((model) => (
+          {models.map((model) => (
             <tr key={`${model.provider}-${model.model}`} style={bodyRowStyle}>
               <td style={bodyCellStyle}>
                 <div style={strongValueStyle}>{model.model}</div>
@@ -312,4 +343,39 @@ const sparklineStyle: CSSProperties = {
   display: "block",
   height: 32,
   width: 110,
+};
+
+const modelPanelActionStyle: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: webTheme.spacing.md,
+};
+
+const tabBarStyle: CSSProperties = {
+  background: withAlpha(webTheme.colors.pine, 0.6),
+  border: `1px solid ${withAlpha(webTheme.colors.cream, 0.12)}`,
+  borderRadius: webTheme.radii.pill,
+  display: "flex",
+  padding: 2,
+};
+
+const baseTabStyle: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  borderRadius: webTheme.radii.pill,
+  color: webTheme.text.muted,
+  cursor: "pointer",
+  ...applyTypography(webTheme.typography.mono),
+  padding: `${webTheme.spacing.xs} ${webTheme.spacing.md}`,
+  transition: `background ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}, color ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
+};
+
+const activeTabStyle: CSSProperties = {
+  ...baseTabStyle,
+  background: withAlpha(webTheme.colors.cream, 0.12),
+  color: webTheme.text.primary,
+};
+
+const inactiveTabStyle: CSSProperties = {
+  ...baseTabStyle,
 };
