@@ -262,7 +262,7 @@ if [[ "${MODE}" == "release" ]]; then
     #   a) API Key file: TOKMETER_API_KEY_FILE (or auto-detected) + KEY_ID + ISSUER_ID (preferred)
     #   b) Apple ID: APPLE_ID + APPLE_APP_PASSWORD + APPLE_TEAM_ID (legacy)
     # Tokmeter-specific defaults (key lives in ~/Sriinnu/apple-dev-account/tokmeter/)
-    TOKMETER_DEFAULT_KEY="${HOME}/Sriinnu/apple-dev-account/tokmeter/AuthKey_JVBYT392FU.p8"
+    TOKMETER_DEFAULT_KEY="${HOME}/Sriinnu/apple-dev-account/tokmeter/AuthKey_JVBYT392FU.p8/AuthKey_JVBYT392FU.p8"
     TOKMETER_DEFAULT_KEY_ID="JVBYT392FU"
     TOKMETER_DEFAULT_ISSUER="0445be98-b570-461d-8cae-7cbcd90e90a7"
 
