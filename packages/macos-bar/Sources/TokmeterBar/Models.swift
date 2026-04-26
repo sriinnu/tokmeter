@@ -82,3 +82,56 @@ struct TokmeterFullJSON: Codable {
     let models: [ModelData]
     let projects: [ProjectData]
 }
+
+// MARK: - Project drilldown (/api/projects/:name)
+
+struct ModelDetail: Codable, Identifiable {
+    let model: String
+    let provider: String
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
+    let reasoningTokens: Int
+    let totalTokens: Int
+    let cost: Double
+    let percentageOfTotal: Double
+
+    var id: String { "\(provider)/\(model)" }
+}
+
+struct ProviderDetail: Codable, Identifiable {
+    let provider: String
+    let totalTokens: Int
+    let cost: Double
+    let models: [String]
+    let percentageOfTotal: Double
+
+    var id: String { provider }
+}
+
+struct DailyDetail: Codable, Identifiable {
+    let date: String
+    let totalTokens: Int
+    let cost: Double
+    let records: Int?
+
+    var id: String { date }
+}
+
+struct ProjectDetailData: Codable {
+    let project: String
+    let totalTokens: Int
+    let totalCost: Double
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
+    let reasoningTokens: Int
+    let models: [ModelDetail]
+    let providers: [ProviderDetail]
+    let dailyBreakdown: [DailyDetail]
+    let activeDays: Int
+    let firstUsed: Double
+    let lastUsed: Double
+}

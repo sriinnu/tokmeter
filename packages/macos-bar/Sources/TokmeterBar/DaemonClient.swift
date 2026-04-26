@@ -43,7 +43,14 @@ final class DaemonClient {
 
     private let baseURL = URL(string: "http://127.0.0.1:9877")!
     private let pidPath = "/tmp/drishti-daemon.pid"
+    private let tokenPath = "/tmp/drishti-daemon.token"
     private let session: URLSession
+
+    /// Bearer token read once from the token file. nil until first POST attempt.
+    private var bearerToken: String? {
+        try? String(contentsOfFile: tokenPath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private init() {
         let config = URLSessionConfiguration.default
@@ -107,13 +114,71 @@ final class DaemonClient {
         try await get("/api/models", as: [ModelData].self)
     }
 
+    func fetchTodayModels() async throws -> [ModelData] {
+        try await get("/api/today-models", as: [ModelData].self)
+    }
+
     /// All sessions across all providers, up to 50 items, sorted by recency.
     /// Used for the expandable session list in the popover.
     func fetchSessions() async throws -> [ProjectData] {
         try await get("/api/sessions", as: [ProjectData].self)
     }
 
+    func fetchProjectDetail(_ projectName: String) async throws -> ProjectDetailData {
+        let encoded = projectName.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+        ) ?? projectName
+        return try await get("/api/projects/\(encoded)", as: ProjectDetailData.self)
+    }
+
+    /// Trigger a fresh kosha pricing registry pull. Blocks until the upstream
+    /// discovery completes (typically 2–5s). Call from a background task.
+    func updatePricing() async throws {
+        struct UpdatePricingResponse: Decodable {
+            let ok: Bool
+            let error: String?
+        }
+        let result = try await get("/api/update-pricing", as: UpdatePricingResponse.self)
+        if !result.ok {
+            throw DaemonError.networkError(result.error ?? "update-pricing returned ok=false")
+        }
+    }
+
     // MARK: - Internal
+
+    private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
+        guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
+
+        let url = baseURL.appendingPathComponent(path)
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+        if let token = bearerToken, !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                throw DaemonError.networkError("non-HTTP response")
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw DaemonError.httpError(http.statusCode)
+            }
+            do {
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch {
+                throw DaemonError.decodingError(error.localizedDescription)
+            }
+        } catch let err as DaemonError {
+            throw err
+        } catch {
+            throw DaemonError.networkError(error.localizedDescription)
+        }
+    }
 
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
