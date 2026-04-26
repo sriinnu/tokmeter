@@ -112,6 +112,11 @@ export class TokmeterCore {
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
+        // Fire-and-forget refresh if the registry is stale (>24h). The current
+        // scan uses whatever data we have on disk; the refresh runs in the
+        // background so the *next* scan benefits. Failures are silent.
+        const { maybeBackgroundRefresh } = await import("./pricing.js");
+        maybeBackgroundRefresh();
       } catch {
         // enrichCosts will re-warn if pricing stays unavailable
       }
