@@ -14,27 +14,65 @@ import SwiftUI
 // MARK: - Models section
 
 /// Per-model cost bars. Each row is [icon + name] [bar] [cost].
+/// A small "All time / Today" pill toggle switches between the two views.
 struct ModelsSection: View {
     @ObservedObject var loader: TokmeterLoader
     let theme: AppTheme
 
+    @State private var showToday: Bool = false
+
     private var c: ThemeColors { theme.colors }
+    private var activeModels: [ModelUsage] { showToday ? loader.todayModels : loader.topModels }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(label: "TOP MODELS", count: loader.topModels.count, theme: theme)
+            HStack(alignment: .center) {
+                SectionHeader(
+                    label: showToday ? "TODAY'S MODELS" : "TOP MODELS",
+                    count: activeModels.count,
+                    theme: theme
+                )
+                Spacer()
+                modelTabPill
+            }
 
             if loader.isWarming {
                 ForEach(0..<3, id: \.self) { _ in
                     ShimmerBar(width: 280, height: 14, breathToggle: true)
                 }
+            } else if activeModels.isEmpty {
+                Text(showToday ? "No model activity yet today." : "No model data.")
+                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
             } else {
-                let maxCost = loader.topModels.first?.cost ?? 1
-                ForEach(loader.topModels) { model in
+                let maxCost = activeModels.first?.cost ?? 1
+                ForEach(activeModels) { model in
                     modelRow(model, maxCost: maxCost)
                 }
             }
         }
+    }
+
+    private var modelTabPill: some View {
+        HStack(spacing: 0) {
+            tabButton(label: "All", active: !showToday) { showToday = false }
+            tabButton(label: "Today", active: showToday)  { showToday = true }
+        }
+        .background(
+            Capsule().fill(Color.primary.opacity(0.06))
+        )
+    }
+
+    private func tabButton(label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: { withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) { action() } }) {
+            Text(label)
+                .font(.system(size: 9, weight: active ? .semibold : .regular, design: theme.fonts.bodyDesign))
+                .foregroundColor(active ? theme.backgroundMode.primaryTextColor : theme.backgroundMode.secondaryTextColor)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(active ? Capsule().fill(c.accent.opacity(0.18)) : nil)
+        }
+        .buttonStyle(.borderless)
     }
 
     private func modelRow(_ model: ModelUsage, maxCost: Double) -> some View {

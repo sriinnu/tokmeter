@@ -22,6 +22,13 @@ struct TokmeterBarApp: App {
             .accessibilityLabel(accessibilityLabel)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Tokmeter Hub", id: "tokmeter-hub") {
+            HubView(loader: loader)
+                .frame(minWidth: 860, minHeight: 560)
+        }
+        .defaultSize(width: 980, height: 660)
+        .windowResizability(.contentMinSize)
     }
 
     /// Cost text shown next to the SF Symbol in the menu bar.

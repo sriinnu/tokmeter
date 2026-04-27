@@ -146,7 +146,6 @@ function backupBrokenAliasFile(path: string, reason: string): void {
   const backupPath = `${path}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   try {
     copyFileSync(path, backupPath);
-    // biome-ignore lint/suspicious/noConsole: user-facing warning, not debug noise
     console.error(
       `⚠  tokmeter: ~/.tokmeter/aliases.json is malformed (${reason}). Saved a copy at ${backupPath} and continuing with an empty alias set.`
     );
@@ -177,7 +176,9 @@ export function isProjectHidden(project: string, map: AliasMap): boolean {
 export function setAlias(
   map: AliasMap,
   key: string,
-  patch: Partial<Omit<AliasEntry, "modifiedAt" | "modifiedBy">> & { display: string },
+  patch: Partial<Omit<AliasEntry, "modifiedAt" | "modifiedBy">> & {
+    display: string;
+  },
   flag: "user" | "tokmeter" = "user"
 ): AliasMap {
   // Don't clobber user-flagged with tokmeter-flagged — that's the whole rule.
@@ -277,10 +278,7 @@ export function setHidden(map: AliasMap, display: string, hidden: boolean): Alia
  * Entries already set by the user are skipped — we never propose over a
  * user-locked alias.
  */
-export function suggestAliases(
-  projectNames: string[],
-  existing: AliasMap
-): AliasSuggestion[] {
+export function suggestAliases(projectNames: string[], existing: AliasMap): AliasSuggestion[] {
   const unique = Array.from(new Set(projectNames)).filter((p) => !isUserLocked(p, existing));
   const suggestions: AliasSuggestion[] = [];
   const consumed = new Set<string>();
@@ -296,14 +294,12 @@ export function suggestAliases(
   for (const [, variants] of byLower) {
     if (variants.length < 2) continue;
     // Prefer the most-capitalized variant (most uppercase letters); ties go to shortest.
-    const proposed = variants
-      .slice()
-      .sort((a, b) => {
-        const upA = (a.match(/[A-Z]/g) || []).length;
-        const upB = (b.match(/[A-Z]/g) || []).length;
-        if (upA !== upB) return upB - upA;
-        return a.length - b.length;
-      })[0];
+    const proposed = variants.slice().sort((a, b) => {
+      const upA = (a.match(/[A-Z]/g) || []).length;
+      const upB = (b.match(/[A-Z]/g) || []).length;
+      if (upA !== upB) return upB - upA;
+      return a.length - b.length;
+    })[0];
     suggestions.push({
       keys: variants,
       proposed: proposed ?? variants[0] ?? "",

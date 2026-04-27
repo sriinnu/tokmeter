@@ -17,6 +17,8 @@ struct FooterBar: View {
     @Binding var theme: AppTheme
     @Binding var showSettings: Bool
 
+    @Environment(\.openWindow) private var openWindow
+
     /// Refresh icon rotation — spins while `loader.isLoading` is true.
     @State private var refreshAngle: Double = 0
 
@@ -82,11 +84,16 @@ struct FooterBar: View {
 
             Spacer()
 
+            FooterIconButton(systemImage: "macwindow", theme: theme, help: "Open Hub (⌘H)") {
+                openWindow(id: "tokmeter-hub")
+            }
+            .keyboardShortcut("h", modifiers: [.command])
+
             FooterIconButton(systemImage: "gearshape", theme: theme, help: "Settings") {
                 showSettings.toggle()
             }
             .popover(isPresented: $showSettings) {
-                SettingsPopover(theme: $theme)
+                SettingsPopover(theme: $theme, loader: loader)
             }
 
             FooterIconButton(systemImage: "arrow.down.circle",

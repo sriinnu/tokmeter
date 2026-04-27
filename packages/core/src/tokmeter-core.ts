@@ -6,7 +6,6 @@
  */
 
 import { homedir } from "node:os";
-import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
 import {
   aggregateByDate,
   aggregateByModel,
@@ -16,6 +15,7 @@ import {
   filterByProject,
   filterByProvider,
 } from "./aggregator.js";
+import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
 import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
 import { loadHistorySnapshot, saveHistorySnapshot } from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
@@ -112,6 +112,11 @@ export class TokmeterCore {
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
+        // Fire-and-forget refresh if the registry is stale (>24h). The current
+        // scan uses whatever data we have on disk; the refresh runs in the
+        // background so the *next* scan benefits. Failures are silent.
+        const { maybeBackgroundRefresh } = await import("./pricing.js");
+        maybeBackgroundRefresh();
       } catch {
         // enrichCosts will re-warn if pricing stays unavailable
       }
@@ -269,10 +274,18 @@ export class TokmeterCore {
   }
 
   /** Get model summaries, optionally filtered by project. */
-  getModelCosts(options?: { project?: string }): ModelSummary[] {
+  getModelCosts(options?: {
+    project?: string;
+    since?: string;
+    until?: string;
+    today?: boolean;
+  }): ModelSummary[] {
     let records = this.records;
     if (options?.project) {
       records = filterByProject(records, options.project);
+    }
+    if (options?.today || options?.since || options?.until) {
+      records = filterByDate(records, options);
     }
     return aggregateByModel(records);
   }

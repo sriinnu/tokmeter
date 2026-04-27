@@ -167,10 +167,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
  * points to a session we have on disk, keep climbing. Otherwise the current
  * session is its own root.
  */
-function resolveRoot(
-  meta: CodexFileMeta,
-  bySessionId: Map<string, CodexFileMeta>
-): string {
+function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta>): string {
   let current: CodexFileMeta | undefined = meta;
   const seen = new Set<string>();
   while (current?.forkedFromId) {
@@ -190,9 +187,9 @@ function resolveRoot(
  * user actually cares about.
  */
 async function dedupForkedFiles(files: string[]): Promise<string[]> {
-  const metas = (
-    await Promise.all(files.map((f) => readSessionMeta(f)))
-  ).filter((m): m is CodexFileMeta => m !== null);
+  const metas = (await Promise.all(files.map((f) => readSessionMeta(f)))).filter(
+    (m): m is CodexFileMeta => m !== null
+  );
 
   const bySessionId = new Map<string, CodexFileMeta>();
   for (const m of metas) bySessionId.set(m.sessionId, m);

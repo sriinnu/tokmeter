@@ -58,8 +58,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-0.4.1}"
-BUILD_VERSION="${CFBundleVersion:-5}"
+SHORT_VERSION="${CFBundleShortVersionString:-0.5.0}"
+BUILD_VERSION="${CFBundleVersion:-6}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
@@ -258,16 +258,28 @@ echo "==> Built ${APP_DIR} ($(du -sh "${APP_DIR}" | cut -f1))"
 
 # ─── 8. Notarize + staple (release only) ────────────────────────────────
 if [[ "${MODE}" == "release" ]]; then
-    # ALL required env vars are now FATAL on missing.
-    # Supports two auth methods (same as Runic):
-    #   a) API Key: APP_STORE_CONNECT_API_KEY_P8 + KEY_ID + ISSUER_ID (preferred)
+    # Supports two auth methods:
+    #   a) API Key file: TOKMETER_API_KEY_FILE (or auto-detected) + KEY_ID + ISSUER_ID (preferred)
     #   b) Apple ID: APPLE_ID + APPLE_APP_PASSWORD + APPLE_TEAM_ID (legacy)
+    # Tokmeter-specific defaults (key lives in ~/Sriinnu/apple-dev-account/tokmeter/)
+    TOKMETER_DEFAULT_KEY="${HOME}/Sriinnu/apple-dev-account/tokmeter/AuthKey_JVBYT392FU.p8/AuthKey_JVBYT392FU.p8"
+    TOKMETER_DEFAULT_KEY_ID="JVBYT392FU"
+    TOKMETER_DEFAULT_ISSUER="0445be98-b570-461d-8cae-7cbcd90e90a7"
+
     USE_API_KEY=0
+    USE_KEY_FILE=0
     if [[ -n "${APP_STORE_CONNECT_API_KEY_P8:-}" && -n "${APP_STORE_CONNECT_KEY_ID:-}" && -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
         USE_API_KEY=1
+    elif [[ -f "${TOKMETER_API_KEY_FILE:-${TOKMETER_DEFAULT_KEY}}" ]]; then
+        # Auto-detect the tokmeter key file — no env vars needed for local release builds
+        TOKMETER_API_KEY_FILE="${TOKMETER_API_KEY_FILE:-${TOKMETER_DEFAULT_KEY}}"
+        APP_STORE_CONNECT_KEY_ID="${APP_STORE_CONNECT_KEY_ID:-${TOKMETER_DEFAULT_KEY_ID}}"
+        APP_STORE_CONNECT_ISSUER_ID="${APP_STORE_CONNECT_ISSUER_ID:-${TOKMETER_DEFAULT_ISSUER}}"
+        USE_KEY_FILE=1
     elif [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ]]; then
         echo "ERROR: --release requires notarization credentials."
         echo "       Option A (preferred): APP_STORE_CONNECT_API_KEY_P8 + KEY_ID + ISSUER_ID"
+        echo "       Option A2 (local): place key at ${TOKMETER_DEFAULT_KEY}"
         echo "       Option B: APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD"
         exit 4
     fi
@@ -312,8 +324,16 @@ if [[ "${MODE}" == "release" ]]; then
     echo "==> Submitting to Apple notary service (this can take 5-30 minutes)"
     NOTARY_FAILED=0
 
-    if [[ "${USE_API_KEY}" == "1" ]]; then
-        # API Key auth (same pattern as Runic — preferred)
+    if [[ "${USE_KEY_FILE}" == "1" ]]; then
+        # API Key auth using key file path directly (local release build)
+        echo "==> Notarizing with key file: ${TOKMETER_API_KEY_FILE} (id: ${APP_STORE_CONNECT_KEY_ID})"
+        xcrun notarytool submit "${ZIP_PATH}" \
+            --key "${TOKMETER_API_KEY_FILE}" \
+            --key-id "${APP_STORE_CONNECT_KEY_ID}" \
+            --issuer "${APP_STORE_CONNECT_ISSUER_ID}" \
+            --wait || NOTARY_FAILED=1
+    elif [[ "${USE_API_KEY}" == "1" ]]; then
+        # API Key auth via env var (CI)
         API_KEY_FILE=$(mktemp)
         echo "${APP_STORE_CONNECT_API_KEY_P8}" | sed 's/\\n/\n/g' > "${API_KEY_FILE}"
         trap "rm -f '${API_KEY_FILE}'" EXIT
