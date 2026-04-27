@@ -716,10 +716,12 @@ export function createServer(): McpServer {
         records = records.filter((r) => r.model.toLowerCase().includes(m));
       }
       if (params.min_cost !== undefined) {
-        records = records.filter((r) => r.cost >= params.min_cost);
+        const minCost = params.min_cost;
+        records = records.filter((r) => r.cost >= minCost);
       }
       if (params.max_cost !== undefined) {
-        records = records.filter((r) => r.cost <= params.max_cost);
+        const maxCost = params.max_cost;
+        records = records.filter((r) => r.cost <= maxCost);
       }
 
       // Sort
