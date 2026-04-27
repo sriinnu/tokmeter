@@ -14,6 +14,7 @@ import {
 } from "node:http";
 import { homedir } from "node:os";
 import type { ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
+import { refreshKoshaRegistry } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
@@ -144,7 +145,10 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
     case "register": {
       const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
       sessionManager.register(msg.session);
-      clientSessions.set(ws, { provider: msg.session.provider, sessionId: msg.session.sessionId });
+      clientSessions.set(ws, {
+        provider: msg.session.provider,
+        sessionId: msg.session.sessionId,
+      });
       if (!existing) {
         console.log(
           `Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`
@@ -336,7 +340,11 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; port: number } {
+export function getDaemonStatus(): {
+  running: boolean;
+  pid?: number;
+  port: number;
+} {
   if (!existsSync(DAEMON_PID_FILE)) {
     return { running: false, port: DAEMON_PORT };
   }
@@ -528,6 +536,21 @@ function startHttpApi(): void {
           json(res, core.getStats());
         } else if (url === "/api/models") {
           json(res, core.getModelCosts());
+        } else if (url === "/api/today-models") {
+          const core = await getHttpCore();
+          json(res, core.getModelCosts({ today: true }));
+        } else if (url === "/api/update-pricing") {
+          try {
+            await refreshKoshaRegistry();
+            _httpCore = null;
+            json(res, { ok: true });
+          } catch (err) {
+            res.writeHead(500);
+            json(res, {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         } else if (url === "/api/daily") {
           json(res, core.getDailyBreakdown());
         } else if (url === "/api/providers") {

@@ -3,6 +3,7 @@
 // Refreshes every 30s via a Timer. Falls back to clear errors when the
 // daemon is offline so the user knows to start it.
 
+import Combine
 import Foundation
 import SwiftUI
 
@@ -19,12 +20,16 @@ final class TokmeterLoader: ObservableObject {
     // after the fast phase succeeds. Each is independent so partial failure
     // is graceful.
     @Published var topModels: [ModelUsage] = []
+    @Published var todayModels: [ModelUsage] = []
     @Published var recentDaily: [DailyUsage] = []
+    @Published var allDaily: [DailyUsage] = []
     @Published var sessions: [ProjectData] = []
 
     // State flags
     @Published var lastError: String?
     @Published var isLoading: Bool = false
+    @Published var isRefreshingPricing: Bool = false
+    @Published var pricingRefreshError: String?
     @Published var hasFreshData: Bool = false
     /// True while the daemon is still doing its first cold scan. The UI
     /// shows a shimmer/skeleton instead of "0" zeros.
@@ -36,12 +41,24 @@ final class TokmeterLoader: ObservableObject {
     private let client = DaemonClient.shared
     private var timer: Timer?
     private var fetchInFlight: Bool = false
+    private var cancellables: Set<AnyCancellable> = []
 
     init() {
         Task { await loadData() }
-        // Refresh every 30 seconds. Timer is retained by the run loop and
-        // we hold it here so it can be invalidated on deinit.
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        let initial = HubConfigStore.shared.config.bar.refreshSeconds
+        restartTimer(interval: TimeInterval(initial))
+        HubConfigStore.shared.$config
+            .map(\.bar.refreshSeconds)
+            .removeDuplicates()
+            .sink { [weak self] interval in
+                self?.restartTimer(interval: TimeInterval(interval))
+            }
+            .store(in: &cancellables)
+    }
+
+    private func restartTimer(interval: TimeInterval) {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let loader = self else { return }
             Task { @MainActor in
                 await loader.loadData()
@@ -98,10 +115,11 @@ final class TokmeterLoader: ObservableObject {
         // Each fetch is independent — a failure on one doesn't kill the others.
         async let dailyTask = fetchDailySafe()
         async let modelsTask = fetchModelsSafe()
+        async let todayModelsTask = fetchTodayModelsSafe()
         async let sessionsTask = fetchSessionsSafe()
 
-        let (dailyResult, modelsResult, sessionsResult) = await (
-            dailyTask, modelsTask, sessionsTask
+        let (dailyResult, modelsResult, todayModelsResult, sessionsResult) = await (
+            dailyTask, modelsTask, todayModelsTask, sessionsTask
         )
 
         if let daily = dailyResult {
@@ -109,13 +127,18 @@ final class TokmeterLoader: ObservableObject {
                 self.todayCost = today.cost
                 self.todayTokens = today.totalTokens
             }
-            self.recentDaily = daily.suffix(7).map {
-                DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost)
-            }
+            let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
+            self.allDaily = mapped
+            self.recentDaily = Array(mapped.suffix(7))
         }
         if let models = modelsResult {
             // Show top 5 instead of 3 — the user has many models
             self.topModels = models.prefix(5).map {
+                ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
+            }
+        }
+        if let todayMs = todayModelsResult {
+            self.todayModels = todayMs.prefix(5).map {
                 ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
             }
         }
@@ -132,8 +155,57 @@ final class TokmeterLoader: ObservableObject {
         try? await client.fetchModels()
     }
 
+    private func fetchTodayModelsSafe() async -> [ModelData]? {
+        try? await client.fetchTodayModels()
+    }
+
     private func fetchSessionsSafe() async -> [ProjectData]? {
         try? await client.fetchSessions()
+    }
+
+    // ─── Pricing refresh ─────────────────────────────────────────────
+
+    /// Pull the latest kosha pricing registry and reload data.
+    /// When the daemon is running: hits POST /api/update-pricing.
+    /// When offline: runs `tokmeter update` via the CLI subprocess.
+    func refreshPricing() async {
+        guard !isRefreshingPricing else { return }
+        isRefreshingPricing = true
+        pricingRefreshError = nil
+        defer { isRefreshingPricing = false }
+
+        if client.isDaemonRunning {
+            do {
+                try await client.updatePricing()
+                await loadData()
+            } catch {
+                pricingRefreshError = error.localizedDescription
+            }
+        } else {
+            await refreshPricingViaCLI()
+        }
+    }
+
+    private func refreshPricingViaCLI() async {
+        let npxCandidates = [
+            "/opt/homebrew/bin/npx",
+            "/usr/local/bin/npx",
+        ]
+        guard let npxPath = npxCandidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            pricingRefreshError = "No node toolchain found — run `tokmeter update` manually."
+            return
+        }
+        do {
+            _ = try await runProcess(executable: npxPath,
+                                     arguments: ["-y", "@sriinnu/tokmeter", "update"],
+                                     timeout: 30)
+            // Bust the bar-cache so next load gets repriced data
+            let cacheFile = NSHomeDirectory() + "/.cache/tokmeter/bar-cache.json"
+            try? FileManager.default.removeItem(atPath: cacheFile)
+            await loadData()
+        } catch {
+            pricingRefreshError = "Pricing update failed: \(error.localizedDescription)"
+        }
     }
 
     // ─── CLI fallback (daemon offline) ───────────────────────────────
@@ -213,13 +285,16 @@ final class TokmeterLoader: ObservableObject {
             self.todayTokens = today.totalTokens
         }
 
-        self.recentDaily = data.daily.suffix(7).map {
-            DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost)
-        }
+        let mappedDaily = data.daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
+        self.allDaily = mappedDaily
+        self.recentDaily = Array(mappedDaily.suffix(7))
 
         self.topModels = data.models.prefix(5).map {
             ModelUsage(model: $0.model, cost: $0.cost, tokens: $0.totalTokens)
         }
+
+        // Today's model breakdown isn't available from the CLI summary — daemon required.
+        self.todayModels = []
 
         // Projects sorted by recency
         let sorted = data.projects

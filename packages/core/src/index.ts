@@ -9,6 +9,7 @@ export { TokmeterCore } from "./tokmeter-core.js";
 export {
   PricingService,
   getKoshaRegistryMtime,
+  maybeBackgroundRefresh,
   refreshKoshaRegistry,
 } from "./pricing.js";
 export { CleanupService } from "./cleanup-service.js";

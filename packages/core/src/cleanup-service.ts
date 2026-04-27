@@ -21,7 +21,9 @@ import {
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
+import { getCleaners } from "./cleaners/index.js";
 import {
   type UserConfig,
   configFilePath,
@@ -29,8 +31,6 @@ import {
   mergeConfigs,
   saveConfig,
 } from "./config-service.js";
-import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
-import { getCleaners } from "./cleaners/index.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { clearRecordCache, invalidateRecordCache } from "./parsers/utils.js";
 import { projectMatchKey } from "./project-name.js";

@@ -330,7 +330,8 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
       inT += r.inputTokens;
       outT += r.outputTokens;
       const pkey = r.project || "unknown";
-      const p = projects[pkey] ?? (projects[pkey] = { cost: 0, in: 0, out: 0 });
+      if (!projects[pkey]) projects[pkey] = { cost: 0, in: 0, out: 0 };
+      const p = projects[pkey];
       p.cost += r.cost;
       p.in += r.inputTokens;
       p.out += r.outputTokens;
@@ -349,10 +350,7 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
  * `-Users-srinivaspendela-Sriinnu-Personal-tokmeter`); a straightforward
  * case-insensitive suffix/contains match is enough to pin the active project.
  */
-function findProjectTotal(
-  totals: TodayTotals,
-  projectName: string
-): ProjectTotal | null {
+function findProjectTotal(totals: TodayTotals, projectName: string): ProjectTotal | null {
   if (!projectName) return null;
   const needle = projectName.toLowerCase();
   let hit: ProjectTotal | null = null;

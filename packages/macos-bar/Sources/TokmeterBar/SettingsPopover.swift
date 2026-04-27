@@ -12,6 +12,7 @@ struct SettingsPopover: View {
     /// Binding to the persisted theme. Writing here updates the parent's
     /// @AppStorage and therefore every themed view in the tree.
     @Binding var theme: AppTheme
+    @ObservedObject var loader: TokmeterLoader
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -33,6 +34,16 @@ struct SettingsPopover: View {
 
             Divider()
 
+            pricingRefreshRow
+
+            Divider()
+
+            Button(action: openWebPanel) {
+                Label("Open web dashboard", systemImage: "safari")
+                    .font(.system(size: 11, design: .rounded))
+            }
+            .buttonStyle(.borderless)
+
             Button(action: openConfigFile) {
                 Label("Open Config File", systemImage: "doc.text")
                     .font(.system(size: 11, design: .rounded))
@@ -41,6 +52,43 @@ struct SettingsPopover: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    // MARK: - Pricing refresh row
+
+    private var pricingRefreshRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pricing data")
+                        .font(.system(size: 11, design: .rounded))
+                    Text("Pull latest model prices from kosha")
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button(action: { Task { await loader.refreshPricing() } }) {
+                    HStack(spacing: 4) {
+                        if loader.isRefreshingPricing {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .frame(width: 12, height: 12)
+                        }
+                        Text(loader.isRefreshingPricing ? "Updating…" : "Update now")
+                    }
+                    .font(.system(size: 10, design: .rounded))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(loader.isRefreshingPricing)
+            }
+            if let err = loader.pricingRefreshError {
+                Text(err)
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+            }
+        }
     }
 
     // MARK: - Theme grid
@@ -66,6 +114,12 @@ struct SettingsPopover: View {
     }
 
     // MARK: - Actions
+
+    private func openWebPanel() {
+        if let url = URL(string: "http://localhost:3000") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
     /// Open the user's `~/.tokmeter/config.json` in the default editor. If
     /// that path has been replaced with a symlink escaping ~/.tokmeter/
