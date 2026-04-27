@@ -128,7 +128,6 @@ function backupBrokenConfigFile(path: string, reason: string): void {
   const backupPath = `${path}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   try {
     copyFileSync(path, backupPath);
-    // biome-ignore lint/suspicious/noConsole: user-facing warning, not debug noise
     console.error(
       `⚠  tokmeter: ~/.tokmeter/config.json is malformed (${reason}). Saved a copy at ${backupPath} and continuing with defaults.`
     );
@@ -157,7 +156,9 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
       ),
     },
     cli: {
-      defaultRange: isDefaultRange(raw.cli?.defaultRange) ? raw.cli.defaultRange : d.cli.defaultRange,
+      defaultRange: isDefaultRange(raw.cli?.defaultRange)
+        ? raw.cli.defaultRange
+        : d.cli.defaultRange,
       defaultSort: isDefaultSort(raw.cli?.defaultSort) ? raw.cli.defaultSort : d.cli.defaultSort,
     },
     alerts: {
@@ -171,12 +172,7 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
   };
 }
 
-function clampPositiveInt(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number
-): number {
+function clampPositiveInt(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   const i = Math.round(value);
   if (i < min) return min;
@@ -185,7 +181,13 @@ function clampPositiveInt(
 }
 
 function isDefaultRange(value: unknown): value is DefaultRange {
-  return value === "all" || value === "today" || value === "week" || value === "month" || value === "year";
+  return (
+    value === "all" ||
+    value === "today" ||
+    value === "week" ||
+    value === "month" ||
+    value === "year"
+  );
 }
 
 function isDefaultSort(value: unknown): value is DefaultSort {

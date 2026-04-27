@@ -109,7 +109,12 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
       return (
         <div style={{ color: webTheme.text.danger, padding: webTheme.spacing.xl }}>
           <h2>Something went wrong</h2>
-          <pre style={{ color: webTheme.text.muted, fontSize: webTheme.typography.mono.size }}>
+          <pre
+            style={{
+              color: webTheme.text.muted,
+              fontSize: webTheme.typography.mono.size,
+            }}
+          >
             {this.state.error?.message}
           </pre>
         </div>

@@ -156,11 +156,7 @@ describe("calculateCost", () => {
       inputPerMillion: 0,
       outputPerMillion: 0,
     });
-    const cost = await pricing.calculateCost(
-      "internal-llama-deployment",
-      10_000_000,
-      10_000_000,
-    );
+    const cost = await pricing.calculateCost("internal-llama-deployment", 10_000_000, 10_000_000);
     expect(cost).toBe(0);
   });
 });

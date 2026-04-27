@@ -7,7 +7,9 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "*.json"]
+    "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "*.json"],
+    "ignore": ["**/dist/**", "**/node_modules/**", "**/*.d.ts", "**/*.min.js", "**/*.map"],
+    "maxSize": 10485760
   },
   "formatter": {
     "enabled": true,

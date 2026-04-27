@@ -6,7 +6,6 @@
  */
 
 import { homedir } from "node:os";
-import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
 import {
   aggregateByDate,
   aggregateByModel,
@@ -16,6 +15,7 @@ import {
   filterByProject,
   filterByProvider,
 } from "./aggregator.js";
+import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
 import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
 import { loadHistorySnapshot, saveHistorySnapshot } from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
@@ -274,7 +274,12 @@ export class TokmeterCore {
   }
 
   /** Get model summaries, optionally filtered by project. */
-  getModelCosts(options?: { project?: string; since?: string; until?: string; today?: boolean }): ModelSummary[] {
+  getModelCosts(options?: {
+    project?: string;
+    since?: string;
+    until?: string;
+    today?: boolean;
+  }): ModelSummary[] {
     let records = this.records;
     if (options?.project) {
       records = filterByProject(records, options.project);
