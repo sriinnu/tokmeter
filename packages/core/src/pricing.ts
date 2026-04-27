@@ -252,7 +252,7 @@ export class PricingService {
    * source of truth.
    */
   seedPricing(modelId: string, pricing: FullPricing): void {
-    this.cache.set(modelId, pricing);
+    this.cache.set(modelId, this.roundPricing(pricing));
   }
 
   /**
