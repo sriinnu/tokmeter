@@ -145,7 +145,10 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
     case "register": {
       const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
       sessionManager.register(msg.session);
-      clientSessions.set(ws, { provider: msg.session.provider, sessionId: msg.session.sessionId });
+      clientSessions.set(ws, {
+        provider: msg.session.provider,
+        sessionId: msg.session.sessionId,
+      });
       if (!existing) {
         console.log(
           `Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`
@@ -337,7 +340,11 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; port: number } {
+export function getDaemonStatus(): {
+  running: boolean;
+  pid?: number;
+  port: number;
+} {
   if (!existsSync(DAEMON_PID_FILE)) {
     return { running: false, port: DAEMON_PORT };
   }
@@ -539,7 +546,10 @@ function startHttpApi(): void {
             json(res, { ok: true });
           } catch (err) {
             res.writeHead(500);
-            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
+            json(res, {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         } else if (url === "/api/daily") {
           json(res, core.getDailyBreakdown());

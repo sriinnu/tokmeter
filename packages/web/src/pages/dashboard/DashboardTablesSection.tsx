@@ -62,12 +62,14 @@ export const DashboardTablesSection = memo(function DashboardTablesSection({
           <div style={modelPanelActionStyle}>
             <div style={tabBarStyle}>
               <button
+                type="button"
                 style={modelTab === "top" ? activeTabStyle : inactiveTabStyle}
                 onClick={() => setModelTab("top")}
               >
                 All time
               </button>
               <button
+                type="button"
                 style={modelTab === "today" ? activeTabStyle : inactiveTabStyle}
                 onClick={() => setModelTab("today")}
               >
@@ -119,8 +121,9 @@ function ProjectLeaderboardTable({ insights }: { insights: DashboardInsights }) 
                   {project.project}
                 </Link>
                 <div style={secondaryTextStyle}>
-                  {project.modelCount} model{project.modelCount === 1 ? "" : "s"} ·{" "}
-                  {project.providerCount} provider{project.providerCount === 1 ? "" : "s"}
+                  {project.modelCount} model
+                  {project.modelCount === 1 ? "" : "s"} · {project.providerCount} provider
+                  {project.providerCount === 1 ? "" : "s"}
                 </div>
               </td>
               <td style={bodyCellStyle}>

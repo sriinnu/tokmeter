@@ -307,7 +307,9 @@ export function createServer(): McpServer {
       const stats = core.getStats();
 
       if (stats.totalRecords === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const daily = core.getDailyBreakdown();
@@ -341,7 +343,9 @@ export function createServer(): McpServer {
         "",
       ];
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -365,7 +369,9 @@ export function createServer(): McpServer {
       const models = core.getModelCosts({ project: params.project });
 
       if (models.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const limit = params.limit ?? 20;
@@ -395,7 +401,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -417,7 +425,9 @@ export function createServer(): McpServer {
       const providers = core.getProviderBreakdown();
 
       if (providers.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const maxCost = providers[0]?.cost ?? 0;
@@ -441,7 +451,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -463,7 +475,9 @@ export function createServer(): McpServer {
       const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
 
       if (projects.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const limit = params.limit ?? 20;
@@ -496,7 +510,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -519,7 +535,9 @@ export function createServer(): McpServer {
       const daily = core.getDailyBreakdown({ project: params.project });
 
       if (daily.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const limit = params.limit ?? 30;
@@ -559,7 +577,9 @@ export function createServer(): McpServer {
       );
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -583,7 +603,9 @@ export function createServer(): McpServer {
       const daily = core.getDailyBreakdown({ project: params.project });
 
       if (daily.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       // Compute overall daily average
@@ -649,7 +671,9 @@ export function createServer(): McpServer {
         "",
       ];
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -692,10 +716,10 @@ export function createServer(): McpServer {
         records = records.filter((r) => r.model.toLowerCase().includes(m));
       }
       if (params.min_cost !== undefined) {
-        records = records.filter((r) => r.cost >= params.min_cost!);
+        records = records.filter((r) => r.cost >= params.min_cost);
       }
       if (params.max_cost !== undefined) {
-        records = records.filter((r) => r.cost <= params.max_cost!);
+        records = records.filter((r) => r.cost <= params.max_cost);
       }
 
       // Sort
@@ -712,7 +736,9 @@ export function createServer(): McpServer {
       const shown = records.slice(0, limit);
 
       if (records.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const lines = [
@@ -744,7 +770,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -783,15 +811,18 @@ export function createServer(): McpServer {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
           models = models.filter(
             (m) =>
-              nameSet.has(m.model.toLowerCase()) ||
-              params.names!.some((n) => m.model.toLowerCase().includes(n.toLowerCase()))
+              (nameSet.has(m.model.toLowerCase()) ||
+                params.names?.some((n) => m.model.toLowerCase().includes(n.toLowerCase()))) ??
+              false
           );
         } else {
           models = models.slice(0, 5);
         }
 
         if (models.length === 0) {
-          return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+          return {
+            content: [{ type: "text", text: noDataMessage(params.scope) }],
+          };
         }
 
         // Compute per-model metrics
@@ -835,15 +866,18 @@ export function createServer(): McpServer {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
           providers = providers.filter(
             (p) =>
-              nameSet.has(p.provider.toLowerCase()) ||
-              params.names!.some((n) => p.provider.toLowerCase().includes(n.toLowerCase()))
+              (nameSet.has(p.provider.toLowerCase()) ||
+                params.names?.some((n) => p.provider.toLowerCase().includes(n.toLowerCase()))) ??
+              false
           );
         } else {
           providers = providers.slice(0, 5);
         }
 
         if (providers.length === 0) {
-          return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+          return {
+            content: [{ type: "text", text: noDataMessage(params.scope) }],
+          };
         }
 
         const maxCost = Math.max(...providers.map((p) => p.cost));
@@ -867,15 +901,18 @@ export function createServer(): McpServer {
         // projects
         let projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
         if (params.names && params.names.length > 0) {
-          projects = projects.filter((p) =>
-            params.names!.some((n) => p.project.toLowerCase().includes(n.toLowerCase()))
+          projects = projects.filter(
+            (p) =>
+              params.names?.some((n) => p.project.toLowerCase().includes(n.toLowerCase())) ?? false
           );
         } else {
           projects = projects.slice(0, 5);
         }
 
         if (projects.length === 0) {
-          return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+          return {
+            content: [{ type: "text", text: noDataMessage(params.scope) }],
+          };
         }
 
         const maxCost = Math.max(...projects.map((p) => p.totalCost));
@@ -900,7 +937,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1226,7 +1265,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1252,7 +1293,9 @@ export function createServer(): McpServer {
       const records = core.getRecords();
 
       if (records.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const metric = params.metric ?? "cost";
@@ -1327,9 +1370,10 @@ export function createServer(): McpServer {
 
       // Day-of-week summary
       lines.push("", separator(), "  Busiest Days:");
-      const sortedDays = DAYS.map((name, i) => ({ name, total: dayTotals[i] })).sort(
-        (a, b) => b.total - a.total
-      );
+      const sortedDays = DAYS.map((name, i) => ({
+        name,
+        total: dayTotals[i],
+      })).sort((a, b) => b.total - a.total);
       const maxDay = sortedDays[0]?.total ?? 0;
       for (const d of sortedDays) {
         if (d.total === 0) continue;
@@ -1353,7 +1397,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1485,8 +1531,11 @@ export function createServer(): McpServer {
         dailyModels.get(date)!.add(r.model);
       }
       const sortedDates = [...dailyModels.keys()].sort();
-      const modelChanges: Array<{ date: string; newModels: string[]; removedModels: string[] }> =
-        [];
+      const modelChanges: Array<{
+        date: string;
+        newModels: string[];
+        removedModels: string[];
+      }> = [];
       for (let i = 1; i < sortedDates.length; i++) {
         const prev = dailyModels.get(sortedDates[i - 1])!;
         const curr = dailyModels.get(sortedDates[i])!;
@@ -1514,7 +1563,11 @@ export function createServer(): McpServer {
 
       // ── Day-over-day velocity ──
       if (daily.length >= 3) {
-        const velocities: Array<{ date: string; change: number; pctChange: number }> = [];
+        const velocities: Array<{
+          date: string;
+          change: number;
+          pctChange: number;
+        }> = [];
         for (let i = 1; i < daily.length; i++) {
           const prev = daily[i - 1].cost;
           const curr = daily[i].cost;
@@ -1540,7 +1593,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1564,7 +1619,9 @@ export function createServer(): McpServer {
       const models = core.getModelCosts({ project: params.project });
 
       if (stats.totalRecords === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       // Global efficiency metrics
@@ -1670,7 +1727,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("", "");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1722,7 +1781,9 @@ export function createServer(): McpServer {
         const records = core.getRecords();
 
         if (models.length === 0) {
-          return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+          return {
+            content: [{ type: "text", text: noDataMessage(params.scope) }],
+          };
         }
 
         // Compute derived metrics for each model
@@ -1822,7 +1883,9 @@ export function createServer(): McpServer {
         const records = core.getRecords();
 
         if (providers.length === 0) {
-          return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+          return {
+            content: [{ type: "text", text: noDataMessage(params.scope) }],
+          };
         }
 
         type ProviderMetrics = ProviderSummary & {
@@ -1865,7 +1928,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -1888,7 +1953,9 @@ export function createServer(): McpServer {
       const stats = core.getStats();
 
       if (stats.totalRecords === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const models = core.getModelCosts({ project: params.project });
@@ -1996,7 +2063,9 @@ export function createServer(): McpServer {
       const costSpark = sparkline(daily.map((d) => d.cost));
       lines.push(separator(), `  Daily Cost:  ${costSpark}`, "");
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2020,7 +2089,9 @@ export function createServer(): McpServer {
       const stats = core.getStats();
 
       if (daily.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.scope) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.scope) }],
+        };
       }
 
       const lines = [
@@ -2183,7 +2254,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2212,7 +2285,9 @@ export function createServer(): McpServer {
       const records = core.getRecords();
 
       if (records.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.period) }],
+        };
       }
 
       // Aggregate totals
@@ -2337,7 +2412,9 @@ export function createServer(): McpServer {
       }
       lines.push("");
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2391,12 +2468,17 @@ export function createServer(): McpServer {
       project: ProjectFilter,
     },
     async (params) => {
-      const opts = buildScanOptions({ scope: params.period, project: params.project });
+      const opts = buildScanOptions({
+        scope: params.period,
+        project: params.project,
+      });
       const core = await getCore(opts);
       const models = core.getModelCosts({ project: params.project });
 
       if (models.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.period) }],
+        };
       }
 
       const periodLabel =
@@ -2435,8 +2517,12 @@ export function createServer(): McpServer {
       // Calculate what-if scenarios
       let totalActual = 0;
       let totalAlternative = 0;
-      const scenarios: { model: string; actual: number; alternative: number; altTier: string }[] =
-        [];
+      const scenarios: {
+        model: string;
+        actual: number;
+        alternative: number;
+        altTier: string;
+      }[] = [];
 
       for (const m of models) {
         totalActual += m.cost;
@@ -2455,7 +2541,12 @@ export function createServer(): McpServer {
           (m.outputTokens / 1_000_000) * altPricing.output;
 
         totalAlternative += altCost;
-        scenarios.push({ model: m.model, actual: m.cost, alternative: altCost, altTier });
+        scenarios.push({
+          model: m.model,
+          actual: m.cost,
+          alternative: altCost,
+          altTier,
+        });
       }
 
       // Models without a cheaper alternative still count toward the total
@@ -2510,7 +2601,9 @@ export function createServer(): McpServer {
       lines.push(formatTable(pricingHeaders, pricingRows, [false, true, true]));
       lines.push("");
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2648,7 +2741,9 @@ export function createServer(): McpServer {
       }
 
       lines.push("");
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2674,7 +2769,9 @@ export function createServer(): McpServer {
       const stats = core.getStats();
 
       if (records.length === 0) {
-        return { content: [{ type: "text", text: noDataMessage(params.period) }] };
+        return {
+          content: [{ type: "text", text: noDataMessage(params.period) }],
+        };
       }
 
       const totalCost = stats.totalCost;
@@ -2824,7 +2921,9 @@ export function createServer(): McpServer {
         );
       }
 
-      return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+      };
     }
   );
 
@@ -2930,7 +3029,9 @@ export function createServer(): McpServer {
           "  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'"
         );
 
-        return { content: [{ type: "text", text: lines.join("\n") + scanFooter() }] };
+        return {
+          content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        };
       } catch (err) {
         return {
           content: [
@@ -3032,7 +3133,12 @@ export function createServer(): McpServer {
 
       if (backups.length === 0) {
         return {
-          content: [{ type: "text", text: `${header("BACKUPS")}\n\n  No backups found.\n` }],
+          content: [
+            {
+              type: "text",
+              text: `${header("BACKUPS")}\n\n  No backups found.\n`,
+            },
+          ],
         };
       }
 

@@ -411,13 +411,12 @@ export function uninstallMCP(editors?: string[]): void {
       continue;
     }
 
-    // biome-ignore lint/performance/noDelete: required to remove property from object
-    delete servers.drishti;
+    const { drishti: _drishti, ...remainingServers } = servers;
 
-    if (Object.keys(servers).length === 0) {
+    if (Object.keys(remainingServers).length === 0) {
       delete config![mcpKey];
     } else {
-      config![mcpKey] = servers;
+      config![mcpKey] = remainingServers;
     }
 
     writeJSON(mcpPath, config!);
@@ -451,8 +450,14 @@ function getGuardHooks(): Record<string, HookMatcher[]> {
       {
         matcher: "Bash",
         hooks: [
-          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"` },
-          { type: "command", command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"` },
+          {
+            type: "command",
+            command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"`,
+          },
+          {
+            type: "command",
+            command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"`,
+          },
         ],
       },
       {
@@ -462,7 +467,10 @@ function getGuardHooks(): Record<string, HookMatcher[]> {
             type: "command",
             command: `bash ${dir}/sensitive-guard.sh "$CLAUDE_TOOL_NAME" "$CLAUDE_TOOL_INPUT"`,
           },
-          { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"` },
+          {
+            type: "command",
+            command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"`,
+          },
         ],
       },
     ],

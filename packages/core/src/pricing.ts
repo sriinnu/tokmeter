@@ -61,8 +61,7 @@ type FullPricing = ModelPricing;
 // Date suffixes used by various providers for versioned model IDs.
 // Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
-const DATE_SUFFIX_RE =
-  /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
+const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
 
 // ─── PricingService ──────────────────────────────────────────────────
 
@@ -125,7 +124,7 @@ const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
  */
 let backgroundRefreshInFlight: Promise<void> | null = null;
 export function maybeBackgroundRefresh(
-  options: { staleAfterMs?: number; cacheDir?: string } = {},
+  options: { staleAfterMs?: number; cacheDir?: string } = {}
 ): void {
   const staleAfter = options.staleAfterMs ?? STALE_AFTER_MS;
   const mtime = getKoshaRegistryMtime();
@@ -170,7 +169,8 @@ function loadUserOverrides(): Map<string, FullPricing> {
       if (typeof id !== "string" || id.length === 0 || id.length > 256) continue;
       if (!pricing || typeof pricing !== "object") continue;
       const p = pricing as Record<string, unknown>;
-      const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+      const isNum = (v: unknown): v is number =>
+        typeof v === "number" && Number.isFinite(v) && v >= 0;
       if (!isNum(p.inputPerMillion) || !isNum(p.outputPerMillion)) continue;
       const out: FullPricing = {
         inputPerMillion: p.inputPerMillion,
@@ -178,8 +178,10 @@ function loadUserOverrides(): Map<string, FullPricing> {
       };
       if (isNum(p.cacheReadPerMillion)) out.cacheReadPerMillion = p.cacheReadPerMillion;
       if (isNum(p.cacheWritePerMillion)) out.cacheWritePerMillion = p.cacheWritePerMillion;
-      if (isNum(p.reasoningInputPerMillion)) out.reasoningInputPerMillion = p.reasoningInputPerMillion;
-      if (isNum(p.reasoningOutputPerMillion)) out.reasoningOutputPerMillion = p.reasoningOutputPerMillion;
+      if (isNum(p.reasoningInputPerMillion))
+        out.reasoningInputPerMillion = p.reasoningInputPerMillion;
+      if (isNum(p.reasoningOutputPerMillion))
+        out.reasoningOutputPerMillion = p.reasoningOutputPerMillion;
       overrides.set(id, out);
     }
   } catch {

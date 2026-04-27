@@ -23,8 +23,6 @@ import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import {
   type AliasMap,
-  type AliasSuggestion,
-  type TokenRecord,
   TokmeterCore,
   applyTagOp,
   loadAliases,
@@ -91,7 +89,7 @@ function sanitizeDisplay(input: string, label = "display"): string {
     process.exit(2);
   }
   // Control chars including \n \r \t break table rendering and logs. Reject.
-  if (/[\x00-\x1f\x7f]/.test(trimmed)) {
+  if (/\p{Cc}/u.test(trimmed)) {
     console.log(chalk.red(`${label} name cannot contain control characters.`));
     process.exit(2);
   }
@@ -141,7 +139,9 @@ function cmdList(map: AliasMap, json: boolean): void {
 
   const entries = Object.entries(map);
   if (entries.length === 0) {
-    console.log(chalk.dim("\nNo aliases configured. Run `tokmeter alias suggest` to get started.\n"));
+    console.log(
+      chalk.dim("\nNo aliases configured. Run `tokmeter alias suggest` to get started.\n")
+    );
     return;
   }
 
@@ -185,9 +185,7 @@ function cmdSet(map: AliasMap, rest: string[]): void {
   }
   const display = sanitizeDisplay(displayIn, "display");
   if (extra.length > 0) {
-    console.log(
-      chalk.dim("(extra arguments ignored — use `alias tag` to set tags after)")
-    );
+    console.log(chalk.dim("(extra arguments ignored — use `alias tag` to set tags after)"));
   }
   const next = setAlias(map, raw, { display }, "user");
   writeAndPrint(next, `"${raw}" → "${display}"`);
@@ -246,7 +244,12 @@ function cmdTag(map: AliasMap, rest: string[]): void {
   }
   const display = sanitizeDisplay(displayIn, "display");
   // Split comma-separated tag lists too: `work,client` == `work client`.
-  const expanded = tags.flatMap((t) => t.split(",").map((s) => s.trim()).filter(Boolean));
+  const expanded = tags.flatMap((t) =>
+    t
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
   const next = applyTagOp(map, display, op, expanded);
   writeAndPrint(next, `tag ${op} "${display}" → ${expanded.join(", ") || "(cleared)"}`);
 }
@@ -381,14 +384,12 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
   console.log(
     `Walking ${chalk.bold(String(total))} item(s): ${chalk.cyan(String(suggestions.length))} auto-detected merge group(s) + ${chalk.cyan(String(solo.length))} solo project(s).\n`
   );
+  console.log(chalk.dim("Merge: [K]eep to confirm merge, [E]dit display, [R]eject merge."));
+  console.log(chalk.dim("Solo:  [K]eep as-is, [E]dit display, [H]ide, [S]kip (= keep)."));
   console.log(
-    chalk.dim("Merge: [K]eep to confirm merge, [E]dit display, [R]eject merge.")
-  );
-  console.log(
-    chalk.dim("Solo:  [K]eep as-is, [E]dit display, [H]ide, [S]kip (= keep).")
-  );
-  console.log(
-    chalk.dim("Each decision is saved to disk immediately — Ctrl-C preserves what you've done so far.\n")
+    chalk.dim(
+      "Each decision is saved to disk immediately — Ctrl-C preserves what you've done so far.\n"
+    )
   );
 
   // Track counts for the final tally. workingMap is used for the in-memory
@@ -415,10 +416,7 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
   // ─ Phase 1: merge groups ──────────────────────────────────────────────
   for (const s of suggestions) {
     idx++;
-    console.log(
-      chalk.bold(`(${idx}/${total})`) +
-        chalk.dim(`  merge · ${s.reason}`)
-    );
+    console.log(chalk.bold(`(${idx}/${total})`) + chalk.dim(`  merge · ${s.reason}`));
     for (const k of s.keys) {
       const existing = initialMap[k];
       const lockTag = existing?.modifiedBy === "user" ? chalk.green(" [locked]") : "";
@@ -461,7 +459,7 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
     const answer = (await ask("  [K]eep / [E]dit / [H]ide / [S]kip > ")).toLowerCase();
 
     if (answer === "e" || answer === "edit") {
-      const custom = await ask(`  new display: `);
+      const custom = await ask("  new display: ");
       if (custom.trim()) {
         workingMap = setAlias(workingMap, raw, { display: custom.trim() }, "user");
         edited++;
@@ -523,7 +521,10 @@ async function readCodexCwd(file: string): Promise<string | undefined> {
       for (const line of text.split("\n").slice(0, 20)) {
         if (!line.trim()) continue;
         try {
-          const evt = JSON.parse(line) as { type?: string; payload?: { cwd?: string } };
+          const evt = JSON.parse(line) as {
+            type?: string;
+            payload?: { cwd?: string };
+          };
           if (evt.type === "session_meta" && evt.payload?.cwd) return evt.payload.cwd;
         } catch {
           // partial line — ignore

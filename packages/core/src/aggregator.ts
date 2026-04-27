@@ -116,13 +116,8 @@ function sumTokens(records: TokenRecord[]) {
  * `hidden: true` are dropped from the output (totals still reflect them
  * via `aggregator.sum*` callers that work on the raw record set).
  */
-export function aggregateByProject(
-  records: TokenRecord[],
-  aliases?: AliasMap
-): ProjectSummary[] {
-  const resolve = aliases
-    ? (p: string) => resolveProjectName(p, aliases)
-    : (p: string) => p;
+export function aggregateByProject(records: TokenRecord[], aliases?: AliasMap): ProjectSummary[] {
+  const resolve = aliases ? (p: string) => resolveProjectName(p, aliases) : (p: string) => p;
 
   const grouped = groupBy(records, (r) => resolve(r.project));
   const totalCost = records.reduce((s, r) => s + r.cost, 0);
