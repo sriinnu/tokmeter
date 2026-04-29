@@ -558,17 +558,22 @@ function startHttpApi(): void {
           try {
             const { statSync } = await import("node:fs");
             const { join } = await import("node:path");
-            const home = process.env.HOME || "";
-            mtime = statSync(join(home, ".kosha", "registry.json")).mtimeMs;
+            const { homedir } = await import("node:os");
+            mtime = statSync(join(homedir(), ".kosha", "registry.json")).mtimeMs;
           } catch {}
           json(res, { registryMtime: mtime });
         } else if (url === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
-          // and the result of its last run. The last-run state comes from
-          // the log file's tail — exit code 0 in the log means success.
-          const { existsSync, statSync, readFileSync } = await import("node:fs");
+          // and the result of its last run. The plist truncates the log on
+          // every run (`: > LOG`), so the entire file contents represent the
+          // last run only — the success/failure substring scan is unambiguous.
+          // We still bound the read to 8KB as a defense against runaway logs.
+          const { existsSync, statSync, openSync, readSync, closeSync } = await import(
+            "node:fs"
+          );
           const { join } = await import("node:path");
-          const home = process.env.HOME || "";
+          const { homedir } = await import("node:os");
+          const home = homedir();
           const plistPath = join(
             home,
             "Library",
@@ -587,13 +592,22 @@ function startHttpApi(): void {
             if (existsSync(logPath)) {
               const stat = statSync(logPath);
               lastRunMtime = stat.mtimeMs;
-              const data = readFileSync(logPath, "utf8");
-              const lines = data.trim().split("\n");
-              lastRunTail = lines.slice(-3).join("\n");
-              // The CLI emits "Kosha registry refreshed." on success and
-              // "Failed to refresh kosha:" on error. Anything else → unknown.
-              if (data.includes("Kosha registry refreshed")) lastRunOk = true;
-              else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+              const cap = 8192;
+              const fd = openSync(logPath, "r");
+              try {
+                const offset = Math.max(0, stat.size - cap);
+                const buf = Buffer.alloc(Math.min(cap, stat.size));
+                readSync(fd, buf, 0, buf.length, offset);
+                const data = buf.toString("utf8");
+                const lines = data.trim().split("\n");
+                lastRunTail = lines.slice(-3).join("\n");
+                // The CLI emits "Kosha registry refreshed." on success and
+                // "Failed to refresh kosha:" on error. Anything else → unknown.
+                if (data.includes("Kosha registry refreshed")) lastRunOk = true;
+                else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+              } finally {
+                closeSync(fd);
+              }
             }
           } catch {}
           json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });

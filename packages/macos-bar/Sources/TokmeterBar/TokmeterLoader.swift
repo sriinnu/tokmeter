@@ -35,6 +35,11 @@ final class TokmeterLoader: ObservableObject {
     @Published var pricingMtime: Double = 0
     /// Daily-cron install + last-run state for the Settings panel.
     @Published var cronStatus: CronStatus?
+    /// True while `tokmeter install-cron` is running. Drives the install
+    /// button's spinner.
+    @Published var isInstallingCron: Bool = false
+    /// Last error from install-cron / uninstall-cron, surfaced in the UI.
+    @Published var cronInstallError: String?
     @Published var hasFreshData: Bool = false
     /// True while the daemon is still doing its first cold scan. The UI
     /// shows a shimmer/skeleton instead of "0" zeros.
@@ -204,6 +209,46 @@ final class TokmeterLoader: ObservableObject {
             }
         } else {
             await refreshPricingViaCLI()
+        }
+    }
+
+    // ─── Cron install/uninstall via CLI subprocess ──────────────────
+
+    /// Spawn `tokmeter install-cron` (or uninstall) as a subprocess. The CLI
+    /// writes the launchd plist under ~/Library/LaunchAgents and bootstraps
+    /// it with launchctl — we don't replicate that logic in Swift, we just
+    /// invoke the CLI so there's a single source of truth for the plist.
+    func installCron() async { await runCronCommand("install-cron") }
+    func uninstallCron() async { await runCronCommand("uninstall-cron") }
+
+    private func runCronCommand(_ subcommand: String) async {
+        guard !isInstallingCron else { return }
+        isInstallingCron = true
+        cronInstallError = nil
+        defer { isInstallingCron = false }
+
+        let npxCandidates = [
+            "/opt/homebrew/bin/npx",
+            "/usr/local/bin/npx",
+        ]
+        guard let npxPath = npxCandidates.first(where: {
+            FileManager.default.fileExists(atPath: $0)
+        }) else {
+            cronInstallError =
+                "No node toolchain found — run `tokmeter \(subcommand)` manually."
+            return
+        }
+        do {
+            _ = try await runProcess(
+                executable: npxPath,
+                arguments: ["-y", "@sriinnu/tokmeter", subcommand],
+                timeout: 30
+            )
+            // Refresh cronStatus from the daemon so the UI reflects the change.
+            await loadData()
+        } catch {
+            cronInstallError =
+                "\(subcommand) failed: \(error.localizedDescription)"
         }
     }
 

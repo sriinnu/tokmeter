@@ -49,10 +49,18 @@ struct FooterBar: View {
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
             Spacer()
             if loader.pricingMtime > 0 {
-                Text("Pricing: \(relativeTime(loader.pricingMtime))")
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
-                    .help("Last kosha registry fetch — older than 24h means today's reprice may be using stale rates.")
+                // TimelineView ticks every 60s so "2h ago" stays accurate while
+                // the popover is open — without it, the badge only refreshes on
+                // the loader's 30s data poll, which is fine for live data but
+                // makes a "1m ago" / "2m ago" / "3m ago" string look frozen.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    Text("Pricing: \(relativeTime(loader.pricingMtime))")
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                        .help(
+                            "Last kosha registry fetch — older than 24h means today's reprice may be using stale rates."
+                        )
+                }
             }
         }
     }
