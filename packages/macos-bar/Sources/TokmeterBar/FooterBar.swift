@@ -48,7 +48,31 @@ struct FooterBar: View {
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
             Spacer()
+            if loader.pricingMtime > 0 {
+                // TimelineView ticks every 60s so "2h ago" stays accurate while
+                // the popover is open — without it, the badge only refreshes on
+                // the loader's 30s data poll, which is fine for live data but
+                // makes a "1m ago" / "2m ago" / "3m ago" string look frozen.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    Text("Pricing: \(relativeTime(loader.pricingMtime))")
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                        .help(
+                            "Last kosha registry fetch — older than 24h means today's reprice may be using stale rates."
+                        )
+                }
+            }
         }
+    }
+
+    /// "2h ago" / "12m ago" / "just now" — single decimal precision is overkill
+    /// for a footer badge, so we round down to the largest unit.
+    private func relativeTime(_ mtimeMs: Double) -> String {
+        let seconds = max(0, Date().timeIntervalSince1970 - mtimeMs / 1000.0)
+        if seconds < 60 { return "just now" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h ago" }
+        return "\(Int(seconds / 86_400))d ago"
     }
 
     private var controlsRow: some View {

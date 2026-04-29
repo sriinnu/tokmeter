@@ -62,6 +62,21 @@ struct ReadyResponse: Codable {
     let apiVersion: Int
 }
 
+/// /api/pricing-status — kosha registry mtime in epoch ms (0 if missing).
+struct PricingStatus: Codable {
+    let registryMtime: Double
+}
+
+/// /api/cron-status — daily-cron install + last-run state.
+/// `lastRunOk == nil` means we couldn't tell from the log (e.g. first run
+/// hasn't happened yet, or the log was rotated).
+struct CronStatus: Codable {
+    let installed: Bool
+    let lastRunMtime: Double
+    let lastRunOk: Bool?
+    let lastRunTail: String
+}
+
 /// /api/sessions — per-project session aggregate.
 /// Mirrors the TS ProjectSummary type from @sriinnu/tokmeter-core.
 struct ProjectData: Codable, Identifiable {
