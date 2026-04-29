@@ -120,26 +120,58 @@ struct SettingsPopover: View {
     @ViewBuilder
     private func cronStatusRow(_ cron: CronStatus) -> some View {
         Divider().padding(.top, 2)
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Image(systemName: cron.installed ? "clock.badge.checkmark" : "clock.badge.exclamationmark")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(
+                            systemName: cron.installed
+                                ? "clock.badge.checkmark"
+                                : "clock.badge.exclamationmark"
+                        )
                         .font(.system(size: 10))
                         .foregroundColor(cron.installed ? .green : .orange)
-                    Text(cron.installed ? "Daily auto-fetch installed" : "Daily auto-fetch not installed")
+                        Text(
+                            cron.installed
+                                ? "Daily auto-fetch installed"
+                                : "Daily auto-fetch not installed"
+                        )
                         .font(.system(size: 11, design: .rounded))
+                    }
+                    Text(cronDetailLine(cron))
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                 }
-                Text(cronDetailLine(cron))
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
+                Spacer()
+                Button(action: {
+                    Task {
+                        if cron.installed {
+                            await loader.uninstallCron()
+                        } else {
+                            await loader.installCron()
+                        }
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        if loader.isInstallingCron {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .frame(width: 12, height: 12)
+                        }
+                        Text(cron.installed ? "Disable" : "Install")
+                    }
+                    .font(.system(size: 10, design: .rounded))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(loader.isInstallingCron)
             }
-            Spacer()
-            if !cron.installed {
-                Text("Run `tokmeter install-cron`")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .textSelection(.enabled)
+            if let err = loader.cronInstallError {
+                Text(err)
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundColor(.red)
+                    .lineLimit(2)
             }
         }
     }
@@ -157,12 +189,11 @@ struct SettingsPopover: View {
         else if seconds < 86_400 { when = "\(Int(seconds / 3600))h ago" }
         else { when = "\(Int(seconds / 86_400))d ago" }
 
-        switch cron.lastRunOk {
-        case true:  return "Last run \(when) — succeeded."
-        case false: return "Last run \(when) — FAILED. Check ~/.cache/tokmeter/daily-cron.log"
-        case nil:   return "Last run \(when) — status unknown (log inconclusive)."
-        case .some(_): return "Last run \(when)."
+        if cron.lastRunOk == true { return "Last run \(when) — succeeded." }
+        if cron.lastRunOk == false {
+            return "Last run \(when) — FAILED. Check ~/.cache/tokmeter/daily-cron.log"
         }
+        return "Last run \(when) — status unknown (log inconclusive)."
     }
 
     // MARK: - Theme grid
