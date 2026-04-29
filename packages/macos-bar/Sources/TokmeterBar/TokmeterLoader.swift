@@ -283,6 +283,13 @@ final class TokmeterLoader: ObservableObject {
     private func loadFromCLI() async {
         self.isWarming = false
 
+        // Daemon is offline, but ~/.kosha/registry.json and the launchd plist
+        // are still readable. Compute pricing freshness + cron install state
+        // from disk so the footer "Pricing: Xh ago" badge and Settings cron
+        // row keep working — without this, pricingMtime stays at the last
+        // value forever and the badge shows phantom freshness.
+        applyOfflinePricingAndCronStatus()
+
         // Check disk cache first (avoids a 30-60s subprocess on every timer tick)
         let cacheFile = NSHomeDirectory() + "/.cache/tokmeter/bar-cache.json"
         if let cached = readBarCache(path: cacheFile, maxAgeSeconds: 120) {
@@ -366,6 +373,35 @@ final class TokmeterLoader: ObservableObject {
         let sorted = data.projects
             .sorted { ($0.lastUsed ?? 0) > ($1.lastUsed ?? 0) }
         self.sessions = Array(sorted.prefix(50))
+    }
+
+    // ─── Offline status (no daemon) ──────────────────────────────────
+
+    /// Mirror of /api/pricing-status + /api/cron-status, computed from disk
+    /// when the daemon isn't running. Keeps the footer badge + Settings cron
+    /// row honest. Log parsing (lastRunOk / lastRunTail) stays daemon-side —
+    /// when daemon is dead we just expose install state + 0 last-run.
+    private func applyOfflinePricingAndCronStatus() {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+
+        let registryPath = home + "/.kosha/registry.json"
+        if let attrs = try? fm.attributesOfItem(atPath: registryPath),
+           let modified = attrs[.modificationDate] as? Date {
+            self.pricingMtime = modified.timeIntervalSince1970 * 1000
+        } else {
+            self.pricingMtime = 0
+        }
+
+        let plistPath =
+            home + "/Library/LaunchAgents/com.sriinnu.tokmeter.daily.plist"
+        let installed = fm.fileExists(atPath: plistPath)
+        self.cronStatus = CronStatus(
+            installed: installed,
+            lastRunMtime: 0,
+            lastRunOk: nil,
+            lastRunTail: ""
+        )
     }
 
     // ─── Disk cache helpers ──────────────────────────────────────────

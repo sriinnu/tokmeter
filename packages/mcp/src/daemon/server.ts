@@ -565,12 +565,13 @@ function startHttpApi(): void {
         } else if (url === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
           // and the result of its last run. The plist truncates the log on
-          // every run (`: > LOG`), so the entire file contents represent the
-          // last run only — the success/failure substring scan is unambiguous.
-          // We still bound the read to 8KB as a defense against runaway logs.
-          const { existsSync, statSync, openSync, readSync, closeSync } = await import(
-            "node:fs"
-          );
+          // every run, so the entire file contents represent the last run
+          // only — the success/failure substring scan is unambiguous. We
+          // bound the read to 8KB as a defense against runaway logs and
+          // open with O_NOFOLLOW so a hostile symlink at logPath can't
+          // exfiltrate arbitrary user-readable files via this endpoint.
+          const fs = await import("node:fs");
+          const { existsSync, openSync, readSync, closeSync, fstatSync } = fs;
           const { join } = await import("node:path");
           const { homedir } = await import("node:os");
           const home = homedir();
@@ -589,27 +590,35 @@ function startHttpApi(): void {
             installed = existsSync(plistPath);
           } catch {}
           try {
-            if (existsSync(logPath)) {
-              const stat = statSync(logPath);
+            const fd = openSync(
+              logPath,
+              fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+            );
+            try {
+              // fstat the open fd, not the path — eliminates the TOCTOU window
+              // between path-stat and path-open.
+              const stat = fstatSync(fd);
               lastRunMtime = stat.mtimeMs;
               const cap = 8192;
-              const fd = openSync(logPath, "r");
-              try {
-                const offset = Math.max(0, stat.size - cap);
-                const buf = Buffer.alloc(Math.min(cap, stat.size));
+              const offset = Math.max(0, stat.size - cap);
+              const buf = Buffer.alloc(Math.min(cap, stat.size));
+              if (buf.length > 0) {
                 readSync(fd, buf, 0, buf.length, offset);
-                const data = buf.toString("utf8");
-                const lines = data.trim().split("\n");
-                lastRunTail = lines.slice(-3).join("\n");
-                // The CLI emits "Kosha registry refreshed." on success and
-                // "Failed to refresh kosha:" on error. Anything else → unknown.
-                if (data.includes("Kosha registry refreshed")) lastRunOk = true;
-                else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
-              } finally {
-                closeSync(fd);
               }
+              const data = buf.toString("utf8");
+              const lines = data.trim().split("\n");
+              lastRunTail = lines.slice(-3).join("\n");
+              // The CLI emits "Kosha registry refreshed." on success and
+              // "Failed to refresh kosha:" on error. Anything else → unknown.
+              if (data.includes("Kosha registry refreshed")) lastRunOk = true;
+              else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+            } finally {
+              closeSync(fd);
             }
-          } catch {}
+          } catch {
+            // ENOENT (no log yet) and ELOOP (symlink — refused) both fall
+            // through to defaults. Fail closed.
+          }
           json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
         } else if (url === "/api/daily") {
           json(res, core.getDailyBreakdown());
