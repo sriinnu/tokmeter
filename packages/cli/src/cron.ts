@@ -114,7 +114,7 @@ function plistContents(shellCommand: string): string {
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>: &gt; ${xmlEscape(LOG_PATH)} 2&gt;/dev/null; PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin ${xmlEscape(shellCommand)}</string>
+        <string>rm -f ${xmlEscape(LOG_PATH)} 2&gt;/dev/null; : &gt; ${xmlEscape(LOG_PATH)} 2&gt;/dev/null; PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin ${xmlEscape(shellCommand)}</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
