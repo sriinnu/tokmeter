@@ -131,6 +131,17 @@ final class DaemonClient {
         return try await get("/api/projects/\(encoded)", as: ProjectDetailData.self)
     }
 
+    /// Fetch the mtime of ~/.kosha/registry.json so the bar can display
+    /// "Pricing fetched 2h ago". Returns 0 if the registry is missing.
+    func fetchPricingStatus() async throws -> PricingStatus {
+        try await get("/api/pricing-status", as: PricingStatus.self)
+    }
+
+    /// Fetch the daily-cron install + last-run state for the Settings panel.
+    func fetchCronStatus() async throws -> CronStatus {
+        try await get("/api/cron-status", as: CronStatus.self)
+    }
+
     /// Trigger a fresh kosha pricing registry pull. Blocks until the upstream
     /// discovery completes (typically 2–5s). Call from a background task.
     func updatePricing() async throws {

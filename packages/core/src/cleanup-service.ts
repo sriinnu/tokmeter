@@ -32,7 +32,7 @@ import {
   saveConfig,
 } from "./config-service.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
-import { clearRecordCache, invalidateRecordCache } from "./parsers/utils.js";
+import { invalidateRecordCache } from "./parsers/utils.js";
 import { projectMatchKey } from "./project-name.js";
 import { invalidateSummaryCache } from "./summary-cache.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
@@ -404,8 +404,14 @@ export class CleanupService {
       const mergedConfig = mergeConfigs(configBeforeRestore, configAfterRestore);
       saveConfig(mergedConfig, currentHome);
 
-      // Clear entire cache after restore so next scan picks up restored files
-      clearRecordCache();
+      // Invalidate the history snapshot + summary so the next scan rebuilds
+      // them with the restored files included. We deliberately do NOT clear
+      // the scan-cache: it still contains the original per-record `cost`
+      // values from before cleanup, frozen at the rates of the day each
+      // record was first priced. Wiping it would force the rebuild path to
+      // re-price restored historical records with current kosha rates,
+      // violating the historical immutability rule (same bug class that
+      // caused the $21K → $15K drop on `tokmeter update`).
       invalidateHistorySnapshot(this.homeDir);
       invalidateSummaryCache(this.homeDir);
 

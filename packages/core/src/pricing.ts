@@ -313,8 +313,111 @@ export class PricingService {
       }
     }
 
+    // Tier 4: registry.json snapshot fallback. The kosha runtime state only
+    // covers per-provider cache files (~44 manually-curated models), but the
+    // exported `~/.kosha/registry.json` manifest is enriched by `kosha update`
+    // with LiteLLM data and lists 1000+ models including new releases like
+    // claude-opus-4-7. Without this fallback, any model that ships AFTER the
+    // last manual provider-cache update silently bills at $0 — which is how
+    // today's spend was showing $0.00 in the bar.
+    const fromManifest = this.lookupFromRegistryManifest(modelId);
+    if (fromManifest) {
+      this.cache.set(modelId, fromManifest);
+      return fromManifest;
+    }
+
     this.cache.set(modelId, null);
     return null;
+  }
+
+  /**
+   * Read pricing for `modelId` directly from `~/.kosha/registry.json`. The
+   * manifest is a flat list of `{key, modelId, pricing, originPricing, ...}`
+   * entries written by `kosha update` (or `kosha export`). We match on
+   * `modelId` (exact) first, then fall through to a normalized variant so
+   * "claude-opus-4-7" matches "claude-opus-4.7" etc.
+   *
+   * Cached so we don't re-read the file on every model lookup — the same
+   * mtime-driven invalidation that drives the rest of pricing init applies.
+   */
+  private lookupFromRegistryManifest(modelId: string): FullPricing | null {
+    const manifestModels = this.loadRegistryManifest();
+    if (!manifestModels) return null;
+    const lower = modelId.toLowerCase();
+    const normalized = lower.replace(/\./g, "-").replace(DATE_SUFFIX_RE, "");
+
+    type ManifestEntry = {
+      modelId?: string;
+      pricing?: ModelPricing;
+      originPricing?: ModelPricing;
+    };
+    const isPriced = (e: ManifestEntry): boolean => {
+      const p = e.originPricing ?? e.pricing;
+      return !!p && p.inputPerMillion > 0 && p.outputPerMillion > 0;
+    };
+
+    const exact = manifestModels.find(
+      (e) => (e.modelId ?? "").toLowerCase() === lower && isPriced(e)
+    );
+    if (exact) {
+      const eff = exact.originPricing ?? exact.pricing;
+      return eff ? this.roundPricing(eff) : null;
+    }
+
+    const normalizedMatch = manifestModels.find((e) => {
+      const id = (e.modelId ?? "").toLowerCase().replace(/\./g, "-");
+      return id === normalized && isPriced(e);
+    });
+    if (normalizedMatch) {
+      const eff = normalizedMatch.originPricing ?? normalizedMatch.pricing;
+      return eff ? this.roundPricing(eff) : null;
+    }
+
+    return null;
+  }
+
+  /** Cached read of ~/.kosha/registry.json. Invalidated whenever the file's
+   *  mtime advances — same signal pricing.init() already tracks. */
+  private manifestCache: {
+    mtimeMs: number;
+    models: Array<Record<string, unknown>> | null;
+  } | null = null;
+
+  private loadRegistryManifest(): Array<{
+    modelId?: string;
+    pricing?: ModelPricing;
+    originPricing?: ModelPricing;
+  }> | null {
+    const path = join(homedir(), ".kosha", "registry.json");
+    let mtime = 0;
+    try {
+      mtime = statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+    if (this.manifestCache && this.manifestCache.mtimeMs === mtime) {
+      return this.manifestCache.models as Array<{
+        modelId?: string;
+        pricing?: ModelPricing;
+        originPricing?: ModelPricing;
+      }> | null;
+    }
+    try {
+      const raw = readFileSync(path, "utf-8");
+      const parsed = JSON.parse(raw) as { models?: unknown };
+      const models = Array.isArray(parsed.models)
+        ? (parsed.models as Array<Record<string, unknown>>)
+        : null;
+      this.manifestCache = { mtimeMs: mtime, models };
+      return models as Array<{
+        modelId?: string;
+        pricing?: ModelPricing;
+        originPricing?: ModelPricing;
+      }> | null;
+    } catch {
+      this.manifestCache = { mtimeMs: mtime, models: null };
+      return null;
+    }
   }
 
   /**

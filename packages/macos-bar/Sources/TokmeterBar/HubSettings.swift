@@ -16,6 +16,7 @@ import AppKit
 import SwiftUI
 
 struct HubSettingsPanel: View {
+    @ObservedObject var loader: TokmeterLoader
     @Binding var theme: AppTheme
 
     @StateObject private var store = HubConfigStore.shared
@@ -29,9 +30,10 @@ struct HubSettingsPanel: View {
                 header.cascadeIn(delay: 0.04)
                 themeSection.cascadeIn(delay: 0.12)
                 refreshSection.cascadeIn(delay: 0.22)
-                cliDefaultsSection.cascadeIn(delay: 0.32)
-                alertsSection.cascadeIn(delay: 0.42)
-                footerActions.cascadeIn(delay: 0.52)
+                pricingSection.cascadeIn(delay: 0.30)
+                cliDefaultsSection.cascadeIn(delay: 0.38)
+                alertsSection.cascadeIn(delay: 0.46)
+                footerActions.cascadeIn(delay: 0.54)
             }
             .padding(28)
         }
@@ -131,6 +133,150 @@ struct HubSettingsPanel: View {
                 )
             }
         }
+    }
+
+    // MARK: - Pricing & auto-fetch
+    //
+    // Single source of truth for the pricing freshness + daily-cron state is
+    // TokmeterLoader (which mirrors /api/pricing-status + /api/cron-status,
+    // or computes them from disk when the daemon is offline). The popover's
+    // SettingsPopover renders the same data in compact form.
+
+    private var pricingSection: some View {
+        HubSettingsSection(
+            title: "Pricing & auto-fetch",
+            icon: "dollarsign.arrow.circlepath",
+            theme: theme
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                pricingRow
+                if let cron = loader.cronStatus {
+                    Divider().background(bg.secondaryTextColor.opacity(0.18))
+                    cronRow(cron)
+                }
+                if let err = loader.pricingRefreshError ?? loader.cronInstallError {
+                    Text(err)
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .foregroundColor(.red)
+                        .lineLimit(3)
+                }
+            }
+        }
+    }
+
+    private var pricingRow: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Pricing data")
+                    .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text(pricingFreshnessLine)
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+            }
+            Spacer()
+            Button(action: { Task { await loader.refreshPricing() } }) {
+                HStack(spacing: 4) {
+                    if loader.isRefreshingPricing {
+                        ProgressView().scaleEffect(0.6).frame(width: 12, height: 12)
+                    }
+                    Text(
+                        loader.isRefreshingPricing
+                            ? "Updating…"
+                            : (isPricingStale ? "Force refresh" : "Update now")
+                    )
+                }
+                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(loader.isRefreshingPricing)
+        }
+    }
+
+    private func cronRow(_ cron: CronStatus) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(
+                        systemName: cron.installed
+                            ? "clock.badge.checkmark"
+                            : "clock.badge.exclamationmark"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(cron.installed ? .green : .orange)
+                    Text(
+                        cron.installed
+                            ? "Daily auto-fetch installed"
+                            : "Daily auto-fetch not installed"
+                    )
+                    .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                }
+                Text(cronDetailLine(cron))
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button(action: {
+                Task {
+                    if cron.installed {
+                        await loader.uninstallCron()
+                    } else {
+                        await loader.installCron()
+                    }
+                }
+            }) {
+                HStack(spacing: 4) {
+                    if loader.isInstallingCron {
+                        ProgressView().scaleEffect(0.6).frame(width: 12, height: 12)
+                    }
+                    Text(cron.installed ? "Disable" : "Install")
+                }
+                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(loader.isInstallingCron)
+        }
+    }
+
+    private var pricingFreshnessLine: String {
+        guard loader.pricingMtime > 0 else {
+            return "Never fetched — kosha registry missing."
+        }
+        let seconds = Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0
+        if seconds < 60 { return "Just fetched." }
+        if seconds < 3600 { return "Fetched \(Int(seconds / 60))m ago." }
+        if seconds < 86_400 { return "Fetched \(Int(seconds / 3600))h ago." }
+        let days = Int(seconds / 86_400)
+        return days == 1 ? "Fetched 1 day ago." : "Fetched \(days) days ago."
+    }
+
+    private var isPricingStale: Bool {
+        guard loader.pricingMtime > 0 else { return true }
+        return Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0 > 86_400
+    }
+
+    private func cronDetailLine(_ cron: CronStatus) -> String {
+        if !cron.installed {
+            return "Runs `tokmeter update` daily at 00:05 — keeps prices fresh while you sleep."
+        }
+        if cron.lastRunMtime <= 0 {
+            return "Scheduled — has not run yet. Next run: tomorrow 00:05."
+        }
+        let seconds = Date().timeIntervalSince1970 - cron.lastRunMtime / 1000.0
+        let when: String
+        if seconds < 3600 { when = "\(Int(seconds / 60))m ago" }
+        else if seconds < 86_400 { when = "\(Int(seconds / 3600))h ago" }
+        else { when = "\(Int(seconds / 86_400))d ago" }
+
+        if cron.lastRunOk == true { return "Last run \(when) — succeeded." }
+        if cron.lastRunOk == false {
+            return "Last run \(when) — FAILED. Check ~/.cache/tokmeter/daily-cron.log"
+        }
+        return "Last run \(when) — status unknown (log inconclusive)."
     }
 
     // MARK: - Alerts

@@ -98,7 +98,7 @@ struct HubView: View {
                 .id(HubSection.commands)
                 .transition(panelTransition)
         case .settings:
-            HubSettingsPanel(theme: $theme)
+            HubSettingsPanel(loader: loader, theme: $theme)
                 .id(HubSection.settings)
                 .transition(panelTransition)
         }

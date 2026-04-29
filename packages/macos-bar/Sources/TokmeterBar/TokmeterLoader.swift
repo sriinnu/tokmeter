@@ -30,6 +30,16 @@ final class TokmeterLoader: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isRefreshingPricing: Bool = false
     @Published var pricingRefreshError: String?
+    /// Epoch ms of the last kosha registry write, 0 if unknown. Drives the
+    /// "Pricing fetched 2h ago" footer badge.
+    @Published var pricingMtime: Double = 0
+    /// Daily-cron install + last-run state for the Settings panel.
+    @Published var cronStatus: CronStatus?
+    /// True while `tokmeter install-cron` is running. Drives the install
+    /// button's spinner.
+    @Published var isInstallingCron: Bool = false
+    /// Last error from install-cron / uninstall-cron, surfaced in the UI.
+    @Published var cronInstallError: String?
     @Published var hasFreshData: Bool = false
     /// True while the daemon is still doing its first cold scan. The UI
     /// shows a shimmer/skeleton instead of "0" zeros.
@@ -117,9 +127,11 @@ final class TokmeterLoader: ObservableObject {
         async let modelsTask = fetchModelsSafe()
         async let todayModelsTask = fetchTodayModelsSafe()
         async let sessionsTask = fetchSessionsSafe()
+        async let pricingStatusTask = fetchPricingStatusSafe()
+        async let cronStatusTask = fetchCronStatusSafe()
 
-        let (dailyResult, modelsResult, todayModelsResult, sessionsResult) = await (
-            dailyTask, modelsTask, todayModelsTask, sessionsTask
+        let (dailyResult, modelsResult, todayModelsResult, sessionsResult, pricingStatusResult, cronStatusResult) = await (
+            dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask, cronStatusTask
         )
 
         if let daily = dailyResult {
@@ -145,10 +157,24 @@ final class TokmeterLoader: ObservableObject {
         if let sessionsList = sessionsResult {
             self.sessions = sessionsList
         }
+        if let pricing = pricingStatusResult {
+            self.pricingMtime = pricing.registryMtime
+        }
+        if let cron = cronStatusResult {
+            self.cronStatus = cron
+        }
     }
 
     private func fetchDailySafe() async -> [DailyData]? {
         try? await client.fetchDaily()
+    }
+
+    private func fetchPricingStatusSafe() async -> PricingStatus? {
+        try? await client.fetchPricingStatus()
+    }
+
+    private func fetchCronStatusSafe() async -> CronStatus? {
+        try? await client.fetchCronStatus()
     }
 
     private func fetchModelsSafe() async -> [ModelData]? {
@@ -186,6 +212,46 @@ final class TokmeterLoader: ObservableObject {
         }
     }
 
+    // ─── Cron install/uninstall via CLI subprocess ──────────────────
+
+    /// Spawn `tokmeter install-cron` (or uninstall) as a subprocess. The CLI
+    /// writes the launchd plist under ~/Library/LaunchAgents and bootstraps
+    /// it with launchctl — we don't replicate that logic in Swift, we just
+    /// invoke the CLI so there's a single source of truth for the plist.
+    func installCron() async { await runCronCommand("install-cron") }
+    func uninstallCron() async { await runCronCommand("uninstall-cron") }
+
+    private func runCronCommand(_ subcommand: String) async {
+        guard !isInstallingCron else { return }
+        isInstallingCron = true
+        cronInstallError = nil
+        defer { isInstallingCron = false }
+
+        let npxCandidates = [
+            "/opt/homebrew/bin/npx",
+            "/usr/local/bin/npx",
+        ]
+        guard let npxPath = npxCandidates.first(where: {
+            FileManager.default.fileExists(atPath: $0)
+        }) else {
+            cronInstallError =
+                "No node toolchain found — run `tokmeter \(subcommand)` manually."
+            return
+        }
+        do {
+            _ = try await runProcess(
+                executable: npxPath,
+                arguments: ["-y", "@sriinnu/tokmeter", subcommand],
+                timeout: 30
+            )
+            // Refresh cronStatus from the daemon so the UI reflects the change.
+            await loadData()
+        } catch {
+            cronInstallError =
+                "\(subcommand) failed: \(error.localizedDescription)"
+        }
+    }
+
     private func refreshPricingViaCLI() async {
         let npxCandidates = [
             "/opt/homebrew/bin/npx",
@@ -216,6 +282,13 @@ final class TokmeterLoader: ObservableObject {
     /// don't re-scan on every 30s timer tick.
     private func loadFromCLI() async {
         self.isWarming = false
+
+        // Daemon is offline, but ~/.kosha/registry.json and the launchd plist
+        // are still readable. Compute pricing freshness + cron install state
+        // from disk so the footer "Pricing: Xh ago" badge and Settings cron
+        // row keep working — without this, pricingMtime stays at the last
+        // value forever and the badge shows phantom freshness.
+        applyOfflinePricingAndCronStatus()
 
         // Check disk cache first (avoids a 30-60s subprocess on every timer tick)
         let cacheFile = NSHomeDirectory() + "/.cache/tokmeter/bar-cache.json"
@@ -300,6 +373,35 @@ final class TokmeterLoader: ObservableObject {
         let sorted = data.projects
             .sorted { ($0.lastUsed ?? 0) > ($1.lastUsed ?? 0) }
         self.sessions = Array(sorted.prefix(50))
+    }
+
+    // ─── Offline status (no daemon) ──────────────────────────────────
+
+    /// Mirror of /api/pricing-status + /api/cron-status, computed from disk
+    /// when the daemon isn't running. Keeps the footer badge + Settings cron
+    /// row honest. Log parsing (lastRunOk / lastRunTail) stays daemon-side —
+    /// when daemon is dead we just expose install state + 0 last-run.
+    private func applyOfflinePricingAndCronStatus() {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+
+        let registryPath = home + "/.kosha/registry.json"
+        if let attrs = try? fm.attributesOfItem(atPath: registryPath),
+           let modified = attrs[.modificationDate] as? Date {
+            self.pricingMtime = modified.timeIntervalSince1970 * 1000
+        } else {
+            self.pricingMtime = 0
+        }
+
+        let plistPath =
+            home + "/Library/LaunchAgents/com.sriinnu.tokmeter.daily.plist"
+        let installed = fm.fileExists(atPath: plistPath)
+        self.cronStatus = CronStatus(
+            installed: installed,
+            lastRunMtime: 0,
+            lastRunOk: nil,
+            lastRunTail: ""
+        )
     }
 
     // ─── Disk cache helpers ──────────────────────────────────────────

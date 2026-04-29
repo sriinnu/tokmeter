@@ -551,6 +551,75 @@ function startHttpApi(): void {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+        } else if (url === "/api/pricing-status") {
+          // Reports the mtime of ~/.kosha/registry.json so the menubar can
+          // surface "Pricing: 2h ago". 0 if the registry is missing.
+          let mtime = 0;
+          try {
+            const { statSync } = await import("node:fs");
+            const { join } = await import("node:path");
+            const { homedir } = await import("node:os");
+            mtime = statSync(join(homedir(), ".kosha", "registry.json")).mtimeMs;
+          } catch {}
+          json(res, { registryMtime: mtime });
+        } else if (url === "/api/cron-status") {
+          // Report whether the daily kosha-refresh launchd job is installed
+          // and the result of its last run. The plist truncates the log on
+          // every run, so the entire file contents represent the last run
+          // only — the success/failure substring scan is unambiguous. We
+          // bound the read to 8KB as a defense against runaway logs and
+          // open with O_NOFOLLOW so a hostile symlink at logPath can't
+          // exfiltrate arbitrary user-readable files via this endpoint.
+          const fs = await import("node:fs");
+          const { existsSync, openSync, readSync, closeSync, fstatSync } = fs;
+          const { join } = await import("node:path");
+          const { homedir } = await import("node:os");
+          const home = homedir();
+          const plistPath = join(
+            home,
+            "Library",
+            "LaunchAgents",
+            "com.sriinnu.tokmeter.daily.plist"
+          );
+          const logPath = join(home, ".cache", "tokmeter", "daily-cron.log");
+          let installed = false;
+          let lastRunMtime = 0;
+          let lastRunOk: boolean | null = null;
+          let lastRunTail = "";
+          try {
+            installed = existsSync(plistPath);
+          } catch {}
+          try {
+            const fd = openSync(
+              logPath,
+              fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+            );
+            try {
+              // fstat the open fd, not the path — eliminates the TOCTOU window
+              // between path-stat and path-open.
+              const stat = fstatSync(fd);
+              lastRunMtime = stat.mtimeMs;
+              const cap = 8192;
+              const offset = Math.max(0, stat.size - cap);
+              const buf = Buffer.alloc(Math.min(cap, stat.size));
+              if (buf.length > 0) {
+                readSync(fd, buf, 0, buf.length, offset);
+              }
+              const data = buf.toString("utf8");
+              const lines = data.trim().split("\n");
+              lastRunTail = lines.slice(-3).join("\n");
+              // The CLI emits "Kosha registry refreshed." on success and
+              // "Failed to refresh kosha:" on error. Anything else → unknown.
+              if (data.includes("Kosha registry refreshed")) lastRunOk = true;
+              else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+            } finally {
+              closeSync(fd);
+            }
+          } catch {
+            // ENOENT (no log yet) and ELOOP (symlink — refused) both fall
+            // through to defaults. Fail closed.
+          }
+          json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
         } else if (url === "/api/daily") {
           json(res, core.getDailyBreakdown());
         } else if (url === "/api/providers") {
