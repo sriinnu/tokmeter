@@ -36,8 +36,11 @@ interface CliArgs extends ScanOptions {
     | "daemon"
     | "install-statusline"
     | "install-mcp"
+    | "install-cron"
     | "uninstall-statusline"
     | "uninstall-mcp"
+    | "uninstall-cron"
+    | "cron-status"
     | "editors"
     | "digest"
     | "cleanup"
@@ -256,8 +259,11 @@ Config (knobs in ~/.tokmeter/config.json):
 Installer:
   install-statusline   Install statusline hook for ALL editors
   install-mcp          Install MCP server for ALL editors
+  install-cron         Install daily kosha-refresh cron (macOS launchd)
   uninstall-statusline Remove statusline hook from all editors
   uninstall-mcp        Remove MCP server from all editors
+  uninstall-cron       Remove the daily kosha-refresh cron
+  cron-status          Show daily-cron install + last-run state
   editors              List all supported editors
 
 Date Filters:
@@ -319,8 +325,11 @@ Output:
       case "daemon":
       case "install-statusline":
       case "install-mcp":
+      case "install-cron":
       case "uninstall-statusline":
       case "uninstall-mcp":
+      case "uninstall-cron":
+      case "cron-status":
       case "editors":
       case "digest":
       case "cleanup":
@@ -548,25 +557,40 @@ async function main() {
   }
 
   if (
+    args.command === "install-cron" ||
+    args.command === "uninstall-cron" ||
+    args.command === "cron-status"
+  ) {
+    if (process.platform !== "darwin") {
+      console.error("Daily cron is currently macOS-only (uses launchd).");
+      process.exit(1);
+    }
+    const { installDailyCron, uninstallDailyCron, cronStatus } = await import("./cron.js");
+    if (args.command === "install-cron") installDailyCron();
+    else if (args.command === "uninstall-cron") uninstallDailyCron();
+    else cronStatus();
+    return;
+  }
+
+  if (
     args.command === "update" ||
     args.command === "refresh" ||
     args.command === "kosha-refresh" ||
     args.command === "kosha-update"
   ) {
-    // Force a fresh discovery pass against kosha's upstream providers, then
-    // invalidate tokmeter's scan cache so today's records reprice with the
-    // new rates on the next scan. This is the "I just updated my pricing,
-    // tell tokmeter" button.
+    // Force a fresh discovery pass against kosha's upstream providers. The
+    // next scan will see the bumped kosha mtime via getCachedKoshaMtime()
+    // and reset cost=0 on today's records only, so enrichCosts reprices
+    // today with new rates. Historical records keep their frozen costs in
+    // the scan-cache and are skipped by enrichCosts (cost > 0).
+    //
+    // DO NOT clear the scan-cache here — wiping cached frozen costs forces
+    // the snapshot rebuild path to re-price historical records with current
+    // kosha rates, which violates the historical immutability rule.
     try {
-      const { refreshKoshaRegistry, clearRecordCache } = await import("@sriinnu/tokmeter");
+      const { refreshKoshaRegistry } = await import("@sriinnu/tokmeter");
       console.log("Refreshing kosha registry...");
       await refreshKoshaRegistry();
-      // Throw away the in-memory + on-disk scan cache so the next scan sees
-      // the updated kosha mtime and reprices today's records from scratch.
-      // Historical records remain frozen (per project immutability rule) —
-      // they get reparsed and repriced but the enrichCosts path skips any
-      // entry with cost > 0, so nothing written yesterday changes.
-      clearRecordCache();
       console.log("Kosha registry refreshed. Next scan will reprice today's records.");
     } catch (error) {
       console.error(

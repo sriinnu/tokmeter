@@ -62,7 +62,7 @@ struct SettingsPopover: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Pricing data")
                         .font(.system(size: 11, design: .rounded))
-                    Text("Pull latest model prices from kosha")
+                    Text(pricingFreshnessLine)
                         .font(.system(size: 9, design: .rounded))
                         .foregroundColor(.secondary)
                 }
@@ -74,7 +74,7 @@ struct SettingsPopover: View {
                                 .scaleEffect(0.6)
                                 .frame(width: 12, height: 12)
                         }
-                        Text(loader.isRefreshingPricing ? "Updating…" : "Update now")
+                        Text(loader.isRefreshingPricing ? "Updating…" : (isStale ? "Force refresh" : "Update now"))
                     }
                     .font(.system(size: 10, design: .rounded))
                 }
@@ -88,6 +88,80 @@ struct SettingsPopover: View {
                     .foregroundColor(.red)
                     .lineLimit(2)
             }
+
+            // ── Daily cron status ──────────────────────────────────────
+            if let cron = loader.cronStatus {
+                cronStatusRow(cron)
+            }
+        }
+    }
+
+    /// Returns "Last fetched 2h ago" or "Never fetched" or absolute date for
+    /// older fetches. Single source of truth: pricingMtime.
+    private var pricingFreshnessLine: String {
+        guard loader.pricingMtime > 0 else {
+            return "Never fetched — kosha registry missing."
+        }
+        let seconds = Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0
+        if seconds < 60 { return "Just fetched." }
+        if seconds < 3600 { return "Fetched \(Int(seconds / 60))m ago." }
+        if seconds < 86_400 { return "Fetched \(Int(seconds / 3600))h ago." }
+        let days = Int(seconds / 86_400)
+        return days == 1 ? "Fetched 1 day ago." : "Fetched \(days) days ago."
+    }
+
+    /// Anything older than 24h is considered stale — that's the same threshold
+    /// used by `maybeBackgroundRefresh()` in pricing.ts.
+    private var isStale: Bool {
+        guard loader.pricingMtime > 0 else { return true }
+        return Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0 > 86_400
+    }
+
+    @ViewBuilder
+    private func cronStatusRow(_ cron: CronStatus) -> some View {
+        Divider().padding(.top, 2)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Image(systemName: cron.installed ? "clock.badge.checkmark" : "clock.badge.exclamationmark")
+                        .font(.system(size: 10))
+                        .foregroundColor(cron.installed ? .green : .orange)
+                    Text(cron.installed ? "Daily auto-fetch installed" : "Daily auto-fetch not installed")
+                        .font(.system(size: 11, design: .rounded))
+                }
+                Text(cronDetailLine(cron))
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            if !cron.installed {
+                Text("Run `tokmeter install-cron`")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func cronDetailLine(_ cron: CronStatus) -> String {
+        if !cron.installed {
+            return "Runs `tokmeter update` daily at 00:05 — keeps prices fresh while you sleep."
+        }
+        if cron.lastRunMtime <= 0 {
+            return "Scheduled — has not run yet. Next run: tomorrow 00:05."
+        }
+        let seconds = Date().timeIntervalSince1970 - cron.lastRunMtime / 1000.0
+        let when: String
+        if seconds < 3600 { when = "\(Int(seconds / 60))m ago" }
+        else if seconds < 86_400 { when = "\(Int(seconds / 3600))h ago" }
+        else { when = "\(Int(seconds / 86_400))d ago" }
+
+        switch cron.lastRunOk {
+        case true:  return "Last run \(when) — succeeded."
+        case false: return "Last run \(when) — FAILED. Check ~/.cache/tokmeter/daily-cron.log"
+        case nil:   return "Last run \(when) — status unknown (log inconclusive)."
+        case .some(_): return "Last run \(when)."
         }
     }
 

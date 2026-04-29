@@ -30,6 +30,11 @@ final class TokmeterLoader: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isRefreshingPricing: Bool = false
     @Published var pricingRefreshError: String?
+    /// Epoch ms of the last kosha registry write, 0 if unknown. Drives the
+    /// "Pricing fetched 2h ago" footer badge.
+    @Published var pricingMtime: Double = 0
+    /// Daily-cron install + last-run state for the Settings panel.
+    @Published var cronStatus: CronStatus?
     @Published var hasFreshData: Bool = false
     /// True while the daemon is still doing its first cold scan. The UI
     /// shows a shimmer/skeleton instead of "0" zeros.
@@ -117,9 +122,11 @@ final class TokmeterLoader: ObservableObject {
         async let modelsTask = fetchModelsSafe()
         async let todayModelsTask = fetchTodayModelsSafe()
         async let sessionsTask = fetchSessionsSafe()
+        async let pricingStatusTask = fetchPricingStatusSafe()
+        async let cronStatusTask = fetchCronStatusSafe()
 
-        let (dailyResult, modelsResult, todayModelsResult, sessionsResult) = await (
-            dailyTask, modelsTask, todayModelsTask, sessionsTask
+        let (dailyResult, modelsResult, todayModelsResult, sessionsResult, pricingStatusResult, cronStatusResult) = await (
+            dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask, cronStatusTask
         )
 
         if let daily = dailyResult {
@@ -145,10 +152,24 @@ final class TokmeterLoader: ObservableObject {
         if let sessionsList = sessionsResult {
             self.sessions = sessionsList
         }
+        if let pricing = pricingStatusResult {
+            self.pricingMtime = pricing.registryMtime
+        }
+        if let cron = cronStatusResult {
+            self.cronStatus = cron
+        }
     }
 
     private func fetchDailySafe() async -> [DailyData]? {
         try? await client.fetchDaily()
+    }
+
+    private func fetchPricingStatusSafe() async -> PricingStatus? {
+        try? await client.fetchPricingStatus()
+    }
+
+    private func fetchCronStatusSafe() async -> CronStatus? {
+        try? await client.fetchCronStatus()
     }
 
     private func fetchModelsSafe() async -> [ModelData]? {

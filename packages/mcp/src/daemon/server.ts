@@ -551,6 +551,52 @@ function startHttpApi(): void {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+        } else if (url === "/api/pricing-status") {
+          // Reports the mtime of ~/.kosha/registry.json so the menubar can
+          // surface "Pricing: 2h ago". 0 if the registry is missing.
+          let mtime = 0;
+          try {
+            const { statSync } = await import("node:fs");
+            const { join } = await import("node:path");
+            const home = process.env.HOME || "";
+            mtime = statSync(join(home, ".kosha", "registry.json")).mtimeMs;
+          } catch {}
+          json(res, { registryMtime: mtime });
+        } else if (url === "/api/cron-status") {
+          // Report whether the daily kosha-refresh launchd job is installed
+          // and the result of its last run. The last-run state comes from
+          // the log file's tail — exit code 0 in the log means success.
+          const { existsSync, statSync, readFileSync } = await import("node:fs");
+          const { join } = await import("node:path");
+          const home = process.env.HOME || "";
+          const plistPath = join(
+            home,
+            "Library",
+            "LaunchAgents",
+            "com.sriinnu.tokmeter.daily.plist"
+          );
+          const logPath = join(home, ".cache", "tokmeter", "daily-cron.log");
+          let installed = false;
+          let lastRunMtime = 0;
+          let lastRunOk: boolean | null = null;
+          let lastRunTail = "";
+          try {
+            installed = existsSync(plistPath);
+          } catch {}
+          try {
+            if (existsSync(logPath)) {
+              const stat = statSync(logPath);
+              lastRunMtime = stat.mtimeMs;
+              const data = readFileSync(logPath, "utf8");
+              const lines = data.trim().split("\n");
+              lastRunTail = lines.slice(-3).join("\n");
+              // The CLI emits "Kosha registry refreshed." on success and
+              // "Failed to refresh kosha:" on error. Anything else → unknown.
+              if (data.includes("Kosha registry refreshed")) lastRunOk = true;
+              else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+            }
+          } catch {}
+          json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
         } else if (url === "/api/daily") {
           json(res, core.getDailyBreakdown());
         } else if (url === "/api/providers") {
