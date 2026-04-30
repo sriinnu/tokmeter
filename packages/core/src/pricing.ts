@@ -265,6 +265,16 @@ export class PricingService {
   }
 
   /**
+   * True if the user has an explicit override for this model in
+   * ~/.tokmeter/pricing-overrides.json. Used by the unpriced-records detector
+   * to skip records whose $0 cost is intentional (internal/free deployments)
+   * rather than a silent pricing miss.
+   */
+  hasUserOverride(modelId: string): boolean {
+    return this.userOverrides.has(modelId);
+  }
+
+  /**
    * Get pricing for a model.
    *
    * Resolution order:

@@ -452,11 +452,16 @@ export class TokmeterCore {
         );
         // Silent $0: pricing returned null, calculateCost returned 0, but the
         // record has real token usage. Track so the UI can surface it instead
-        // of letting it disappear into the totals.
+        // of letting it disappear into the totals. Skip the track when the
+        // user has an explicit override for this model — a $0 entry there
+        // means "intentionally free" (internal/local/negotiated deployment),
+        // not a lookup miss, and we'd otherwise flood the amber pill with
+        // every internal model the user has configured.
         if (
           unpricedTracker &&
           r.cost === 0 &&
-          r.inputTokens + r.outputTokens + r.reasoningTokens > 0
+          r.inputTokens + r.outputTokens + r.reasoningTokens > 0 &&
+          !this.pricing.hasUserOverride(r.model)
         ) {
           unpricedTracker.models.add(r.model);
           unpricedTracker.records += 1;
