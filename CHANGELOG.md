@@ -5,6 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-30
+
+First major release. Aligned with `@sriinnu/kosha-discovery@1.0.0`. The
+defense stack underneath today's pricing/usage data is now considered
+production-grade:
+
+### Layers (paired with kosha-discovery 1.0.0)
+
+| # | Layer | Owner |
+|---|---|---|
+| 1 | kosha runtime model lookup | kosha |
+| 2 | tokmeter manifest fallback (mtime+size cache, schemaVersion guard, provider-shadow tie-break, two-sided pricing predicate) | tokmeter |
+| 3 | unpriced-records detection signal (capped, override-aware) | tokmeter |
+| 4 | VDOM-style merge — preserves dropped entries on partial failure | kosha |
+| 5 | Pricing-aware merge — degraded-fresh keeps old usable rates | kosha |
+| 6 | Atomic write (tmp + rename) | kosha |
+| 7 | O_EXCL cross-process file lock | kosha |
+| 8 | Schema-version guard | kosha + tokmeter |
+| 9 | Hermeticity test guard | both |
+| 10 | Smart-merge — seed pricing onto API stubs | kosha |
+| 11 | Pricing-diff anomaly log + 7-day snapshot rollback ring | kosha |
+
+### Added (TokmeterBar)
+- **Daily kosha-refresh cron** (macOS launchd) — `tokmeter install-cron` /
+  `uninstall-cron` / `cron-status`. Runs `tokmeter update` at 00:05 local;
+  auto-fires on next wake if asleep.
+- **Pricing-freshness footer badge** — "Pricing: 2h ago" (TimelineView 60s tick).
+- **Daily-cron status row in Settings** (popover + Hub) with last run / success
+  state and Install/Disable button.
+- **Anomaly footer pill** — "⚠ N price changes" when kosha logged
+  >25% rate movement in last 24h. Catches the failure mode every other
+  defense makes WORSE (wrong number, not null).
+- **Hub Settings parity** — pricing + cron rows mirrored from popover.
+- **macOS Hub window** — Overview, Projects drilldown, Commands, Settings
+  (NavigationSplitView; ⌘1–⌘5 sections).
+
+### Added (CLI / daemon)
+- **`tokmeter pricing-audit --json`** — exports today's verification:
+  `{today, resolved, unpriced, anomalies, pricing, meta}`. Exit 0 healthy /
+  exit 2 needs attention. Pipeable into CI gates.
+- **Kosha-wishlist writer** — at each scan, writes
+  `~/.tokmeter/wishlist.json` with unpriced models + today-hit-counts so
+  kosha can bias provider priority.
+- **GET `/api/health`** — surfaces silent $0 leaks (capped at 100 with
+  `truncated` flag).
+- **GET `/api/anomalies`** — last 24h of kosha-detected pricing anomalies.
+- **GET `/api/pricing-status`** + **GET `/api/cron-status`**.
+- **GET `/api/today-models`** + **GET `/api/update-pricing`**.
+
+### Changed
+- **kosha-discovery dep bumped from `^0.6.0` to `^1.0.0`**.
+- **Two-sided pricing predicate** in 6 lookup sites: replaces
+  `originPricing ?? pricing` (which short-circuited on a zero origin stub
+  and silently zeroed proxy-only routes).
+- **macOS bar now treats user-overridden $0 models** as intentionally free
+  (no false-positive amber pill).
+- **`tokmeter update`** is lightweight — kosha pull only, no scan, no
+  cache wipe. Removed `clearRecordCache()` which was the root cause of
+  the historical reprice bug ($21K → $15K).
+- **CleanupService.restore** matches: no cache wipe; history-snapshot +
+  summary invalidation only.
+
+### Fixed
+- Historical reprice leak in `tokmeter update` (the $21K → $15K bug).
+- Same leak path in `CleanupService.restore`.
+- Daemon-offline state: footer badge + cron row stayed stale forever
+  because `loadFromCLI()` short-circuited before phase 2.
+- `/api/cron-status` log read now uses `O_NOFOLLOW` to refuse symlink
+  exfiltration via local processes.
+- Plist log truncation uses `rm -f LOG; : > LOG` so a hostile symlink
+  can't redirect the truncate at an arbitrary file.
+- Test isolation: `~/.kosha` and `~/.tokmeter` snapshotted before each
+  suite; tests that touch them fail loudly.
+
 ## [0.5.1] - 2026-04-29
 
 ### Fixed

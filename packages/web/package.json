@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/tokmeter-web",
-  "version": "0.4.0",
-  "description": "Token usage tracking web dashboard — React + Plotly",
+  "version": "1.0.0",
+  "description": "Token usage tracking web dashboard \u2014 React + Plotly",
   "type": "module",
   "files": ["dist"],
   "scripts": {
@@ -42,6 +42,10 @@
     "claude",
     "anthropic"
   ],
-  "engines": { "node": ">=18.0.0" },
-  "publishConfig": { "access": "public" }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

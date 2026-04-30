@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/tokmeter",
-  "version": "0.4.0",
-  "description": "Token usage tracking for AI coding agents — parsers, CLI, and TUI",
+  "version": "1.0.0",
+  "description": "Token usage tracking for AI coding agents \u2014 parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",
   "types": "dist/core/index.d.ts",
@@ -57,6 +57,10 @@
     "claude",
     "anthropic"
   ],
-  "engines": { "node": ">=18.0.0" },
-  "publishConfig": { "access": "public" }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
