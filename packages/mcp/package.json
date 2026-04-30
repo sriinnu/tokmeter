@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/drishti",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
   "type": "module",
   "bin": {
