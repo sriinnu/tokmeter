@@ -59,6 +59,24 @@ struct FooterBar: View {
                         "Models with token usage but no pricing: \(health.unpricedModels.joined(separator: ", ")). Run `tokmeter update` or check ~/.kosha/registry.json."
                     )
             }
+            // Red pill when kosha logged a pricing anomaly in the last 24h.
+            // Catches rate-regression failures (wrong number, not null) — the
+            // worst class because every other defense makes the wrong number
+            // stickier, not less stuck.
+            if let anomalies = loader.pricingAnomalies, anomalies.total > 0 {
+                let preview = anomalies.anomalies
+                    .prefix(5)
+                    .map { a in
+                        let dir = a.deltaPct > 0 ? "↑" : "↓"
+                        let pct = abs(a.deltaPct * 100)
+                        return "\(a.key) \(a.field) \(dir) \(Int(pct))%"
+                    }
+                    .joined(separator: "\n")
+                Text("⚠︎ \(anomalies.total) price changes")
+                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+                    .foregroundColor(.red)
+                    .help("Kosha detected rate movements >25% in the last 24h:\n\(preview)")
+            }
             if loader.pricingMtime > 0 {
                 // TimelineView ticks every 60s so "2h ago" stays accurate while
                 // the popover is open — without it, the badge only refreshes on

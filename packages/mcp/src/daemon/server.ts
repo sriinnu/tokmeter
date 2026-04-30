@@ -582,6 +582,29 @@ function startHttpApi(): void {
             mtime = statSync(join(homedir(), ".kosha", "registry.json")).mtimeMs;
           } catch {}
           json(res, { registryMtime: mtime });
+        } else if (url === "/api/anomalies") {
+          // Pricing anomalies kosha logs at merge time. Read-only window:
+          // last 24h of >25% rate movements. Caps the response so a
+          // pathological diff burst (provider migration day) doesn't ship
+          // megabytes through the bar's 30s poll.
+          const ANOM_CAP = 50;
+          const TWENTY_FOUR_H = 24 * 3600 * 1000;
+          let recent: unknown[] = [];
+          let total = 0;
+          try {
+            const { readFileSync } = await import("node:fs");
+            const { join: pjoin } = await import("node:path");
+            const { homedir: hd } = await import("node:os");
+            const path = pjoin(hd(), ".kosha", "anomalies.json");
+            const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+              anomalies?: Array<{ ts: number }>;
+            };
+            const cutoff = Date.now() - TWENTY_FOUR_H;
+            const all = (parsed.anomalies ?? []).filter((a) => a.ts >= cutoff);
+            total = all.length;
+            recent = all.slice(-ANOM_CAP).reverse(); // newest first
+          } catch {}
+          json(res, { anomalies: recent, total, cappedAt: ANOM_CAP });
         } else if (url === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
           // and the result of its last run. The plist truncates the log on

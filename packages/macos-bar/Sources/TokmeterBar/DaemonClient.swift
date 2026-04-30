@@ -153,6 +153,12 @@ final class DaemonClient {
         return HealthStatus(unpricedModels: w.unpricedModels, unpricedRecords: w.unpricedRecords)
     }
 
+    /// Fetch kosha's recent pricing anomalies (rate movements >25% in 24h).
+    /// Drives the "⚠ N price changes" pill in the bar footer.
+    func fetchAnomalies() async throws -> AnomaliesResponse {
+        try await get("/api/anomalies", as: AnomaliesResponse.self)
+    }
+
     /// Trigger a fresh kosha pricing registry pull. Blocks until the upstream
     /// discovery completes (typically 2–5s). Call from a background task.
     func updatePricing() async throws {

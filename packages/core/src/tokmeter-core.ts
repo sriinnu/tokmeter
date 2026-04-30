@@ -235,6 +235,12 @@ export class TokmeterCore {
       unpricedRecords: unpricedTracker.records,
     };
 
+    // Feedback channel to kosha: drop a wishlist of models we couldn't price
+    // along with their hit counts. Kosha reads this on the next `update` and
+    // can bias provider priority toward what's actually being used. Without
+    // this, kosha has no way to know which models matter to the user.
+    this.writeKoshaWishlist(unpricedTracker, records);
+
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
     if (summaryCacheWarnings.length > 0) {
       this.scanMeta = {
@@ -558,5 +564,58 @@ export class TokmeterCore {
 
   private toErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  /**
+   * Write the kosha wishlist — every model tokmeter saw real usage on but
+   * couldn't price. Kosha reads this on `kosha update` to bias provider
+   * priority toward what the user actually needs.
+   *
+   * Synchronous + best-effort. Writing this should never block or fail a
+   * scan. File is atomic-renamed so kosha can read mid-write safely.
+   */
+  private writeKoshaWishlist(
+    unpricedTracker: { models: Set<string>; records: number },
+    records: TokenRecord[]
+  ): void {
+    if (unpricedTracker.models.size === 0) return;
+    try {
+      const fs = require("node:fs") as typeof import("node:fs");
+      const path = require("node:path") as typeof import("node:path");
+      const crypto = require("node:crypto") as typeof import("node:crypto");
+      const dir = path.join(this.homeDir, ".tokmeter");
+      fs.mkdirSync(dir, { recursive: true });
+
+      // Count hits per unpriced model from today's records.
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const sinceMs = todayStart.getTime();
+      const hits = new Map<string, { hits: number; lastSeenAt: number }>();
+      for (const r of records) {
+        if (r.timestamp < sinceMs) continue;
+        if (!unpricedTracker.models.has(r.model)) continue;
+        const cur = hits.get(r.model);
+        if (cur) {
+          cur.hits += 1;
+          if (r.timestamp > cur.lastSeenAt) cur.lastSeenAt = r.timestamp;
+        } else {
+          hits.set(r.model, { hits: 1, lastSeenAt: r.timestamp });
+        }
+      }
+
+      const payload = {
+        schemaVersion: 1,
+        writtenAt: Date.now(),
+        models: [...hits.entries()]
+          .map(([id, v]) => ({ id, hits: v.hits, lastSeenAt: v.lastSeenAt }))
+          .sort((a, b) => b.hits - a.hits),
+      };
+      const filePath = path.join(dir, "wishlist.json");
+      const tmp = `${filePath}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+      fs.renameSync(tmp, filePath);
+    } catch {
+      // Wishlist is observability only — never block a scan.
+    }
   }
 }

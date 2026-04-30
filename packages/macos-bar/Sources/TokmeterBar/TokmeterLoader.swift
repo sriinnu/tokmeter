@@ -38,6 +38,10 @@ final class TokmeterLoader: ObservableObject {
     /// Today's unpriced-records signal — drives the amber "X models unpriced"
     /// pill in the popover/Hub when non-empty.
     @Published var healthStatus: HealthStatus?
+    /// Kosha-detected pricing anomalies (rate moves >25% in last 24h). Drives
+    /// the "⚠ N price changes" pill that catches the WORST failure mode —
+    /// a wrong rate slipping through every other defense.
+    @Published var pricingAnomalies: AnomaliesResponse?
     /// True while `tokmeter install-cron` is running. Drives the install
     /// button's spinner.
     @Published var isInstallingCron: Bool = false
@@ -133,6 +137,7 @@ final class TokmeterLoader: ObservableObject {
         async let pricingStatusTask = fetchPricingStatusSafe()
         async let cronStatusTask = fetchCronStatusSafe()
         async let healthTask = fetchHealthSafe()
+        async let anomaliesTask = fetchAnomaliesSafe()
 
         let (
             dailyResult,
@@ -141,10 +146,11 @@ final class TokmeterLoader: ObservableObject {
             sessionsResult,
             pricingStatusResult,
             cronStatusResult,
-            healthResult
+            healthResult,
+            anomaliesResult
         ) = await (
             dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
-            cronStatusTask, healthTask
+            cronStatusTask, healthTask, anomaliesTask
         )
 
         if let daily = dailyResult {
@@ -179,6 +185,9 @@ final class TokmeterLoader: ObservableObject {
         if let health = healthResult {
             self.healthStatus = health
         }
+        if let anomalies = anomaliesResult {
+            self.pricingAnomalies = anomalies
+        }
     }
 
     private func fetchDailySafe() async -> [DailyData]? {
@@ -195,6 +204,10 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchHealthSafe() async -> HealthStatus? {
         try? await client.fetchHealth()
+    }
+
+    private func fetchAnomaliesSafe() async -> AnomaliesResponse? {
+        try? await client.fetchAnomalies()
     }
 
     private func fetchModelsSafe() async -> [ModelData]? {
