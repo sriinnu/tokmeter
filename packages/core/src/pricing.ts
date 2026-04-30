@@ -11,7 +11,10 @@
  *     Uses `originPricing` (direct-provider rate) when available, else `pricing`.
  *  4. kosha fuzzy — searches all discovered models with an exact-first scorer.
  *     Covers the long tail of providers automatically.
- *  5. null — no pricing available
+ *  5. registry.json manifest — direct read of the kosha export when the
+ *     runtime state is missing models that the manifest knows about
+ *     (drift between per-provider caches and the manifest export).
+ *  6. null — no pricing available
  *
  * User-overrides JSON schema (~/.tokmeter/pricing-overrides.json):
  *
@@ -62,6 +65,10 @@ type FullPricing = ModelPricing;
 // Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
 const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
+
+/** Expected `schemaVersion` of ~/.kosha/registry.json. Bump when reading
+ *  the manifest fallback would break (renamed fields, removed pricing block). */
+const KOSHA_SCHEMA_VERSION = 1;
 
 // ─── PricingService ──────────────────────────────────────────────────
 
@@ -350,26 +357,37 @@ export class PricingService {
       modelId?: string;
       pricing?: ModelPricing;
       originPricing?: ModelPricing;
+      providerId?: string;
+      canonicalProviderId?: string;
     };
     const isPriced = (e: ManifestEntry): boolean => {
       const p = e.originPricing ?? e.pricing;
       return !!p && p.inputPerMillion > 0 && p.outputPerMillion > 0;
     };
 
-    const exact = manifestModels.find(
+    // Tie-break for proxied entries: when the same modelId exists for the
+    // canonical (direct) provider AND a proxied provider (perplexity/openrouter),
+    // prefer the direct one. Proxy rates can drift; the direct provider's rate
+    // is canonical truth.
+    const isDirect = (e: ManifestEntry): boolean =>
+      !!e.providerId && e.providerId === e.canonicalProviderId;
+
+    const exactMatches = manifestModels.filter(
       (e) => (e.modelId ?? "").toLowerCase() === lower && isPriced(e)
     );
-    if (exact) {
-      const eff = exact.originPricing ?? exact.pricing;
+    if (exactMatches.length > 0) {
+      const winner = exactMatches.find(isDirect) ?? exactMatches[0];
+      const eff = winner.originPricing ?? winner.pricing;
       return eff ? this.roundPricing(eff) : null;
     }
 
-    const normalizedMatch = manifestModels.find((e) => {
+    const normalizedMatches = manifestModels.filter((e) => {
       const id = (e.modelId ?? "").toLowerCase().replace(/\./g, "-");
       return id === normalized && isPriced(e);
     });
-    if (normalizedMatch) {
-      const eff = normalizedMatch.originPricing ?? normalizedMatch.pricing;
+    if (normalizedMatches.length > 0) {
+      const winner = normalizedMatches.find(isDirect) ?? normalizedMatches[0];
+      const eff = winner.originPricing ?? winner.pricing;
       return eff ? this.roundPricing(eff) : null;
     }
 
@@ -387,6 +405,8 @@ export class PricingService {
     modelId?: string;
     pricing?: ModelPricing;
     originPricing?: ModelPricing;
+    providerId?: string;
+    canonicalProviderId?: string;
   }> | null {
     const path = join(homedir(), ".kosha", "registry.json");
     let mtime = 0;
@@ -400,11 +420,19 @@ export class PricingService {
         modelId?: string;
         pricing?: ModelPricing;
         originPricing?: ModelPricing;
+        providerId?: string;
+        canonicalProviderId?: string;
       }> | null;
     }
     try {
       const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw) as { models?: unknown };
+      const parsed = JSON.parse(raw) as { schemaVersion?: number; models?: unknown };
+      // Schema-version guard: a future kosha bump that renames fields would
+      // silently zero our pricing without this check.
+      if (parsed.schemaVersion !== undefined && parsed.schemaVersion !== KOSHA_SCHEMA_VERSION) {
+        this.manifestCache = { mtimeMs: mtime, models: null };
+        return null;
+      }
       const models = Array.isArray(parsed.models)
         ? (parsed.models as Array<Record<string, unknown>>)
         : null;
@@ -413,6 +441,8 @@ export class PricingService {
         modelId?: string;
         pricing?: ModelPricing;
         originPricing?: ModelPricing;
+        providerId?: string;
+        canonicalProviderId?: string;
       }> | null;
     } catch {
       this.manifestCache = { mtimeMs: mtime, models: null };

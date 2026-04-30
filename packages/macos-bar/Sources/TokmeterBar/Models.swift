@@ -77,6 +77,14 @@ struct CronStatus: Codable {
     let lastRunTail: String
 }
 
+/// /api/health — surfaces silent $0 pricing leaks. Any non-empty
+/// `unpricedModels` means today-records billed at $0 because no pricing tier
+/// resolved them — the bar should flip to an amber state so the user notices.
+struct HealthStatus: Codable {
+    let unpricedModels: [String]
+    let unpricedRecords: Int
+}
+
 /// /api/sessions — per-project session aggregate.
 /// Mirrors the TS ProjectSummary type from @sriinnu/tokmeter-core.
 struct ProjectData: Codable, Identifiable {

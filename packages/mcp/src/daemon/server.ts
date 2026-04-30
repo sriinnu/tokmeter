@@ -536,6 +536,18 @@ function startHttpApi(): void {
           json(res, core.getStats());
         } else if (url === "/api/models") {
           json(res, core.getModelCosts());
+        } else if (url === "/api/health") {
+          // Surface silent-pricing leaks: today-records that priced at $0
+          // because no tier (kosha runtime, manifest, override) had pricing.
+          // The bar UI uses unpricedModels.length to flip to amber state.
+          const meta = core.getScanMeta();
+          json(res, {
+            ready: true,
+            unpricedModels: meta.unpricedModels,
+            unpricedRecords: meta.unpricedRecords,
+            warnings: meta.warnings,
+            lastScanAt: meta.lastScanAt,
+          });
         } else if (url === "/api/today-models") {
           const core = await getHttpCore();
           json(res, core.getModelCosts({ today: true }));

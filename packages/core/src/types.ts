@@ -147,6 +147,13 @@ export interface ScanMeta {
   lastScanAt: number;
   /** Non-fatal warnings gathered during scan/caching. */
   warnings: ScanWarning[];
+  /** Models that have non-zero token usage but no pricing in any tier
+   *  (kosha runtime, manifest fallback, or user override). Surfaces silent
+   *  $0 leaks — the bug class that hit claude-opus-4-7 in 2026-04-29. */
+  unpricedModels: string[];
+  /** Number of records whose model couldn't be priced. Roughly proportional
+   *  to dollar impact of the silent leak. */
+  unpricedRecords: number;
 }
 
 /** Overall usage stats returned by TokmeterCore. */

@@ -35,6 +35,9 @@ final class TokmeterLoader: ObservableObject {
     @Published var pricingMtime: Double = 0
     /// Daily-cron install + last-run state for the Settings panel.
     @Published var cronStatus: CronStatus?
+    /// Today's unpriced-records signal — drives the amber "X models unpriced"
+    /// pill in the popover/Hub when non-empty.
+    @Published var healthStatus: HealthStatus?
     /// True while `tokmeter install-cron` is running. Drives the install
     /// button's spinner.
     @Published var isInstallingCron: Bool = false
@@ -129,9 +132,19 @@ final class TokmeterLoader: ObservableObject {
         async let sessionsTask = fetchSessionsSafe()
         async let pricingStatusTask = fetchPricingStatusSafe()
         async let cronStatusTask = fetchCronStatusSafe()
+        async let healthTask = fetchHealthSafe()
 
-        let (dailyResult, modelsResult, todayModelsResult, sessionsResult, pricingStatusResult, cronStatusResult) = await (
-            dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask, cronStatusTask
+        let (
+            dailyResult,
+            modelsResult,
+            todayModelsResult,
+            sessionsResult,
+            pricingStatusResult,
+            cronStatusResult,
+            healthResult
+        ) = await (
+            dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
+            cronStatusTask, healthTask
         )
 
         if let daily = dailyResult {
@@ -163,6 +176,9 @@ final class TokmeterLoader: ObservableObject {
         if let cron = cronStatusResult {
             self.cronStatus = cron
         }
+        if let health = healthResult {
+            self.healthStatus = health
+        }
     }
 
     private func fetchDailySafe() async -> [DailyData]? {
@@ -175,6 +191,10 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchCronStatusSafe() async -> CronStatus? {
         try? await client.fetchCronStatus()
+    }
+
+    private func fetchHealthSafe() async -> HealthStatus? {
+        try? await client.fetchHealth()
     }
 
     private func fetchModelsSafe() async -> [ModelData]? {

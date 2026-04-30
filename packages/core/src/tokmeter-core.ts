@@ -47,6 +47,8 @@ const EMPTY_SCAN_META: ScanMeta = {
   todayState: "snapshot-only",
   lastScanAt: 0,
   warnings: [],
+  unpricedModels: [],
+  unpricedRecords: 0,
 };
 
 export class TokmeterCore {
@@ -181,6 +183,7 @@ export class TokmeterCore {
     }
 
     // Calculate costs for records that don't have them
+    const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (records.length > 0 && !this.skipPricing) {
       const historicalRecords = records.filter((record) =>
         isBeforeToday(record.timestamp, referenceTimestamp)
@@ -203,12 +206,14 @@ export class TokmeterCore {
         }
       }
 
+      // Only track today's unpriced — historical $0s might be legitimately
+      // frozen at $0 from a time when pricing was unavailable, so flagging
+      // them as a current problem would generate noise the user can't fix.
       if (historicalRecords.length > 0) {
         await this.enrichCosts(historicalRecords, "history", historyWarnings);
       }
-
       if (todayRecords.length > 0) {
-        await this.enrichCosts(todayRecords, "today", todayWarnings);
+        await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
       }
 
       // Persist the kosha mtime tied to the cost values we just wrote so
@@ -226,6 +231,8 @@ export class TokmeterCore {
       todayState: this.resolveTodayState(records, todayWarnings, isTodayOnlyScan),
       lastScanAt: Date.now(),
       warnings: [...historyWarnings, ...todayWarnings],
+      unpricedModels: [...unpricedTracker.models].sort(),
+      unpricedRecords: unpricedTracker.records,
     };
 
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
@@ -429,7 +436,8 @@ export class TokmeterCore {
   private async enrichCosts(
     records: TokenRecord[],
     warningScope: "history" | "today",
-    warnings: ScanWarning[]
+    warnings: ScanWarning[],
+    unpricedTracker?: { models: Set<string>; records: number }
   ): Promise<void> {
     const costPromises = records.map(async (r) => {
       if (r.cost > 0) return; // already has cost
@@ -442,11 +450,26 @@ export class TokmeterCore {
           r.cacheWriteTokens,
           r.reasoningTokens
         );
+        // Silent $0: pricing returned null, calculateCost returned 0, but the
+        // record has real token usage. Track so the UI can surface it instead
+        // of letting it disappear into the totals.
+        if (
+          unpricedTracker &&
+          r.cost === 0 &&
+          r.inputTokens + r.outputTokens + r.reasoningTokens > 0
+        ) {
+          unpricedTracker.models.add(r.model);
+          unpricedTracker.records += 1;
+        }
       } catch (error) {
         warnings.push({
           scope: warningScope,
           message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
         });
+        if (unpricedTracker) {
+          unpricedTracker.models.add(r.model);
+          unpricedTracker.records += 1;
+        }
       }
     });
     await Promise.all(costPromises);
