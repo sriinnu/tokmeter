@@ -590,10 +590,7 @@ function startHttpApi(): void {
             installed = existsSync(plistPath);
           } catch {}
           try {
-            const fd = openSync(
-              logPath,
-              fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
-            );
+            const fd = openSync(logPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
             try {
               // fstat the open fd, not the path — eliminates the TOCTOU window
               // between path-stat and path-open.
