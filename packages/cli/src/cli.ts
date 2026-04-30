@@ -501,8 +501,7 @@ async function runPricingAudit(_options: { json: boolean }): Promise<void> {
   // UTC and silently shifts to yesterday for any positive UTC offset after
   // local midnight, which would make the daily lookup miss today entirely.
   const now = new Date();
-  const todayKey =
-    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   // Today's resolved models with cost.
   const todayModels = core.getModelCosts({ today: true }) ?? [];
