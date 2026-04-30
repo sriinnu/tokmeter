@@ -7,8 +7,18 @@ describe("PricingService", () => {
     expect(pricing).toBeDefined();
   });
 
-  // Skip network-dependent tests in CI environment
-  (process.env.CI ? it.skip : it)("should initialize without errors", async () => {
+  // Network/integration tests — opt-in via RUN_NETWORK_TESTS=1.
+  //
+  // pricing.init() instantiates a real kosha registry, which on first run
+  // writes to ~/.kosha/registry.json (the user's actual state dir). That
+  // collides with the hermeticity guard in test/setup-hermeticity.ts —
+  // and even if it didn't, every local test run would corrupt the user's
+  // pricing manifest. Default off; flip the env var to run these against
+  // the live kosha registry.
+  const runNetwork = process.env.RUN_NETWORK_TESTS === "1";
+  const itNet = runNetwork ? it : it.skip;
+
+  itNet("should initialize without errors", async () => {
     const pricing = new PricingService();
     try {
       await pricing.init();
@@ -17,7 +27,7 @@ describe("PricingService", () => {
     }
   });
 
-  (process.env.CI ? it.skip : it)("should return pricing for known models or null", async () => {
+  itNet("should return pricing for known models or null", async () => {
     const pricing = new PricingService();
     await pricing.init();
 
@@ -28,7 +38,7 @@ describe("PricingService", () => {
     }
   });
 
-  (process.env.CI ? it.skip : it)("should return null for unknown models", async () => {
+  itNet("should return null for unknown models", async () => {
     const pricing = new PricingService();
     await pricing.init();
 

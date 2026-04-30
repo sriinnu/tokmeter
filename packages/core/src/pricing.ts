@@ -70,6 +70,31 @@ const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2
  *  the manifest fallback would break (renamed fields, removed pricing block). */
 const KOSHA_SCHEMA_VERSION = 1;
 
+/**
+ * Pick the usable pricing side from a kosha entry.
+ *
+ * `originPricing` is the direct-provider rate (truth from the canonical
+ * source); `pricing` is the proxy/gateway's billed rate. We prefer origin
+ * when it's actually populated, but **independently** fall through to
+ * `pricing` when origin is a zero stub.
+ *
+ * The previous `originPricing ?? pricing` short-circuited on origin being
+ * defined, so a row with `originPricing = {input:0, output:0}` and
+ * `pricing = {input:5, output:15}` returned the zero stub — silently $0 for
+ * proxied routes whose direct API exposed only an identity stub. Same class
+ * of bug fixed in kosha-discovery 1.0.0 (`hasUsablePricing` predicate).
+ */
+function pickUsablePricing(entry: {
+  pricing?: ModelPricing | null;
+  originPricing?: ModelPricing | null;
+}): ModelPricing | null {
+  const isUsable = (p: ModelPricing | null | undefined): p is ModelPricing =>
+    !!p && (p.inputPerMillion ?? 0) > 0 && (p.outputPerMillion ?? 0) > 0;
+  if (isUsable(entry.originPricing)) return entry.originPricing;
+  if (isUsable(entry.pricing)) return entry.pricing;
+  return null;
+}
+
 // ─── PricingService ──────────────────────────────────────────────────
 
 /**
@@ -304,12 +329,11 @@ export class PricingService {
               originPricing?: ModelPricing;
             }
           | undefined;
-        // originPricing = direct-provider rate on proxied routes (preferred)
-        const raw = card?.originPricing ?? card?.pricing;
-        // Reject zero-priced hits — kosha's canonical resolver sometimes maps
-        // a bare ID to a `:free` variant, which would silently bill at $0.
-        // Fall through to fuzzy so we can find the paid variant.
-        if (raw && raw.inputPerMillion > 0 && raw.outputPerMillion > 0) {
+        // pickUsablePricing prefers originPricing but falls through to
+        // `pricing` when origin is a zero stub — important for proxy routes
+        // (perplexity, openrouter) where origin is just an identity row.
+        const raw = card ? pickUsablePricing(card) : null;
+        if (raw) {
           const p = this.roundPricing(raw);
           this.cache.set(modelId, p);
           return p;
@@ -370,10 +394,11 @@ export class PricingService {
       providerId?: string;
       canonicalProviderId?: string;
     };
-    const isPriced = (e: ManifestEntry): boolean => {
-      const p = e.originPricing ?? e.pricing;
-      return !!p && p.inputPerMillion > 0 && p.outputPerMillion > 0;
-    };
+    // Two-sided pricing predicate: an entry is priced if EITHER side carries
+    // non-zero rates. Naive `originPricing ?? pricing` short-circuits on a
+    // zero origin stub and falsely reports the row as unpriced for proxy
+    // routes — fixed centrally via pickUsablePricing.
+    const isPriced = (e: ManifestEntry): boolean => pickUsablePricing(e) !== null;
 
     // Tie-break for proxied entries: when the same modelId exists for the
     // canonical (direct) provider AND a proxied provider (perplexity/openrouter),
@@ -387,7 +412,7 @@ export class PricingService {
     );
     if (exactMatches.length > 0) {
       const winner = exactMatches.find(isDirect) ?? exactMatches[0];
-      const eff = winner.originPricing ?? winner.pricing;
+      const eff = pickUsablePricing(winner);
       return eff ? this.roundPricing(eff) : null;
     }
 
@@ -397,7 +422,7 @@ export class PricingService {
     });
     if (normalizedMatches.length > 0) {
       const winner = normalizedMatches.find(isDirect) ?? normalizedMatches[0];
-      const eff = winner.originPricing ?? winner.pricing;
+      const eff = pickUsablePricing(winner);
       return eff ? this.roundPricing(eff) : null;
     }
 
@@ -563,8 +588,10 @@ export class PricingService {
 
     const best = all
       .filter((m) => {
-        const eff = m.originPricing ?? m.pricing;
-        if (!eff || eff.inputPerMillion <= 0 || eff.outputPerMillion <= 0) return false;
+        // Two-sided check: if EITHER side has usable pricing, the row is
+        // a candidate. Naive `originPricing ?? pricing` rejected proxy-only
+        // pricing rows whose origin had a zero stub.
+        if (!pickUsablePricing(m)) return false;
         const lower = m.id.toLowerCase();
         if (lower.includes(":free") || lower.includes(":exacto")) return false;
         const mNorm = lower.replace(/\./g, "-");
@@ -580,7 +607,7 @@ export class PricingService {
         return aBase.length - bBase.length;
       })[0];
 
-    const eff = best?.originPricing ?? best?.pricing;
+    const eff = best ? pickUsablePricing(best) : null;
     return eff ? this.roundPricing(eff) : null;
   }
 
