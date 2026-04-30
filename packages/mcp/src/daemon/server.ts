@@ -540,10 +540,18 @@ function startHttpApi(): void {
           // Surface silent-pricing leaks: today-records that priced at $0
           // because no tier (kosha runtime, manifest, override) had pricing.
           // The bar UI uses unpricedModels.length to flip to amber state.
+          //
+          // Cap the array at 100 entries to defend against a pathological
+          // parser bug that could emit thousands of distinct fake model IDs;
+          // the bar only needs the count + a sample to render the warning.
           const meta = core.getScanMeta();
+          const UNPRICED_CAP = 100;
+          const allUnpriced = meta.unpricedModels;
           json(res, {
             ready: true,
-            unpricedModels: meta.unpricedModels,
+            unpricedModels: allUnpriced.slice(0, UNPRICED_CAP),
+            unpricedModelsTotal: allUnpriced.length,
+            unpricedModelsTruncated: allUnpriced.length > UNPRICED_CAP,
             unpricedRecords: meta.unpricedRecords,
             warnings: meta.warnings,
             lastScanAt: meta.lastScanAt,

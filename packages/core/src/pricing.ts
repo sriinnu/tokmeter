@@ -408,6 +408,7 @@ export class PricingService {
    *  mtime advances — same signal pricing.init() already tracks. */
   private manifestCache: {
     mtimeMs: number;
+    sizeBytes: number;
     models: Array<Record<string, unknown>> | null;
   } | null = null;
 
@@ -420,12 +421,23 @@ export class PricingService {
   }> | null {
     const path = join(homedir(), ".kosha", "registry.json");
     let mtime = 0;
+    let size = 0;
     try {
-      mtime = statSync(path).mtimeMs;
+      const s = statSync(path);
+      mtime = s.mtimeMs;
+      size = s.size;
     } catch {
       return null;
     }
-    if (this.manifestCache && this.manifestCache.mtimeMs === mtime) {
+    // Cache key is (mtime, size). mtime alone could collide if two writes
+    // land in the same millisecond (rare on APFS but not guaranteed across
+    // filesystems); size adds an ETag-cheap distinguisher that nearly
+    // always changes when content does.
+    if (
+      this.manifestCache &&
+      this.manifestCache.mtimeMs === mtime &&
+      this.manifestCache.sizeBytes === size
+    ) {
       return this.manifestCache.models as Array<{
         modelId?: string;
         pricing?: ModelPricing;
@@ -440,13 +452,13 @@ export class PricingService {
       // Schema-version guard: a future kosha bump that renames fields would
       // silently zero our pricing without this check.
       if (parsed.schemaVersion !== undefined && parsed.schemaVersion !== KOSHA_SCHEMA_VERSION) {
-        this.manifestCache = { mtimeMs: mtime, models: null };
+        this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models: null };
         return null;
       }
       const models = Array.isArray(parsed.models)
         ? (parsed.models as Array<Record<string, unknown>>)
         : null;
-      this.manifestCache = { mtimeMs: mtime, models };
+      this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models };
       return models as Array<{
         modelId?: string;
         pricing?: ModelPricing;
@@ -455,7 +467,7 @@ export class PricingService {
         canonicalProviderId?: string;
       }> | null;
     } catch {
-      this.manifestCache = { mtimeMs: mtime, models: null };
+      this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models: null };
       return null;
     }
   }
