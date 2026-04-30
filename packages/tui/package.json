@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/tokmeter-tui",
-  "version": "1.0.0",
-  "description": "Token usage tracking TUI — interactive terminal UI with charts",
+  "version": "1.1.0",
+  "description": "Token usage tracking TUI \u2014 interactive terminal UI with charts",
   "type": "module",
   "bin": {
     "tokmeter-tui": "dist/index.js"
@@ -39,6 +39,10 @@
     "claude",
     "anthropic"
   ],
-  "engines": { "node": ">=18.0.0" },
-  "publishConfig": { "access": "public" }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
