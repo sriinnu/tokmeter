@@ -77,6 +77,35 @@ struct CronStatus: Codable {
     let lastRunTail: String
 }
 
+/// /api/health — surfaces silent $0 pricing leaks. Any non-empty
+/// `unpricedModels` means today-records billed at $0 because no pricing tier
+/// resolved them — the bar should flip to an amber state so the user notices.
+struct HealthStatus: Codable {
+    let unpricedModels: [String]
+    let unpricedRecords: Int
+}
+
+/// /api/anomalies — kosha-detected pricing rate movements >25% in the last
+/// 24h. Surfaces "rate moved unexpectedly" — the failure mode the unpriced
+/// detector can't catch (kosha returned a wrong number, not null).
+struct PricingAnomaly: Codable, Identifiable {
+    let ts: Double
+    let key: String
+    let field: String
+    let side: String
+    let previous: Double
+    let current: Double
+    let deltaPct: Double
+
+    var id: String { "\(key)|\(field)|\(side)|\(ts)" }
+}
+
+struct AnomaliesResponse: Codable {
+    let anomalies: [PricingAnomaly]
+    let total: Int
+    let cappedAt: Int
+}
+
 /// /api/sessions — per-project session aggregate.
 /// Mirrors the TS ProjectSummary type from @sriinnu/tokmeter-core.
 struct ProjectData: Codable, Identifiable {

@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/tokmeter-core",
-  "version": "1.0.0",
-  "description": "Token usage tracking core — session parsers, aggregation, and pricing",
+  "version": "1.1.0",
+  "description": "Token usage tracking core \u2014 session parsers, aggregation, and pricing",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,6 +31,10 @@
     "directory": "packages/core"
   },
   "keywords": ["tokens", "ai", "llm", "usage-tracking", "pricing", "claude", "anthropic"],
-  "engines": { "node": ">=18.0.0" },
-  "publishConfig": { "access": "public" }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

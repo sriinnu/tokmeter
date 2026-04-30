@@ -11,7 +11,10 @@
  *     Uses `originPricing` (direct-provider rate) when available, else `pricing`.
  *  4. kosha fuzzy — searches all discovered models with an exact-first scorer.
  *     Covers the long tail of providers automatically.
- *  5. null — no pricing available
+ *  5. registry.json manifest — direct read of the kosha export when the
+ *     runtime state is missing models that the manifest knows about
+ *     (drift between per-provider caches and the manifest export).
+ *  6. null — no pricing available
  *
  * User-overrides JSON schema (~/.tokmeter/pricing-overrides.json):
  *
@@ -62,6 +65,35 @@ type FullPricing = ModelPricing;
 // Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
 const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
+
+/** Expected `schemaVersion` of ~/.kosha/registry.json. Bump when reading
+ *  the manifest fallback would break (renamed fields, removed pricing block). */
+const KOSHA_SCHEMA_VERSION = 1;
+
+/**
+ * Pick the usable pricing side from a kosha entry.
+ *
+ * `originPricing` is the direct-provider rate (truth from the canonical
+ * source); `pricing` is the proxy/gateway's billed rate. We prefer origin
+ * when it's actually populated, but **independently** fall through to
+ * `pricing` when origin is a zero stub.
+ *
+ * The previous `originPricing ?? pricing` short-circuited on origin being
+ * defined, so a row with `originPricing = {input:0, output:0}` and
+ * `pricing = {input:5, output:15}` returned the zero stub — silently $0 for
+ * proxied routes whose direct API exposed only an identity stub. Same class
+ * of bug fixed in kosha-discovery 1.0.0 (`hasUsablePricing` predicate).
+ */
+function pickUsablePricing(entry: {
+  pricing?: ModelPricing | null;
+  originPricing?: ModelPricing | null;
+}): ModelPricing | null {
+  const isUsable = (p: ModelPricing | null | undefined): p is ModelPricing =>
+    !!p && (p.inputPerMillion ?? 0) > 0 && (p.outputPerMillion ?? 0) > 0;
+  if (isUsable(entry.originPricing)) return entry.originPricing;
+  if (isUsable(entry.pricing)) return entry.pricing;
+  return null;
+}
 
 // ─── PricingService ──────────────────────────────────────────────────
 
@@ -258,6 +290,16 @@ export class PricingService {
   }
 
   /**
+   * True if the user has an explicit override for this model in
+   * ~/.tokmeter/pricing-overrides.json. Used by the unpriced-records detector
+   * to skip records whose $0 cost is intentional (internal/free deployments)
+   * rather than a silent pricing miss.
+   */
+  hasUserOverride(modelId: string): boolean {
+    return this.userOverrides.has(modelId);
+  }
+
+  /**
    * Get pricing for a model.
    *
    * Resolution order:
@@ -287,12 +329,11 @@ export class PricingService {
               originPricing?: ModelPricing;
             }
           | undefined;
-        // originPricing = direct-provider rate on proxied routes (preferred)
-        const raw = card?.originPricing ?? card?.pricing;
-        // Reject zero-priced hits — kosha's canonical resolver sometimes maps
-        // a bare ID to a `:free` variant, which would silently bill at $0.
-        // Fall through to fuzzy so we can find the paid variant.
-        if (raw && raw.inputPerMillion > 0 && raw.outputPerMillion > 0) {
+        // pickUsablePricing prefers originPricing but falls through to
+        // `pricing` when origin is a zero stub — important for proxy routes
+        // (perplexity, openrouter) where origin is just an identity row.
+        const raw = card ? pickUsablePricing(card) : null;
+        if (raw) {
           const p = this.roundPricing(raw);
           this.cache.set(modelId, p);
           return p;
@@ -350,26 +391,38 @@ export class PricingService {
       modelId?: string;
       pricing?: ModelPricing;
       originPricing?: ModelPricing;
+      providerId?: string;
+      canonicalProviderId?: string;
     };
-    const isPriced = (e: ManifestEntry): boolean => {
-      const p = e.originPricing ?? e.pricing;
-      return !!p && p.inputPerMillion > 0 && p.outputPerMillion > 0;
-    };
+    // Two-sided pricing predicate: an entry is priced if EITHER side carries
+    // non-zero rates. Naive `originPricing ?? pricing` short-circuits on a
+    // zero origin stub and falsely reports the row as unpriced for proxy
+    // routes — fixed centrally via pickUsablePricing.
+    const isPriced = (e: ManifestEntry): boolean => pickUsablePricing(e) !== null;
 
-    const exact = manifestModels.find(
+    // Tie-break for proxied entries: when the same modelId exists for the
+    // canonical (direct) provider AND a proxied provider (perplexity/openrouter),
+    // prefer the direct one. Proxy rates can drift; the direct provider's rate
+    // is canonical truth.
+    const isDirect = (e: ManifestEntry): boolean =>
+      !!e.providerId && e.providerId === e.canonicalProviderId;
+
+    const exactMatches = manifestModels.filter(
       (e) => (e.modelId ?? "").toLowerCase() === lower && isPriced(e)
     );
-    if (exact) {
-      const eff = exact.originPricing ?? exact.pricing;
+    if (exactMatches.length > 0) {
+      const winner = exactMatches.find(isDirect) ?? exactMatches[0];
+      const eff = pickUsablePricing(winner);
       return eff ? this.roundPricing(eff) : null;
     }
 
-    const normalizedMatch = manifestModels.find((e) => {
+    const normalizedMatches = manifestModels.filter((e) => {
       const id = (e.modelId ?? "").toLowerCase().replace(/\./g, "-");
       return id === normalized && isPriced(e);
     });
-    if (normalizedMatch) {
-      const eff = normalizedMatch.originPricing ?? normalizedMatch.pricing;
+    if (normalizedMatches.length > 0) {
+      const winner = normalizedMatches.find(isDirect) ?? normalizedMatches[0];
+      const eff = pickUsablePricing(winner);
       return eff ? this.roundPricing(eff) : null;
     }
 
@@ -380,6 +433,7 @@ export class PricingService {
    *  mtime advances — same signal pricing.init() already tracks. */
   private manifestCache: {
     mtimeMs: number;
+    sizeBytes: number;
     models: Array<Record<string, unknown>> | null;
   } | null = null;
 
@@ -387,35 +441,58 @@ export class PricingService {
     modelId?: string;
     pricing?: ModelPricing;
     originPricing?: ModelPricing;
+    providerId?: string;
+    canonicalProviderId?: string;
   }> | null {
     const path = join(homedir(), ".kosha", "registry.json");
     let mtime = 0;
+    let size = 0;
     try {
-      mtime = statSync(path).mtimeMs;
+      const s = statSync(path);
+      mtime = s.mtimeMs;
+      size = s.size;
     } catch {
       return null;
     }
-    if (this.manifestCache && this.manifestCache.mtimeMs === mtime) {
+    // Cache key is (mtime, size). mtime alone could collide if two writes
+    // land in the same millisecond (rare on APFS but not guaranteed across
+    // filesystems); size adds an ETag-cheap distinguisher that nearly
+    // always changes when content does.
+    if (
+      this.manifestCache &&
+      this.manifestCache.mtimeMs === mtime &&
+      this.manifestCache.sizeBytes === size
+    ) {
       return this.manifestCache.models as Array<{
         modelId?: string;
         pricing?: ModelPricing;
         originPricing?: ModelPricing;
+        providerId?: string;
+        canonicalProviderId?: string;
       }> | null;
     }
     try {
       const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw) as { models?: unknown };
+      const parsed = JSON.parse(raw) as { schemaVersion?: number; models?: unknown };
+      // Schema-version guard: a future kosha bump that renames fields would
+      // silently zero our pricing without this check.
+      if (parsed.schemaVersion !== undefined && parsed.schemaVersion !== KOSHA_SCHEMA_VERSION) {
+        this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models: null };
+        return null;
+      }
       const models = Array.isArray(parsed.models)
         ? (parsed.models as Array<Record<string, unknown>>)
         : null;
-      this.manifestCache = { mtimeMs: mtime, models };
+      this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models };
       return models as Array<{
         modelId?: string;
         pricing?: ModelPricing;
         originPricing?: ModelPricing;
+        providerId?: string;
+        canonicalProviderId?: string;
       }> | null;
     } catch {
-      this.manifestCache = { mtimeMs: mtime, models: null };
+      this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models: null };
       return null;
     }
   }
@@ -511,8 +588,10 @@ export class PricingService {
 
     const best = all
       .filter((m) => {
-        const eff = m.originPricing ?? m.pricing;
-        if (!eff || eff.inputPerMillion <= 0 || eff.outputPerMillion <= 0) return false;
+        // Two-sided check: if EITHER side has usable pricing, the row is
+        // a candidate. Naive `originPricing ?? pricing` rejected proxy-only
+        // pricing rows whose origin had a zero stub.
+        if (!pickUsablePricing(m)) return false;
         const lower = m.id.toLowerCase();
         if (lower.includes(":free") || lower.includes(":exacto")) return false;
         const mNorm = lower.replace(/\./g, "-");
@@ -528,7 +607,7 @@ export class PricingService {
         return aBase.length - bBase.length;
       })[0];
 
-    const eff = best?.originPricing ?? best?.pricing;
+    const eff = best ? pickUsablePricing(best) : null;
     return eff ? this.roundPricing(eff) : null;
   }
 
