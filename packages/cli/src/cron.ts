@@ -195,13 +195,9 @@ export function cronStatus(): void {
     if (output.includes("could not find")) {
       console.log("launchd: not loaded");
     } else {
-      const stateLine = output
-        .split("\n")
-        .find((l) => l.trim().startsWith("state ="));
-      const lastExitLine = output
-        .split("\n")
-        .find((l) => l.trim().startsWith("last exit code"));
-      console.log(`launchd: loaded`);
+      const stateLine = output.split("\n").find((l) => l.trim().startsWith("state ="));
+      const lastExitLine = output.split("\n").find((l) => l.trim().startsWith("last exit code"));
+      console.log("launchd: loaded");
       if (stateLine) console.log(`  ${stateLine.trim()}`);
       if (lastExitLine) console.log(`  ${lastExitLine.trim()}`);
     }
