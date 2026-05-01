@@ -50,6 +50,7 @@ interface CliArgs extends ScanOptions {
     | "config"
     | "kosha-refresh"
     | "kosha-update"
+    | "pricing-audit"
     | "update"
     | "refresh";
   /** Alias sub-command and its positional arguments. */
@@ -339,6 +340,7 @@ Output:
       case "kosha-update":
       case "update":
       case "refresh":
+      case "pricing-audit":
         args.command = arg;
         break;
       case "alias":
@@ -471,6 +473,113 @@ function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
   console.log(table.toString());
 }
 
+// ---- pricing-audit ----
+
+/**
+ * Export the consumer-side audit of today's pricing resolution.
+ *
+ * Output shape (JSON only — this command is meant for piping into CI):
+ * {
+ *   ts: number,
+ *   today: { date, totalCost, recordCount, modelCount },
+ *   resolved: [{ model, cost, tokens }],
+ *   unpriced: [{ model, hits, lastSeenAt }],   // unmet pricing
+ *   anomalies: [{ key, field, side, previous, current, deltaPct, ts }],
+ *   pricing: { fetchedAt, ageHours },
+ * }
+ */
+async function runPricingAudit(_options: { json: boolean }): Promise<void> {
+  const { TokmeterCore } = await import("@sriinnu/tokmeter");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const os = await import("node:os");
+
+  const core = new TokmeterCore();
+  await core.scan();
+  const meta = core.getScanMeta();
+  // Local-date key (YYYY-MM-DD in user's TZ). Don't use toISOString — it's
+  // UTC and silently shifts to yesterday for any positive UTC offset after
+  // local midnight, which would make the daily lookup miss today entirely.
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  // Today's resolved models with cost.
+  const todayModels = core.getModelCosts({ today: true }) ?? [];
+  const todayDaily = core.getDailyBreakdown({ since: todayKey, until: todayKey })[0] ?? null;
+  const resolved = todayModels.map((m) => ({
+    model: m.model,
+    cost: m.cost,
+    tokens: m.totalTokens,
+  }));
+
+  // Unpriced — read the wishlist tokmeter just wrote.
+  let unpriced: Array<{ id: string; hits: number; lastSeenAt: number }> = [];
+  try {
+    const wishPath = path.join(os.homedir(), ".tokmeter", "wishlist.json");
+    const wish = JSON.parse(fs.readFileSync(wishPath, "utf-8")) as {
+      models?: Array<{ id: string; hits: number; lastSeenAt: number }>;
+    };
+    unpriced = wish.models ?? [];
+  } catch {
+    /* no wishlist — empty */
+  }
+
+  // Anomalies — read kosha's diff log.
+  let anomalies: Array<Record<string, unknown>> = [];
+  try {
+    const anomPath = path.join(os.homedir(), ".kosha", "anomalies.json");
+    const a = JSON.parse(fs.readFileSync(anomPath, "utf-8")) as {
+      anomalies?: Array<Record<string, unknown>>;
+    };
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    anomalies = (a.anomalies ?? []).filter(
+      (x) => typeof x.ts === "number" && (x.ts as number) >= cutoff
+    );
+  } catch {
+    /* no anomalies file */
+  }
+
+  // Pricing freshness — kosha registry mtime.
+  let fetchedAt = 0;
+  try {
+    fetchedAt = fs.statSync(path.join(os.homedir(), ".kosha", "registry.json")).mtimeMs;
+  } catch {
+    /* missing registry — fetchedAt stays 0 */
+  }
+  const ageHours = fetchedAt > 0 ? (Date.now() - fetchedAt) / 3_600_000 : null;
+
+  const output = {
+    ts: Date.now(),
+    today: {
+      date: todayKey,
+      totalCost: todayDaily?.cost ?? 0,
+      recordCount: todayDaily?.records ?? 0,
+      modelCount: resolved.length,
+    },
+    resolved,
+    unpriced,
+    anomalies,
+    pricing: {
+      fetchedAt,
+      ageHours,
+      stale: ageHours !== null && ageHours > 24,
+    },
+    meta: {
+      lastScanAt: meta.lastScanAt,
+      todayState: meta.todayState,
+      warnings: meta.warnings.length,
+    },
+  };
+
+  console.log(JSON.stringify(output, null, 2));
+
+  // Exit non-zero when something needs attention — lets CI checks gate on
+  // this command without piping into jq.
+  if (unpriced.length > 0 || anomalies.length > 0 || output.pricing.stale) {
+    process.exit(2);
+  }
+}
+
 // ---- Main ----
 
 async function main() {
@@ -598,6 +707,15 @@ async function main() {
       );
       process.exit(1);
     }
+    return;
+  }
+
+  if (args.command === "pricing-audit") {
+    // Export the consumer-side audit: which today-models resolved, which
+    // didn't, which moved >25%. JSON-only output, pipeable into CI checks
+    // / dashboards / Slack alerts. Makes the verification half of the
+    // kosha-as-source-of-truth pattern a first-class artifact.
+    await runPricingAudit({ json: args.json !== false });
     return;
   }
 

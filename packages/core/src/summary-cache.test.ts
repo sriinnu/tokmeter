@@ -42,6 +42,8 @@ function createSummary(): TokmeterSummary {
       todayState: "live",
       lastScanAt: 123,
       warnings: [],
+      unpricedModels: [],
+      unpricedRecords: 0,
     },
   };
 }

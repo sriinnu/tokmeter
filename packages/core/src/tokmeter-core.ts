@@ -47,6 +47,8 @@ const EMPTY_SCAN_META: ScanMeta = {
   todayState: "snapshot-only",
   lastScanAt: 0,
   warnings: [],
+  unpricedModels: [],
+  unpricedRecords: 0,
 };
 
 export class TokmeterCore {
@@ -181,6 +183,7 @@ export class TokmeterCore {
     }
 
     // Calculate costs for records that don't have them
+    const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (records.length > 0 && !this.skipPricing) {
       const historicalRecords = records.filter((record) =>
         isBeforeToday(record.timestamp, referenceTimestamp)
@@ -203,12 +206,14 @@ export class TokmeterCore {
         }
       }
 
+      // Only track today's unpriced — historical $0s might be legitimately
+      // frozen at $0 from a time when pricing was unavailable, so flagging
+      // them as a current problem would generate noise the user can't fix.
       if (historicalRecords.length > 0) {
         await this.enrichCosts(historicalRecords, "history", historyWarnings);
       }
-
       if (todayRecords.length > 0) {
-        await this.enrichCosts(todayRecords, "today", todayWarnings);
+        await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
       }
 
       // Persist the kosha mtime tied to the cost values we just wrote so
@@ -226,7 +231,15 @@ export class TokmeterCore {
       todayState: this.resolveTodayState(records, todayWarnings, isTodayOnlyScan),
       lastScanAt: Date.now(),
       warnings: [...historyWarnings, ...todayWarnings],
+      unpricedModels: [...unpricedTracker.models].sort(),
+      unpricedRecords: unpricedTracker.records,
     };
+
+    // Feedback channel to kosha: drop a wishlist of models we couldn't price
+    // along with their hit counts. Kosha reads this on the next `update` and
+    // can bias provider priority toward what's actually being used. Without
+    // this, kosha has no way to know which models matter to the user.
+    this.writeKoshaWishlist(unpricedTracker, records);
 
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
     if (summaryCacheWarnings.length > 0) {
@@ -429,7 +442,8 @@ export class TokmeterCore {
   private async enrichCosts(
     records: TokenRecord[],
     warningScope: "history" | "today",
-    warnings: ScanWarning[]
+    warnings: ScanWarning[],
+    unpricedTracker?: { models: Set<string>; records: number }
   ): Promise<void> {
     const costPromises = records.map(async (r) => {
       if (r.cost > 0) return; // already has cost
@@ -442,11 +456,31 @@ export class TokmeterCore {
           r.cacheWriteTokens,
           r.reasoningTokens
         );
+        // Silent $0: pricing returned null, calculateCost returned 0, but the
+        // record has real token usage. Track so the UI can surface it instead
+        // of letting it disappear into the totals. Skip the track when the
+        // user has an explicit override for this model — a $0 entry there
+        // means "intentionally free" (internal/local/negotiated deployment),
+        // not a lookup miss, and we'd otherwise flood the amber pill with
+        // every internal model the user has configured.
+        if (
+          unpricedTracker &&
+          r.cost === 0 &&
+          r.inputTokens + r.outputTokens + r.reasoningTokens > 0 &&
+          !this.pricing.hasUserOverride(r.model)
+        ) {
+          unpricedTracker.models.add(r.model);
+          unpricedTracker.records += 1;
+        }
       } catch (error) {
         warnings.push({
           scope: warningScope,
           message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
         });
+        if (unpricedTracker) {
+          unpricedTracker.models.add(r.model);
+          unpricedTracker.records += 1;
+        }
       }
     });
     await Promise.all(costPromises);
@@ -530,5 +564,58 @@ export class TokmeterCore {
 
   private toErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  /**
+   * Write the kosha wishlist — every model tokmeter saw real usage on but
+   * couldn't price. Kosha reads this on `kosha update` to bias provider
+   * priority toward what the user actually needs.
+   *
+   * Synchronous + best-effort. Writing this should never block or fail a
+   * scan. File is atomic-renamed so kosha can read mid-write safely.
+   */
+  private writeKoshaWishlist(
+    unpricedTracker: { models: Set<string>; records: number },
+    records: TokenRecord[]
+  ): void {
+    if (unpricedTracker.models.size === 0) return;
+    try {
+      const fs = require("node:fs") as typeof import("node:fs");
+      const path = require("node:path") as typeof import("node:path");
+      const crypto = require("node:crypto") as typeof import("node:crypto");
+      const dir = path.join(this.homeDir, ".tokmeter");
+      fs.mkdirSync(dir, { recursive: true });
+
+      // Count hits per unpriced model from today's records.
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const sinceMs = todayStart.getTime();
+      const hits = new Map<string, { hits: number; lastSeenAt: number }>();
+      for (const r of records) {
+        if (r.timestamp < sinceMs) continue;
+        if (!unpricedTracker.models.has(r.model)) continue;
+        const cur = hits.get(r.model);
+        if (cur) {
+          cur.hits += 1;
+          if (r.timestamp > cur.lastSeenAt) cur.lastSeenAt = r.timestamp;
+        } else {
+          hits.set(r.model, { hits: 1, lastSeenAt: r.timestamp });
+        }
+      }
+
+      const payload = {
+        schemaVersion: 1,
+        writtenAt: Date.now(),
+        models: [...hits.entries()]
+          .map(([id, v]) => ({ id, hits: v.hits, lastSeenAt: v.lastSeenAt }))
+          .sort((a, b) => b.hits - a.hits),
+      };
+      const filePath = path.join(dir, "wishlist.json");
+      const tmp = `${filePath}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+      fs.renameSync(tmp, filePath);
+    } catch {
+      // Wishlist is observability only — never block a scan.
+    }
   }
 }

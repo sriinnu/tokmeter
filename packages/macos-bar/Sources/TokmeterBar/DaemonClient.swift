@@ -142,6 +142,23 @@ final class DaemonClient {
         try await get("/api/cron-status", as: CronStatus.self)
     }
 
+    /// Fetch unpriced-record counters so the bar can flip to amber when
+    /// a model has token usage but no pricing data resolves.
+    func fetchHealth() async throws -> HealthStatus {
+        struct Wire: Codable {
+            let unpricedModels: [String]
+            let unpricedRecords: Int
+        }
+        let w = try await get("/api/health", as: Wire.self)
+        return HealthStatus(unpricedModels: w.unpricedModels, unpricedRecords: w.unpricedRecords)
+    }
+
+    /// Fetch kosha's recent pricing anomalies (rate movements >25% in 24h).
+    /// Drives the "⚠ N price changes" pill in the bar footer.
+    func fetchAnomalies() async throws -> AnomaliesResponse {
+        try await get("/api/anomalies", as: AnomaliesResponse.self)
+    }
+
     /// Trigger a fresh kosha pricing registry pull. Blocks until the upstream
     /// discovery completes (typically 2–5s). Call from a background task.
     func updatePricing() async throws {
