@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/drishti",
-  "version": "1.0.0",
-  "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
+  "version": "1.1.0",
+  "description": "\u0926\u0943\u0937\u094d\u091f\u093f \u2014 MCP server + live token observatory for AI coding agents",
   "type": "module",
   "bin": {
     "drishti": "dist/cli.js"
@@ -71,6 +71,10 @@
     "anthropic",
     "statusline"
   ],
-  "engines": { "node": ">=18.0.0" },
-  "publishConfig": { "access": "public" }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
