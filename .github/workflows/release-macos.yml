@@ -181,11 +181,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
-          BUILD_NUM="${{ github.run_number }}"
-          TAG="${{ github.event.release.tag_name }}"
-          ZIP_NAME="${APP_NAME}-${VERSION}.zip"
-          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
+          export PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+          export BUILD_NUM="${{ github.run_number }}"
+          export TAG="${{ github.event.release.tag_name }}"
+          export ZIP_NAME="${APP_NAME}-${VERSION}.zip"
+          export ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
           # ED_SIG already contains sparkle:edSignature="…" length="…" as one
           # attribute string, ready to drop into the enclosure tag.
 
