@@ -31,6 +31,9 @@ env:
   APP_NAME: TokmeterBar
   BUNDLE_ID: com.sriinnu.tokmeterbar
 
+permissions:
+  contents: write
+
 jobs:
   build-sign-notarize:
     runs-on: macos-14
@@ -167,6 +170,80 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             "${APP_NAME}-${VERSION}.zip" \
             --clobber
+
+      # Sparkle resolves new versions from packages/macos-bar/appcast.xml served
+      # from raw.githubusercontent.com/main. Auto-append a new <item> on real
+      # release events so existing users see the update on next poll. Skipped
+      # for workflow_dispatch (manual rebuilds shouldn't bump appcast).
+      - name: Update appcast.xml
+        if: github.event_name == 'release' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+          export BUILD_NUM="${{ github.run_number }}"
+          export TAG="${{ github.event.release.tag_name }}"
+          export ZIP_NAME="${APP_NAME}-${VERSION}.zip"
+          export ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
+          # ED_SIG already contains sparkle:edSignature="…" length="…" as one
+          # attribute string, ready to drop into the enclosure tag.
+
+          git fetch origin main
+          git checkout -B main origin/main
+
+          python3 - <<'PY'
+          import os, re, pathlib
+          path = pathlib.Path("packages/macos-bar/appcast.xml")
+          xml = path.read_text()
+          version    = os.environ["VERSION"]
+          build_num  = os.environ["BUILD_NUM"]
+          pub_date   = os.environ["PUB_DATE"]
+          zip_url    = os.environ["ZIP_URL"]
+          ed_sig     = os.environ["ED_SIG"]
+          tag        = os.environ["TAG"]
+          repo       = os.environ["GITHUB_REPOSITORY"]
+
+          # Idempotency — skip if this version is already in the feed.
+          if f"<sparkle:shortVersionString>{version}</sparkle:shortVersionString>" in xml:
+              print(f"appcast.xml already has {version}, skipping insert")
+              raise SystemExit(0)
+
+          item = (
+              "        <item>\n"
+              f"            <title>TokmeterBar {version}</title>\n"
+              f"            <pubDate>{pub_date}</pubDate>\n"
+              f"            <sparkle:version>{build_num}</sparkle:version>\n"
+              f"            <sparkle:shortVersionString>{version}</sparkle:shortVersionString>\n"
+              "            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>\n"
+              f"            <description>&lt;p&gt;See release notes at &lt;a href=\"https://github.com/{repo}/releases/tag/{tag}\"&gt;{tag}&lt;/a&gt;.&lt;/p&gt;</description>\n"
+              f'            <enclosure url="{zip_url}" type="application/octet-stream" {ed_sig} />\n'
+              "        </item>\n"
+          )
+
+          # Insert directly after <language>…</language> (top of channel).
+          new_xml, n = re.subn(
+              r"(<language>[^<]*</language>\n)",
+              r"\1" + item,
+              xml,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("ERROR: could not locate <language> anchor in appcast.xml")
+          path.write_text(new_xml)
+          print(f"Inserted {version} (build {build_num}) into appcast.xml")
+          PY
+
+          if git diff --quiet packages/macos-bar/appcast.xml; then
+            echo "appcast.xml unchanged — already current"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/macos-bar/appcast.xml
+          git commit -m "chore(appcast): add ${TAG} (build ${BUILD_NUM}) [skip ci]"
+          git push origin main
 
       - name: Upload artifact (manual trigger)
         if: github.event_name == 'workflow_dispatch'
