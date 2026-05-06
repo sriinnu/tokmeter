@@ -6,6 +6,15 @@
         <description>Auto-update feed for TokmeterBar.app</description>
         <language>en</language>
         <item>
+            <title>TokmeterBar 1.1.0</title>
+            <pubDate>Wed, 06 May 2026 19:31:35 +0000</pubDate>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;p&gt;Anomaly detection, audit CLI, wishlist, unpriced detection. macOS bar pricing freshness badge, daily kosha cron, settings UI overhaul. See full notes on GitHub.&lt;/p&gt;</description>
+            <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.1.0/TokmeterBar-1.1.0.zip" length="2950804" type="application/octet-stream" sparkle:edSignature="MO9RkMb7BzMPLQAPq1ZhHawglTg1c7/AGAwp2acaczBHJERP+4Q7mblS7XY+nbprEK/eS9c+xFQjEEtsp8mQBg==" />
+        </item>
+        <item>
             <title>TokmeterBar 0.5.0</title>
             <pubDate>Sun, 26 Apr 2026 18:32:20 +0000</pubDate>
             <sparkle:version>6</sparkle:version>
