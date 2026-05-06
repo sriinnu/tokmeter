@@ -190,8 +190,7 @@ jobs:
           # attribute string, ready to drop into the enclosure tag.
 
           git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
+          git checkout -B main origin/main
 
           python3 - <<'PY'
           import os, re, pathlib
