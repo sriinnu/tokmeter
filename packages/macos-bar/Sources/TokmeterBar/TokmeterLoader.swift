@@ -470,14 +470,18 @@ final class TokmeterLoader: ObservableObject {
             proc.standardError = FileHandle.nullDevice
 
             // Double-resume guard: termination handler and timeout both race to
-            // resume the continuation. Only the first caller wins.
-            var resumed = false
-            let lock = NSLock()
+            // resume the continuation. Only the first caller wins. Boxed in a
+            // class so @Sendable closures capture a reference, not a mutable var.
+            final class ResumeGuard: @unchecked Sendable {
+                var resumed = false
+                let lock = NSLock()
+            }
+            let guardBox = ResumeGuard()
             @Sendable func finish(_ result: Result<String, Error>) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
-                resumed = true
+                guardBox.lock.lock()
+                defer { guardBox.lock.unlock() }
+                guard !guardBox.resumed else { return }
+                guardBox.resumed = true
                 switch result {
                 case .success(let output): continuation.resume(returning: output)
                 case .failure(let error):  continuation.resume(throwing: error)
