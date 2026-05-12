@@ -47,6 +47,13 @@ export interface TokenRecord {
   sourceFile?: string;
   /** Actual working directory the session ran in (not the session log path). */
   cwd?: string;
+  /**
+   * Whether this record represents a normal user-driven turn or an overhead
+   * call like a `/compact` summarization. Surfaced in the bar/dashboard so
+   * the user can see what slice of spend is going to context maintenance
+   * versus actual work. Defaults to "normal" when absent.
+   */
+  kind?: "normal" | "compaction";
 }
 
 /** Summary of token usage for a single model within a context. */
@@ -175,6 +182,69 @@ export interface TokmeterStats {
   lastUsed: number;
 }
 
+/**
+ * Live "how am I doing right now" signals for the statbar/dashboard hero.
+ * These are derived from the same records that drive everything else, but
+ * computed against a reference timestamp so the bar can show motion instead
+ * of just totals.
+ *
+ *   - burnRate: dollars per hour over a recent window (default 60 min)
+ *   - cacheHitToday: fraction of today's input bytes served from cache
+ *     (1.0 = perfect cache, 0.0 = re-reading the world)
+ *   - pace: today's cost divided by typical cost-at-this-hour over the last
+ *     N active days. >1 = above your usual rhythm, <1 = under.
+ *   - compactionToday: how much of today's spend went to /compact overhead
+ *   - liveSession: the most recently-active record within the freshness
+ *     window (5 min) — null when nothing's live
+ */
+export interface StatbarSignals {
+  burnRate: {
+    /** USD per hour over the recent window. */
+    costPerHour: number;
+    /** Tokens per hour over the recent window. */
+    tokensPerHour: number;
+    /** How many minutes the window spans (e.g. 60). */
+    windowMinutes: number;
+    /** Records in the window — UI hides the ribbon when zero. */
+    recordsInWindow: number;
+  };
+  cacheHitToday: {
+    /** 0..1 — share of read tokens (input + cacheRead) served from cache. */
+    rate: number;
+    /** Total cache-read tokens today. */
+    cacheReadTokens: number;
+    /** Total non-cached input tokens today. */
+    inputTokens: number;
+  };
+  pace: {
+    /** today.cost / typicalCostAtThisHour. null when we have no baseline. */
+    multiple: number | null;
+    /** USD typically spent by this hour-of-day (median across recent days). */
+    typicalCostByNow: number;
+    /** USD actually spent so far today. */
+    actualCostByNow: number;
+    /** How many past days informed the baseline. */
+    daysOfHistory: number;
+  };
+  compactionToday: {
+    cost: number;
+    tokens: number;
+    /** Compaction cost / total today cost, 0..1. 0 when no spend today. */
+    share: number;
+    /** Compaction events (records tagged kind:"compaction") today. */
+    events: number;
+  };
+  liveSession: {
+    provider: ProviderId;
+    model: string;
+    project: string;
+    /** Seconds since the most recent record's timestamp. */
+    ageSeconds: number;
+    /** Cost of the single most-recent record (for context-of-glance). */
+    lastRecordCost: number;
+  } | null;
+}
+
 /** Full serialisable summary payload used by web/CLI/API consumers. */
 export interface TokmeterSummary {
   records: TokenRecord[];
@@ -183,6 +253,8 @@ export interface TokmeterSummary {
   daily: DailyEntry[];
   stats: TokmeterStats;
   meta: ScanMeta;
+  /** Optional — present when computed (daemon API includes it). */
+  signals?: StatbarSignals;
 }
 
 /** Options for the TokmeterCore constructor. */

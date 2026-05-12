@@ -52,6 +52,10 @@ struct TokmeterBarView: View {
 
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Thin "right now" telemetry strip — burn rate, cache hit,
+                    // compaction tax. Self-hides when there's no live signal.
+                    SignalsRibbon(loader: loader, theme: theme)
+                        .cascadeIn(delay: 0.10)
                     StatsGrid(loader: loader, theme: theme)
                         .cascadeIn(delay: 0.14)
                     if !loader.topModels.isEmpty || loader.isWarming {

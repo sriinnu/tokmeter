@@ -26,6 +26,7 @@ import {
 } from "./parsers/utils.js";
 import { PricingService } from "./pricing.js";
 import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
+import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
 import type {
   DailyEntry,
@@ -35,6 +36,7 @@ import type {
   ScanMeta,
   ScanOptions,
   ScanWarning,
+  StatbarSignals,
   TokenRecord,
   TokmeterConfig,
   TokmeterStats,
@@ -407,6 +409,15 @@ export class TokmeterCore {
     };
   }
 
+  /**
+   * Live "right now" signals — burn rate, cache hit, pace, compaction tax,
+   * live session. Each call recomputes against the current wall clock so the
+   * bar can poll this and watch the numbers move.
+   */
+  getStatbarSignals(now: number = Date.now()): StatbarSignals {
+    return computeStatbarSignals(this.records, now);
+  }
+
   /** Get a serialisable summary payload with data plus scan metadata. */
   getSummary(): TokmeterSummary {
     return {
@@ -416,6 +427,7 @@ export class TokmeterCore {
       daily: this.getDailyBreakdown(),
       stats: this.getStats(),
       meta: this.getScanMeta(),
+      signals: this.getStatbarSignals(),
     };
   }
 

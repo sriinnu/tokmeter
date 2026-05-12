@@ -106,6 +106,12 @@ final class DaemonClient {
         try await get("/api/stats", as: StatsData.self)
     }
 
+    /// Fetch the live "right now" signals — burn rate, cache hit, pace,
+    /// compaction tax, live session. Cheap call (single pass over records).
+    func fetchStatbarSignals() async throws -> StatbarSignals {
+        try await get("/api/statbar-signals", as: StatbarSignals.self)
+    }
+
     func fetchDaily() async throws -> [DailyData] {
         try await get("/api/daily", as: [DailyData].self)
     }

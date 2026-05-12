@@ -50,20 +50,58 @@ struct StatsGrid: View {
                 isWarming: loader.isWarming,
                 index: 1
             )
-            if let s = loader.stats {
-                StatCard(
-                    icon: "flame.fill",
-                    label: "STREAK",
-                    value: "\(s.longestStreak)d",
-                    role: c.tertiary,
-                    delta: nil,
-                    sparkValues: streakSpark(for: s),
-                    theme: theme,
-                    isWarming: false,
-                    index: 2
-                )
-            }
+            paceCard
         }
+    }
+
+    /// Pace card — replaces the old STREAK vanity number with an actionable
+    /// "how does today compare to my typical day at this hour" multiple.
+    /// Falls back to STREAK when we don't yet have a pace baseline (first
+    /// few days of use) so the card doesn't go blank.
+    @ViewBuilder
+    private var paceCard: some View {
+        if let signals = loader.statbarSignals,
+           let multiple = signals.pace.multiple,
+           signals.pace.daysOfHistory >= 2 {
+            StatCard(
+                icon: paceIcon(for: multiple),
+                label: "PACE",
+                value: Fmt.paceMultiple(multiple),
+                role: paceRole(for: multiple),
+                delta: nil,
+                sparkValues: loader.recentDaily.map { $0.cost },
+                theme: theme,
+                isWarming: false,
+                index: 2
+            )
+        } else if let s = loader.stats {
+            StatCard(
+                icon: "flame.fill",
+                label: "STREAK",
+                value: "\(s.longestStreak)d",
+                role: c.tertiary,
+                delta: nil,
+                sparkValues: streakSpark(for: s),
+                theme: theme,
+                isWarming: false,
+                index: 2
+            )
+        }
+    }
+
+    /// Pace icon — tortoise when behind, hare when ahead, equal sign at par.
+    /// Picked deliberately recognizable so the card reads without numerals.
+    private func paceIcon(for multiple: Double) -> String {
+        if multiple >= 1.25 { return "hare.fill" }
+        if multiple <= 0.75 { return "tortoise.fill" }
+        return "equal.circle.fill"
+    }
+
+    /// Pace role color — amber when burning hot, green when easy day, neutral at par.
+    private func paceRole(for multiple: Double) -> Color {
+        if multiple >= 1.25 { return Color(red: 0.95, green: 0.70, blue: 0.30) }
+        if multiple <= 0.75 { return Color(red: 0.13, green: 0.80, blue: 0.47) }
+        return c.tertiary
     }
 
     /// Percentage delta between today and yesterday. Returns nil when the

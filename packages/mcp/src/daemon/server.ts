@@ -534,6 +534,12 @@ function startHttpApi(): void {
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
         } else if (url === "/api/stats") {
           json(res, core.getStats());
+        } else if (url === "/api/statbar-signals") {
+          // Live "right now" signals for the menubar — burn rate, cache hit,
+          // pace vs typical, compaction tax, and the live session pointer.
+          // Cheap to compute (single pass over records), so polled on the
+          // same 30s cadence as everything else.
+          json(res, core.getStatbarSignals());
         } else if (url === "/api/models") {
           json(res, core.getModelCosts());
         } else if (url === "/api/health") {
@@ -681,6 +687,7 @@ function startHttpApi(): void {
               "/api/projects",
               "/api/sessions",
               "/api/stats",
+              "/api/statbar-signals",
               "/api/models",
               "/api/daily",
               "/api/providers",
