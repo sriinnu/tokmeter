@@ -28,6 +28,8 @@ AI coding agents burn tokens. Lots of them. Tokmeter answers:
 - What's my **daily spend** trend?
 - How do costs break down across **providers**?
 - What's my **cache hit rate** and how much is caching saving me?
+- What **% of today's spend** went to `/compact` overhead vs. actual work?
+- How **fast am I burning right now** — and how does that compare to a typical day?
 - Which **cheaper model** could I be using instead?
 
 No social features. No leaderboard. Just your data, locally.
@@ -112,6 +114,11 @@ tokmeter daemon start             # Start aggregation daemon
 tokmeter daemon stop              # Stop daemon
 tokmeter daemon status            # Check daemon status
 
+# Backup / Restore (see docs/backup-restore.md)
+tokmeter cleanup                  # interactive: pick projects → dates → confirm
+tokmeter snapshot                 # non-destructive portable backup
+tokmeter restore --latest         # restore the most recent backup
+
 # Installer (all editors)
 tokmeter install-statusline       # Install statusline for ALL editors
 tokmeter install-mcp              # Install MCP for ALL editors
@@ -132,53 +139,16 @@ tokmeter --light                  # skip pricing (faster)
 
 ### Backup, Snapshot & Restore
 
-Three commands handle everything from reclaiming disk space to carrying your
-session history across machines. Every destructive operation writes a tar
-archive to `~/.cache/tokmeter/backups/` first, and `restore` auto-remaps paths
-when the source and target homedirs differ (different user, different OS).
-
-```bash
-tokmeter cleanup                  # interactive stepper: pick projects → dates → confirm
-tokmeter snapshot                 # non-destructive backup (nothing is deleted)
-tokmeter restore                  # list all local backups
-tokmeter restore --latest         # restore the most recent backup
-tokmeter restore --id <backup-id> # restore a specific archive
-```
-
-**Interactive cleanup** walks you through three steps: pick one or more
-projects, pick the dates to wipe (or "all"), then confirm. A backup archive is
-created before anything is deleted; restores replay that archive back into
-place.
-
-**Snapshot** is the same machinery without the deletion — use it when you just
-want a portable copy of your session data. It drops a `.tar.gz` plus a
-`.meta.json` beside it; copy both files to another machine's
-`~/.cache/tokmeter/backups/` and run `tokmeter restore --latest` there.
-
-**Cross-machine restore** works without configuration. The archive records the
-source `$HOME`, username, and platform. On restore, if the target homedir
-differs, paths are transparently remapped (e.g. `/home/alice/.claude/...` →
-`/Users/bob/.claude/...`) and the confirmation prompt shows
-`Source → Target → Mode` so you know exactly what will happen.
-
-**UUID collision handling**: if a restored session would overwrite a session
-that already exists locally (same UUID from working on both machines), the
-restored copy gets a freshly-minted UUID instead — propagated consistently
-across all seven associated paths (transcript, subagents, file-history, tasks,
-todos, session-env, and the project index entry). Local sessions with the
-same id stay put; the restored ones land alongside them with new ids.
-
-**Caveat**: JSONL-based providers (Claude Code, Codex, OpenCode, Gemini, Kimi,
-Qwen, etc.) restore end-to-end. SQLite-backed providers (Cursor, VS Code,
-Roo/Kilo) are backed up at the row level but not re-injected on restore —
-their data shows up in tokmeter stats once re-indexed, but isn't written back
-into the editor's SQLite DB.
+`tokmeter cleanup`, `tokmeter snapshot`, and `tokmeter restore` handle disk
+reclaim and cross-machine portability with automatic tar backups and
+homedir-aware path remapping. See [docs/backup-restore.md](docs/backup-restore.md)
+for the full walkthrough.
 
 ### Project Aliases
 
 Collapse variants of the same project (e.g. `Vortex` on Mac and `vortex` on
 Linux become one row), rename noisy canonical names
-(`WeatherApp/frontend` → `WeatherApp`), tag projects (`work`,
+(`weather-app/frontend` → `weather-app`), tag projects (`work`,
 `client`, `self`), or hide archived ones.
 
 File: `~/.tokmeter/aliases.json`. Included in `snapshot` bundles automatically,
@@ -189,7 +159,7 @@ data.
 tokmeter alias list                              # show current aliases
 tokmeter alias set "Vortex" "Vortex"               # single rename
 tokmeter alias merge "Vortex" "Vortex" "vortex"     # group keys under one display
-tokmeter alias tag add "WeatherApp" work client
+tokmeter alias tag add "weather-app" work client
 tokmeter alias hide "old-scratch"                # drop from per-project tables
 tokmeter alias suggest                           # interactive auto-detect
 ```
@@ -389,6 +359,32 @@ When the daemon is running, the web dashboard connects via WebSocket and shows *
 
 Export data: `tokmeter --json > packages/web/public/data.json`
 
+## macOS Menu Bar
+
+A native SwiftUI menubar app that surfaces your live token spend without ever
+leaving the menubar. Reads from the daemon when it's running, falls back to
+the CLI on disk when it isn't.
+
+```bash
+bun run bar                        # build, install to /Applications, launch
+```
+
+Beyond the standard totals (today's cost, week sparkline, top models, per-project
+sessions), the bar shows **five "right now" signals** so the surface reads as
+a speedometer, not a scoreboard:
+
+| Signal | What it tells you |
+|--------|-------------------|
+| **Burn rate** | $/hr over the last 60 min — color ramps green → amber → red as you heat up. |
+| **Cache hit %** today | Share of read tokens served from cache. Green ≥90%, amber 60–90%, red below. |
+| **Pace** | Today's cost-by-this-hour vs. the median of your last 7 active days. Tortoise / hare / equal icon. |
+| **Compaction tax** | % of today's spend going to `/compact` overhead (Claude Code-specific signal). |
+| **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
+
+Eight themes (Nebula / Nocturne / Daylight / Synthwave / HUD / Terminal / Paper /
+Glass) and a companion "Hub" full-window with project drilldown, command palette,
+and settings.
+
 ## Supported Providers
 
 | Provider | Data Location |
@@ -432,11 +428,13 @@ Session Files (local disk)
     |
 @sriinnu/tokmeter-core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
     |
-+----------+----------+----------+----------+-----------+
-|  CLI     |  TUI     |  Web App | Drishti  | Daemon    |
-| (table)  | (Ink)    | (Plotly) | (MCP)    | (WebSocket)|
-| (digest) |          | (live)   | (20 tools)|           |
-+----------+----------+----------+----------+-----------+
+    +-- StatbarSignals (burn/cache/pace/compaction/live)
+    |
++----------+----------+----------+----------+-----------+----------+
+|  CLI     |  TUI     |  Web App | Drishti  | Daemon    | macOS    |
+| (table)  | (Ink)    | (Plotly) | (MCP)    | (WebSocket)| menu bar |
+| (digest) |          | (live)   | (20 tools)|           | (Swift)  |
++----------+----------+----------+----------+-----------+----------+
 ```
 
 ## Development
@@ -488,7 +486,7 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (30 tests)
+bun run test                   # Run tests (175+ cases across the monorepo)
 bun run lint                   # Lint
 bun run format                 # Format
 ```
