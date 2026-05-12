@@ -24,6 +24,9 @@ final class TokmeterLoader: ObservableObject {
     @Published var recentDaily: [DailyUsage] = []
     @Published var allDaily: [DailyUsage] = []
     @Published var sessions: [ProjectData] = []
+    /// Live "right now" signals — burn rate, cache hit, pace vs typical,
+    /// compaction tax, live session. nil until the first phase-2 fetch.
+    @Published var statbarSignals: StatbarSignals?
 
     // State flags
     @Published var lastError: String?
@@ -138,6 +141,7 @@ final class TokmeterLoader: ObservableObject {
         async let cronStatusTask = fetchCronStatusSafe()
         async let healthTask = fetchHealthSafe()
         async let anomaliesTask = fetchAnomaliesSafe()
+        async let signalsTask = fetchStatbarSignalsSafe()
 
         let (
             dailyResult,
@@ -147,10 +151,11 @@ final class TokmeterLoader: ObservableObject {
             pricingStatusResult,
             cronStatusResult,
             healthResult,
-            anomaliesResult
+            anomaliesResult,
+            signalsResult
         ) = await (
             dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
-            cronStatusTask, healthTask, anomaliesTask
+            cronStatusTask, healthTask, anomaliesTask, signalsTask
         )
 
         if let daily = dailyResult {
@@ -188,6 +193,9 @@ final class TokmeterLoader: ObservableObject {
         if let anomalies = anomaliesResult {
             self.pricingAnomalies = anomalies
         }
+        if let signals = signalsResult {
+            self.statbarSignals = signals
+        }
     }
 
     private func fetchDailySafe() async -> [DailyData]? {
@@ -208,6 +216,10 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchAnomaliesSafe() async -> AnomaliesResponse? {
         try? await client.fetchAnomalies()
+    }
+
+    private func fetchStatbarSignalsSafe() async -> StatbarSignals? {
+        try? await client.fetchStatbarSignals()
     }
 
     private func fetchModelsSafe() async -> [ModelData]? {

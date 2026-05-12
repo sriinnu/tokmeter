@@ -163,6 +163,58 @@ struct DailyDetail: Codable, Identifiable {
     var id: String { date }
 }
 
+// MARK: - Statbar signals (/api/statbar-signals)
+
+/// Live "how am I doing right now" signals. Mirror of the TS StatbarSignals
+/// type in @sriinnu/tokmeter-core. Every field is recomputed against the
+/// current wall clock on each fetch, so the bar can watch numbers move
+/// instead of just showing totals.
+struct BurnRate: Codable, Equatable {
+    let costPerHour: Double
+    let tokensPerHour: Double
+    let windowMinutes: Int
+    let recordsInWindow: Int
+}
+
+struct CacheHitToday: Codable, Equatable {
+    /// 0…1 — share of read tokens served from cache today. 1 = perfect cache.
+    let rate: Double
+    let cacheReadTokens: Int
+    let inputTokens: Int
+}
+
+struct PaceSignal: Codable, Equatable {
+    /// today.cost / typicalCostAtThisHour. nil when we have no baseline.
+    let multiple: Double?
+    let typicalCostByNow: Double
+    let actualCostByNow: Double
+    let daysOfHistory: Int
+}
+
+struct CompactionToday: Codable, Equatable {
+    let cost: Double
+    let tokens: Int
+    /// Compaction cost / total today cost, 0…1.
+    let share: Double
+    let events: Int
+}
+
+struct LiveSession: Codable, Equatable {
+    let provider: String
+    let model: String
+    let project: String
+    let ageSeconds: Int
+    let lastRecordCost: Double
+}
+
+struct StatbarSignals: Codable, Equatable {
+    let burnRate: BurnRate
+    let cacheHitToday: CacheHitToday
+    let pace: PaceSignal
+    let compactionToday: CompactionToday
+    let liveSession: LiveSession?
+}
+
 struct ProjectDetailData: Codable {
     let project: String
     let totalTokens: Int

@@ -81,8 +81,13 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      (fixes 5-10× cost inflation from `codex resume` creating siblings of
  *      the same session) — old caches have duplicated records and must be
  *      discarded to reflect the corrected totals
+ *  6 — claude-code parser tags records as kind:"compaction" when a
+ *      compact_boundary follows the assistant turn. Existing caches lack
+ *      this field, so old records would silently mis-attribute compaction
+ *      spend as normal turns. Force a re-parse so the new "% to compaction"
+ *      signal is honest from the start.
  */
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
