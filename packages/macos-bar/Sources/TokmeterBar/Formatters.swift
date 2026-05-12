@@ -25,6 +25,31 @@ enum Fmt {
         return String(format: "$%.2f", cost)
     }
 
+    /// Cost rate per hour: "$3.20/hr". Below one cent, drops to "—/hr" so a
+    /// near-zero burn doesn't read as "$0.00/hr" — which the eye registers
+    /// as "I'm not spending anything" instead of "I'm idle right now."
+    static func costPerHour(_ cost: Double) -> String {
+        if cost < 0.01 { return "—/hr" }
+        if cost >= 100 { return String(format: "$%.0f/hr", cost) }
+        if cost >= 10  { return String(format: "$%.1f/hr", cost) }
+        return String(format: "$%.2f/hr", cost)
+    }
+
+    /// Pace multiple: "1.4×" / "0.6×". null → em-dash. Used by the PACE card
+    /// to compare today's cost-by-this-hour against the recent baseline.
+    static func paceMultiple(_ multiple: Double?) -> String {
+        guard let m = multiple else { return "—" }
+        if m >= 10 { return String(format: "%.0f×", m) }
+        return String(format: "%.1f×", m)
+    }
+
+    /// Seconds since the most recent record, compact: "4s" / "47s" / "3m" / "2h".
+    static func liveAge(_ seconds: Int) -> String {
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3600 { return "\(seconds / 60)m" }
+        return "\(seconds / 3600)h"
+    }
+
     /// Strip noisy prefixes and dated suffixes from model ids:
     ///   "claude-sonnet-4-5-20250929" → "sonnet-4-5"
     /// Keeps the model table narrow enough to fit 110pt of card width.

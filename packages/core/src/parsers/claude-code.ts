@@ -12,6 +12,7 @@ import {
 
 interface ClaudeMessage {
   type: string;
+  subtype?: string;
   message?: {
     model?: string;
     usage?: {
@@ -23,6 +24,19 @@ interface ClaudeMessage {
   };
   timestamp?: string;
   costUSD?: number;
+  /**
+   * Present on `{ type: "system", subtype: "compact_boundary" }` events that
+   * Claude Code writes when a session is auto- or manually-compacted. We use
+   * its presence as the canonical signal: the assistant message immediately
+   * preceding the boundary is the summarization API call — tag it so the
+   * bar can break out "% of spend going to compaction".
+   */
+  compactMetadata?: {
+    trigger?: "auto" | "manual";
+    preTokens?: number;
+    postTokens?: number;
+    durationMs?: number;
+  };
 }
 
 /**
@@ -70,7 +84,22 @@ export class ClaudeCodeParser implements SessionParser {
       // Dedup: using both usage values and a stable per-message discriminator so
       // distinct consecutive assistant messages with identical usage are kept.
       let lastUsageKey = "";
+      // Index of the most recent assistant record we've pushed. When a
+      // compact_boundary system message arrives, we retroactively flip that
+      // record's kind to "compaction" — Claude Code writes the summarization
+      // API call as a normal assistant message right before the boundary, so
+      // the most-recent record is the right one to tag.
+      let lastAssistantIdx = -1;
       for (const msg of lines) {
+        if (msg.type === "system" && msg.subtype === "compact_boundary") {
+          if (lastAssistantIdx >= 0) {
+            newRecords[lastAssistantIdx].kind = "compaction";
+            // Don't re-tag if a second boundary follows without an assistant
+            // turn in between (defensive — shouldn't happen in practice).
+            lastAssistantIdx = -1;
+          }
+          continue;
+        }
         if (msg.type !== "assistant" || !msg.message?.usage) continue;
 
         const usage = msg.message.usage;
@@ -96,6 +125,7 @@ export class ClaudeCodeParser implements SessionParser {
             cost: msg.costUSD ?? 0,
           })
         );
+        lastAssistantIdx = newRecords.length - 1;
       }
 
       // Merge cached records with newly parsed ones
