@@ -98,6 +98,7 @@ export {
 } from "./themes.js";
 export type { Theme, ThemeColors } from "./themes.js";
 
+export { computeStatbarSignals } from "./signals.js";
 export type {
   TokenRecord,
   ProjectSummary,
@@ -110,6 +111,7 @@ export type {
   TokmeterConfig,
   TokmeterStats,
   TokmeterSummary,
+  StatbarSignals,
   SessionParser,
   ProviderId,
   SessionCleaner,

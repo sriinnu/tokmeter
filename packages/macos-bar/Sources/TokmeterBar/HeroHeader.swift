@@ -126,14 +126,51 @@ struct HeroHeader: View {
             warmingPill
         } else if loader.lastError != nil && loader.hasFreshData {
             stalePill
+        } else if let live = loader.statbarSignals?.liveSession {
+            // Something is actively running RIGHT NOW. Replace the generic
+            // ECG with a concrete pointer — "claude-code · tokmeter · 4m" —
+            // so the bar tells you what's live, not just that "data exists."
+            liveSessionPill(live)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
         } else if loader.isDaemonAlive {
-            // Live heartbeat — a scrolling ECG trace only when we're confident
-            // the data is current. Disappears when warming or stale, so the
-            // badge always tells the user which state they're in.
+            // No live session right now, but the daemon is alive — show the
+            // scrolling ECG as a passive "data is fresh" heartbeat.
             EcgView(color: ecgColor)
                 .frame(width: 78, height: 14)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
+    }
+
+    /// Live-session pill — green dot + compact session descriptor. Reads as
+    /// "something is happening right now and here's what." Tooltip shows the
+    /// model + last-record cost for the user who wants the detail.
+    private func liveSessionPill(_ live: LiveSession) -> some View {
+        let dotColor = Color(red: 0.13, green: 0.80, blue: 0.47)
+        let project = Fmt.projectBasename(live.project)
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(dotColor)
+                .frame(width: 6, height: 6)
+                .shadow(color: dotColor.opacity(0.7), radius: 3)
+                .scaleEffect(breathToggle ? 1.0 : 0.75)
+                .animation(
+                    .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                    value: breathToggle
+                )
+            Text("\(project) · \(Fmt.liveAge(live.ageSeconds))")
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .tracking(0.3)
+                .foregroundColor(foreground.opacity(0.92))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(dotColor.opacity(0.15)))
+        .overlay(Capsule().strokeBorder(dotColor.opacity(0.35), lineWidth: 0.6))
+        .help(
+            "Live: \(live.provider) · \(Fmt.shortModel(live.model)) · "
+            + "last call \(Fmt.cost(live.lastRecordCost))"
+        )
     }
 
     private var ecgColor: Color {
