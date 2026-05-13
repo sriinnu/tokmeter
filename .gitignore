@@ -42,3 +42,8 @@ packages/macos-bar/sparkle_ed25519_priv.pub
 packages/macos-bar/generate_keys.out
 .mcp.json
 /.claude/worktrees
+
+# Personal notes that happen to live at the repo root — never commit
+/AGENTS.md
+/CLAUDE.md
+/hello.md
