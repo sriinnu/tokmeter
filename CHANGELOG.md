@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-13
+
+### Changed
+
+- **@sriinnu/tokmeter-core**, **@sriinnu/tokmeter** — bumped `@sriinnu/kosha-discovery` pin from `^1.0.0` to `^1.2.0`. No code changes; picks up kosha 1.2.0's expanded provider coverage and registry refinements on next install.
+- **All packages** — version bumped 1.2.0 → 1.2.1.
+- **TokmeterBar** — `bundle.sh` defaults bumped 1.2.0/14 → 1.2.1/15 to keep the bar in lockstep with the npm release. No new notarized zip / appcast entry in this release — bar binary is unchanged.
+
+### Docs
+
+- **README** — staleness pass after #30's workspace-private lockdown: broken install commands fixed, MCP tool count corrected to 24, stale "static pricing table" claim removed, missing CLI commands (`update`, `pricing-audit`, `install-cron`/`uninstall-cron`/`cron-status`) added, test count refreshed.
+- **README** — new "What it looks like" section with three screenshots (macOS bar popover, weekly digest, project breakdown). Real data, real numbers, names sanitized for privacy.
+- **docs/designs/routes.md** — design for `tokmeter routes`, a provider-agnostic cost surface explorer that reprices session/branch/project token volume across every (model × serving-provider) tuple in kosha. Design only — no implementation yet.
+
 ## [1.2.0] - 2026-05-12
 
 ### Added
