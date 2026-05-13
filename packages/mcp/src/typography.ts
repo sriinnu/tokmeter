@@ -84,7 +84,7 @@ const ITALIC_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
 /**
  * Math Script: several uppercase letters are placed outside the
  * main block. None of these hit the current project namespace
- * (vaayu, chitragupta, pakt, spanda, karya, smriti) but declared
+ * (vortex, Auditor, Compact, Pulse, Worker, Memory) but declared
  * for correctness.
  */
 const SCRIPT_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
@@ -127,12 +127,12 @@ const sansBoldTransform = mathBlockTransform(0x1d5ee, 0x1d5d4); // 𝘁𝗼𝗸�
  * The first character is carved — dense Fraktur strokes, scribal weight.
  * The rest flows — cursive Script, open and alive.
  *
- *   projectName("vaayu")       → 𝔳𝒶𝒶𝓎𝓊
- *   projectName("chitragupta") → 𝔠𝒽𝒾𝓉𝓇𝒶𝑔𝓊𝓅𝓉𝒶
- *   projectName("spanda")      → 𝔰𝓅𝒶𝓃𝒹𝒶
- *   projectName("karya")       → 𝔨𝒶𝓇𝓎𝒶
- *   projectName("smriti")      → 𝔰𝓂𝓇𝒾𝓉𝒾
- *   projectName("pakt")        → 𝔭𝒶𝓀𝓉
+ *   projectName("vortex")       → 𝔳𝒶𝒶𝓎𝓊
+ *   projectName("Auditor") → 𝔠𝒽𝒾𝓉𝓇𝒶𝑔𝓊𝓅𝓉𝒶
+ *   projectName("Pulse")      → 𝔰𝓅𝒶𝓃𝒹𝒶
+ *   projectName("Worker")       → 𝔨𝒶𝓇𝓎𝒶
+ *   projectName("Memory")      → 𝔰𝓂𝓇𝒾𝓉𝒾
+ *   projectName("Compact")        → 𝔭𝒶𝓀𝓉
  */
 export function projectName(s: string): string {
   if (!s) return s;
@@ -171,7 +171,7 @@ export function boldMath(s: string): string {
  *
  * Usage:
  *   const t = defaultTheme;
- *   `${t.name("vaayu")} · ${t.ephemeral("today")} · 3 tasks · ${t.ephemeral("now")}`
+ *   `${t.name("vortex")} · ${t.ephemeral("today")} · 3 tasks · ${t.ephemeral("now")}`
  *   → 𝔳𝒶𝒶𝓎𝓊 · 𝑡𝑜𝑑𝑎𝑦 · 3 tasks · 𝑛𝑜𝑤
  */
 export interface StatuslineTheme {
@@ -185,7 +185,7 @@ export interface StatuslineTheme {
  * Works for ANY project name — English, Sanskrit, anything.
  *
  *   sansBold("tokmeter") → 𝘁𝗼𝗸𝗺𝗲𝘁𝗲𝗿
- *   sansBold("vaayu")    → 𝘃𝗮𝗮𝘆𝘂
+ *   sansBold("vortex")    → 𝘃𝗮𝗮𝘆𝘂
  */
 export function sansBold(s: string): string {
   return applyTransform(sansBoldTransform, s);

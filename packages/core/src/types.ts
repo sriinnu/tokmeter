@@ -412,7 +412,7 @@ export interface BackupInfo {
   /** Projects affected. */
   projects: string[];
   /**
-   * Source machine's home directory at backup time (e.g. "/home/sriinnu").
+   * Source machine's home directory at backup time (e.g. "/home/alice").
    * Used by restore to auto-remap paths when restoring on a machine with a
    * different homedir (cross-platform, different username, etc.).
    * Optional for backward compat with legacy backups.

@@ -112,7 +112,10 @@ fi
 
 # --- Today's cost from दृष्टि ---
 today_section=""
-tokmeter_dir="/Users/srinivaspendela/Sriinnu/Personal/tokmeter"
+# Derive the tokmeter repo root from this script's location so the path
+# is portable across machines (script lives at packages/mcp/scripts/).
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tokmeter_dir="$(cd "${script_dir}/../../.." && pwd)"
 if [ -d "$tokmeter_dir" ]; then
   cache_file="/tmp/drishti-today-cost.txt"
   cache_age=0

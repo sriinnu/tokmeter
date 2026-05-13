@@ -124,7 +124,7 @@ Usage:
   tokmeter alias unhide  <display>
   tokmeter alias suggest
 
-Auto-suggest proposes case-insensitive duplicates (e.g. Vaayu vs vaayu) and
+Auto-suggest proposes case-insensitive duplicates (e.g. Vortex vs vortex) and
 path-tail collisions. You can keep / edit / reject each proposal.
 `);
 }

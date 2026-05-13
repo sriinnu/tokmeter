@@ -2,7 +2,7 @@
  * @sriinnu/tokmeter-core — Project alias service.
  *
  * Lets users collapse two or more canonical project names into a single
- * display label (e.g. "Vaayu" + "vaayu" from different machines → "Vaayu"),
+ * display label (e.g. "Vortex" + "vortex" from different machines → "Vortex"),
  * hide projects from aggregations, and tag them for grouping.
  *
  * File location: ~/.tokmeter/aliases.json
@@ -10,15 +10,15 @@
  * Shape:
  *
  *   {
- *     "Vaayu": {
- *       "display": "Vaayu",
+ *     "Vortex": {
+ *       "display": "Vortex",
  *       "hidden": false,
  *       "tags": ["self"],
  *       "modifiedBy": "user",
  *       "modifiedAt": "2026-04-24T13:22:00Z"
  *     },
- *     "vaayu": {
- *       "display": "Vaayu",  // same display → merges with above in aggregations
+ *     "vortex": {
+ *       "display": "Vortex",  // same display → merges with above in aggregations
  *       "modifiedBy": "tokmeter",
  *       "modifiedAt": "2026-04-24T13:22:00Z"
  *     }
@@ -268,10 +268,10 @@ export function setHidden(map: AliasMap, display: string, hidden: boolean): Alia
  * lets the user confirm each suggestion interactively.
  *
  * Heuristics (v1):
- *   1. Case-insensitive match — "Vaayu" vs "vaayu" → merge as "Vaayu" (the
+ *   1. Case-insensitive match — "Vortex" vs "vortex" → merge as "Vortex" (the
  *      variant that appears more often, or the properly cased one).
  *   2. Path-tail collapse — two names that share the same final segment
- *      (e.g. "Linsinger/CustomerCockpit" vs "CustomerCockpit") merge to the
+ *      (e.g. "Acme/WeatherApp" vs "WeatherApp") merge to the
  *      shared tail. (Conservative: only triggers when the shared tail is
  *      ≥ 4 chars to avoid false positives on short generic names.)
  *
@@ -310,7 +310,7 @@ export function suggestAliases(projectNames: string[], existing: AliasMap): Alia
 
   // ─ Heuristic 2: path-tail collapse — conservative version ─────────────
   // Only propose merging "X/Y" with "Y" (where one variant IS the bare tail).
-  // This covers the common "rename `CustomerCockpit/frontend` → `CustomerCockpit`"
+  // This covers the common "rename `WeatherApp/frontend` → `WeatherApp`"
   // case without false-positive merging of unrelated repos that happen to
   // share a directory name (e.g. `acme/api-gateway` + `bob/api-gateway`).
   const remaining = unique.filter((n) => !consumed.has(n));

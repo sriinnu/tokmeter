@@ -3,9 +3,9 @@ import { boldMath, defaultTheme, italicMath, projectName, sansBold } from "./typ
 
 describe("projectName (Fraktur initial + Script body)", () => {
   it("renders a Fraktur first char + Script rest", () => {
-    const result = projectName("vaayu");
+    const result = projectName("vortex");
     // First char: 𝔳 (Fraktur v), rest: 𝒶𝒶𝓎𝓊 (Script)
-    expect(result).not.toBe("vaayu");
+    expect(result).not.toBe("vortex");
     expect(result.length).toBeGreaterThan(0);
     // The first codepoint should be in the Fraktur lowercase block (U+1D51E+)
     const firstCode = result.codePointAt(0)!;

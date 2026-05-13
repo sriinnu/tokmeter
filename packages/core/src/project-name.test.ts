@@ -11,17 +11,17 @@ import type { TokenRecord } from "./types.js";
 describe("project-name helpers", () => {
   it("canonicalizes Windows, WSL, and slugged frontend workspaces to one project label", () => {
     const inputs = [
-      "/mnt/c/Linsinger/CustomerCockpit/frontend",
-      "C:\\Linsinger\\CustomerCockpit\\frontend",
-      "-mnt-c-Linsinger-CustomerCockpit-frontend",
-      "/mnt/c/Linsinger/CustomerCockpit/frontend.code-workspace",
+      "/mnt/c/Acme/WeatherApp/frontend",
+      "C:\\Acme\\WeatherApp\\frontend",
+      "-mnt-c-Acme-WeatherApp-frontend",
+      "/mnt/c/Acme/WeatherApp/frontend.code-workspace",
     ];
 
     expect(inputs.map((value) => canonicalizeProjectName(value))).toEqual([
-      "CustomerCockpit/frontend",
-      "CustomerCockpit/frontend",
-      "CustomerCockpit/frontend",
-      "CustomerCockpit/frontend",
+      "WeatherApp/frontend",
+      "WeatherApp/frontend",
+      "WeatherApp/frontend",
+      "WeatherApp/frontend",
     ]);
   });
 
@@ -30,8 +30,8 @@ describe("project-name helpers", () => {
       "clipforge-PAKT"
     );
     expect(canonicalizeProjectName("-mnt-c-sriinnu-personal-Json-ZEN")).toBe("Json-ZEN");
-    expect(canonicalizeProjectName("-mnt-c-sriinnu-personal-Kaala-brahma-AUriva-chitragupta")).toBe(
-      "chitragupta"
+    expect(canonicalizeProjectName("-mnt-c-sriinnu-personal-Kaala-brahma-AUriva-Auditor")).toBe(
+      "Auditor"
     );
   });
 
@@ -56,7 +56,7 @@ describe("project-name helpers", () => {
     const records: TokenRecord[] = [
       {
         timestamp: 1_710_000_000_000,
-        project: "CustomerCockpit/frontend",
+        project: "WeatherApp/frontend",
         provider: "codex",
         model: "gpt-4.1",
         inputTokens: 10,
@@ -68,8 +68,8 @@ describe("project-name helpers", () => {
       },
     ];
 
-    expect(filterByProject(records, "/mnt/c/Linsinger/CustomerCockpit/frontend")).toHaveLength(1);
-    expect(filterByProject(records, "-mnt-c-Linsinger-CustomerCockpit-frontend")).toHaveLength(1);
-    expect(projectNameIncludes("CustomerCockpit/frontend", "frontend")).toBe(true);
+    expect(filterByProject(records, "/mnt/c/Acme/WeatherApp/frontend")).toHaveLength(1);
+    expect(filterByProject(records, "-mnt-c-Acme-WeatherApp-frontend")).toHaveLength(1);
+    expect(projectNameIncludes("WeatherApp/frontend", "frontend")).toBe(true);
   });
 });

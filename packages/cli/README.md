@@ -40,8 +40,8 @@ See the top-level README for the full cross-machine backup/restore workflow.
 
 ## Aliases
 
-Collapse variants of the same project (e.g. `Vaayu` on Mac vs `vaayu` on Linux),
-rename noisy canonical names (`CustomerCockpit/frontend` → `CustomerCockpit`),
+Collapse variants of the same project (e.g. `Vortex` on Mac vs `vortex` on Linux),
+rename noisy canonical names (`WeatherApp/frontend` → `WeatherApp`),
 attach tags (`work`/`client`/`self`), or hide archived projects.
 
 File: `~/.tokmeter/aliases.json` (also included in `snapshot` bundles so aliases
@@ -52,22 +52,22 @@ travel with your data across machines).
 tokmeter alias list
 
 # Rename a single canonical project
-tokmeter alias set "CustomerCockpit/frontend" "CustomerCockpit"
+tokmeter alias set "WeatherApp/frontend" "WeatherApp"
 
 # Merge multiple canonical keys under one display name
-tokmeter alias merge "Vaayu" "Vaayu" "vaayu"
+tokmeter alias merge "Vortex" "Vortex" "vortex"
 
 # Tag a project (keyed by display — applies to all merged raw keys)
-tokmeter alias tag add    "CustomerCockpit" work client
-tokmeter alias tag remove "CustomerCockpit" client
-tokmeter alias tag set    "Vaayu" self
+tokmeter alias tag add    "WeatherApp" work client
+tokmeter alias tag remove "WeatherApp" client
+tokmeter alias tag set    "Vortex" self
 
 # Hide / unhide from per-project tables (totals still include them)
 tokmeter alias hide   "old-scratch"
 tokmeter alias unhide "old-scratch"
 
 # Remove an alias entry — project reverts to its raw canonical name
-tokmeter alias remove "Vaayu"
+tokmeter alias remove "Vortex"
 
 # Interactive auto-suggest: scans your project names, proposes case-insensitive
 # and path-tail duplicates, walks through each with keep / edit / reject.

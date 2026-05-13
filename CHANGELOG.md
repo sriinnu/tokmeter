@@ -79,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **@sriinnu/tokmeter-core** — kosha is the single source of truth for pricing; static fallback table removed.
 - **TokmeterBar** — live timer refresh cadence driven by `HubConfigStore` via Combine.
-- **bundle.sh** — auto-detect tokmeter notarization key (separate from Runics key); bumped to 0.5.0/build 6.
+- **bundle.sh** — auto-detect tokmeter notarization key (separate from any sibling project's key under the same Apple Developer account); bumped to 0.5.0/build 6.
 
 ### Fixed
 

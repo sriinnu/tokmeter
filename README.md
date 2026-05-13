@@ -186,7 +186,7 @@ for the full walkthrough.
 
 ### Project Aliases
 
-Collapse variants of the same project (e.g. `Vaayu` on Mac and `vaayu` on
+Collapse variants of the same project (e.g. `Vortex` on Mac and `vortex` on
 Linux become one row), rename noisy canonical names
 (`weather-app/frontend` → `weather-app`), tag projects (`work`,
 `client`, `self`), or hide archived ones.
@@ -197,8 +197,8 @@ data.
 
 ```bash
 tokmeter alias list                              # show current aliases
-tokmeter alias set "Vaayu" "Vaayu"               # single rename
-tokmeter alias merge "Vaayu" "Vaayu" "vaayu"     # group keys under one display
+tokmeter alias set "Vortex" "Vortex"               # single rename
+tokmeter alias merge "Vortex" "Vortex" "vortex"     # group keys under one display
 tokmeter alias tag add "weather-app" work client
 tokmeter alias hide "old-scratch"                # drop from per-project tables
 tokmeter alias suggest                           # interactive auto-detect

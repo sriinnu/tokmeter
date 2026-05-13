@@ -11,12 +11,12 @@ name tokmeter derives from the cwd can drift:
 
 | Machine | cwd | Canonical name |
 | --- | --- | --- |
-| Mac | `/Users/srinivaspendela/Sriinnu/Personal/Vaayu` | `Vaayu` |
-| Linux office PC | `/mnt/c/sriinnu/personal/vaayu` | `vaayu` |
+| Mac | `/Users/bob/Sriinnu/Personal/Vortex` | `Vortex` |
+| Linux office PC | `/mnt/c/sriinnu/personal/vortex` | `vortex` |
 
 After restoring the Linux snapshot onto the Mac, tokmeter shows **two** rows
-(`Vaayu` and `vaayu`) for what is, in your head, one project. Similar stories
-for long path names (`CustomerCockpit/frontend` when the `/frontend` is just a
+(`Vortex` and `vortex`) for what is, in your head, one project. Similar stories
+for long path names (`WeatherApp/frontend` when the `/frontend` is just a
 subdir you want to collapse away) and for archived projects you don't want to
 see in the default table but still want counted in totals.
 
@@ -43,22 +43,22 @@ the `display` field is what the UI shows.
 
 ```json
 {
-  "Vaayu": {
-    "display": "Vaayu",
+  "Vortex": {
+    "display": "Vortex",
     "hidden": false,
     "tags": ["self"],
     "modifiedBy": "user",
     "modifiedAt": "2026-04-24T13:22:00Z"
   },
-  "vaayu": {
-    "display": "Vaayu",
+  "vortex": {
+    "display": "Vortex",
     "hidden": false,
     "tags": ["self"],
     "modifiedBy": "user",
     "modifiedAt": "2026-04-24T13:22:00Z"
   },
-  "CustomerCockpit/frontend": {
-    "display": "CustomerCockpit",
+  "WeatherApp/frontend": {
+    "display": "WeatherApp",
     "hidden": false,
     "tags": ["work", "client"],
     "modifiedBy": "user",
@@ -109,13 +109,13 @@ it, whether it's hidden, its tags, and who last wrote the entry.
 ### Rename a single canonical project
 
 ```bash
-tokmeter alias set "CustomerCockpit/frontend" "CustomerCockpit"
+tokmeter alias set "WeatherApp/frontend" "WeatherApp"
 ```
 
 ### Merge variants under one display
 
 ```bash
-tokmeter alias merge "Vaayu" "Vaayu" "vaayu"
+tokmeter alias merge "Vortex" "Vortex" "vortex"
 ```
 
 Accepts any number of raw-key arguments after the display. Writes an entry
@@ -126,10 +126,10 @@ per key with the same `display` and `modifiedBy: "user"`.
 Keyed by display — changes propagate to every raw key mapping to that display.
 
 ```bash
-tokmeter alias tag add    "CustomerCockpit" work client
-tokmeter alias tag remove "CustomerCockpit" client
-tokmeter alias tag set    "Vaayu" self           # overwrite
-tokmeter alias tag set    "Vaayu"                # clear (no args with `set`)
+tokmeter alias tag add    "WeatherApp" work client
+tokmeter alias tag remove "WeatherApp" client
+tokmeter alias tag set    "Vortex" self           # overwrite
+tokmeter alias tag set    "Vortex"                # clear (no args with `set`)
 ```
 
 Comma-separated lists are accepted: `work,client` is equivalent to `work client`.
@@ -144,7 +144,7 @@ tokmeter alias unhide "old-scratch"
 ### Remove a single entry
 
 ```bash
-tokmeter alias remove "vaayu"
+tokmeter alias remove "vortex"
 ```
 
 The key reverts to its canonical name. Other keys in a merge group stay intact.
@@ -158,9 +158,9 @@ tokmeter alias suggest
 Scans the records your current tokmeter setup sees, proposes two kinds of
 merge candidates, and walks you through each with `keep` / `edit` / `reject`:
 
-1. **Case-insensitive duplicates** — `Vaayu` + `vaayu` → proposes the
+1. **Case-insensitive duplicates** — `Vortex` + `vortex` → proposes the
    most-capitalised variant as the canonical display.
-2. **Path-tail collapse** — `CustomerCockpit/frontend` + `CustomerCockpit` →
+2. **Path-tail collapse** — `WeatherApp/frontend` + `WeatherApp` →
    proposes the bare tail. Conservative: triggers only when at least one
    variant is already the bare tail, so unrelated repos sharing a directory
    name (e.g. `acme/api-gateway` + `bob/api-gateway`) are **not** proposed.
@@ -172,9 +172,9 @@ never argues with a decision you've made.
 
 ```
 (1/1)  reason: case-insensitive
-  Vaayu
-  vaayu
-  proposed → Vaayu
+  Vortex
+  vortex
+  proposed → Vortex
   [K]eep / [E]dit / [R]eject >
 ```
 

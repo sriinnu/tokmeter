@@ -112,7 +112,7 @@ function sumTokens(records: TokenRecord[]) {
  * Aggregate records into per-project summaries.
  *
  * If `aliases` is provided: records are first grouped by the resolved
- * display name (so "Vaayu" + "vaayu" → one row), and projects flagged
+ * display name (so "Vortex" + "vortex" → one row), and projects flagged
  * `hidden: true` are dropped from the output (totals still reflect them
  * via `aggregator.sum*` callers that work on the raw record set).
  */

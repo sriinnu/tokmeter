@@ -683,7 +683,7 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 
 /**
  * Normalise a homedir for comparison — strips trailing slashes so
- * "/home/sriinnu" and "/home/sriinnu/" compare equal.
+ * "/home/alice" and "/home/alice/" compare equal.
  */
 function normaliseHome(path: string): string {
   return path.replace(/\/+$/, "");
