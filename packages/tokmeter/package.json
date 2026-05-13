@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Token usage tracking for AI coding agents \u2014 parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",
@@ -28,7 +28,7 @@
     "build": "rm -rf dist && mkdir -p dist/core dist/cli dist/tui && cp -r ../core/dist/* dist/core/ && cp -r ../cli/dist/* dist/cli/ && cp -r ../tui/dist/* dist/tui/"
   },
   "dependencies": {
-    "@sriinnu/kosha-discovery": "^1.0.0",
+    "@sriinnu/kosha-discovery": "^1.2.0",
     "cli-table3": "^0.6.5",
     "chalk": "^5.3.0",
     "ink": "^5.0.0",
