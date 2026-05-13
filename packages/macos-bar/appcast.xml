@@ -6,6 +6,15 @@
         <description>Auto-update feed for TokmeterBar.app</description>
         <language>en</language>
         <item>
+            <title>TokmeterBar 1.2.0</title>
+            <pubDate>Tue, 12 May 2026 20:28:42 +0000</pubDate>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;p&gt;Statbar signals: burn rate (last 60 min $/hr), cache hit % today, pace vs. typical, compaction tax, live-session pill. New signals ribbon, PACE card replaces STREAK once history exists, canonical compaction tagging via Claude Code compact_boundary. See full notes on GitHub.&lt;/p&gt;</description>
+            <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.2.0/TokmeterBar-1.2.0.zip" length="2992249" type="application/octet-stream" sparkle:edSignature="azv9O4ZUSp//yg5Pdf2aK9FE31FvbvagqYDJXU1szN2vIUVuvRLby/FzCeJm/ZX8oelkQqDl2Q7AKtUk4J5hDw==" />
+        </item>
+        <item>
             <title>TokmeterBar 1.1.0</title>
             <pubDate>Wed, 06 May 2026 19:31:35 +0000</pubDate>
             <sparkle:version>13</sparkle:version>
