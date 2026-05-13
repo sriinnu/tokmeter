@@ -84,7 +84,7 @@ const ITALIC_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
 /**
  * Math Script: several uppercase letters are placed outside the
  * main block. None of these hit the current project namespace
- * (vortex, Auditor, pakt, Pulse, Worker, Memory) but declared
+ * (vortex, Auditor, Compact, Pulse, Worker, Memory) but declared
  * for correctness.
  */
 const SCRIPT_EXCEPTIONS: ReadonlyMap<number, string> = new Map([
@@ -132,7 +132,7 @@ const sansBoldTransform = mathBlockTransform(0x1d5ee, 0x1d5d4); // 𝘁𝗼𝗸�
  *   projectName("Pulse")      → 𝔰𝓅𝒶𝓃𝒹𝒶
  *   projectName("Worker")       → 𝔨𝒶𝓇𝓎𝒶
  *   projectName("Memory")      → 𝔰𝓂𝓇𝒾𝓉𝒾
- *   projectName("pakt")        → 𝔭𝒶𝓀𝓉
+ *   projectName("Compact")        → 𝔭𝒶𝓀𝓉
  */
 export function projectName(s: string): string {
   if (!s) return s;
