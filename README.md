@@ -7,7 +7,7 @@
 <p align="center"><strong>Token Usage Tracker for AI Coding Agents</strong></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@sriinnu/tokmeter-core"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter--core-39d353?style=flat-square&logo=npm" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/@sriinnu/tokmeter"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter-39d353?style=flat-square&logo=npm" alt="npm" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node" />
   <img src="https://img.shields.io/badge/license-MIT-26a641?style=flat-square" alt="license" />
   <img src="https://img.shields.io/badge/bun-monorepo-39d353?style=flat-square&logo=npm" alt="bun" />
@@ -18,6 +18,28 @@
 Tokmeter tracks token consumption across **16+ AI coding agents**, breaks it down by **project, model, provider, and day**, and gives you **five surfaces** to explore your data: CLI, TUI, web dashboard, MCP server, and macOS menu bar.
 
 Powered by [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery) for real-time model pricing across 20+ providers including 300+ OpenRouter models.
+
+## Gallery
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="280" />
+      <br/><em>macOS menu bar — five live signals at a glance.</em>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/screenshots/cli-digest.png" alt="tokmeter digest --period week" width="380" />
+      <br/><em><code>tokmeter digest</code> — weekly cost report card with optimization grade.</em>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/assets/screenshots/cli-overview.png" alt="tokmeter overview" width="560" />
+  <br/><em><code>tokmeter</code> — per-project breakdown across all parsed agents.</em>
+</p>
+
+TUI, web dashboard, and Hub window shots landing in the next pass — see [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md) for the capture checklist.
 
 ## Why
 
@@ -38,22 +60,30 @@ No social features. No leaderboard. Just your data, locally.
 
 ```bash
 # Run directly
-npx @sriinnu/tokmeter-cli
+npx @sriinnu/tokmeter
 
-# Or install globally
-npm install -g @sriinnu/tokmeter-cli
+# Or install globally — gives you both `tokmeter` and `tokmeter-tui`
+npm install -g @sriinnu/tokmeter
 tokmeter
+tokmeter-tui
 ```
 
 ## Packages
 
+Two packages ship to npm; everything else is bundled inside `@sriinnu/tokmeter`.
+
 | Package | What | Install |
 |---------|------|---------|
-| [`@sriinnu/tokmeter-core`](packages/core/) | Session parsers, aggregator, pricing, public API | `npm install @sriinnu/tokmeter-core` |
-| [`@sriinnu/tokmeter-cli`](packages/cli/) | CLI -- table + JSON output + cost digest | `npx @sriinnu/tokmeter-cli` |
-| [`@sriinnu/tokmeter-tui`](packages/tui/) | Interactive terminal UI with charts | `npx @sriinnu/tokmeter-tui` |
-| [`@sriinnu/tokmeter-web`](packages/web/) | React + Plotly web dashboard with live mode | See [Web App](#web-app) |
-| [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + daemon | `npx @sriinnu/drishti` |
+| [`@sriinnu/tokmeter`](packages/tokmeter/) | Umbrella distribution — bundles CLI + TUI + core + parsers | `npx @sriinnu/tokmeter` |
+| [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + cross-provider daemon | `npx @sriinnu/drishti` |
+
+The following packages are workspace-internal — they're built and bundled into
+the umbrella above, not published as standalone npm packages:
+
+- `@sriinnu/tokmeter-core` — session parsers, aggregator, pricing, public API
+- `@sriinnu/tokmeter-cli` — CLI entry point (table + JSON output + cost digest)
+- `@sriinnu/tokmeter-tui` — interactive terminal UI with charts
+- `@sriinnu/tokmeter-web` — React + Plotly web dashboard with live mode (run locally; see [Web App](#web-app))
 
 ## Consume Tokmeter From Other Apps
 
@@ -61,9 +91,8 @@ Use the surface that matches the job:
 
 | Need | Use | Notes |
 | --- | --- | --- |
-| Local programmatic access in Node/Bun | `@sriinnu/tokmeter-core` | Lowest-level scan + aggregation + cleanup API |
-| Shell / CI automation | `@sriinnu/tokmeter-cli --json` | Best machine-readable contract for scripts |
-| Convenience helpers without shelling out | `@sriinnu/tokmeter-cli` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
+| Shell / CI automation | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract for scripts |
+| Convenience helpers without shelling out | `@sriinnu/tokmeter` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
 | Live in-session token/cost answers | `@sriinnu/drishti` | MCP + daemon + statusline + live tracker |
 
 ### Programmatic convenience helpers
@@ -75,7 +104,7 @@ import {
   loadTokmeterModels,
   loadTokmeterStats,
   lookupTokmeterPricing,
-} from "@sriinnu/tokmeter-cli";
+} from "@sriinnu/tokmeter";
 
 const summary = await loadTokmeterSummary({ month: true });
 const projects = await loadTokmeterProjects({ project: "tokmeter" });
@@ -87,9 +116,9 @@ const pricing = await lookupTokmeterPricing("claude-sonnet-4-20250514");
 ### Stable shell contract
 
 ```bash
-npx @sriinnu/tokmeter-cli --json
-npx @sriinnu/tokmeter-cli models --json --project tokmeter
-npx @sriinnu/tokmeter-cli digest --json --period week
+npx @sriinnu/tokmeter --json
+npx @sriinnu/tokmeter models --json --project tokmeter
+npx @sriinnu/tokmeter digest --json --period week
 ```
 
 For a deeper integration guide, see [`docs/consuming-tokmeter.md`](docs/consuming-tokmeter.md).
@@ -113,6 +142,13 @@ tokmeter statusline               # Statusline mode
 tokmeter daemon start             # Start aggregation daemon
 tokmeter daemon stop              # Stop daemon
 tokmeter daemon status            # Check daemon status
+
+# Pricing maintenance
+tokmeter update                   # Refresh kosha pricing on demand
+tokmeter pricing-audit            # Audit pricing coverage across observed models
+tokmeter install-cron             # Install daily kosha-refresh cron (macOS launchd)
+tokmeter uninstall-cron           # Remove the daily kosha-refresh cron
+tokmeter cron-status              # Show daily-cron install + last-run state
 
 # Backup / Restore (see docs/backup-restore.md)
 tokmeter cleanup                  # interactive: pick projects → dates → confirm
@@ -217,7 +253,9 @@ Total: 3.3M tokens | $34.14 | 24 active days
 
 ### MCP Server
 
-Exposes 20 token usage tools to Claude Code, Codex, Cursor, and any MCP client.
+Exposes **24 tools** to Claude Code, Codex, Cursor, and any MCP client. All
+tools are prefixed `drishti_*` so they don't collide with other servers in the
+same client.
 
 ```json
 // ~/.claude/settings.json
@@ -231,13 +269,18 @@ Exposes 20 token usage tools to Claude Code, Codex, Cursor, and any MCP client.
 }
 ```
 
-**Data Tools:** `token_usage`, `cost_breakdown`, `daily_trend`, `session_cost`, `budget_check`, `compare_models`, `export_csv`
+**Snapshot & breakdowns:** `drishti_pulse`, `drishti_models`, `drishti_providers`, `drishti_projects`, `drishti_timeline`, `drishti_heatmap`
 
-**Cost Intelligence Tools:**
-- `cache_efficiency` -- Cache hit rate, dollar savings, per-model breakdown
-- `model_advisor` -- What-if analysis (Opus vs Sonnet, GPT-5 vs GPT-4o)
-- `budget_alert` -- Proactive budget monitoring with projected spend and alerts
-- `cost_optimization_tips` -- Actionable recommendations based on usage patterns
+**Search, compare, export:** `drishti_search`, `drishti_compare`, `drishti_export`
+
+**Cost intelligence:** `drishti_cache_efficiency`, `drishti_model_advisor`, `drishti_budget_alert`, `drishti_cost_optimization_tips`, `drishti_efficiency`, `drishti_anomaly`, `drishti_forecast`, `drishti_budget`
+
+**Reports & behavior:** `drishti_digest`, `drishti_streaks`, `drishti_leaderboard`
+
+**Storage hygiene:** `drishti_cleanup_preview`, `drishti_cleanup_execute`, `drishti_backups`, `drishti_restore`
+
+Every tool output carries a transparency footer (record count, scan duration,
+warnings for models with missing pricing) so you can audit the math.
 
 ### Statusline Hook
 
@@ -321,7 +364,11 @@ Supported editors:
 Interactive terminal UI with bar charts, sparklines, and contribution heatmaps.
 
 ```bash
-npx @sriinnu/tokmeter-tui
+# After `npm install -g @sriinnu/tokmeter`
+tokmeter-tui
+
+# Or one-shot
+npx -p @sriinnu/tokmeter tokmeter-tui
 ```
 
 | View | Key | Description |
@@ -364,6 +411,10 @@ Export data: `tokmeter --json > packages/web/public/data.json`
 A native SwiftUI menubar app that surfaces your live token spend without ever
 leaving the menubar. Reads from the daemon when it's running, falls back to
 the CLI on disk when it isn't.
+
+<p align="center">
+  <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="320" />
+</p>
 
 ```bash
 bun run bar                        # build, install to /Applications, launch
@@ -410,16 +461,24 @@ OpenRouter models (free and paid) are automatically detected via model ID format
 
 ## Pricing
 
-Pricing is resolved via [`@sriinnu/kosha-discovery`](https://github.com/sriinnu/kosha-discovery):
+Pricing is resolved entirely through [`@sriinnu/kosha-discovery`](https://github.com/sriinnu/kosha-discovery)
+— one source of truth, refreshed daily, no stale hardcoded fallback.
 
-1. **Static table** -- 50+ models with accurate direct-api rates
-2. **kosha direct** -- authenticated API calls to Anthropic, OpenAI, Google, etc.
-3. **kosha fuzzy** -- 300+ OpenRouter models for the long tail
-4. **Reasoning tokens** -- dedicated rates for o1/o3/gemini-thinking/deepseek-r1
+Resolution chain (see `packages/core/src/pricing.ts`):
 
-Covers: Anthropic, OpenAI, Google, DeepSeek, xAI (Grok), Mistral, Meta (Llama), Moonshot/Kimi, Cohere, Perplexity, Qwen, and more.
+1. **In-memory cache** — per-process, invalidated on kosha registry mtime change.
+2. **User overrides** — `~/.tokmeter/pricing-overrides.json` for negotiated rates, free internal deployments, or per-model corrections. Keyed by exact model id; partial `ModelPricing` shapes accepted.
+3. **kosha direct** — `registry.model(id)` for canonical model IDs. Prefers `originPricing` (direct-provider rate) over `pricing` (proxy/gateway rate) when both are usable.
+4. **kosha fuzzy** — searches the full discovered catalog with an exact-first scorer; covers the long tail (including 300+ OpenRouter models).
+5. **Manifest fallback** — direct read of `~/.kosha/registry.json` when the runtime state is missing models the manifest knows about.
 
-All formatters are NaN/Infinity-safe -- malformed data never leaks into output.
+Reasoning tokens get their own rate when kosha publishes one (o1/o3/gemini-thinking/deepseek-r1 and equivalents); otherwise they fall back to the output rate with the cell flagged.
+
+Covers Anthropic, OpenAI, Google, DeepSeek, xAI, Mistral, Meta, Moonshot, Cohere, Perplexity, Qwen, and 10+ more — whatever kosha is currently tracking.
+
+Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. See [`docs/designs/routes.md`](docs/designs/routes.md) for the design of the upcoming `tokmeter routes` feature, which extends this posture into a full cost-surface explorer across every (model × serving-provider) route.
+
+All formatters are NaN/Infinity-safe — malformed data never leaks into output.
 
 ## Architecture
 
@@ -433,7 +492,7 @@ Session Files (local disk)
 +----------+----------+----------+----------+-----------+----------+
 |  CLI     |  TUI     |  Web App | Drishti  | Daemon    | macOS    |
 | (table)  | (Ink)    | (Plotly) | (MCP)    | (WebSocket)| menu bar |
-| (digest) |          | (live)   | (20 tools)|           | (Swift)  |
+| (digest) |          | (live)   | (24 tools)|           | (Swift)  |
 +----------+----------+----------+----------+-----------+----------+
 ```
 
@@ -486,7 +545,7 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (175+ cases across the monorepo)
+bun run test                   # Run tests (220+ cases across the monorepo)
 bun run lint                   # Lint
 bun run format                 # Format
 ```
