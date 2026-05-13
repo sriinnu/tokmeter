@@ -19,7 +19,9 @@ Tokmeter tracks token consumption across **16+ AI coding agents**, breaks it dow
 
 Powered by [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery) for real-time model pricing across 20+ providers including 300+ OpenRouter models.
 
-## Gallery
+## What it looks like
+
+Below is exactly what tokmeter prints on a real machine — same code you'd `npm install`. Project names are swapped to generic ones for privacy; spend numbers, cache rates, optimization scores, model breakdowns, and everything else are unedited.
 
 <table>
   <tr>
@@ -39,7 +41,9 @@ Powered by [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/k
   <br/><em><code>tokmeter</code> — per-project breakdown across all parsed agents.</em>
 </p>
 
-TUI, web dashboard, and Hub window shots landing in the next pass — see [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md) for the capture checklist.
+No mocked data, no "before / after" stagings, no third-party comparison shots. If the screenshots above feel underwhelming, that's the surface — there's no better-looking demo hiding somewhere. What you see is what you get.
+
+Want to know what *your* data looks like before committing to anything? `npx @sriinnu/tokmeter` and `tokmeter --light` (skip pricing for the first scan). Nothing leaves your machine. TUI, web dashboard, Hub window, and statusline shots landing in the next pass — see [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md) for the capture checklist.
 
 ## Why
 
