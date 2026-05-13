@@ -11,7 +11,7 @@
     },
     "packages/cli": {
       "name": "@sriinnu/tokmeter-cli",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "bin": {
         "tokmeter": "dist/cli.js",
       },
@@ -28,9 +28,9 @@
     },
     "packages/core": {
       "name": "@sriinnu/tokmeter-core",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "dependencies": {
-        "@sriinnu/kosha-discovery": "^1.0.0",
+        "@sriinnu/kosha-discovery": "^1.2.0",
       },
       "devDependencies": {
         "@types/node": "^25.5.0",
@@ -39,7 +39,7 @@
     },
     "packages/mcp": {
       "name": "@sriinnu/drishti",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "bin": {
         "drishti": "dist/cli.js",
       },
@@ -61,13 +61,13 @@
     },
     "packages/tokmeter": {
       "name": "@sriinnu/tokmeter",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "bin": {
         "tokmeter": "dist/cli/cli.js",
         "tokmeter-tui": "dist/tui/index.js",
       },
       "dependencies": {
-        "@sriinnu/kosha-discovery": "^1.0.0",
+        "@sriinnu/kosha-discovery": "^1.2.0",
         "chalk": "^5.3.0",
         "cli-table3": "^0.6.5",
         "ink": "^5.0.0",
@@ -81,7 +81,7 @@
     },
     "packages/tui": {
       "name": "@sriinnu/tokmeter-tui",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "bin": {
         "tokmeter-tui": "dist/index.js",
       },
@@ -98,7 +98,7 @@
     },
     "packages/web": {
       "name": "@sriinnu/tokmeter-web",
-      "version": "1.0.0",
+      "version": "1.2.1",
       "dependencies": {
         "plotly.js": "^2.35.0",
         "react": "^18.3.0",
@@ -330,7 +330,7 @@
 
     "@sriinnu/drishti": ["@sriinnu/drishti@workspace:packages/mcp"],
 
-    "@sriinnu/kosha-discovery": ["@sriinnu/kosha-discovery@1.0.0", "", { "dependencies": { "@hono/node-server": "^1.19.10", "hono": "^4.12.14" }, "bin": { "kosha": "dist/cli.js" } }, "sha512-Ou1LqC4R6XwbNoLsHerOks5/jcvEeArAv4qLEfV6DjfT4KSxV4ztF9dbU2rc+NcDui79eUAI59d92zkkkfprRA=="],
+    "@sriinnu/kosha-discovery": ["@sriinnu/kosha-discovery@1.2.0", "", { "dependencies": { "@hono/node-server": "^1.19.10", "hono": "^4.12.14" }, "bin": { "kosha": "dist/cli.js", "kosha-mcp": "dist/mcp-server.js" } }, "sha512-e4SzLC3lh94jLrRj5tysnwmA9hBlPw+oQ+AU4o6QJzDje1oRbm6B0JRsAkW3CWhjHWDR1SGN/fn0pNWvRnCzIg=="],
 
     "@sriinnu/tokmeter": ["@sriinnu/tokmeter@workspace:packages/tokmeter"],
 
