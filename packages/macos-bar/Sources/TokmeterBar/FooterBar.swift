@@ -63,19 +63,32 @@ struct FooterBar: View {
             // Catches rate-regression failures (wrong number, not null) — the
             // worst class because every other defense makes the wrong number
             // stickier, not less stuck.
+            //
+            // Kosha emits one anomaly per (model × pricing field). A single
+            // provider price update typically moves input + output + cacheRead
+            // together, so the raw count overstates events 2-3×. Collapse to
+            // one row per model in the pill; keep the per-field breakdown in
+            // the tooltip.
             if let anomalies = loader.pricingAnomalies, anomalies.total > 0 {
-                let preview = anomalies.anomalies
+                let collapsed = collapseAnomalies(anomalies.anomalies)
+                let preview = collapsed
                     .prefix(5)
-                    .map { a in
-                        let dir = a.deltaPct > 0 ? "↑" : "↓"
-                        let pct = abs(a.deltaPct * 100)
-                        return "\(a.key) \(a.field) \(dir) \(Int(pct))%"
+                    .map { group in
+                        let worst = group.worst
+                        let dir = worst.deltaPct > 0 ? "↑" : "↓"
+                        let pct = Int(abs(worst.deltaPct * 100))
+                        let extra = group.fieldCount > 1 ? "  (+\(group.fieldCount - 1) more fields)" : ""
+                        return "\(group.key)  \(worst.field) \(dir) \(pct)%\(extra)"
                     }
                     .joined(separator: "\n")
-                Text("⚠︎ \(anomalies.total) price changes")
+                let modelLabel = collapsed.count == 1 ? "model" : "models"
+                Text("⚠︎ \(collapsed.count) \(modelLabel) repriced")
                     .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
                     .foregroundColor(.red)
-                    .help("Kosha detected rate movements >25% in the last 24h:\n\(preview)")
+                    .help(
+                        "Kosha detected rate movements >25% in the last 24h "
+                        + "(\(anomalies.total) field updates across \(collapsed.count) \(modelLabel)):\n\(preview)"
+                    )
             }
             if loader.pricingMtime > 0 {
                 // TimelineView ticks every 60s so "2h ago" stays accurate while
@@ -162,6 +175,29 @@ struct FooterBar: View {
         }
     }
 
+}
+
+/// One model's anomalies, after collapsing per-field rows back into a single
+/// event. `worst` is the field with the largest |deltaPct| — the headline the
+/// pill tooltip should lead with.
+struct AnomalyGroup {
+    let key: String
+    let fieldCount: Int
+    let worst: PricingAnomaly
+}
+
+/// Collapse kosha's per-field anomalies into one row per model. Stable order:
+/// groups sorted by the worst |deltaPct| within each group (biggest first).
+func collapseAnomalies(_ anomalies: [PricingAnomaly]) -> [AnomalyGroup] {
+    var byKey: [String: [PricingAnomaly]] = [:]
+    for a in anomalies {
+        byKey[a.key, default: []].append(a)
+    }
+    let groups = byKey.map { (key, items) -> AnomalyGroup in
+        let worst = items.max(by: { abs($0.deltaPct) < abs($1.deltaPct) }) ?? items[0]
+        return AnomalyGroup(key: key, fieldCount: items.count, worst: worst)
+    }
+    return groups.sorted { abs($0.worst.deltaPct) > abs($1.worst.deltaPct) }
 }
 
 /// Self-contained heartbeat indicator. Drives its own animation loop via

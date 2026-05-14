@@ -43,6 +43,25 @@ import type {
   TokmeterSummary,
 } from "./types.js";
 
+/**
+ * Models whose provider intentionally hides the underlying routed model, so
+ * we can't price them even with a fresh kosha. Treat these as known-opaque:
+ * cost still resolves to $0 (we honestly don't know), but suppress the
+ * unpriced-leak signal — otherwise the bar's amber pill cries wolf on every
+ * scan and the kosha wishlist begs for an entry that will never exist.
+ *
+ * Codex CLI's auto-review pipeline ("codex-auto-review") is the canonical
+ * case: codex writes this literal string into rollout JSONL when OpenAI's
+ * batched code-review router picks a model. The real model never surfaces
+ * to the client. Add new entries here only when the same condition holds —
+ * provider explicitly opaque, not just "kosha doesn't have it yet."
+ */
+const OPAQUE_MODELS: ReadonlySet<string> = new Set(["codex-auto-review"]);
+
+function isOpaqueModel(model: string): boolean {
+  return OPAQUE_MODELS.has(model);
+}
+
 const EMPTY_SCAN_META: ScanMeta = {
   stableThrough: null,
   historySource: "none",
@@ -479,7 +498,8 @@ export class TokmeterCore {
           unpricedTracker &&
           r.cost === 0 &&
           r.inputTokens + r.outputTokens + r.reasoningTokens > 0 &&
-          !this.pricing.hasUserOverride(r.model)
+          !this.pricing.hasUserOverride(r.model) &&
+          !isOpaqueModel(r.model)
         ) {
           unpricedTracker.models.add(r.model);
           unpricedTracker.records += 1;
@@ -489,7 +509,7 @@ export class TokmeterCore {
           scope: warningScope,
           message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
         });
-        if (unpricedTracker) {
+        if (unpricedTracker && !isOpaqueModel(r.model)) {
           unpricedTracker.models.add(r.model);
           unpricedTracker.records += 1;
         }
@@ -590,12 +610,26 @@ export class TokmeterCore {
     unpricedTracker: { models: Set<string>; records: number },
     records: TokenRecord[]
   ): void {
-    if (unpricedTracker.models.size === 0) return;
     try {
       const fs = require("node:fs") as typeof import("node:fs");
       const path = require("node:path") as typeof import("node:path");
       const crypto = require("node:crypto") as typeof import("node:crypto");
       const dir = path.join(this.homeDir, ".tokmeter");
+      const filePath = path.join(dir, "wishlist.json");
+
+      // Empty tracker but a stale wishlist exists — clean it up so consumers
+      // (bar, CI, kosha) don't keep flagging models that are no longer
+      // unpriced. Without this, the file freezes at its last non-empty state
+      // forever, which is exactly what bit codex-auto-review after the
+      // opaque-models filter landed.
+      if (unpricedTracker.models.size === 0) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          /* missing is fine */
+        }
+        return;
+      }
       fs.mkdirSync(dir, { recursive: true });
 
       // Count hits per unpriced model from today's records.
@@ -622,7 +656,6 @@ export class TokmeterCore {
           .map(([id, v]) => ({ id, hits: v.hits, lastSeenAt: v.lastSeenAt }))
           .sort((a, b) => b.hits - a.hits),
       };
-      const filePath = path.join(dir, "wishlist.json");
       const tmp = `${filePath}.${crypto.randomBytes(4).toString("hex")}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
       fs.renameSync(tmp, filePath);
