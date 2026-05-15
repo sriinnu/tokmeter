@@ -68,6 +68,8 @@ enum BackgroundMode {
     case terminalBlack    // True black (Terminal)
     case paperWarm        // Warm off-white editorial (Paper)
     case glassBlur        // Translucent material — works over wallpaper (Glass)
+    case auroraDrift      // Deep night with slow-drifting northern-lights gradient
+    case blueprintGrid    // Cream-paper bg with cyan grid lines (Blueprint)
 
     /// The base surface color painted as the popover's background.
     var surfaceColor: Color {
@@ -89,13 +91,21 @@ enum BackgroundMode {
         case .glassBlur:
             // Base tint; the actual blur is provided by a Material layer in the view.
             return Color(red: 0.18, green: 0.20, blue: 0.26).opacity(0.35)
+        case .auroraDrift:
+            // Deep blue-violet night — the gradient overlay paints on top via
+            // a TimelineView. Solid base gives the moving stops something to
+            // anchor to without flicker.
+            return Color(red: 0.02, green: 0.03, blue: 0.08)
+        case .blueprintGrid:
+            // Cream paper base. Cyan grid is overlaid in the renderer.
+            return Color(red: 0.955, green: 0.945, blue: 0.910)
         }
     }
 
     /// Whether this surface is light (drives text color inversion).
     var isLight: Bool {
         switch self {
-        case .lightCream, .paperWarm: return true
+        case .lightCream, .paperWarm, .blueprintGrid: return true
         default: return false
         }
     }
@@ -137,6 +147,10 @@ enum BackgroundMode {
             return [base, Color(red: 0.948, green: 0.926, blue: 0.885)]
         case .glassBlur:
             return [base, base.opacity(0.55)]
+        case .auroraDrift:
+            return [base, Color(red: 0.01, green: 0.02, blue: 0.05)]
+        case .blueprintGrid:
+            return [base, Color(red: 0.942, green: 0.928, blue: 0.890)]
         case .dark:
             return [base, base]
         }
@@ -155,6 +169,8 @@ enum HeroMode {
     case terminalCRT        // Pure black + dense scanlines + green phosphor + cursor
     case paperEditorial     // Cream, large serif display number, hairline rule
     case glassMaterial      // Translucent material + soft tint + glossy highlight
+    case auroraDrift        // Slow-drifting aurora gradient — motion as identity
+    case blueprintTechnical // Hairline cyan frame, mono digits, drafting feel
 }
 
 // MARK: - Card style
@@ -169,14 +185,16 @@ enum CardMode {
     case terminalPanel    // Terminal: black fill, green hairline border, mono
     case paperHairline    // Paper: no fill, thin black hairline border, serif
     case glassFrost       // Glass: ultra-thin material with subtle border
+    case auroraGlass      // Aurora: thin-material on the drifting bg, soft glow
+    case blueprintFrame   // Blueprint: cyan hairline frame, no fill, mono
 
     /// Corner radius — HUD/Terminal go sharper for readout feel.
     var cornerRadius: CGFloat {
         switch self {
-        case .hudPanel, .terminalPanel: return 4
+        case .hudPanel, .terminalPanel, .blueprintFrame: return 4
         case .paperHairline: return 2
         case .neonOutlined: return 10
-        case .glassFrost: return 14
+        case .glassFrost, .auroraGlass: return 14
         default: return 12
         }
     }
@@ -220,6 +238,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case terminal
     case paper
     case glass
+    case aurora
+    case blueprint
 
     var id: String { rawValue }
 
@@ -233,6 +253,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "Terminal"
         case .paper:     return "Paper"
         case .glass:     return "Glass"
+        case .aurora:    return "Aurora"
+        case .blueprint: return "Blueprint"
         }
     }
 
@@ -246,6 +268,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "CRT phosphor retro"
         case .paper:     return "Editorial serif"
         case .glass:     return "Translucent glass"
+        case .aurora:    return "Northern lights, drifting"
+        case .blueprint: return "Drafting paper, cyan grid"
         }
     }
 
@@ -259,14 +283,16 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "terminal.fill"
         case .paper:     return "doc.text.fill"
         case .glass:     return "circle.lefthalf.filled"
+        case .aurora:    return "sparkle"
+        case .blueprint: return "ruler.fill"
         }
     }
 
-    /// Convenience: whether the hero uses monospaced digits (HUD + Terminal).
-    /// Kept so the view has a quick readability signal.
+    /// Convenience: whether the hero uses monospaced digits (HUD + Terminal +
+    /// Blueprint). Kept so the view has a quick readability signal.
     var monoHero: Bool {
         switch self {
-        case .hud, .terminal: return true
+        case .hud, .terminal, .blueprint: return true
         default: return false
         }
     }
@@ -281,6 +307,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalBlack
         case .paper:     return .paperWarm
         case .glass:     return .glassBlur
+        case .aurora:    return .auroraDrift
+        case .blueprint: return .blueprintGrid
         }
     }
 
@@ -294,6 +322,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalCRT
         case .paper:     return .paperEditorial
         case .glass:     return .glassMaterial
+        case .aurora:    return .auroraDrift
+        case .blueprint: return .blueprintTechnical
         }
     }
 
@@ -307,6 +337,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalPanel
         case .paper:     return .paperHairline
         case .glass:     return .glassFrost
+        case .aurora:    return .auroraGlass
+        case .blueprint: return .blueprintFrame
         }
     }
 
@@ -349,6 +381,16 @@ enum AppTheme: String, CaseIterable, Identifiable {
             return ThemeFonts(heroDesign: .rounded,    heroWeight: .medium,
                               valueDesign: .rounded,   valueWeight: .semibold,
                               labelDesign: .rounded,   bodyDesign: .rounded)
+        case .aurora:
+            // Soft rounded — the bg is doing the heavy visual lifting
+            return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,
+                              valueDesign: .rounded,   valueWeight: .semibold,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        case .blueprint:
+            // Mono digits + serif labels = drafting/technical-document feel
+            return ThemeFonts(heroDesign: .monospaced, heroWeight: .bold,
+                              valueDesign: .monospaced, valueWeight: .bold,
+                              labelDesign: .serif,      bodyDesign: .default)
         }
     }
 

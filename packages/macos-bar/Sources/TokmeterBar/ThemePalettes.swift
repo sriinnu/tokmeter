@@ -106,6 +106,32 @@ extension AppTheme {
                 warm:      Color(red: 0.710, green: 0.643, blue: 0.757),  // #b5a4c1 lavender-slate
                 tertiary:  Color(red: 0.627, green: 0.773, blue: 0.706)   // #a0c5b4 sage
             )
+
+        case .aurora:
+            // Northern-lights palette — deep teal, electric green, soft violet,
+            // with a warm coral highlight so the cost number doesn't melt into
+            // the cool background.
+            return ThemeColors(
+                primary:   Color(red: 0.055, green: 0.255, blue: 0.353),  // #0e4159 deep teal
+                secondary: Color(red: 0.180, green: 0.792, blue: 0.694),  // #2ecaa3 aurora green
+                accent:    Color(red: 0.541, green: 0.482, blue: 0.945),  // #8a7af1 electric violet
+                highlight: Color(red: 0.984, green: 0.722, blue: 0.420),  // #fbb86b warm coral
+                warm:      Color(red: 0.961, green: 0.553, blue: 0.420),  // #f58d6b sunset coral
+                tertiary:  Color(red: 0.412, green: 0.871, blue: 0.847)   // #69ded8 light teal
+            )
+
+        case .blueprint:
+            // Drafting-paper palette — saturated technical cyan as primary,
+            // slate-grey for body, brick-red for cost (the editorial "ink"
+            // accent), forest-green for healthy signals.
+            return ThemeColors(
+                primary:   Color(red: 0.122, green: 0.392, blue: 0.541),  // #1f648a technical blue
+                secondary: Color(red: 0.286, green: 0.349, blue: 0.412),  // #495969 slate
+                accent:    Color(red: 0.227, green: 0.580, blue: 0.776),  // #3a94c6 drafting cyan
+                highlight: Color(red: 0.722, green: 0.290, blue: 0.275),  // #b84a46 brick red
+                warm:      Color(red: 0.812, green: 0.490, blue: 0.290),  // #cf7d4a sienna
+                tertiary:  Color(red: 0.298, green: 0.518, blue: 0.349)   // #4c8559 forest
+            )
         }
     }
 }

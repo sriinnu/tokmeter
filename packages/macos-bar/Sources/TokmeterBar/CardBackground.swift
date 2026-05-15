@@ -114,6 +114,32 @@ struct CardBackground: View {
                     ), lineWidth: 1)
             }
             .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+
+        case .auroraGlass:
+            // Thin material that lets the drifting bg show through, with a
+            // soft role-tinted glow at the top edge — like aurora light
+            // catching the lip of a glass shelf.
+            ZStack {
+                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: radius).fill(role.opacity(0.10))
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(LinearGradient(
+                        colors: [role.opacity(0.45), Color.white.opacity(0.06)],
+                        startPoint: .top, endPoint: .bottom
+                    ), lineWidth: 0.8)
+            }
+            .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
+
+        case .blueprintFrame:
+            // No fill so the underlying grid shows through. Just a cyan
+            // hairline — the chrome reads as a drafting-paper callout box
+            // around the data, not a card with a background.
+            ZStack {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(role.opacity(0.55), lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.white.opacity(0.20))
+            }
         }
     }
 }

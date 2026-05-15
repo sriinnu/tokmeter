@@ -270,6 +270,8 @@ struct HeroHeader: View {
         case .terminal:  return c.secondary.opacity(0.40)
         case .paper:     return Color.black.opacity(0.08)
         case .glass:     return Color.black.opacity(0.18)
+        case .aurora:    return c.accent.opacity(0.35)
+        case .blueprint: return Color.black.opacity(0.10)
         }
     }
 
@@ -293,7 +295,7 @@ struct HeroHeader: View {
     @ViewBuilder
     private var innerHighlight: some View {
         switch theme {
-        case .daylight, .hud, .terminal, .paper:
+        case .daylight, .hud, .terminal, .paper, .blueprint:
             EmptyView()
         default:
             notchShape.strokeBorder(

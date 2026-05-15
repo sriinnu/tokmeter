@@ -22,14 +22,114 @@ struct HeroBackground: View {
 
     var body: some View {
         switch theme.heroMode {
-        case .nebulaGradient:   nebula
-        case .nocturneCalm:     nocturne
-        case .daylightSoft:     daylight
-        case .synthwaveHorizon: synthwave
-        case .hudScanlines:     hud
-        case .terminalCRT:      terminal
-        case .paperEditorial:   paper
-        case .glassMaterial:    glass
+        case .nebulaGradient:    nebula
+        case .nocturneCalm:      nocturne
+        case .daylightSoft:      daylight
+        case .synthwaveHorizon:  synthwave
+        case .hudScanlines:      hud
+        case .terminalCRT:       terminal
+        case .paperEditorial:    paper
+        case .glassMaterial:     glass
+        case .auroraDrift:       aurora
+        case .blueprintTechnical: blueprint
+        }
+    }
+
+    // MARK: - Aurora
+
+    /// Drifting northern-lights gradient. The MeshGradient stops shift their
+    /// positions on a slow 60s cycle so the bg is alive but never flashy —
+    /// motion as identity, not motion as ornament. Apple's macOS Sonoma
+    /// "Sky" wallpapers are the lineage. Performance: the only animated
+    /// view in the entire bar; runs on Core Animation off the main thread.
+    private var aurora: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            // 60s + 90s base periods (non-multiple so the pattern doesn't
+            // loop visibly). Each color stop drifts on its own phase.
+            let p1 = sin(t * 2 * .pi / 60)
+            let p2 = cos(t * 2 * .pi / 90)
+            let p3 = sin(t * 2 * .pi / 75)
+            ZStack {
+                // Solid base anchor.
+                Color(red: 0.02, green: 0.03, blue: 0.08)
+                // Three radial gradients, each at a slowly-drifting position.
+                // Together they create the "curtain of light" feel.
+                RadialGradient(
+                    colors: [c.secondary.opacity(0.55), Color.clear],
+                    center: UnitPoint(x: 0.25 + p1 * 0.18, y: 0.30 + p2 * 0.12),
+                    startRadius: 20, endRadius: 280
+                )
+                RadialGradient(
+                    colors: [c.accent.opacity(0.45), Color.clear],
+                    center: UnitPoint(x: 0.72 + p3 * 0.15, y: 0.55 + p1 * 0.10),
+                    startRadius: 30, endRadius: 320
+                )
+                RadialGradient(
+                    colors: [c.tertiary.opacity(0.30), Color.clear],
+                    center: UnitPoint(x: 0.50 + p2 * 0.20, y: 0.20 + p3 * 0.08),
+                    startRadius: 40, endRadius: 260
+                )
+                // Faint star-like specular over the top so it reads as
+                // "night sky" not "abstract gradient."
+                RadialGradient(
+                    colors: [Color.white.opacity(0.06), Color.clear],
+                    center: .top, startRadius: 0, endRadius: 200
+                )
+            }
+        }
+    }
+
+    // MARK: - Blueprint
+
+    /// Drafting-paper hero. Cream base + cyan technical grid + hairline
+    /// frame. The hero number reads as a dimension callout — like the
+    /// big numeral on an engineering drawing. No motion; this theme is
+    /// about precision and stillness.
+    private var blueprint: some View {
+        ZStack {
+            // Cream paper base.
+            Color(red: 0.955, green: 0.945, blue: 0.910)
+            // Faint cyan grid — major lines every 40pt, minor every 10pt.
+            Canvas { ctx, size in
+                let major = c.accent.opacity(0.18)
+                let minor = c.accent.opacity(0.08)
+                var minorPath = Path()
+                var majorPath = Path()
+                let step: CGFloat = 10
+                var x: CGFloat = 0
+                var i = 0
+                while x <= size.width {
+                    if i % 4 == 0 {
+                        majorPath.move(to: CGPoint(x: x, y: 0))
+                        majorPath.addLine(to: CGPoint(x: x, y: size.height))
+                    } else {
+                        minorPath.move(to: CGPoint(x: x, y: 0))
+                        minorPath.addLine(to: CGPoint(x: x, y: size.height))
+                    }
+                    x += step
+                    i += 1
+                }
+                var y: CGFloat = 0
+                i = 0
+                while y <= size.height {
+                    if i % 4 == 0 {
+                        majorPath.move(to: CGPoint(x: 0, y: y))
+                        majorPath.addLine(to: CGPoint(x: size.width, y: y))
+                    } else {
+                        minorPath.move(to: CGPoint(x: 0, y: y))
+                        minorPath.addLine(to: CGPoint(x: size.width, y: y))
+                    }
+                    y += step
+                    i += 1
+                }
+                ctx.stroke(minorPath, with: .color(minor), lineWidth: 0.5)
+                ctx.stroke(majorPath, with: .color(major), lineWidth: 0.8)
+            }
+            // Hairline frame at the edges — the "drawing border" callout.
+            Rectangle()
+                .stroke(c.primary.opacity(0.35), lineWidth: 0.8)
+                .padding(6)
         }
     }
 
