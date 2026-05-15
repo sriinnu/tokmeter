@@ -145,7 +145,7 @@ struct HeroHeader: View {
     /// "something is happening right now and here's what." Tooltip shows the
     /// model + last-record cost for the user who wants the detail.
     private func liveSessionPill(_ live: LiveSession) -> some View {
-        let dotColor = Color(red: 0.13, green: 0.80, blue: 0.47)
+        let dotColor = Color.tokSuccess
         let project = Fmt.projectBasename(live.project)
         return HStack(spacing: 5) {
             Circle()

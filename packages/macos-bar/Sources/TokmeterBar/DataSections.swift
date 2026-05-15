@@ -78,7 +78,7 @@ struct ModelsSection: View {
     private func modelRow(_ model: ModelUsage, maxCost: Double) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 3) {
-                Image(systemName: "waveform.circle")
+                Image(systemName: providerGlyph(for: model.model))
                     .font(.system(size: 10))
                     .foregroundColor(c.accent)
                 Text(Fmt.shortModel(model.model))
@@ -94,9 +94,18 @@ struct ModelsSection: View {
                     .overlay(
                         HStack {
                             Capsule()
-                                .fill(LinearGradient(
-                                    colors: [c.secondary, c.warm],
-                                    startPoint: .leading, endPoint: .trailing))
+                                .fill(compositionFill(
+                                    output: model.outputTokens,
+                                    cacheRead: model.cacheReadTokens,
+                                    cacheWrite: model.cacheWriteTokens,
+                                    input: model.inputTokens,
+                                    reasoning: model.reasoningTokens,
+                                    theme: theme,
+                                    fallback: LinearGradient(
+                                        colors: [c.secondary, c.warm],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
+                                ))
                                 .frame(width: max(geo.size.width * pct, 4))
                             Spacer(minLength: 0)
                         }
@@ -105,12 +114,73 @@ struct ModelsSection: View {
                     .animation(.spring(response: 0.6, dampingFraction: 0.75), value: model.cost)
             }
             .frame(height: 6)
+            .help(compositionTooltip(
+                output: model.outputTokens,
+                cacheRead: model.cacheReadTokens,
+                cacheWrite: model.cacheWriteTokens,
+                input: model.inputTokens,
+                reasoning: model.reasoningTokens
+            ))
             Text(Fmt.cost(model.cost))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(c.highlight)
+                .foregroundColor(costTint(for: model))
                 .frame(width: 56, alignment: .trailing)
         }
     }
+
+    // MARK: - Cost tint (extension A)
+
+    /// Tint the $cost with the dominant tier color when the bar went solid.
+    /// Tied to the bar's own threshold via the shared helper so a mixed-color
+    /// bar always pairs with a neutral $.
+    private func costTint(for model: ModelUsage) -> Color {
+        dominantTierColor(
+            output: model.outputTokens,
+            cacheRead: model.cacheReadTokens,
+            cacheWrite: model.cacheWriteTokens,
+            input: model.inputTokens,
+            reasoning: model.reasoningTokens,
+            theme: theme
+        ) ?? c.highlight
+    }
+
+    // MARK: - Provider glyph (extension C)
+
+    /// Map model name to a provider glyph. Letter-disc glyphs (a.circle.fill /
+    /// g.circle.fill / m.circle.fill) win over dotted-grid glyphs at 10pt —
+    /// OpenAI's hexagongrid and Google's 3x3 grid were both reading as "dotted
+    /// disc" below the perceptual floor. Letter discs are unambiguous.
+    ///
+    /// Namespace handling: strip a leading `openrouter/` (and any single-
+    /// segment `provider/` prefix from kilo/opencode/roo) before matching, so
+    /// `openrouter/anthropic/claude-opus-4-7` still gets the sparkle.
+    private func providerGlyph(for model: String) -> String {
+        let raw = model.lowercased()
+        // Strip a leading openrouter/ then check the rest.
+        let n: String
+        if raw.hasPrefix("openrouter/") {
+            n = String(raw.dropFirst("openrouter/".count))
+        } else {
+            n = raw
+        }
+        if n.hasPrefix("claude") || n.hasPrefix("anthropic/")
+            || n.contains("/claude")                            { return "sparkle" }
+        if n.hasPrefix("gpt") || n.hasPrefix("openai/")
+            || n.hasPrefix("o1") || n.hasPrefix("o3")
+            || n.hasPrefix("codex")
+            || n.contains("/gpt")                               { return "circle.hexagongrid.fill" }
+        if n.hasPrefix("gemini") || n.hasPrefix("google/")
+            || n.contains("/gemini")                            { return "g.circle.fill" }
+        if n.hasPrefix("qwen") || n.hasPrefix("alibaba/")      { return "diamond.fill" }
+        if n.hasPrefix("deepseek")                              { return "triangle.fill" }
+        if n.hasPrefix("mistral")                               { return "m.circle.fill" }
+        if n.hasPrefix("llama") || n.hasPrefix("meta/")        { return "leaf.fill" }
+        if n.hasPrefix("kimi") || n.hasPrefix("moonshot")      { return "moon.fill" }
+        if n.hasPrefix("minimax")                               { return "infinity" }
+        if n.hasPrefix("grok") || n.hasPrefix("xai/")          { return "x.circle.fill" }
+        return "waveform.circle"
+    }
+
 }
 
 // MARK: - Week section

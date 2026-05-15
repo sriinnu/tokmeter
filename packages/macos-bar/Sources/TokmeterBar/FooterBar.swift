@@ -22,6 +22,11 @@ struct FooterBar: View {
     /// Refresh icon rotation — spins while `loader.isLoading` is true.
     @State private var refreshAngle: Double = 0
 
+    /// Drives the anomaly drill-in sheet. The pill is the glance; the sheet
+    /// is the full per-field breakdown — sortable, copyable, no tooltip-
+    /// chasing.
+    @State private var showAnomalySheet = false
+
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.1"
     }
@@ -30,6 +35,15 @@ struct FooterBar: View {
         VStack(spacing: 6) {
             attributionRow
             controlsRow
+        }
+        .sheet(isPresented: $showAnomalySheet) {
+            if let anomalies = loader.pricingAnomalies {
+                AnomalyDetailSheet(
+                    response: anomalies,
+                    theme: theme,
+                    isPresented: $showAnomalySheet
+                )
+            }
         }
     }
 
@@ -71,24 +85,14 @@ struct FooterBar: View {
             // the tooltip.
             if let anomalies = loader.pricingAnomalies, anomalies.total > 0 {
                 let collapsed = collapseAnomalies(anomalies.anomalies)
-                let preview = collapsed
-                    .prefix(5)
-                    .map { group in
-                        let worst = group.worst
-                        let dir = worst.deltaPct > 0 ? "↑" : "↓"
-                        let pct = Int(abs(worst.deltaPct * 100))
-                        let extra = group.fieldCount > 1 ? "  (+\(group.fieldCount - 1) more fields)" : ""
-                        return "\(group.key)  \(worst.field) \(dir) \(pct)%\(extra)"
-                    }
-                    .joined(separator: "\n")
                 let modelLabel = collapsed.count == 1 ? "model" : "models"
-                Text("⚠︎ \(collapsed.count) \(modelLabel) repriced")
-                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
-                    .foregroundColor(.red)
-                    .help(
-                        "Kosha detected rate movements >25% in the last 24h "
-                        + "(\(anomalies.total) field updates across \(collapsed.count) \(modelLabel)):\n\(preview)"
-                    )
+                AnomalyPill(
+                    text: "⚠︎ \(collapsed.count) \(modelLabel) repriced",
+                    detailCount: anomalies.total,
+                    modelCount: collapsed.count,
+                    theme: theme,
+                    onTap: { showAnomalySheet = true }
+                )
             }
             if loader.pricingMtime > 0 {
                 // TimelineView ticks every 60s so "2h ago" stays accurate while

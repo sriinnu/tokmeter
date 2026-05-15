@@ -10,6 +10,12 @@ import {
   setCachedRecords,
 } from "./utils.js";
 
+interface ClaudeContentBlock {
+  type?: string;
+  /** Tool name on `type: "tool_use"` blocks (Bash, Read, Edit, …). */
+  name?: string;
+}
+
 interface ClaudeMessage {
   type: string;
   subtype?: string;
@@ -21,6 +27,8 @@ interface ClaudeMessage {
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
     };
+    /** Content blocks — assistant turns mix `thinking`, `text`, `tool_use`. */
+    content?: ClaudeContentBlock[];
   };
   timestamp?: string;
   costUSD?: number;
@@ -59,7 +67,12 @@ export class ClaudeCodeParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const projectsDir = expandHome("~/.claude/projects", homeDir);
-    const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 3);
+    // Depth 5: main sessions live at `<slug>/<sessionId>.jsonl` (depth 2),
+    // subagent runs at `<slug>/<sessionId>/subagents/agent-*.jsonl` (depth 4).
+    // Previous depth 3 silently missed every subagent file — those costs
+    // vanished from totals. Bumping picks them up + the parser tags them via
+    // `isSubagent` so the aggregator can break out "subagent share."
+    const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 5);
     const records: TokenRecord[] = [];
 
     for (const file of files) {
@@ -73,6 +86,7 @@ export class ClaudeCodeParser implements SessionParser {
 
       const project = extractProjectFromPath(file);
       const cwd = decodeClaudeSlugDir(file);
+      const isSubagent = file.includes("/subagents/");
 
       // Append mode: only parse new bytes from where we left off
       const lines =
@@ -110,6 +124,17 @@ export class ClaudeCodeParser implements SessionParser {
         if (usageKey && usageKey === lastUsageKey) continue;
         if (usageKey) lastUsageKey = usageKey;
 
+        // Tool names on this assistant turn. Multiple tool_use blocks in one
+        // message are common (parallel tool calls) — we keep them all and
+        // split cost evenly downstream in the aggregator. Skip nil/empty so
+        // we don't bloat records that were pure text answers.
+        const toolCalls: string[] = [];
+        for (const block of msg.message.content ?? []) {
+          if (block.type === "tool_use" && block.name) {
+            toolCalls.push(block.name);
+          }
+        }
+
         newRecords.push(
           createRecord({
             timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
@@ -123,6 +148,8 @@ export class ClaudeCodeParser implements SessionParser {
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
             cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
             cost: msg.costUSD ?? 0,
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            isSubagent: isSubagent ? true : undefined,
           })
         );
         lastAssistantIdx = newRecords.length - 1;

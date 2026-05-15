@@ -35,6 +35,26 @@ struct ThemeColors {
     let tertiary: Color     // Streak / third stat card
 }
 
+// MARK: - Semantic status colors
+
+/// Status-tier colors shared across every theme. These encode meaning, not
+/// brand — red is "this needs your attention", amber is "approaching a
+/// limit", green is "things are working." Theme-tinted palettes still pick
+/// these for status signals; a future high-contrast/accessibility theme can
+/// promote them to ThemeColors if it needs to override.
+///
+/// Centralized here because they used to live as RGB triples in 5+ files
+/// (SignalsRibbon, HubPulseCard, AnomalyDetail, StatCards…). One source of
+/// truth means tuning the red once tunes it everywhere.
+extension Color {
+    /// Red — kosha anomaly direction, late billing window, overspend pace.
+    static let tokDanger = Color(red: 0.96, green: 0.42, blue: 0.42)
+    /// Amber — approaching a limit (cache <60%, billing >75% elapsed, etc).
+    static let tokWarning = Color(red: 0.95, green: 0.70, blue: 0.30)
+    /// Green — healthy (cache ≥90%, anomaly going down, low burn).
+    static let tokSuccess = Color(red: 0.13, green: 0.80, blue: 0.47)
+}
+
 // MARK: - Background surface
 
 /// How the whole popover surface paints itself.

@@ -99,8 +99,8 @@ struct StatsGrid: View {
 
     /// Pace role color — amber when burning hot, green when easy day, neutral at par.
     private func paceRole(for multiple: Double) -> Color {
-        if multiple >= 1.25 { return Color(red: 0.95, green: 0.70, blue: 0.30) }
-        if multiple <= 0.75 { return Color(red: 0.13, green: 0.80, blue: 0.47) }
+        if multiple >= 1.25 { return Color.tokWarning }
+        if multiple <= 0.75 { return Color.tokSuccess }
         return c.tertiary
     }
 
@@ -284,9 +284,7 @@ struct DeltaPill: View {
 
     var body: some View {
         let positive = percent >= 0
-        let color: Color = positive
-            ? Color(red: 0.13, green: 0.80, blue: 0.47)
-            : Color(red: 0.96, green: 0.42, blue: 0.42)
+        let color: Color = positive ? Color.tokSuccess : Color.tokDanger
         HStack(spacing: 2) {
             Image(systemName: positive ? "arrow.up" : "arrow.down")
                 .font(.system(size: 7, weight: .bold))
