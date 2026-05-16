@@ -623,7 +623,18 @@ async function runRoutes(options: {
   }
   if (records.length === 0) {
     if (options.json) {
-      console.log(JSON.stringify({ scope: { project: options.project, today: true }, totals, actualCost: 0, projections: [] }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            scope: { project: options.project, today: true },
+            totals,
+            actualCost: 0,
+            projections: [],
+          },
+          null,
+          2
+        )
+      );
     } else {
       console.log("No records in scope. Did you mean --project <name>?");
     }
@@ -639,7 +650,9 @@ async function runRoutes(options: {
     lifetime.map(async (m) => ({
       model: m.model,
       provider: m.provider,
-      projectedCost: await (core as unknown as { pricing: { calculateCost(...args: unknown[]): Promise<number> } }).pricing.calculateCost(
+      projectedCost: await (
+        core as unknown as { pricing: { calculateCost(...args: unknown[]): Promise<number> } }
+      ).pricing.calculateCost(
         m.model,
         totals.input,
         totals.output,
@@ -656,50 +669,71 @@ async function runRoutes(options: {
   const projections = projectionsRaw
     .filter((p) => p.projectedCost > 0.0001)
     .sort((a, b) => a.projectedCost - b.projectedCost);
-  const unpriced = projectionsRaw
-    .filter((p) => p.projectedCost <= 0.0001)
-    .map((p) => p.model);
+  const unpriced = projectionsRaw.filter((p) => p.projectedCost <= 0.0001).map((p) => p.model);
 
   if (options.json) {
-    console.log(JSON.stringify({
-      scope: { project: options.project, today: true },
-      totals,
-      actualCost,
-      projections,
-      generatedAt: new Date().toISOString(),
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          scope: { project: options.project, today: true },
+          totals,
+          actualCost,
+          projections,
+          generatedAt: new Date().toISOString(),
+        },
+        null,
+        2
+      )
+    );
     return;
   }
 
   // Pretty table output.
   console.log("");
-  console.log(`tokmeter routes — projection for today${options.project ? ` (project: ${options.project})` : ""}`);
+  console.log(
+    `tokmeter routes — projection for today${options.project ? ` (project: ${options.project})` : ""}`
+  );
   console.log("");
-  console.log(`Tokens: ${totals.input.toLocaleString()} input · `
-    + `${totals.output.toLocaleString()} output · `
-    + `${totals.cacheRead.toLocaleString()} cacheRead · `
-    + `${totals.cacheWrite.toLocaleString()} cacheWrite · `
-    + `${totals.reasoning.toLocaleString()} reasoning`);
+  console.log(
+    `Tokens: ${totals.input.toLocaleString()} input · ` +
+      `${totals.output.toLocaleString()} output · ` +
+      `${totals.cacheRead.toLocaleString()} cacheRead · ` +
+      `${totals.cacheWrite.toLocaleString()} cacheWrite · ` +
+      `${totals.reasoning.toLocaleString()} reasoning`
+  );
   console.log(`Actual cost (historical pricing): $${actualCost.toFixed(2)}`);
   console.log("");
   console.log("Projected cost on today's kosha (sorted, cheapest first):");
   console.log("");
   const pad = (s: string, n: number) => s.padEnd(n);
-  console.log(`  ${pad("MODEL", 38)} ${pad("PROVIDER", 14)} ${pad("PROJECTED", 12)} ${"Δ vs ACTUAL"}`);
+  console.log(
+    `  ${pad("MODEL", 38)} ${pad("PROVIDER", 14)} ${pad("PROJECTED", 12)} ${"Δ vs ACTUAL"}`
+  );
   console.log(`  ${"─".repeat(38)} ${"─".repeat(14)} ${"─".repeat(12)} ${"─".repeat(11)}`);
   for (const p of projections) {
     const delta = p.projectedCost - actualCost;
-    const deltaStr = Math.abs(delta) < 0.005
-      ? "—"
-      : (delta < 0 ? `−$${Math.abs(delta).toFixed(2)}` : `+$${delta.toFixed(2)}`);
-    console.log(`  ${pad(p.model.slice(0, 38), 38)} ${pad(p.provider, 14)} $${pad(p.projectedCost.toFixed(2), 11)} ${deltaStr}`);
+    const deltaStr =
+      Math.abs(delta) < 0.005
+        ? "—"
+        : delta < 0
+          ? `−$${Math.abs(delta).toFixed(2)}`
+          : `+$${delta.toFixed(2)}`;
+    console.log(
+      `  ${pad(p.model.slice(0, 38), 38)} ${pad(p.provider, 14)} $${pad(p.projectedCost.toFixed(2), 11)} ${deltaStr}`
+    );
   }
   console.log("");
-  console.log("Note: alternatives use TODAY's kosha pricing; actual uses historical (frozen) pricing.");
-  console.log("Layer 1 (pure pricing translation) — no cache-economics adjustment for cross-provider differences.");
+  console.log(
+    "Note: alternatives use TODAY's kosha pricing; actual uses historical (frozen) pricing."
+  );
+  console.log(
+    "Layer 1 (pure pricing translation) — no cache-economics adjustment for cross-provider differences."
+  );
   if (unpriced.length > 0) {
     console.log("");
-    console.log(`Unpriced models excluded (no kosha price; honest \$? not free): ${unpriced.join(", ")}`);
+    console.log(
+      `Unpriced models excluded (no kosha price; honest \$? not free): ${unpriced.join(", ")}`
+    );
   }
 }
 
