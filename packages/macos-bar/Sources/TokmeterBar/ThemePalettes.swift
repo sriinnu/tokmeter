@@ -62,14 +62,18 @@ extension AppTheme {
             )
 
         case .hud:
-            // Tactical instrument panel. Phosphor green, warning amber, alert red.
+            // Pivoted to amber-on-black ("old radar") so the five tier colors
+            // have actual spread — the previous all-green palette collapsed
+            // every tier-composition signal into a monochrome smear. Tier
+            // colors now span deep-amber → bright-amber → cyan → red → teal
+            // → muted-orange, mil-aesthetic intact but functionally readable.
             return ThemeColors(
-                primary:   Color(red: 0.000, green: 0.267, blue: 0.216),  // #004437 deep tactical
-                secondary: Color(red: 0.000, green: 1.000, blue: 0.553),  // #00ff8d phosphor green
-                accent:    Color(red: 0.000, green: 0.831, blue: 1.000),  // #00d4ff HUD cyan
-                highlight: Color(red: 1.000, green: 0.722, blue: 0.000),  // #ffb800 warning amber
-                warm:      Color(red: 1.000, green: 0.549, blue: 0.000),  // #ff8c00 orange
-                tertiary:  Color(red: 0.424, green: 0.859, blue: 0.533)   // #6cdb88 HUD mint
+                primary:   Color(red: 0.349, green: 0.180, blue: 0.000),  // #592e00 deep amber base
+                secondary: Color(red: 1.000, green: 0.690, blue: 0.000),  // #ffb000 radar amber
+                accent:    Color(red: 0.000, green: 0.831, blue: 1.000),  // #00d4ff signal cyan
+                highlight: Color(red: 1.000, green: 0.882, blue: 0.510),  // #ffe182 readout cream
+                warm:      Color(red: 1.000, green: 0.396, blue: 0.180),  // #ff652e alert orange
+                tertiary:  Color(red: 0.235, green: 0.616, blue: 0.671)   // #3c9eab muted teal
             )
 
         case .terminal:

@@ -83,7 +83,9 @@ enum BackgroundMode {
         case .deepMagenta:
             return Color(red: 0.07, green: 0.03, blue: 0.13)
         case .tactical:
-            return Color(red: 0.02, green: 0.04, blue: 0.04)
+            // Near-black with a faint warm tint to anchor the amber palette
+            // (was green-tinted to match the old phosphor look).
+            return Color(red: 0.05, green: 0.035, blue: 0.020)
         case .terminalBlack:
             return Color(red: 0.0, green: 0.02, blue: 0.01)
         case .paperWarm:
@@ -138,7 +140,7 @@ enum BackgroundMode {
         case .deepMagenta:
             return [base, Color(red: 0.04, green: 0.02, blue: 0.08)]
         case .tactical:
-            return [base, Color(red: 0.01, green: 0.02, blue: 0.02)]
+            return [base, Color(red: 0.02, green: 0.015, blue: 0.008)]
         case .lightCream:
             return [base, Color(red: 0.96, green: 0.93, blue: 0.90)]
         case .terminalBlack:
@@ -240,6 +242,15 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case glass
     case aurora
     case blueprint
+
+    /// Order the picker shows. Daylight is hidden — Paper does light theme
+    /// better and two cream themes split attention. The case stays in the
+    /// enum so persisted user settings don't crash on decode, but it never
+    /// appears in the picker. Selecting it manually still works.
+    static var allCases: [AppTheme] = [
+        .terminal, .paper, .blueprint, .nebula, .aurora,
+        .nocturne, .glass, .synthwave, .hud,
+    ]
 
     var id: String { rawValue }
 

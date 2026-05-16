@@ -45,36 +45,37 @@ struct HeroBackground: View {
     private var aurora: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            // 60s + 90s base periods (non-multiple so the pattern doesn't
-            // loop visibly). Each color stop drifts on its own phase.
-            let p1 = sin(t * 2 * .pi / 60)
-            let p2 = cos(t * 2 * .pi / 90)
-            let p3 = sin(t * 2 * .pi / 75)
+            // 45/60/75s phased periods — faster than the initial pass so the
+            // motion is actually visible without being distracting. Each
+            // stop drifts on its own phase to keep the pattern non-looping.
+            let p1 = sin(t * 2 * .pi / 45)
+            let p2 = cos(t * 2 * .pi / 75)
+            let p3 = sin(t * 2 * .pi / 60)
             ZStack {
                 // Solid base anchor.
                 Color(red: 0.02, green: 0.03, blue: 0.08)
-                // Three radial gradients, each at a slowly-drifting position.
-                // Together they create the "curtain of light" feel.
+                // Three radial gradients drift independently with stronger
+                // peak intensities than v1 — "curtain of light" should land
+                // as luminous, not subliminal.
                 RadialGradient(
-                    colors: [c.secondary.opacity(0.55), Color.clear],
-                    center: UnitPoint(x: 0.25 + p1 * 0.18, y: 0.30 + p2 * 0.12),
-                    startRadius: 20, endRadius: 280
+                    colors: [c.secondary.opacity(0.78), c.secondary.opacity(0.10), Color.clear],
+                    center: UnitPoint(x: 0.25 + p1 * 0.22, y: 0.30 + p2 * 0.16),
+                    startRadius: 15, endRadius: 320
                 )
                 RadialGradient(
-                    colors: [c.accent.opacity(0.45), Color.clear],
-                    center: UnitPoint(x: 0.72 + p3 * 0.15, y: 0.55 + p1 * 0.10),
-                    startRadius: 30, endRadius: 320
+                    colors: [c.accent.opacity(0.65), c.accent.opacity(0.08), Color.clear],
+                    center: UnitPoint(x: 0.72 + p3 * 0.20, y: 0.55 + p1 * 0.14),
+                    startRadius: 20, endRadius: 360
                 )
                 RadialGradient(
-                    colors: [c.tertiary.opacity(0.30), Color.clear],
-                    center: UnitPoint(x: 0.50 + p2 * 0.20, y: 0.20 + p3 * 0.08),
-                    startRadius: 40, endRadius: 260
+                    colors: [c.tertiary.opacity(0.45), Color.clear],
+                    center: UnitPoint(x: 0.50 + p2 * 0.25, y: 0.20 + p3 * 0.12),
+                    startRadius: 30, endRadius: 280
                 )
-                // Faint star-like specular over the top so it reads as
-                // "night sky" not "abstract gradient."
+                // Faint star-like specular over the top.
                 RadialGradient(
-                    colors: [Color.white.opacity(0.06), Color.clear],
-                    center: .top, startRadius: 0, endRadius: 200
+                    colors: [Color.white.opacity(0.08), Color.clear],
+                    center: .top, startRadius: 0, endRadius: 220
                 )
             }
         }
@@ -90,10 +91,12 @@ struct HeroBackground: View {
         ZStack {
             // Cream paper base.
             Color(red: 0.955, green: 0.945, blue: 0.910)
-            // Faint cyan grid — major lines every 40pt, minor every 10pt.
+            // Cyan grid — major lines every 40pt, minor every 10pt. Bolder
+            // than v1 so the drafting-paper texture actually reads at the
+            // bar's viewing distance.
             Canvas { ctx, size in
-                let major = c.accent.opacity(0.18)
-                let minor = c.accent.opacity(0.08)
+                let major = c.accent.opacity(0.32)
+                let minor = c.accent.opacity(0.14)
                 var minorPath = Path()
                 var majorPath = Path()
                 let step: CGFloat = 10
@@ -126,10 +129,36 @@ struct HeroBackground: View {
                 ctx.stroke(minorPath, with: .color(minor), lineWidth: 0.5)
                 ctx.stroke(majorPath, with: .color(major), lineWidth: 0.8)
             }
-            // Hairline frame at the edges — the "drawing border" callout.
+            // Drawing border + corner tick marks. The ticks are the
+            // engineering-drawing tell — small L-shapes at each corner that
+            // sell "this is a technical document, not a card."
             Rectangle()
-                .stroke(c.primary.opacity(0.35), lineWidth: 0.8)
-                .padding(6)
+                .stroke(c.primary.opacity(0.55), lineWidth: 1.0)
+                .padding(8)
+            GeometryReader { geo in
+                let w = geo.size.width; let h = geo.size.height
+                let s: CGFloat = 14
+                let inset: CGFloat = 8
+                Path { p in
+                    // Top-left
+                    p.move(to: CGPoint(x: inset, y: inset + s))
+                    p.addLine(to: CGPoint(x: inset, y: inset))
+                    p.addLine(to: CGPoint(x: inset + s, y: inset))
+                    // Top-right
+                    p.move(to: CGPoint(x: w - inset - s, y: inset))
+                    p.addLine(to: CGPoint(x: w - inset, y: inset))
+                    p.addLine(to: CGPoint(x: w - inset, y: inset + s))
+                    // Bottom-left
+                    p.move(to: CGPoint(x: inset, y: h - inset - s))
+                    p.addLine(to: CGPoint(x: inset, y: h - inset))
+                    p.addLine(to: CGPoint(x: inset + s, y: h - inset))
+                    // Bottom-right
+                    p.move(to: CGPoint(x: w - inset - s, y: h - inset))
+                    p.addLine(to: CGPoint(x: w - inset, y: h - inset))
+                    p.addLine(to: CGPoint(x: w - inset, y: h - inset - s))
+                }
+                .stroke(c.primary.opacity(0.75), lineWidth: 1.5)
+            }
         }
     }
 
@@ -230,16 +259,23 @@ struct HeroBackground: View {
             GeometryReader { geo in
                 let w = geo.size.width; let h = geo.size.height
                 let horizon = h * 0.58
-                // Grid rails below horizon
-                Path { p in
-                    for i in 0..<7 {
-                        let t = CGFloat(i) / 6
-                        let y = horizon + (h - horizon) * pow(t, 1.4)
-                        p.move(to: CGPoint(x: 0, y: y))
-                        p.addLine(to: CGPoint(x: w, y: y))
+                // Grid rails below horizon — animated phase scrolls the
+                // horizontal lines TOWARD the horizon. Selling the retrofuture
+                // motion the static version was only pretending to deliver.
+                // 6s period, perspective-warped via pow(t, 1.4).
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { tl in
+                    let phase = CGFloat(tl.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: 6.0) / 6.0)
+                    Path { p in
+                        for i in 0..<8 {
+                            let t = (CGFloat(i) / 7 + phase).truncatingRemainder(dividingBy: 1.0)
+                            let y = horizon + (h - horizon) * pow(t, 1.4)
+                            p.move(to: CGPoint(x: 0, y: y))
+                            p.addLine(to: CGPoint(x: w, y: y))
+                        }
                     }
+                    .stroke(c.secondary.opacity(0.55), lineWidth: 0.7)
                 }
-                .stroke(c.secondary.opacity(0.55), lineWidth: 0.7)
                 // Vanishing-point verticals
                 Path { p in
                     let vx = w / 2; let vy = horizon
