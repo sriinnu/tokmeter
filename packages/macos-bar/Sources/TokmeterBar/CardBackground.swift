@@ -131,14 +131,38 @@ struct CardBackground: View {
             .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
 
         case .blueprintFrame:
-            // No fill so the underlying grid shows through. Just a cyan
-            // hairline — the chrome reads as a drafting-paper callout box
-            // around the data, not a card with a background.
             ZStack {
                 RoundedRectangle(cornerRadius: radius)
                     .strokeBorder(role.opacity(0.55), lineWidth: 0.8)
                 RoundedRectangle(cornerRadius: radius)
                     .fill(Color.white.opacity(0.20))
+            }
+
+        case .noiseStuck:
+            // Solid white fill + chunky 2pt black border + 3pt HARD offset
+            // shadow (no blur, no opacity). Reads as "sticky note stuck on
+            // a yellow board." The chrome IS the personality.
+            ZStack {
+                // Hard offset shadow — black, no blur, no alpha
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.black)
+                    .offset(x: 3, y: 3)
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.white)
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(Color.black, lineWidth: 2)
+            }
+
+        case .mintHairline:
+            // Solid white fill + 1pt black hairline. The translucent version
+            // read as washed-out on peach; solid cards feel like objects ON
+            // the surface (the reference app's discipline). 14pt rounded
+            // corners stay pill-friendly.
+            ZStack {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.white)
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(Color.black.opacity(0.55), lineWidth: 1.0)
             }
         }
     }

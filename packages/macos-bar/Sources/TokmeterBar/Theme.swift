@@ -70,6 +70,8 @@ enum BackgroundMode {
     case glassBlur        // Translucent material — works over wallpaper (Glass)
     case auroraDrift      // Deep night with slow-drifting northern-lights gradient
     case blueprintGrid    // Cream-paper bg with cyan grid lines (Blueprint)
+    case noiseYellow      // Canary-yellow flat surface (Noise / neobrutalist)
+    case mintPeach        // Warm peach surface (Mint / soft editorial)
 
     /// The base surface color painted as the popover's background.
     var surfaceColor: Color {
@@ -99,15 +101,23 @@ enum BackgroundMode {
             // anchor to without flicker.
             return Color(red: 0.02, green: 0.03, blue: 0.08)
         case .blueprintGrid:
-            // Cream paper base. Cyan grid is overlaid in the renderer.
             return Color(red: 0.955, green: 0.945, blue: 0.910)
+        case .noiseYellow:
+            // Canary yellow — the bright neobrutalist hero color. Cards
+            // become flat-color sticky-notes on top via the noiseStuck card
+            // mode. Confidence as design; zero gradients.
+            return Color(red: 1.000, green: 0.851, blue: 0.239) // #ffd93d
+        case .mintPeach:
+            // Warm peach — softer than Paper's cool cream. Black ink + a
+            // single lime accent carry the entire personality.
+            return Color(red: 1.000, green: 0.898, blue: 0.769) // #ffe5c4
         }
     }
 
     /// Whether this surface is light (drives text color inversion).
     var isLight: Bool {
         switch self {
-        case .lightCream, .paperWarm, .blueprintGrid: return true
+        case .lightCream, .paperWarm, .blueprintGrid, .noiseYellow, .mintPeach: return true
         default: return false
         }
     }
@@ -153,6 +163,11 @@ enum BackgroundMode {
             return [base, Color(red: 0.01, green: 0.02, blue: 0.05)]
         case .blueprintGrid:
             return [base, Color(red: 0.942, green: 0.928, blue: 0.890)]
+        case .noiseYellow:
+            // No gradient — neobrutalist commits to flat fill
+            return [base, base]
+        case .mintPeach:
+            return [base, Color(red: 0.988, green: 0.886, blue: 0.757)]
         case .dark:
             return [base, base]
         }
@@ -173,6 +188,8 @@ enum HeroMode {
     case glassMaterial      // Translucent material + soft tint + glossy highlight
     case auroraDrift        // Slow-drifting aurora gradient — motion as identity
     case blueprintTechnical // Hairline cyan frame, mono digits, drafting feel
+    case noiseBrutal        // Heavy black sans on canary yellow, brutalist
+    case mintEditorial      // Peach surface, lime accent, hairline underline
 }
 
 // MARK: - Card style
@@ -189,6 +206,8 @@ enum CardMode {
     case glassFrost       // Glass: ultra-thin material with subtle border
     case auroraGlass      // Aurora: thin-material on the drifting bg, soft glow
     case blueprintFrame   // Blueprint: cyan hairline frame, no fill, mono
+    case noiseStuck       // Noise: solid color + 2pt black border + hard offset shadow
+    case mintHairline     // Mint: peach fill + 0.5pt black hairline, no shadow
 
     /// Corner radius — HUD/Terminal go sharper for readout feel.
     var cornerRadius: CGFloat {
@@ -197,6 +216,8 @@ enum CardMode {
         case .paperHairline: return 2
         case .neonOutlined: return 10
         case .glassFrost, .auroraGlass: return 14
+        case .noiseStuck: return 8   // chunky-but-not-pillow
+        case .mintHairline: return 14 // friendlier pill-shape feel
         default: return 12
         }
     }
@@ -242,16 +263,20 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case glass
     case aurora
     case blueprint
+    case noise
+    case mint
 
-    /// Order the picker shows. Hidden cases (Daylight, Blueprint) stay in
-    /// the enum so persisted settings don't crash on decode, but they don't
-    /// appear in the picker. Daylight: Paper covers light better. Blueprint:
-    /// the grid only painted the hero, the rest of the popover was naked
-    /// cream — felt like a worksheet, not an instrument. New references
-    /// pending.
+    /// Order the picker shows. Hidden cases stay in the enum so persisted
+    /// settings don't crash on decode.
+    /// - Daylight: Paper covers light better.
+    /// - Blueprint: only the hero got the grid; rest was naked cream.
+    /// - Mint: warmer-Paper-cousin — concept didn't differentiate enough.
+    /// - HUD: even amber-rework couldn't carry it. Terminal owns the
+    ///   instrument-panel space already.
+    /// - Synthwave: costume that scrolling-grid couldn't save.
     static var allCases: [AppTheme] = [
         .terminal, .paper, .nebula, .aurora,
-        .nocturne, .glass, .synthwave, .hud,
+        .noise, .nocturne, .glass,
     ]
 
     var id: String { rawValue }
@@ -268,6 +293,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return "Glass"
         case .aurora:    return "Aurora"
         case .blueprint: return "Blueprint"
+        case .noise:     return "Noise"
+        case .mint:      return "Mint"
         }
     }
 
@@ -283,6 +310,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return "Translucent glass"
         case .aurora:    return "Northern lights, drifting"
         case .blueprint: return "Drafting paper, cyan grid"
+        case .noise:     return "Neobrutalist canary yellow"
+        case .mint:      return "Warm peach + lime accent"
         }
     }
 
@@ -298,6 +327,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return "circle.lefthalf.filled"
         case .aurora:    return "sparkle"
         case .blueprint: return "ruler.fill"
+        case .noise:     return "exclamationmark.octagon.fill"
+        case .mint:      return "leaf.fill"
         }
     }
 
@@ -322,6 +353,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return .glassBlur
         case .aurora:    return .auroraDrift
         case .blueprint: return .blueprintGrid
+        case .noise:     return .noiseYellow
+        case .mint:      return .mintPeach
         }
     }
 
@@ -337,6 +370,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return .glassMaterial
         case .aurora:    return .auroraDrift
         case .blueprint: return .blueprintTechnical
+        case .noise:     return .noiseBrutal
+        case .mint:      return .mintEditorial
         }
     }
 
@@ -352,6 +387,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .glass:     return .glassFrost
         case .aurora:    return .auroraGlass
         case .blueprint: return .blueprintFrame
+        case .noise:     return .noiseStuck
+        case .mint:      return .mintHairline
         }
     }
 
@@ -404,6 +441,18 @@ enum AppTheme: String, CaseIterable, Identifiable {
             return ThemeFonts(heroDesign: .monospaced, heroWeight: .bold,
                               valueDesign: .monospaced, valueWeight: .bold,
                               labelDesign: .serif,      bodyDesign: .default)
+        case .noise:
+            // Heavy black sans across the board — neobrutalist commits to
+            // weight, not contrast tricks. Hero numbers hit like headlines.
+            return ThemeFonts(heroDesign: .default,    heroWeight: .black,
+                              valueDesign: .default,   valueWeight: .heavy,
+                              labelDesign: .default,   bodyDesign: .default)
+        case .mint:
+            // Editorial: serif hero (display-y), default sans for labels and
+            // body. Friendly, warm, considered.
+            return ThemeFonts(heroDesign: .serif,      heroWeight: .semibold,
+                              valueDesign: .default,   valueWeight: .semibold,
+                              labelDesign: .default,   bodyDesign: .default)
         }
     }
 

@@ -136,6 +136,32 @@ extension AppTheme {
                 warm:      Color(red: 0.812, green: 0.490, blue: 0.290),  // #cf7d4a sienna
                 tertiary:  Color(red: 0.298, green: 0.518, blue: 0.349)   // #4c8559 forest
             )
+
+        case .noise:
+            // Neobrutalist palette — bright flat colors, each tier gets a
+            // confident hue. Black ink does the typography work; colors
+            // carry the personality. NO mid-tones, NO gradients.
+            return ThemeColors(
+                primary:   Color(red: 0.063, green: 0.063, blue: 0.063),  // #101010 near-black ink
+                secondary: Color(red: 0.388, green: 0.667, blue: 0.945),  // #63aaf1 sky blue
+                accent:    Color(red: 0.929, green: 0.298, blue: 0.286),  // #ed4c49 alarm red
+                highlight: Color(red: 0.231, green: 0.792, blue: 0.345),  // #3bca58 grass green
+                warm:      Color(red: 0.973, green: 0.541, blue: 0.196),  // #f88a32 orange
+                tertiary:  Color(red: 0.722, green: 0.529, blue: 0.957)   // #b887f4 lavender
+            )
+
+        case .mint:
+            // Soft editorial palette — black ink as primary, single lime
+            // accent doing the energy work. Tier roles use opacity-modulated
+            // lime + black so the surface stays calm.
+            return ThemeColors(
+                primary:   Color(red: 0.094, green: 0.094, blue: 0.094),  // #181818 ink
+                secondary: Color(red: 0.380, green: 0.380, blue: 0.380),  // #616161 grey-secondary
+                accent:    Color(red: 0.357, green: 0.831, blue: 0.349),  // #5bd459 lime
+                highlight: Color(red: 0.851, green: 0.337, blue: 0.235),  // #d9563c brick (cost ink)
+                warm:      Color(red: 0.961, green: 0.612, blue: 0.376),  // #f59c60 peach
+                tertiary:  Color(red: 0.380, green: 0.682, blue: 0.349)   // #61ae59 forest-lime
+            )
         }
     }
 }

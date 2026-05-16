@@ -180,6 +180,9 @@ struct HeroHeader: View {
         case .paper:    return c.highlight                  // editorial red on cream
         case .terminal: return c.secondary                  // phosphor green on black
         case .hud:      return c.secondary                  // phosphor green on tactical
+        case .noise:    return Color.black.opacity(0.75)    // ink on canary yellow
+        case .mint:     return c.highlight                  // brick-red on peach
+        case .blueprint: return c.primary                   // technical blue on cream
         default:        return Color.white.opacity(0.85)    // clean white on dark heroes
         }
     }
@@ -244,7 +247,11 @@ struct HeroHeader: View {
     /// themes use their signature phosphor/ink hue.
     private var foreground: Color {
         switch theme {
-        case .daylight, .paper: return Color.black.opacity(0.92)
+        case .daylight, .paper, .noise, .mint, .blueprint:
+            // Light surfaces — dark ink. The previous default-to-white was
+            // baking white text into the canary-yellow Noise hero. .blueprint
+            // is hidden from picker but kept here for consistency.
+            return Color.black.opacity(0.92)
         case .hud, .terminal:   return c.secondary
         case .glass:            return Color.white.opacity(0.95)
         default:                return Color.white
@@ -272,6 +279,8 @@ struct HeroHeader: View {
         case .glass:     return Color.black.opacity(0.18)
         case .aurora:    return c.accent.opacity(0.35)
         case .blueprint: return Color.black.opacity(0.10)
+        case .noise:     return Color.black.opacity(0.40)   // hard offset reads as "stuck on"
+        case .mint:      return Color.black.opacity(0.06)   // hairline whisper
         }
     }
 
@@ -295,7 +304,7 @@ struct HeroHeader: View {
     @ViewBuilder
     private var innerHighlight: some View {
         switch theme {
-        case .daylight, .hud, .terminal, .paper, .blueprint:
+        case .daylight, .hud, .terminal, .paper, .blueprint, .noise, .mint:
             EmptyView()
         default:
             notchShape.strokeBorder(
@@ -317,6 +326,9 @@ struct HeroHeader: View {
             case .terminal:  return c.secondary.opacity(0.40)
             case .paper:     return Color.black.opacity(0.18)
             case .glass:     return Color.white.opacity(0.25)
+            case .noise:     return Color.black.opacity(0.45)   // ink frame
+            case .mint:      return Color.black.opacity(0.12)   // hairline
+            case .blueprint: return Color.black.opacity(0.18)
             default:         return Color.white.opacity(0.10)
             }
         }()

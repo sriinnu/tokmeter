@@ -32,6 +32,55 @@ struct HeroBackground: View {
         case .glassMaterial:     glass
         case .auroraDrift:       aurora
         case .blueprintTechnical: blueprint
+        case .noiseBrutal:       noise
+        case .mintEditorial:     mint
+        }
+    }
+
+    // MARK: - Noise (neobrutalist)
+
+    /// Flat canary yellow + heavy black bottom border. Hero number sits on
+    /// top in heaviest black weight. Zero gradients, zero subtlety. The
+    /// "★ NEW" corner badge was clobbering the live-session pill so it's
+    /// gone — confidence-as-design doesn't mean crowding the data.
+    private var noise: some View {
+        ZStack(alignment: .topTrailing) {
+            Color(red: 1.000, green: 0.851, blue: 0.239)
+            Rectangle()
+                .stroke(Color.black, lineWidth: 3)
+                .padding(EdgeInsets(top: -3, leading: -3, bottom: 0, trailing: -3))
+        }
+    }
+
+    // MARK: - Mint (soft editorial)
+
+    /// Peach surface + a confident lime BLOCK along the bottom (not a thin
+    /// rule — a real chunky kicker like the bold green CTA in the reference
+    /// app). A small "+/-" pace indicator floats top-right in lime to give
+    /// the hero a second touchpoint of color energy. Editorial in spirit,
+    /// committed in execution.
+    private var mint: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color(red: 1.000, green: 0.898, blue: 0.769)
+            // Bottom kicker — chunky lime block, the editorial CTA-energy
+            // moment. 8pt tall vs the previous 3pt hairline.
+            Rectangle()
+                .fill(c.accent)
+                .frame(height: 8)
+            // Pace dot top-right — a single lime period anchoring the
+            // opposite corner of the kicker. Two confident lime moments
+            // give the eye an axis to read along.
+            VStack {
+                HStack {
+                    Spacer()
+                    Circle()
+                        .fill(c.accent)
+                        .frame(width: 10, height: 10)
+                        .padding(.top, 14)
+                        .padding(.trailing, 18)
+                }
+                Spacer()
+            }
         }
     }
 
