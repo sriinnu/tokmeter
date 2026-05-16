@@ -565,6 +565,11 @@ function startHttpApi(): void {
         } else if (url === "/api/today-models") {
           const core = await getHttpCore();
           json(res, core.getModelCosts({ today: true }));
+        } else if (url === "/api/cross-tool") {
+          // Project today's token shape against the user's top lifetime
+          // models. Surfaces "what would today have cost on model X" — the
+          // kind of comparison only kosha-backed tools can ship honestly.
+          json(res, await core.getCrossToolComparison());
         } else if (url === "/api/update-pricing") {
           try {
             await refreshKoshaRegistry();

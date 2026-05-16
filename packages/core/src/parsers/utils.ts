@@ -86,8 +86,18 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      this field, so old records would silently mis-attribute compaction
  *      spend as normal turns. Force a re-parse so the new "% to compaction"
  *      signal is honest from the start.
+ *  7 — claude-code parser extracts tool_use block names into TokenRecord.
+ *      toolCalls so the bar can break out "% of today's spend by tool"
+ *      (Bash, Read, Edit, Task, …). Existing caches don't carry the field
+ *      so today's tool-cost view would be blank for cached records — force
+ *      a re-parse.
+ *  8 — claude-code parser now follows the depth bump (3→5) to pick up
+ *      subagent JSONLs under <slug>/<sessionId>/subagents/agent-*.jsonl.
+ *      These records were previously invisible (cost vanished from totals).
+ *      Records from subagent files are tagged `isSubagent:true`. Existing
+ *      caches lack the new files + flag — force a re-parse.
  */
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 8;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -100,6 +110,13 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
       // Reject old cache versions — fall through to empty map so all files
       // get re-parsed with the current parser semantics.
       if (data.version !== CACHE_VERSION) {
+        // Flag the rebuild so a long re-parse on first scan after upgrade
+        // doesn't look like a hung menubar. stderr keeps it out of stdout
+        // (which CLI consumers might be piping into jq).
+        console.warn(
+          `[tokmeter] scan-cache schema bumped ${data.version} → ${CACHE_VERSION}, `
+          + `rebuilding from JSONL on next scan. One-time cost.`
+        );
         cacheCreatedAt = new Date().toISOString();
         return recordCache;
       }

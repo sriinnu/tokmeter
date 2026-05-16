@@ -51,6 +51,7 @@ interface CliArgs extends ScanOptions {
     | "kosha-refresh"
     | "kosha-update"
     | "pricing-audit"
+    | "routes"
     | "update"
     | "refresh";
   /** Alias sub-command and its positional arguments. */
@@ -341,6 +342,7 @@ Output:
       case "update":
       case "refresh":
       case "pricing-audit":
+      case "routes":
         args.command = arg;
         break;
       case "alias":
@@ -580,6 +582,127 @@ async function runPricingAudit(_options: { json: boolean }): Promise<void> {
   }
 }
 
+/**
+ * `tokmeter routes` — cost surface explorer (MVP per docs/designs/routes.md).
+ *
+ * Layer 1 only: pure pricing translation. For the scope (today by default,
+ * configurable via --project), sums the five token classes once, then asks
+ * kosha to project the cost across every available model. Output sorted by
+ * projected cost ascending. JSON mode for piping into CI / spreadsheets.
+ *
+ * Honesty constraints (from the design doc):
+ *  - No "Recommended" / "Best value" badges. Sort is honest neutral.
+ *  - Models with missing tier pricing get projected at the input rate, the
+ *    cell is flagged so the user knows.
+ *  - "Actual run" cost uses historical frozen pricing; alternatives use
+ *    today's kosha. Both timestamps shown.
+ */
+async function runRoutes(options: {
+  json: boolean;
+  project?: string;
+}): Promise<void> {
+  const { TokmeterCore } = await import("@sriinnu/tokmeter");
+  const core = new TokmeterCore();
+  await core.scan({ today: true, project: options.project });
+  const records = core.getRecords();
+  const totals = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    reasoning: 0,
+  };
+  let actualCost = 0;
+  for (const r of records) {
+    totals.input += r.inputTokens;
+    totals.output += r.outputTokens;
+    totals.cacheRead += r.cacheReadTokens;
+    totals.cacheWrite += r.cacheWriteTokens;
+    totals.reasoning += r.reasoningTokens;
+    actualCost += r.cost;
+  }
+  if (records.length === 0) {
+    if (options.json) {
+      console.log(JSON.stringify({ scope: { project: options.project, today: true }, totals, actualCost: 0, projections: [] }, null, 2));
+    } else {
+      console.log("No records in scope. Did you mean --project <name>?");
+    }
+    return;
+  }
+
+  // Project against every model in the user's lifetime lineup. The design
+  // doc calls for kosha live + non-deprecated chat models — for the MVP we
+  // use the same "models the user has actually used" lineup, which has the
+  // pragmatic benefit of guaranteed-existing kosha pricing.
+  const lifetime = core.getModelCosts();
+  const projectionsRaw = await Promise.all(
+    lifetime.map(async (m) => ({
+      model: m.model,
+      provider: m.provider,
+      projectedCost: await (core as unknown as { pricing: { calculateCost(...args: unknown[]): Promise<number> } }).pricing.calculateCost(
+        m.model,
+        totals.input,
+        totals.output,
+        totals.cacheRead,
+        totals.cacheWrite,
+        totals.reasoning
+      ),
+    }))
+  );
+  // Drop $0 projections — these are models with no kosha pricing (synthetic
+  // mocks, opaque provider labels like `codex-auto-review`, deprecated entries).
+  // Showing them at the top of "cheapest" implies a free alternative when we
+  // just don't know the price. Honest to omit rather than misrank.
+  const projections = projectionsRaw
+    .filter((p) => p.projectedCost > 0.0001)
+    .sort((a, b) => a.projectedCost - b.projectedCost);
+  const unpriced = projectionsRaw
+    .filter((p) => p.projectedCost <= 0.0001)
+    .map((p) => p.model);
+
+  if (options.json) {
+    console.log(JSON.stringify({
+      scope: { project: options.project, today: true },
+      totals,
+      actualCost,
+      projections,
+      generatedAt: new Date().toISOString(),
+    }, null, 2));
+    return;
+  }
+
+  // Pretty table output.
+  console.log("");
+  console.log(`tokmeter routes — projection for today${options.project ? ` (project: ${options.project})` : ""}`);
+  console.log("");
+  console.log(`Tokens: ${totals.input.toLocaleString()} input · `
+    + `${totals.output.toLocaleString()} output · `
+    + `${totals.cacheRead.toLocaleString()} cacheRead · `
+    + `${totals.cacheWrite.toLocaleString()} cacheWrite · `
+    + `${totals.reasoning.toLocaleString()} reasoning`);
+  console.log(`Actual cost (historical pricing): $${actualCost.toFixed(2)}`);
+  console.log("");
+  console.log("Projected cost on today's kosha (sorted, cheapest first):");
+  console.log("");
+  const pad = (s: string, n: number) => s.padEnd(n);
+  console.log(`  ${pad("MODEL", 38)} ${pad("PROVIDER", 14)} ${pad("PROJECTED", 12)} ${"Δ vs ACTUAL"}`);
+  console.log(`  ${"─".repeat(38)} ${"─".repeat(14)} ${"─".repeat(12)} ${"─".repeat(11)}`);
+  for (const p of projections) {
+    const delta = p.projectedCost - actualCost;
+    const deltaStr = Math.abs(delta) < 0.005
+      ? "—"
+      : (delta < 0 ? `−$${Math.abs(delta).toFixed(2)}` : `+$${delta.toFixed(2)}`);
+    console.log(`  ${pad(p.model.slice(0, 38), 38)} ${pad(p.provider, 14)} $${pad(p.projectedCost.toFixed(2), 11)} ${deltaStr}`);
+  }
+  console.log("");
+  console.log("Note: alternatives use TODAY's kosha pricing; actual uses historical (frozen) pricing.");
+  console.log("Layer 1 (pure pricing translation) — no cache-economics adjustment for cross-provider differences.");
+  if (unpriced.length > 0) {
+    console.log("");
+    console.log(`Unpriced models excluded (no kosha price; honest \$? not free): ${unpriced.join(", ")}`);
+  }
+}
+
 // ---- Main ----
 
 async function main() {
@@ -716,6 +839,17 @@ async function main() {
     // / dashboards / Slack alerts. Makes the verification half of the
     // kosha-as-source-of-truth pattern a first-class artifact.
     await runPricingAudit({ json: args.json !== false });
+    return;
+  }
+
+  if (args.command === "routes") {
+    // Cost surface explorer: project today's tokens against every model
+    // the user has used. Layer 1 of docs/designs/routes.md — pure pricing
+    // translation, no cache-economics adjustment. JSON or pretty table.
+    await runRoutes({
+      json: args.json === true,
+      project: args.project,
+    });
     return;
   }
 

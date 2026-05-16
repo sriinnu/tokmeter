@@ -329,6 +329,80 @@ export class TokmeterCore {
     return aggregateByProvider(this.records);
   }
 
+  /**
+   * Cross-tool comparison: project today's exact token shape against each of
+   * the user's top N models from lifetime usage. Surfaces "if all of today's
+   * tokens had run on model X instead, you'd have spent $Y" — the kind of
+   * comparison nobody else ships because most trackers don't have a unified
+   * pricing oracle. Universal-first: no hardcoded model list; the projection
+   * uses kosha live so the lineup reflects what's actually billable today.
+   *
+   * Returns an array of {model, provider, projectedCost} sorted by projected
+   * cost ascending (cheapest alternative first). Actual today's cost is
+   * exposed separately so the UI can mark the "you used these" baseline.
+   */
+  async getCrossToolComparison(): Promise<{
+    todayActualCost: number;
+    todayTokens: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      reasoning: number;
+    };
+    projections: Array<{
+      model: string;
+      provider: ProviderId;
+      projectedCost: number;
+    }>;
+  }> {
+    const refTs = Date.now();
+    const todayRecords = this.records.filter(
+      (r) => !isBeforeToday(r.timestamp, refTs)
+    );
+    const totals = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+    };
+    let actual = 0;
+    for (const r of todayRecords) {
+      totals.input += r.inputTokens;
+      totals.output += r.outputTokens;
+      totals.cacheRead += r.cacheReadTokens;
+      totals.cacheWrite += r.cacheWriteTokens;
+      totals.reasoning += r.reasoningTokens;
+      actual += r.cost;
+    }
+    // Top 6 lifetime models — the lineup the user has demonstrated by use.
+    // Hardcoding a "popular models" list would violate the universal-first
+    // principle; projecting against the user's actual lineup is honest and
+    // useful (these are the alternatives they'd realistically pick).
+    const topModels = aggregateByModel(this.records).slice(0, 6);
+    const projections = await Promise.all(
+      topModels.map(async (m) => ({
+        model: m.model,
+        provider: m.provider,
+        projectedCost: await this.pricing.calculateCost(
+          m.model,
+          totals.input,
+          totals.output,
+          totals.cacheRead,
+          totals.cacheWrite,
+          totals.reasoning
+        ),
+      }))
+    );
+    projections.sort((a, b) => a.projectedCost - b.projectedCost);
+    return {
+      todayActualCost: actual,
+      todayTokens: totals,
+      projections,
+    };
+  }
+
   /** Get daily breakdown, optionally filtered by date range and project. */
   getDailyBreakdown(options?: { since?: string; until?: string; project?: string }): DailyEntry[] {
     let records = this.records;

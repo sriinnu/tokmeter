@@ -54,6 +54,25 @@ export interface TokenRecord {
    * versus actual work. Defaults to "normal" when absent.
    */
   kind?: "normal" | "compaction";
+  /**
+   * Names of tool_use blocks in this assistant turn. Only populated by the
+   * claude-code parser today — Claude Code is the only agent in the registry
+   * that exposes the tool names in its JSONL. Used by the daemon to compute
+   * "% of today's cost by tool" (Bash, Read, Edit, Task, …). When a turn has
+   * multiple tool calls, the cost is split evenly across them in aggregation.
+   * Empty array or undefined means "this turn was just text" (no tools).
+   */
+  toolCalls?: string[];
+  /**
+   * Whether this record came from a subagent JSONL (path contains
+   * `/subagents/`). Claude Code's Task tool spawns subagents that write to a
+   * separate file; previously the parser's depth-3 cap missed them entirely
+   * (cost vanished from totals). Tag here so the aggregator can roll up
+   * "subagent share of today" without losing the underlying cost in the
+   * project total. Compaction kind takes priority over this flag — a
+   * subagent compaction record is `kind:"compaction"` AND `isSubagent:true`.
+   */
+  isSubagent?: boolean;
 }
 
 /** Summary of token usage for a single model within a context. */
@@ -234,6 +253,81 @@ export interface StatbarSignals {
     /** Compaction events (records tagged kind:"compaction") today. */
     events: number;
   };
+  reasoningToday: {
+    /** Reasoning output tokens today (subset of outputTokens for OpenAI-style providers). */
+    tokens: number;
+    /** Total output tokens today — the denominator for share. */
+    outputTokens: number;
+    /** reasoningTokens / outputTokens, 0..1. 0 when no output today. */
+    share: number;
+    /** Records with reasoningTokens > 0 today — UI hides the chip when zero. */
+    records: number;
+  };
+  /**
+   * Today's subagent share. Claude Code's Task tool spawns subagents that
+   * write to a separate JSONL. Surfacing this share tells the user how much
+   * of their cost is going to nested agent work vs. main-session turns —
+   * actionable for spotting runaway subagent loops or expensive parallel
+   * fan-outs.
+   */
+  subagentToday: {
+    /** USD attributed to subagent records today. */
+    cost: number;
+    /** Number of subagent records today. */
+    records: number;
+    /** cost / totalCost today, 0..1. 0 when no spend today. */
+    share: number;
+  };
+  /**
+   * Today's tool-call cost breakdown. Only Claude Code populates this today
+   * (other providers don't expose tool names in their JSONL). When an
+   * assistant turn fires multiple tools in parallel, the turn's cost is
+   * split evenly across them — imperfect but the right call without
+   * per-tool token accounting from the upstream API.
+   */
+  toolCallsToday: {
+    /** Per-tool aggregates, sorted by cost descending. */
+    byTool: Array<{
+      /** Tool name as Claude Code wrote it ("Bash", "Read", "Edit", …). */
+      tool: string;
+      /** USD attributed to this tool today. */
+      cost: number;
+      /** cost / totalCost — UI uses this for bar widths. 0..1. */
+      share: number;
+      /** Number of times this tool was invoked today. */
+      calls: number;
+    }>;
+    /** Total cost of today's tool-using turns. Denominator for share. */
+    totalCost: number;
+    /** Total tool invocations today (sum across all tools). */
+    callCount: number;
+    /** Distinct turns that fired ≥1 tool today. */
+    turnsWithTools: number;
+  };
+  /**
+   * Claude Pro/Max 5-hour billing window. A new block starts at the first
+   * record after no Claude activity for >5h. Block ends 5h after its start.
+   * null when there's no active block (no Claude records, or last block
+   * expired). Only Claude has this billing model — other providers omit.
+   */
+  billingWindow: {
+    /** 1-based count of blocks observed in the record set. */
+    blockNumber: number;
+    /** epoch ms — when the current block started. */
+    blockStart: number;
+    /** epoch ms — when the current block will end (blockStart + 5h). */
+    blockEnd: number;
+    /** Seconds until blockEnd. 0 when expired (UI should hide). */
+    remainingSec: number;
+    /** (now - blockStart) / 5h × 100, clamped to 0..100. */
+    elapsedPct: number;
+    /** USD spent in the current block. */
+    cost: number;
+    /** Total tokens (all kinds) in the current block. */
+    tokens: number;
+    /** Records in the current block — UI uses this to count turns/messages. */
+    records: number;
+  } | null;
   liveSession: {
     provider: ProviderId;
     model: string;

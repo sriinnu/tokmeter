@@ -165,6 +165,12 @@ final class DaemonClient {
         try await get("/api/anomalies", as: AnomaliesResponse.self)
     }
 
+    /// Project today's tokens against the user's top lifetime models.
+    /// Drives the Hub's "If today ran on..." card.
+    func fetchCrossToolComparison() async throws -> CrossToolComparison {
+        try await get("/api/cross-tool", as: CrossToolComparison.self)
+    }
+
     /// Trigger a fresh kosha pricing registry pull. Blocks until the upstream
     /// discovery completes (typically 2–5s). Call from a background task.
     func updatePricing() async throws {

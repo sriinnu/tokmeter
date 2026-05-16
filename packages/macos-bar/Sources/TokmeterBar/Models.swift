@@ -24,6 +24,14 @@ struct ModelUsage: Identifiable, Equatable {
     let model: String
     let cost: Double
     let tokens: Int
+    /// Per-tier token counts. Optional so legacy wire shapes (CLI offline
+    /// fallback, very old daemon builds) don't fail to decode — the UI just
+    /// hides the sliver when these are all zero.
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
+    let reasoningTokens: Int
 }
 
 // MARK: - Wire types (decoded from daemon JSON)
@@ -47,6 +55,14 @@ struct ModelData: Codable {
     let cost: Double
     let totalTokens: Int
     let percentageOfTotal: Double
+    /// Per-tier breakdown emitted by the daemon's `ModelSummary`. Optional
+    /// so older wire shapes still decode — we default to 0 in the loader
+    /// when they're missing.
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let cacheReadTokens: Int?
+    let cacheWriteTokens: Int?
+    let reasoningTokens: Int?
 }
 
 /// /api/quick — fast cached response, may be unready (zeros) on cold start.
@@ -199,6 +215,28 @@ struct CompactionToday: Codable, Equatable {
     let events: Int
 }
 
+/// Today's subagent share — Claude Code's Task tool spawns subagents that
+/// write to a separate JSONL. Surfacing this share tells the user how much
+/// of their cost is going to nested agent work vs. main-session turns.
+struct SubagentToday: Codable, Equatable {
+    let cost: Double
+    let records: Int
+    let share: Double
+}
+
+struct ReasoningToday: Codable, Equatable {
+    /// Reasoning output tokens today (subset of outputTokens for OpenAI-style
+    /// providers — Codex, GPT-5.x-codex, etc.). 0 for providers that don't
+    /// report reasoning separately.
+    let tokens: Int
+    /// Total output tokens today — denominator for share.
+    let outputTokens: Int
+    /// reasoningTokens / outputTokens, 0…1.
+    let share: Double
+    /// Records with reasoningTokens > 0 today — UI hides the chip when zero.
+    let records: Int
+}
+
 struct LiveSession: Codable, Equatable {
     let provider: String
     let model: String
@@ -207,11 +245,86 @@ struct LiveSession: Codable, Equatable {
     let lastRecordCost: Double
 }
 
+/// Today's tool-call cost breakdown. Only Claude Code populates the upstream
+/// `toolCalls` field today, so this card is currently a Claude-only signal —
+/// the daemon still emits it (empty) for other-provider-only days so the
+/// schema stays stable.
+struct ToolCallEntry: Codable, Equatable, Identifiable {
+    /// Tool name as Claude Code wrote it ("Bash", "Read", "Edit", …).
+    let tool: String
+    /// USD attributed to this tool today.
+    let cost: Double
+    /// cost / totalCost — UI uses this for bar widths. 0…1.
+    let share: Double
+    /// Times this tool was invoked today.
+    let calls: Int
+
+    var id: String { tool }
+}
+
+struct ToolCallsToday: Codable, Equatable {
+    let byTool: [ToolCallEntry]
+    let totalCost: Double
+    let callCount: Int
+    let turnsWithTools: Int
+}
+
+/// Claude Pro/Max 5-hour billing window. Anthropic bills Pro/Max subscriptions
+/// in 5h buckets — hitting the cap inside a window forces a wait, which is a
+/// real failure mode. Surfaces the current block's cost + time remaining so
+/// the user can pace before getting kicked out. Other providers don't have
+/// this billing model so the daemon emits null for them.
+struct BillingWindow: Codable, Equatable {
+    let blockNumber: Int
+    /// epoch ms — when the current block started.
+    let blockStart: Double
+    /// epoch ms — when the current block ends.
+    let blockEnd: Double
+    /// Seconds until blockEnd. Always > 0 when this struct is non-null.
+    let remainingSec: Int
+    /// (now - blockStart) / 5h × 100, clamped to 0..100.
+    let elapsedPct: Double
+    /// USD spent in the current block.
+    let cost: Double
+    /// Total tokens (all kinds) in the current block.
+    let tokens: Int
+    /// Records in the current block — UI uses this to count turns/messages.
+    let records: Int
+}
+
+/// /api/cross-tool — projects today's token shape against the user's top
+/// lifetime models. "If all of today's tokens had run on model X instead,
+/// you'd have spent $Y."
+struct CrossToolProjection: Codable, Equatable, Identifiable {
+    let model: String
+    let provider: String
+    let projectedCost: Double
+    var id: String { model }
+}
+
+struct CrossToolTokens: Codable, Equatable {
+    let input: Int
+    let output: Int
+    let cacheRead: Int
+    let cacheWrite: Int
+    let reasoning: Int
+}
+
+struct CrossToolComparison: Codable, Equatable {
+    let todayActualCost: Double
+    let todayTokens: CrossToolTokens
+    let projections: [CrossToolProjection]
+}
+
 struct StatbarSignals: Codable, Equatable {
     let burnRate: BurnRate
     let cacheHitToday: CacheHitToday
     let pace: PaceSignal
     let compactionToday: CompactionToday
+    let subagentToday: SubagentToday
+    let reasoningToday: ReasoningToday
+    let toolCallsToday: ToolCallsToday
+    let billingWindow: BillingWindow?
     let liveSession: LiveSession?
 }
 

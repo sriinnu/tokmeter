@@ -62,14 +62,18 @@ extension AppTheme {
             )
 
         case .hud:
-            // Tactical instrument panel. Phosphor green, warning amber, alert red.
+            // Pivoted to amber-on-black ("old radar") so the five tier colors
+            // have actual spread — the previous all-green palette collapsed
+            // every tier-composition signal into a monochrome smear. Tier
+            // colors now span deep-amber → bright-amber → cyan → red → teal
+            // → muted-orange, mil-aesthetic intact but functionally readable.
             return ThemeColors(
-                primary:   Color(red: 0.000, green: 0.267, blue: 0.216),  // #004437 deep tactical
-                secondary: Color(red: 0.000, green: 1.000, blue: 0.553),  // #00ff8d phosphor green
-                accent:    Color(red: 0.000, green: 0.831, blue: 1.000),  // #00d4ff HUD cyan
-                highlight: Color(red: 1.000, green: 0.722, blue: 0.000),  // #ffb800 warning amber
-                warm:      Color(red: 1.000, green: 0.549, blue: 0.000),  // #ff8c00 orange
-                tertiary:  Color(red: 0.424, green: 0.859, blue: 0.533)   // #6cdb88 HUD mint
+                primary:   Color(red: 0.349, green: 0.180, blue: 0.000),  // #592e00 deep amber base
+                secondary: Color(red: 1.000, green: 0.690, blue: 0.000),  // #ffb000 radar amber
+                accent:    Color(red: 0.000, green: 0.831, blue: 1.000),  // #00d4ff signal cyan
+                highlight: Color(red: 1.000, green: 0.882, blue: 0.510),  // #ffe182 readout cream
+                warm:      Color(red: 1.000, green: 0.396, blue: 0.180),  // #ff652e alert orange
+                tertiary:  Color(red: 0.235, green: 0.616, blue: 0.671)   // #3c9eab muted teal
             )
 
         case .terminal:
@@ -105,6 +109,58 @@ extension AppTheme {
                 highlight: Color(red: 0.780, green: 0.647, blue: 0.537),  // #c7a589 warm beige
                 warm:      Color(red: 0.710, green: 0.643, blue: 0.757),  // #b5a4c1 lavender-slate
                 tertiary:  Color(red: 0.627, green: 0.773, blue: 0.706)   // #a0c5b4 sage
+            )
+
+        case .aurora:
+            // Northern-lights palette — deep teal, electric green, soft violet,
+            // with a warm coral highlight so the cost number doesn't melt into
+            // the cool background.
+            return ThemeColors(
+                primary:   Color(red: 0.055, green: 0.255, blue: 0.353),  // #0e4159 deep teal
+                secondary: Color(red: 0.180, green: 0.792, blue: 0.694),  // #2ecaa3 aurora green
+                accent:    Color(red: 0.541, green: 0.482, blue: 0.945),  // #8a7af1 electric violet
+                highlight: Color(red: 0.984, green: 0.722, blue: 0.420),  // #fbb86b warm coral
+                warm:      Color(red: 0.961, green: 0.553, blue: 0.420),  // #f58d6b sunset coral
+                tertiary:  Color(red: 0.412, green: 0.871, blue: 0.847)   // #69ded8 light teal
+            )
+
+        case .blueprint:
+            // Drafting-paper palette — saturated technical cyan as primary,
+            // slate-grey for body, brick-red for cost (the editorial "ink"
+            // accent), forest-green for healthy signals.
+            return ThemeColors(
+                primary:   Color(red: 0.122, green: 0.392, blue: 0.541),  // #1f648a technical blue
+                secondary: Color(red: 0.286, green: 0.349, blue: 0.412),  // #495969 slate
+                accent:    Color(red: 0.227, green: 0.580, blue: 0.776),  // #3a94c6 drafting cyan
+                highlight: Color(red: 0.722, green: 0.290, blue: 0.275),  // #b84a46 brick red
+                warm:      Color(red: 0.812, green: 0.490, blue: 0.290),  // #cf7d4a sienna
+                tertiary:  Color(red: 0.298, green: 0.518, blue: 0.349)   // #4c8559 forest
+            )
+
+        case .noise:
+            // Neobrutalist palette — bright flat colors, each tier gets a
+            // confident hue. Black ink does the typography work; colors
+            // carry the personality. NO mid-tones, NO gradients.
+            return ThemeColors(
+                primary:   Color(red: 0.063, green: 0.063, blue: 0.063),  // #101010 near-black ink
+                secondary: Color(red: 0.388, green: 0.667, blue: 0.945),  // #63aaf1 sky blue
+                accent:    Color(red: 0.929, green: 0.298, blue: 0.286),  // #ed4c49 alarm red
+                highlight: Color(red: 0.231, green: 0.792, blue: 0.345),  // #3bca58 grass green
+                warm:      Color(red: 0.973, green: 0.541, blue: 0.196),  // #f88a32 orange
+                tertiary:  Color(red: 0.722, green: 0.529, blue: 0.957)   // #b887f4 lavender
+            )
+
+        case .mint:
+            // Soft editorial palette — black ink as primary, single lime
+            // accent doing the energy work. Tier roles use opacity-modulated
+            // lime + black so the surface stays calm.
+            return ThemeColors(
+                primary:   Color(red: 0.094, green: 0.094, blue: 0.094),  // #181818 ink
+                secondary: Color(red: 0.380, green: 0.380, blue: 0.380),  // #616161 grey-secondary
+                accent:    Color(red: 0.357, green: 0.831, blue: 0.349),  // #5bd459 lime
+                highlight: Color(red: 0.851, green: 0.337, blue: 0.235),  // #d9563c brick (cost ink)
+                warm:      Color(red: 0.961, green: 0.612, blue: 0.376),  // #f59c60 peach
+                tertiary:  Color(red: 0.380, green: 0.682, blue: 0.349)   // #61ae59 forest-lime
             )
         }
     }

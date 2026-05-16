@@ -35,159 +35,26 @@ struct ThemeColors {
     let tertiary: Color     // Streak / third stat card
 }
 
-// MARK: - Background surface
+// MARK: - Semantic status colors
 
-/// How the whole popover surface paints itself.
-enum BackgroundMode {
-    case dark             // Standard macOS dark background
-    case darkGradient     // Subtle top→bottom dark gradient
-    case deepIndigo       // Near-black with cool blue tint (Nocturne)
-    case lightCream       // Light ivory/cream (Daylight)
-    case deepMagenta      // Very dark purple base (Synthwave)
-    case tactical         // Very dark with green-black tint (HUD)
-    case terminalBlack    // True black (Terminal)
-    case paperWarm        // Warm off-white editorial (Paper)
-    case glassBlur        // Translucent material — works over wallpaper (Glass)
-
-    /// The base surface color painted as the popover's background.
-    var surfaceColor: Color {
-        switch self {
-        case .dark, .darkGradient:
-            return Color(NSColor.windowBackgroundColor)
-        case .deepIndigo:
-            return Color(red: 0.04, green: 0.05, blue: 0.10)
-        case .lightCream:
-            return Color(red: 0.975, green: 0.955, blue: 0.925)
-        case .deepMagenta:
-            return Color(red: 0.07, green: 0.03, blue: 0.13)
-        case .tactical:
-            return Color(red: 0.02, green: 0.04, blue: 0.04)
-        case .terminalBlack:
-            return Color(red: 0.0, green: 0.02, blue: 0.01)
-        case .paperWarm:
-            return Color(red: 0.962, green: 0.943, blue: 0.904)
-        case .glassBlur:
-            // Base tint; the actual blur is provided by a Material layer in the view.
-            return Color(red: 0.18, green: 0.20, blue: 0.26).opacity(0.35)
-        }
-    }
-
-    /// Whether this surface is light (drives text color inversion).
-    var isLight: Bool {
-        switch self {
-        case .lightCream, .paperWarm: return true
-        default: return false
-        }
-    }
-
-    /// Whether this surface uses a translucent material layer (Glass).
-    /// The view renders a regular-material background + tint instead of a solid fill.
-    var usesMaterial: Bool {
-        if case .glassBlur = self { return true }
-        return false
-    }
-
-    /// Primary body text color appropriate for this surface.
-    var primaryTextColor: Color {
-        isLight ? Color.black.opacity(0.88) : Color.white.opacity(0.92)
-    }
-
-    /// Secondary/label text color.
-    var secondaryTextColor: Color {
-        isLight ? Color.black.opacity(0.55) : Color.white.opacity(0.55)
-    }
-
-    /// The subtle gradient pair applied to the outer background.
-    func gradientColors() -> [Color] {
-        let base = surfaceColor
-        switch self {
-        case .darkGradient:
-            return [base, base.opacity(0.92)]
-        case .deepIndigo:
-            return [base, Color(red: 0.02, green: 0.03, blue: 0.07)]
-        case .deepMagenta:
-            return [base, Color(red: 0.04, green: 0.02, blue: 0.08)]
-        case .tactical:
-            return [base, Color(red: 0.01, green: 0.02, blue: 0.02)]
-        case .lightCream:
-            return [base, Color(red: 0.96, green: 0.93, blue: 0.90)]
-        case .terminalBlack:
-            return [Color.black, Color(red: 0.01, green: 0.03, blue: 0.01)]
-        case .paperWarm:
-            return [base, Color(red: 0.948, green: 0.926, blue: 0.885)]
-        case .glassBlur:
-            return [base, base.opacity(0.55)]
-        case .dark:
-            return [base, base]
-        }
-    }
+/// Status-tier colors shared across every theme. These encode meaning, not
+/// brand — red is "this needs your attention", amber is "approaching a
+/// limit", green is "things are working." Theme-tinted palettes still pick
+/// these for status signals; a future high-contrast/accessibility theme can
+/// promote them to ThemeColors if it needs to override.
+///
+/// Centralized here because they used to live as RGB triples in 5+ files
+/// (SignalsRibbon, HubPulseCard, AnomalyDetail, StatCards…). One source of
+/// truth means tuning the red once tunes it everywhere.
+extension Color {
+    /// Red — kosha anomaly direction, late billing window, overspend pace.
+    static let tokDanger = Color(red: 0.96, green: 0.42, blue: 0.42)
+    /// Amber — approaching a limit (cache <60%, billing >75% elapsed, etc).
+    static let tokWarning = Color(red: 0.95, green: 0.70, blue: 0.30)
+    /// Green — healthy (cache ≥90%, anomaly going down, low burn).
+    static let tokSuccess = Color(red: 0.13, green: 0.80, blue: 0.47)
 }
 
-// MARK: - Hero header style
-
-/// How the giant "$48.95 / today" header renders. Branch on this in the view.
-enum HeroMode {
-    case nebulaGradient     // Classic purple→magenta→orange diagonal
-    case nocturneCalm       // Deep indigo solid with a faint accent glow
-    case daylightSoft       // Cream with soft color wave; dark foreground
-    case synthwaveHorizon   // Sunset horizon + perspective grid overlay
-    case hudScanlines       // Dark panel with scanline + OPERATIONAL pill
-    case terminalCRT        // Pure black + dense scanlines + green phosphor + cursor
-    case paperEditorial     // Cream, large serif display number, hairline rule
-    case glassMaterial      // Translucent material + soft tint + glossy highlight
-}
-
-// MARK: - Card style
-
-/// How KPI cards and list rows render — fill, border, corner radius, shadow.
-enum CardMode {
-    case glossyDark       // Nebula: color-tinted fill with soft glow
-    case flatDark         // Nocturne: gray-tinted flat fill
-    case lightPaper       // Daylight: white fill with soft shadow
-    case neonOutlined     // Synthwave: neon border, minimal fill, inner glow
-    case hudPanel         // HUD: rectangular, tactical, mono values
-    case terminalPanel    // Terminal: black fill, green hairline border, mono
-    case paperHairline    // Paper: no fill, thin black hairline border, serif
-    case glassFrost       // Glass: ultra-thin material with subtle border
-
-    /// Corner radius — HUD/Terminal go sharper for readout feel.
-    var cornerRadius: CGFloat {
-        switch self {
-        case .hudPanel, .terminalPanel: return 4
-        case .paperHairline: return 2
-        case .neonOutlined: return 10
-        case .glassFrost: return 14
-        default: return 12
-        }
-    }
-}
-
-// MARK: - Per-theme typography
-
-/// Font personality for a theme. Each role (hero number, stat value, label,
-/// body) can pick its own design so Paper can use serif, Terminal can use
-/// monospaced, Synthwave can use display, etc.
-struct ThemeFonts {
-    let heroDesign: Font.Design
-    let heroWeight: Font.Weight
-    let valueDesign: Font.Design
-    let valueWeight: Font.Weight
-    let labelDesign: Font.Design
-    let bodyDesign: Font.Design
-
-    func hero(size: CGFloat) -> Font {
-        Font.system(size: size, weight: heroWeight, design: heroDesign)
-    }
-    func value(size: CGFloat) -> Font {
-        Font.system(size: size, weight: valueWeight, design: valueDesign)
-    }
-    func label(size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        Font.system(size: size, weight: weight, design: labelDesign)
-    }
-    func body(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        Font.system(size: size, weight: weight, design: bodyDesign)
-    }
-}
 
 // MARK: - Theme enum
 
@@ -200,6 +67,23 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case terminal
     case paper
     case glass
+    case aurora
+    case blueprint
+    case noise
+    case mint
+
+    /// Order the picker shows. Hidden cases stay in the enum so persisted
+    /// settings don't crash on decode.
+    /// - Daylight: Paper covers light better.
+    /// - Blueprint: only the hero got the grid; rest was naked cream.
+    /// - Mint: warmer-Paper-cousin — concept didn't differentiate enough.
+    /// - HUD: even amber-rework couldn't carry it. Terminal owns the
+    ///   instrument-panel space already.
+    /// - Synthwave: costume that scrolling-grid couldn't save.
+    static var allCases: [AppTheme] = [
+        .terminal, .paper, .nebula, .aurora,
+        .noise, .nocturne, .glass,
+    ]
 
     var id: String { rawValue }
 
@@ -213,6 +97,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "Terminal"
         case .paper:     return "Paper"
         case .glass:     return "Glass"
+        case .aurora:    return "Aurora"
+        case .blueprint: return "Blueprint"
+        case .noise:     return "Noise"
+        case .mint:      return "Mint"
         }
     }
 
@@ -226,6 +114,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "CRT phosphor retro"
         case .paper:     return "Editorial serif"
         case .glass:     return "Translucent glass"
+        case .aurora:    return "Northern lights, drifting"
+        case .blueprint: return "Drafting paper, cyan grid"
+        case .noise:     return "Neobrutalist canary yellow"
+        case .mint:      return "Warm peach + lime accent"
         }
     }
 
@@ -239,14 +131,18 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return "terminal.fill"
         case .paper:     return "doc.text.fill"
         case .glass:     return "circle.lefthalf.filled"
+        case .aurora:    return "sparkle"
+        case .blueprint: return "ruler.fill"
+        case .noise:     return "exclamationmark.octagon.fill"
+        case .mint:      return "leaf.fill"
         }
     }
 
-    /// Convenience: whether the hero uses monospaced digits (HUD + Terminal).
-    /// Kept so the view has a quick readability signal.
+    /// Convenience: whether the hero uses monospaced digits (HUD + Terminal +
+    /// Blueprint). Kept so the view has a quick readability signal.
     var monoHero: Bool {
         switch self {
-        case .hud, .terminal: return true
+        case .hud, .terminal, .blueprint: return true
         default: return false
         }
     }
@@ -261,6 +157,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalBlack
         case .paper:     return .paperWarm
         case .glass:     return .glassBlur
+        case .aurora:    return .auroraDrift
+        case .blueprint: return .blueprintGrid
+        case .noise:     return .noiseYellow
+        case .mint:      return .mintPeach
         }
     }
 
@@ -274,6 +174,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalCRT
         case .paper:     return .paperEditorial
         case .glass:     return .glassMaterial
+        case .aurora:    return .auroraDrift
+        case .blueprint: return .blueprintTechnical
+        case .noise:     return .noiseBrutal
+        case .mint:      return .mintEditorial
         }
     }
 
@@ -287,6 +191,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .terminal:  return .terminalPanel
         case .paper:     return .paperHairline
         case .glass:     return .glassFrost
+        case .aurora:    return .auroraGlass
+        case .blueprint: return .blueprintFrame
+        case .noise:     return .noiseStuck
+        case .mint:      return .mintHairline
         }
     }
 
@@ -329,6 +237,28 @@ enum AppTheme: String, CaseIterable, Identifiable {
             return ThemeFonts(heroDesign: .rounded,    heroWeight: .medium,
                               valueDesign: .rounded,   valueWeight: .semibold,
                               labelDesign: .rounded,   bodyDesign: .rounded)
+        case .aurora:
+            // Soft rounded — the bg is doing the heavy visual lifting
+            return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,
+                              valueDesign: .rounded,   valueWeight: .semibold,
+                              labelDesign: .rounded,   bodyDesign: .rounded)
+        case .blueprint:
+            // Mono digits + serif labels = drafting/technical-document feel
+            return ThemeFonts(heroDesign: .monospaced, heroWeight: .bold,
+                              valueDesign: .monospaced, valueWeight: .bold,
+                              labelDesign: .serif,      bodyDesign: .default)
+        case .noise:
+            // Heavy black sans across the board — neobrutalist commits to
+            // weight, not contrast tricks. Hero numbers hit like headlines.
+            return ThemeFonts(heroDesign: .default,    heroWeight: .black,
+                              valueDesign: .default,   valueWeight: .heavy,
+                              labelDesign: .default,   bodyDesign: .default)
+        case .mint:
+            // Editorial: serif hero (display-y), default sans for labels and
+            // body. Friendly, warm, considered.
+            return ThemeFonts(heroDesign: .serif,      heroWeight: .semibold,
+                              valueDesign: .default,   valueWeight: .semibold,
+                              labelDesign: .default,   bodyDesign: .default)
         }
     }
 
