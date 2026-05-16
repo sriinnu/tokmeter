@@ -243,12 +243,14 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case aurora
     case blueprint
 
-    /// Order the picker shows. Daylight is hidden — Paper does light theme
-    /// better and two cream themes split attention. The case stays in the
-    /// enum so persisted user settings don't crash on decode, but it never
-    /// appears in the picker. Selecting it manually still works.
+    /// Order the picker shows. Hidden cases (Daylight, Blueprint) stay in
+    /// the enum so persisted settings don't crash on decode, but they don't
+    /// appear in the picker. Daylight: Paper covers light better. Blueprint:
+    /// the grid only painted the hero, the rest of the popover was naked
+    /// cream — felt like a worksheet, not an instrument. New references
+    /// pending.
     static var allCases: [AppTheme] = [
-        .terminal, .paper, .blueprint, .nebula, .aurora,
+        .terminal, .paper, .nebula, .aurora,
         .nocturne, .glass, .synthwave, .hud,
     ]
 
