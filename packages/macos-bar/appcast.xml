@@ -6,6 +6,15 @@
         <description>Auto-update feed for TokmeterBar.app</description>
         <language>en</language>
         <item>
+            <title>TokmeterBar 1.3.0</title>
+            <pubDate>Sat, 16 May 2026 14:13:10 +0000</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;p&gt;Tier 1+2+3: reasoning share, Claude 5h billing window detector, subagent attribution, tool-call cost breakdown, 365-day activity heatmap, click-through anomaly drill-in, cross-tool cost projection. Two new themes (Aurora, Noise) plus the picker curated to seven. License flip to AGPL-3.0-only. See full notes on GitHub.&lt;/p&gt;</description>
+            <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.3.0/TokmeterBar-1.3.0.zip" length="3171564" type="application/octet-stream" sparkle:edSignature="4GJVfnoP6N7Una8YS+miOHHK/e9fX/q4kFSz7pX9YKraGZMMlK3/lWXGsbr1+APLnr/YDHmRWJxOhfyQrVHSAg==" />
+        </item>
+        <item>
             <title>TokmeterBar 1.2.0</title>
             <pubDate>Tue, 12 May 2026 20:28:42 +0000</pubDate>
             <sparkle:version>14</sparkle:version>
