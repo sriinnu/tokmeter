@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-16
+
+The biggest release since 1.2.0 — honest accounting (Tier 1), animated chrome
+(Tier 2), route projection (Tier 3), two new themes, a major refactor pass,
+and a license upgrade.
+
+### License
+
+- **MIT → AGPL-3.0-only.** Single copyright holder, clean flip. AGPL's
+  section 13 (network-use clause) applies if anyone runs a modified tokmeter
+  as a network service — `drishti` is the MCP/HTTP daemon that touches that
+  surface. LICENSE replaced; six npm packages updated to SPDX
+  `AGPL-3.0-only`; README badge + footer flipped.
+
+### Added — Tier 1 (correctness + parity)
+
+- **@sriinnu/tokmeter-core** — `reasoningToday` signal: reasoningTokens /
+  outputTokens today, clamped at 1.0 (some Codex variants over-report).
+- **@sriinnu/tokmeter-core** — Claude Pro/Max 5-hour billing window detector.
+  Bounded 2× lookback so the gap-walker can verify candidate `blockStart`
+  actually opened a fresh block (smaller lookbacks clipped previous blocks'
+  tail records into phantom windows).
+- **@sriinnu/tokmeter-core** — **Subagent attribution.** Parser depth bumped
+  3→5 to pick up `<slug>/<sessionId>/subagents/agent-*.jsonl`. Records tagged
+  `isSubagent: true`. Was silently missing from totals before.
+- **@sriinnu/tokmeter-core** — Opaque-models filter (`codex-auto-review` etc.)
+  so provider-side alias labels don't pollute the unpriced-wishlist.
+- **TokmeterBar** — Hub "Today's pulse" card: 5 mini-tiles (burn / cache /
+  compaction / reasoning / subagents) + a wide Claude 5h billing strip with
+  progress bar. Inactive tiles render dimmed with "—" (was dishonest "0%").
+- **TokmeterBar** — Pricing anomaly pill collapses per-field rows by model
+  (one provider price change typically fans out across input/output/cacheRead).
+
+### Added — Tier 2 (visual + engineering signal)
+
+- **TokmeterBar** — Burn-rate flame chip animation. SF Symbols
+  `.variableColor.iterative.reversing` with intensity scaled by $/hr.
+- **@sriinnu/tokmeter-core** — Tool-call cost breakdown. Claude Code parser
+  extracts `tool_use` block names; aggregator computes per-tool cost share
+  today. Surfaced as the Hub "Today's tools" card.
+- **TokmeterBar** — 365-day GitHub-style activity heatmap in the Hub.
+  Geometry-driven cells, log-scale color clipped at 95th percentile, cached
+  grid via @State.
+- **TokmeterBar** — Click-through anomaly drill-in sheet. Footer pill becomes
+  tappable; sheet rises with anticipation-squash, group cards cascade in.
+- **TokmeterBar** — Composition-gradient cost bar. Each model row's bar
+  encodes BOTH cost share (length) AND tier composition (color): ≥50%
+  dominant → solid, else hard-stop gradient of top 2 tiers. Cost numeral
+  tinted by dominant tier; provider glyph prefix (sparkle / hex / g.circle).
+
+### Added — Tier 3 (innovation)
+
+- **@sriinnu/drishti / TokmeterBar** — Cross-tool projection. New
+  `/api/cross-tool` endpoint projects today's exact token shape against the
+  user's top 6 lifetime models. Hub "If today ran on…" card surfaces it with
+  Δ-vs-actual.
+- **@sriinnu/tokmeter (CLI)** — `tokmeter routes`. MVP of the cost-surface
+  explorer (see `docs/designs/routes.md`). Layer 1 pricing translation — table
+  or `--json`. Honest exclusion of unpriced models.
+
+### Added — Themes (curated to 7)
+
+- **Aurora** — Northern-lights drifting gradient. Motion as identity — first
+  theme where the background itself is alive.
+- **Noise** — Neobrutalist canary yellow. Cards: solid white + 2pt black
+  border + 3pt hard offset shadow.
+- **Hidden** (cases stay in enum for persisted-settings safety, but not in
+  the picker): Daylight, Synthwave, HUD, Mint, Blueprint.
+
+### Changed — performance
+
+- `signals.ts` pace loop bounded by 2× `PACE_BASELINE_DAYS` — at 100k records
+  this cut per-scan cost from ~5-15ms to ~0.5ms.
+- `todayRecords` filter switched to numeric epoch-ms bounds.
+- Billing-window detection: O(n log n) sort → O(n) walk + bounded lookback.
+- Heatmap grid cached via @State, rebuilt only on day rollover.
+
+### Changed — code organization (LOC budget enforced ≤400)
+
+- `HubOverview.swift` 1312 → 196 (14 focused sibling files extracted).
+- `HubProjectDetail.swift` 706 → 262.
+- `HubSettings.swift` 687 → 367.
+- `TokmeterLoader.swift` 527 → 299 (CLI fallback in extension).
+- `HubCommands.swift` 492 → 295 (catalog extracted).
+- `HeroBackground.swift` 488 → 227 (hidden-theme renderers extracted).
+- `Theme.swift` 463 → 269 (modes + ThemeFonts extracted).
+- Extracted `Color.tokDanger / .tokWarning / .tokSuccess` to Theme.swift
+  (was 9 duplicated RGB triples across 5 files).
+
+### Fixed
+
+- **Billing window phantom-block bug.** 5h lookback was clipping previous
+  blocks' tail records into a "fresh" block — UI claimed up to 4h54m left on
+  already-expired windows.
+- **Hero hardcoded white text** on light themes (Noise). Switch defaulted to
+  white, baking it into the canary-yellow surface.
+- **Provider glyph for namespaced models** (`openrouter/anthropic/...`) now
+  strips the `openrouter/` prefix before pattern-matching.
+
+### Tests
+
+- 78 → 124 core tests. Regression coverage for phantom-block, unsorted-array
+  records, reasoning share clamp, parallel-tool cost split, subagent share,
+  today-blocks-only count.
+
 ## [1.2.1] - 2026-05-13
 
 ### Changed

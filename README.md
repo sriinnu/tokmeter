@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@sriinnu/tokmeter"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter-39d353?style=flat-square&logo=npm" alt="npm" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node" />
-  <img src="https://img.shields.io/badge/license-MIT-26a641?style=flat-square" alt="license" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-26a641?style=flat-square" alt="license" />
   <img src="https://img.shields.io/badge/bun-monorepo-39d353?style=flat-square&logo=npm" alt="bun" />
 </p>
 
@@ -436,9 +436,10 @@ a speedometer, not a scoreboard:
 | **Compaction tax** | % of today's spend going to `/compact` overhead (Claude Code-specific signal). |
 | **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
 
-Eight themes (Nebula / Nocturne / Daylight / Synthwave / HUD / Terminal / Paper /
-Glass) and a companion "Hub" full-window with project drilldown, command palette,
-and settings.
+Seven themes (Terminal / Paper / Nebula / Aurora / Noise / Nocturne / Glass) and
+a companion "Hub" full-window with project drilldown, command palette, and
+settings. Aurora uses a slow-drifting gradient — motion as identity. Noise is
+neobrutalist (canary yellow + sticky-note cards with hard offset shadows).
 
 ## Supported Providers
 
@@ -480,7 +481,7 @@ Reasoning tokens get their own rate when kosha publishes one (o1/o3/gemini-think
 
 Covers Anthropic, OpenAI, Google, DeepSeek, xAI, Mistral, Meta, Moonshot, Cohere, Perplexity, Qwen, and 10+ more — whatever kosha is currently tracking.
 
-Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. See [`docs/designs/routes.md`](docs/designs/routes.md) for the design of the upcoming `tokmeter routes` feature, which extends this posture into a full cost-surface explorer across every (model × serving-provider) route.
+Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. The `tokmeter routes` CLI extends this into a cost-surface explorer — projects today's exact token shape against every model in your lifetime lineup using kosha's live registry, with Δ-vs-actual and honest exclusion of unpriced models. Run `tokmeter routes` for a table or `tokmeter routes --json` for piping. Layer 1 (pure pricing translation) ships in v1.3.0; the full multi-layer design is in [`docs/designs/routes.md`](docs/designs/routes.md).
 
 All formatters are NaN/Infinity-safe — malformed data never leaks into output.
 
@@ -549,11 +550,16 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (220+ cases across the monorepo)
+bun run test                   # Run tests (260+ cases across the monorepo)
 bun run lint                   # Lint
 bun run format                 # Format
 ```
 
 ## License
 
-MIT (c) Srinivas Pendela
+GNU Affero General Public License v3.0 (AGPL-3.0-only) — see [LICENSE](./LICENSE).
+
+Copyright (c) 2026 Srinivas Pendela. tokmeter is free software: you can
+redistribute it and/or modify it under the terms of the AGPL v3. If you run a
+modified version of tokmeter as a network service, AGPL section 13 requires you
+to make the modified source available to your users.
