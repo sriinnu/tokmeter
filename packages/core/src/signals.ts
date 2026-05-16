@@ -105,7 +105,10 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
     nowDateForBounds.getFullYear(),
     nowDateForBounds.getMonth(),
     nowDateForBounds.getDate(),
-    0, 0, 0, 0
+    0,
+    0,
+    0,
+    0
   ).getTime();
   const todayRecords: TokenRecord[] = [];
   for (const r of records) {
@@ -229,10 +232,7 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
     // count isn't always strictly nested inside output_tokens). Without the
     // clamp the UI would render ">100% reasoning", which is technically
     // honest but reads as a bug.
-    share:
-      reasoningOutputTokens > 0
-        ? Math.min(1, reasoningTokens / reasoningOutputTokens)
-        : 0,
+    share: reasoningOutputTokens > 0 ? Math.min(1, reasoningTokens / reasoningOutputTokens) : 0,
     records: reasoningRecords,
   };
 
@@ -332,7 +332,7 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
       const todayClaude = todayRecords
         .filter((r) => r.provider === "claude-code")
         .sort((a, b) => a.timestamp - b.timestamp);
-      const todayBlockCount = countBlocks(todayClaude);;
+      const todayBlockCount = countBlocks(todayClaude);
       billingWindow = {
         blockNumber: todayBlockCount > 0 ? todayBlockCount : 1,
         blockStart,

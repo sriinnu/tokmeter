@@ -114,8 +114,7 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
         // doesn't look like a hung menubar. stderr keeps it out of stdout
         // (which CLI consumers might be piping into jq).
         console.warn(
-          `[tokmeter] scan-cache schema bumped ${data.version} → ${CACHE_VERSION}, `
-          + `rebuilding from JSONL on next scan. One-time cost.`
+          `[tokmeter] scan-cache schema bumped ${data.version} → ${CACHE_VERSION}, rebuilding from JSONL on next scan. One-time cost.`
         );
         cacheCreatedAt = new Date().toISOString();
         return recordCache;

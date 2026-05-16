@@ -357,9 +357,7 @@ export class TokmeterCore {
     }>;
   }> {
     const refTs = Date.now();
-    const todayRecords = this.records.filter(
-      (r) => !isBeforeToday(r.timestamp, refTs)
-    );
+    const todayRecords = this.records.filter((r) => !isBeforeToday(r.timestamp, refTs));
     const totals = {
       input: 0,
       output: 0,

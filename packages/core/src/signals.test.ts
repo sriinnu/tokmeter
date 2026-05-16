@@ -148,9 +148,7 @@ describe("computeStatbarSignals", () => {
     expect(s.toolCallsToday.turnsWithTools).toBe(2);
     // Bash: $0.25 + $0.25 (two in parallel turn) + $0.5 = $1.0
     // Read: $0.25; Edit: $0.25
-    const byTool = Object.fromEntries(
-      s.toolCallsToday.byTool.map((t) => [t.tool, t])
-    );
+    const byTool = Object.fromEntries(s.toolCallsToday.byTool.map((t) => [t.tool, t]));
     expect(byTool.Bash.cost).toBeCloseTo(1.0);
     expect(byTool.Bash.calls).toBe(3);
     expect(byTool.Read.cost).toBeCloseTo(0.25);
