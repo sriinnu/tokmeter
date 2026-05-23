@@ -12,8 +12,10 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  computeAllProjectsFromState,
   computeDailyBreakdownFromState,
   computeModelCostsFromState,
+  computeProjectSummaryFromState,
   computeProviderBreakdownFromState,
   computeRawProjectNamesFromState,
   computeStatsFromRecords,
@@ -24,12 +26,14 @@ import { aggregateRecordsByDay } from "./aggregates.js";
 import {
   aggregateByDate,
   aggregateByModel,
+  aggregateByProject,
   aggregateByProvider,
   filterByDate,
   filterByProject,
 } from "./aggregator.js";
 import type { AliasMap } from "./alias-service.js";
 import { isBeforeToday, localDateKey } from "./date-utils.js";
+import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
 import type { TokenRecord } from "./types.js";
 
 /** Build a `TokenRecord` with sensible defaults — same helper across tests. */
@@ -312,5 +316,147 @@ describe("Phase 2 parity — getProviderBreakdown", () => {
   test("empty records: both paths return empty array", () => {
     const empty = computeProviderBreakdownFromState(new Map(), new DailyAccumulator("2026-01-01"));
     expect(empty).toEqual(aggregateByProvider([]));
+  });
+});
+
+/**
+ * Sort helpers for ProjectSummary comparison. The legacy and aggregate paths
+ * are free to emit projects/models/providers in different orders; we collapse
+ * those orderings into deterministic forms so equality reflects *content*
+ * parity rather than iteration luck.
+ */
+function sortProjectSummary<
+  T extends {
+    models: { model: string; provider: string }[];
+    providers: { provider: string; models: string[] }[];
+  },
+>(p: T): T {
+  return {
+    ...p,
+    models: [...p.models].sort((a, b) =>
+      `${a.provider} ${a.model}`.localeCompare(`${b.provider} ${b.model}`)
+    ),
+    providers: [...p.providers]
+      .map((pv) => ({ ...pv, models: [...pv.models].sort() }))
+      .sort((a, b) => a.provider.localeCompare(b.provider)),
+  };
+}
+
+describe("Phase 2 parity — getAllProjects", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("no aliases: legacy aggregateByProject == aggregate path", () => {
+    const legacy = aggregateByProject(records, aliasesEmpty)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    const fresh = computeAllProjectsFromState(aggregates, todayAcc, aliasesEmpty)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("with hidden alias: both paths drop the hidden display", () => {
+    const legacy = aggregateByProject(records, aliasesWithHidden)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    const fresh = computeAllProjectsFromState(aggregates, todayAcc, aliasesWithHidden)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    expect(fresh).toEqual(legacy);
+    // Sanity: hiding `beta` removes exactly one display from the set.
+    expect(fresh.find((p) => p.project === "beta")).toBeUndefined();
+  });
+
+  test("empty input: both paths return empty array", () => {
+    const fresh = computeAllProjectsFromState(
+      new Map(),
+      new DailyAccumulator("2026-01-01"),
+      aliasesEmpty
+    );
+    expect(fresh).toEqual(aggregateByProject([], aliasesEmpty));
+  });
+
+  test("today-only records: aggregate path reads from todayAccumulator alone", () => {
+    const todayOnly = records.filter((rec) => !isBeforeToday(rec.timestamp, now));
+    const { aggregates: emptyHist, todayAcc: todayAccOnly } = projectToState(todayOnly, now);
+    const legacy = aggregateByProject(todayOnly, aliasesEmpty)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    const fresh = computeAllProjectsFromState(emptyHist, todayAccOnly, aliasesEmpty)
+      .map(sortProjectSummary)
+      .sort((a, b) => a.project.localeCompare(b.project));
+    expect(fresh).toEqual(legacy);
+  });
+});
+
+describe("Phase 2 parity — getProjectSummary", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  function legacyLookup(name: string) {
+    const all = aggregateByProject(records, aliasesEmpty);
+    return (
+      all.find((p) => projectNamesMatch(p.project, name)) ||
+      all.find((p) => projectNameIncludes(p.project, name))
+    );
+  }
+
+  test("exact match returns the same row from both paths", () => {
+    const legacy = legacyLookup("alpha");
+    const fresh = computeProjectSummaryFromState(aggregates, todayAcc, aliasesEmpty, "alpha");
+    expect(fresh && sortProjectSummary(fresh)).toEqual(legacy && sortProjectSummary(legacy));
+  });
+
+  test("substring match returns the same row from both paths", () => {
+    const legacy = legacyLookup("amm"); // matches "gamma"
+    const fresh = computeProjectSummaryFromState(aggregates, todayAcc, aliasesEmpty, "amm");
+    expect(fresh && sortProjectSummary(fresh)).toEqual(legacy && sortProjectSummary(legacy));
+    expect(fresh?.project).toBe("gamma");
+  });
+
+  test("no match returns undefined on both paths", () => {
+    const fresh = computeProjectSummaryFromState(aggregates, todayAcc, aliasesEmpty, "nonexistent");
+    expect(fresh).toBeUndefined();
+  });
+});
+
+describe("Phase 2 parity — getModelCosts (project filter)", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("project filter: aggregate path matches legacy aggregateByModel(filterByProject(...))", () => {
+    const filtered = filterByProject(records, "alpha");
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, { project: "alpha" });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("project filter + today: both paths agree on the today-only slice", () => {
+    const filtered = filterByDate(filterByProject(records, "alpha"), { today: true });
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, {
+      project: "alpha",
+      today: true,
+    });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("project substring filter agrees across both paths", () => {
+    const filtered = filterByProject(records, "amm"); // matches gamma
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, { project: "amm" });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("non-matching project: empty array on both paths", () => {
+    const filtered = filterByProject(records, "zzz");
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, { project: "zzz" });
+    expect(fresh).toEqual(legacy);
+    expect(fresh).toEqual([]);
   });
 });

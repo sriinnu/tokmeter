@@ -7,8 +7,10 @@
 
 import { homedir } from "node:os";
 import {
+  computeAllProjectsFromState,
   computeDailyBreakdownFromState,
   computeModelCostsFromState,
+  computeProjectSummaryFromState,
   computeProviderBreakdownFromState,
   computeRawProjectNamesFromState,
   computeStatsFromRecords,
@@ -16,13 +18,7 @@ import {
 } from "./aggregate-consumers.js";
 import { DailyAccumulator } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
-import {
-  aggregateByModel,
-  aggregateByProject,
-  filterByDate,
-  filterByProject,
-  filterByProvider,
-} from "./aggregator.js";
+import { aggregateByModel, filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import {
@@ -38,7 +34,6 @@ import {
   setCachedKoshaMtime,
 } from "./parsers/utils.js";
 import { PricingService } from "./pricing.js";
-import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
 import type {
@@ -444,8 +439,11 @@ export class TokmeterCore {
   }
 
   /** Get summaries for all projects. Respects user aliases (merge + hide). */
+  /** Project rollup — alias-resolved displays + per-(model, provider)
+   *  cross-cut totals + per-day breakdown. Phase 2.3 aggregate migration;
+   *  parity-tested. */
   getAllProjects(): ProjectSummary[] {
-    return aggregateByProject(this.records, this.getAliases());
+    return computeAllProjectsFromState(this.aggregates, this.todayAccumulator, this.getAliases());
   }
 
   /** All raw canonical project names seen during scan (pre-alias). Used by
@@ -455,26 +453,21 @@ export class TokmeterCore {
     return computeRawProjectNamesFromState(this.aggregates, this.todayAccumulator);
   }
 
-  /** Get summary for a specific project (by exact name or substring match). */
+  /** Single ProjectSummary lookup — exact match first, then substring.
+   *  Phase 2.3 aggregate migration. */
   getProjectSummary(projectName: string): ProjectSummary | undefined {
-    const all = this.getAllProjects();
-
-    return (
-      all.find((project) => projectNamesMatch(project.project, projectName)) ||
-      all.find((project) => projectNameIncludes(project.project, projectName))
+    return computeProjectSummaryFromState(
+      this.aggregates,
+      this.todayAccumulator,
+      this.getAliases(),
+      projectName
     );
   }
 
   /**
    * Get model summaries, optionally filtered by project / date window.
-   *
-   * **Dispatch:** the project filter requires per-(project, model) cross-cut
-   * buckets that the current aggregate schema doesn't capture, so passing
-   * `options.project` stays on the legacy `this.records` walk. Date-only
-   * filters (today / since / until) and the no-filter common case go to the
-   * aggregate path. Phase 2.2 migration; parity-tested for the aggregate
-   * paths. Project-filter migration is deferred to a future schema
-   * enrichment.
+   * Reads from aggregate state — project filter walks per-(project, model)
+   * cross-cut buckets added in Phase 2.3. Parity-tested.
    */
   getModelCosts(options?: {
     project?: string;
@@ -482,20 +475,11 @@ export class TokmeterCore {
     until?: string;
     today?: boolean;
   }): ModelSummary[] {
-    if (options?.project) {
-      // Legacy path — kept verbatim because the project filter needs a
-      // per-(project, model) view the aggregates don't yet store.
-      let records = this.records;
-      records = filterByProject(records, options.project);
-      if (options?.today || options?.since || options?.until) {
-        records = filterByDate(records, options);
-      }
-      return aggregateByModel(records);
-    }
     return computeModelCostsFromState(this.aggregates, this.todayAccumulator, {
       today: options?.today,
       since: options?.since,
       until: options?.until,
+      project: options?.project,
     });
   }
 

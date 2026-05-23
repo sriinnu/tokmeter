@@ -109,10 +109,29 @@ export function readDayFile(homeDir: string, date: string): DailyAggregate | nul
   if (!existsSync(path)) return null;
   try {
     const raw = readFileSync(path, "utf-8");
-    return JSON.parse(raw) as DailyAggregate;
+    const parsed = JSON.parse(raw) as DailyAggregate;
+    return forwardMigrateAggregate(parsed);
   } catch {
     return null;
   }
+}
+
+/**
+ * Backfill fields added after the initial v3 schema for files written by
+ * older versions. Per-project `firstUsed`/`lastUsed` default to 0 (the day's
+ * raw records aren't kept, so we can't reconstruct exact timestamps — the
+ * project-summary consumer treats 0 as "unknown"). Per-project `modelBuckets`
+ * default to empty: getModelCosts(project=…) for that historical day yields
+ * an empty per-(project, model) cross-cut, which is correct for any file
+ * that pre-dates the schema enrichment. New writes always populate both.
+ */
+function forwardMigrateAggregate(day: DailyAggregate): DailyAggregate {
+  for (const p of Object.values(day.projects)) {
+    if (typeof p.firstUsed !== "number") p.firstUsed = 0;
+    if (typeof p.lastUsed !== "number") p.lastUsed = 0;
+    if (!p.modelBuckets) p.modelBuckets = {};
+  }
+  return day;
 }
 
 /**
@@ -350,7 +369,10 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
       cost: 0,
       totalTokens: 0,
       recordCount: 0,
+      firstUsed: Number.POSITIVE_INFINITY,
+      lastUsed: Number.NEGATIVE_INFINITY,
       models: [],
+      modelBuckets: {},
       ...emptyBuckets(),
     };
     day.projects[r.project] = project;
@@ -358,7 +380,29 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
   project.cost += r.cost;
   addBuckets(project, r);
   project.recordCount++;
+  if (r.timestamp < project.firstUsed) project.firstUsed = r.timestamp;
+  if (r.timestamp > project.lastUsed) project.lastUsed = r.timestamp;
   if (!project.models.includes(r.model)) project.models.push(r.model);
+  // Per-(project, model) cross-cut: same scheme as aggregateRecordsByDay so a
+  // record folded here lands in the exact same bucket the cold-scan path
+  // produces. Required by getAllProjects / getProjectSummary / getModelCosts
+  // (project=…) to compute exact per-project ModelSummary arrays.
+  const projModelKey = `${r.provider} ${r.model}`;
+  let projModel = project.modelBuckets[projModelKey];
+  if (!projModel) {
+    projModel = {
+      model: r.model,
+      provider: r.provider,
+      cost: 0,
+      totalTokens: 0,
+      recordCount: 0,
+      ...emptyBuckets(),
+    };
+    project.modelBuckets[projModelKey] = projModel;
+  }
+  projModel.cost += r.cost;
+  addBuckets(projModel, r);
+  projModel.recordCount++;
 
   let provider: ProviderDayBucket | undefined = day.providers[r.provider];
   if (!provider) {
@@ -379,7 +423,12 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
 function finalizeDay(day: DailyAggregate): DailyAggregate {
   day.totalTokens = tokensTotal(day);
   for (const m of Object.values(day.models)) m.totalTokens = tokensTotal(m);
-  for (const p of Object.values(day.projects)) p.totalTokens = tokensTotal(p);
+  for (const p of Object.values(day.projects)) {
+    p.totalTokens = tokensTotal(p);
+    if (!Number.isFinite(p.firstUsed)) p.firstUsed = 0;
+    if (!Number.isFinite(p.lastUsed)) p.lastUsed = 0;
+    for (const pm of Object.values(p.modelBuckets)) pm.totalTokens = tokensTotal(pm);
+  }
   for (const pr of Object.values(day.providers)) pr.totalTokens = tokensTotal(pr);
   if (!Number.isFinite(day.firstUsed)) day.firstUsed = 0;
   if (!Number.isFinite(day.lastUsed)) day.lastUsed = 0;

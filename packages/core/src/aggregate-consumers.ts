@@ -19,13 +19,14 @@
  */
 
 import type { DailyAccumulator } from "./aggregates-store.js";
-import type { DailyAggregate } from "./aggregates.js";
-import { type AliasMap, resolveProjectName } from "./alias-service.js";
+import type { DailyAggregate, ProjectDayBucket } from "./aggregates.js";
+import { type AliasMap, isProjectHidden, resolveProjectName } from "./alias-service.js";
 import { localDateKey } from "./date-utils.js";
-import { projectNameIncludes } from "./project-name.js";
+import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
 import type {
   DailyEntry,
   ModelSummary,
+  ProjectSummary,
   ProviderId,
   ProviderSummary,
   TokenRecord,
@@ -286,7 +287,7 @@ export function computeRawProjectNamesFromState(
 export function computeModelCostsFromState(
   aggregates: Map<string, DailyAggregate>,
   todayAccumulator: DailyAccumulator | null,
-  opts?: { since?: string; until?: string; today?: boolean }
+  opts?: { since?: string; until?: string; today?: boolean; project?: string }
 ): ModelSummary[] {
   const todayKey = todayAccumulator?.date;
   const totals = new Map<
@@ -304,6 +305,53 @@ export function computeModelCostsFromState(
     }
   >();
   let grandTotalCost = 0;
+  // Project-filtered path: walk per-(project, model) cross-cut buckets. Matches
+  // legacy `aggregateByModel(filterByProject(records, project))` semantics —
+  // grandTotal is the sum of the *filtered* set's cost, just like the legacy
+  // path's `records.reduce((s, r) => s + r.cost)` over filtered records.
+  if (opts?.project) {
+    const query = opts.project;
+    for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+      if (opts?.today && day.date !== todayKey) continue;
+      if (opts?.since && day.date < opts.since) continue;
+      if (opts?.until && day.date > opts.until) continue;
+      for (const project of Object.values(day.projects)) {
+        if (!projectNameIncludes(project.project, query)) continue;
+        for (const mb of Object.values(project.modelBuckets)) {
+          grandTotalCost += mb.cost;
+          const key = `${mb.provider} ${mb.model}`;
+          let row = totals.get(key);
+          if (!row) {
+            row = {
+              provider: mb.provider,
+              model: mb.model,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              reasoningTokens: 0,
+              totalTokens: 0,
+              cost: 0,
+            };
+            totals.set(key, row);
+          }
+          row.cost += mb.cost;
+          row.inputTokens += mb.inputTokens;
+          row.outputTokens += mb.outputTokens;
+          row.cacheReadTokens += mb.cacheReadTokens;
+          row.cacheWriteTokens += mb.cacheWriteTokens;
+          row.reasoningTokens += mb.reasoningTokens;
+          row.totalTokens += mb.totalTokens;
+        }
+      }
+    }
+    return [...totals.values()]
+      .map((row) => ({
+        ...row,
+        percentageOfTotal: grandTotalCost > 0 ? (row.cost / grandTotalCost) * 100 : 0,
+      }))
+      .sort((a, b) => b.cost - a.cost);
+  }
   for (const day of iterateAllDays(aggregates, todayAccumulator)) {
     if (opts?.today && day.date !== todayKey) continue;
     if (opts?.since && day.date < opts.since) continue;
@@ -400,4 +448,242 @@ export function computeProviderBreakdownFromState(
       percentageOfTotal: grandTotalCost > 0 ? (t.cost / grandTotalCost) * 100 : 0,
     }))
     .sort((a, b) => b.cost - a.cost);
+}
+
+/**
+ * Per-(project, model) cross-cut accumulator. Sums one day's
+ * ProjectModelDayBucket into a project-lifetime row.
+ */
+interface ProjectModelTotal {
+  model: string;
+  provider: ProviderId;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  cost: number;
+}
+
+/**
+ * ProjectSummary[] from aggregates + today. Groups raw project names by
+ * alias-resolved display, sums per-(model, provider) cross-cut buckets,
+ * folds visibility (drop a display only when every raw mapping to it is
+ * hidden), and emits the same shape as `aggregateByProject(records, aliases)`.
+ *
+ * Percentages are share-of-total cost across ALL projects (including hidden
+ * ones), matching the legacy implementation that computes total before
+ * filtering visibility.
+ */
+export function computeAllProjectsFromState(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null,
+  aliases: AliasMap
+): ProjectSummary[] {
+  // Pass 1: grand total cost across all days (matches legacy's
+  // `records.reduce((s, r) => s + r.cost)` on full input).
+  let grandTotalCost = 0;
+  for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+    grandTotalCost += day.cost;
+  }
+
+  type Accum = {
+    rawProjects: Set<string>;
+    cost: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    firstUsed: number;
+    lastUsed: number;
+    modelTotals: Map<string, ProjectModelTotal>;
+    daily: Map<string, DailyEntry>;
+  };
+
+  const byDisplay = new Map<string, Accum>();
+
+  const newAccum = (): Accum => ({
+    rawProjects: new Set(),
+    cost: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    firstUsed: Number.POSITIVE_INFINITY,
+    lastUsed: Number.NEGATIVE_INFINITY,
+    modelTotals: new Map(),
+    daily: new Map(),
+  });
+
+  for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+    // Group day's raw projects by display name. Multiple raws may resolve to
+    // the same display (alias merge) — sum them into one day-entry.
+    const displaysOnDay = new Map<string, ProjectDayBucket[]>();
+    for (const [raw, pb] of Object.entries(day.projects)) {
+      const display = resolveProjectName(raw, aliases);
+      const list = displaysOnDay.get(display) ?? [];
+      list.push(pb);
+      displaysOnDay.set(display, list);
+    }
+
+    for (const [display, buckets] of displaysOnDay) {
+      let acc = byDisplay.get(display);
+      if (!acc) {
+        acc = newAccum();
+        byDisplay.set(display, acc);
+      }
+      let dayCost = 0;
+      let dayInput = 0;
+      let dayOutput = 0;
+      let dayCacheRead = 0;
+      let dayCacheWrite = 0;
+      let dayReasoning = 0;
+      let dayRecords = 0;
+      for (const pb of buckets) {
+        acc.rawProjects.add(pb.project);
+        acc.cost += pb.cost;
+        acc.inputTokens += pb.inputTokens;
+        acc.outputTokens += pb.outputTokens;
+        acc.cacheReadTokens += pb.cacheReadTokens;
+        acc.cacheWriteTokens += pb.cacheWriteTokens;
+        acc.reasoningTokens += pb.reasoningTokens;
+        if (pb.firstUsed > 0 && pb.firstUsed < acc.firstUsed) acc.firstUsed = pb.firstUsed;
+        if (pb.lastUsed > acc.lastUsed) acc.lastUsed = pb.lastUsed;
+        for (const mb of Object.values(pb.modelBuckets)) {
+          const key = `${mb.provider} ${mb.model}`;
+          let mt = acc.modelTotals.get(key);
+          if (!mt) {
+            mt = {
+              model: mb.model,
+              provider: mb.provider,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              reasoningTokens: 0,
+              totalTokens: 0,
+              cost: 0,
+            };
+            acc.modelTotals.set(key, mt);
+          }
+          mt.cost += mb.cost;
+          mt.inputTokens += mb.inputTokens;
+          mt.outputTokens += mb.outputTokens;
+          mt.cacheReadTokens += mb.cacheReadTokens;
+          mt.cacheWriteTokens += mb.cacheWriteTokens;
+          mt.reasoningTokens += mb.reasoningTokens;
+          mt.totalTokens += mb.totalTokens;
+        }
+        dayCost += pb.cost;
+        dayInput += pb.inputTokens;
+        dayOutput += pb.outputTokens;
+        dayCacheRead += pb.cacheReadTokens;
+        dayCacheWrite += pb.cacheWriteTokens;
+        dayReasoning += pb.reasoningTokens;
+        dayRecords += pb.recordCount;
+      }
+      acc.daily.set(day.date, {
+        date: day.date,
+        cost: dayCost,
+        inputTokens: dayInput,
+        outputTokens: dayOutput,
+        cacheReadTokens: dayCacheRead,
+        cacheWriteTokens: dayCacheWrite,
+        reasoningTokens: dayReasoning,
+        totalTokens: dayInput + dayOutput + dayCacheRead + dayCacheWrite + dayReasoning,
+        records: dayRecords,
+      });
+    }
+  }
+
+  const results: ProjectSummary[] = [];
+  for (const [display, acc] of byDisplay) {
+    // Visibility: a display stays if ANY raw mapping to it is non-hidden.
+    let visible = false;
+    for (const raw of acc.rawProjects) {
+      if (!isProjectHidden(raw, aliases)) {
+        visible = true;
+        break;
+      }
+    }
+    if (!visible) continue;
+
+    const models: ModelSummary[] = [...acc.modelTotals.values()]
+      .map((mt) => ({
+        ...mt,
+        percentageOfTotal: grandTotalCost > 0 ? (mt.cost / grandTotalCost) * 100 : 0,
+      }))
+      .sort((a, b) => b.cost - a.cost);
+
+    const providerMap = new Map<
+      ProviderId,
+      { cost: number; totalTokens: number; models: Set<string> }
+    >();
+    for (const mt of acc.modelTotals.values()) {
+      let pv = providerMap.get(mt.provider);
+      if (!pv) {
+        pv = { cost: 0, totalTokens: 0, models: new Set() };
+        providerMap.set(mt.provider, pv);
+      }
+      pv.cost += mt.cost;
+      pv.totalTokens += mt.totalTokens;
+      pv.models.add(mt.model);
+    }
+    const providers: ProviderSummary[] = [...providerMap.entries()]
+      .map(([provider, t]) => ({
+        provider,
+        totalTokens: t.totalTokens,
+        cost: t.cost,
+        models: [...t.models],
+        percentageOfTotal: grandTotalCost > 0 ? (t.cost / grandTotalCost) * 100 : 0,
+      }))
+      .sort((a, b) => b.cost - a.cost);
+
+    const dailyBreakdown = [...acc.daily.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+    results.push({
+      project: display,
+      totalTokens:
+        acc.inputTokens +
+        acc.outputTokens +
+        acc.cacheReadTokens +
+        acc.cacheWriteTokens +
+        acc.reasoningTokens,
+      totalCost: acc.cost,
+      inputTokens: acc.inputTokens,
+      outputTokens: acc.outputTokens,
+      cacheReadTokens: acc.cacheReadTokens,
+      cacheWriteTokens: acc.cacheWriteTokens,
+      reasoningTokens: acc.reasoningTokens,
+      models,
+      providers,
+      dailyBreakdown,
+      activeDays: dailyBreakdown.length,
+      firstUsed: Number.isFinite(acc.firstUsed) ? acc.firstUsed : Number.POSITIVE_INFINITY,
+      lastUsed: Number.isFinite(acc.lastUsed) ? acc.lastUsed : Number.NEGATIVE_INFINITY,
+    });
+  }
+  return results;
+}
+
+/**
+ * Single ProjectSummary lookup by name. First tries exact match
+ * ({@link projectNamesMatch}), then falls back to substring
+ * ({@link projectNameIncludes}) — same precedence as the legacy
+ * `getProjectSummary`.
+ */
+export function computeProjectSummaryFromState(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null,
+  aliases: AliasMap,
+  projectName: string
+): ProjectSummary | undefined {
+  const all = computeAllProjectsFromState(aggregates, todayAccumulator, aliases);
+  return (
+    all.find((p) => projectNamesMatch(p.project, projectName)) ||
+    all.find((p) => projectNameIncludes(p.project, projectName))
+  );
 }
