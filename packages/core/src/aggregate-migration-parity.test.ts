@@ -11,20 +11,26 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { DailyAccumulator } from "./aggregates-store.js";
-import { aggregateRecordsByDay } from "./aggregates.js";
-import { aggregateByDate, aggregateByProvider, filterByProject } from "./aggregator.js";
-import type { AliasMap } from "./alias-service.js";
-import { isBeforeToday, localDateKey } from "./date-utils.js";
-import { __test_internals } from "./tokmeter-core.js";
-import type { TokenRecord } from "./types.js";
-
-const {
+import {
+  computeDailyBreakdownFromState,
+  computeModelCostsFromState,
+  computeProviderBreakdownFromState,
+  computeRawProjectNamesFromState,
   computeStatsFromRecords,
   computeStatsFromState,
-  computeDailyBreakdownFromState,
-  computeProviderBreakdownFromState,
-} = __test_internals;
+} from "./aggregate-consumers.js";
+import { DailyAccumulator } from "./aggregates-store.js";
+import { aggregateRecordsByDay } from "./aggregates.js";
+import {
+  aggregateByDate,
+  aggregateByModel,
+  aggregateByProvider,
+  filterByDate,
+  filterByProject,
+} from "./aggregator.js";
+import type { AliasMap } from "./alias-service.js";
+import { isBeforeToday, localDateKey } from "./date-utils.js";
+import type { TokenRecord } from "./types.js";
 
 /** Build a `TokenRecord` with sensible defaults — same helper across tests. */
 function r(overrides: Partial<TokenRecord> & Pick<TokenRecord, "timestamp">): TokenRecord {
@@ -237,6 +243,54 @@ describe("Phase 2 parity — getDailyBreakdown", () => {
     });
     expect(fresh).toHaveLength(1);
     expect(fresh[0].date).toBe(todayKey);
+  });
+});
+
+describe("Phase 2 parity — getRawProjectNames", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("aggregate-path set of raw names equals records-path set", () => {
+    const legacy = [...new Set(records.map((rec) => rec.project))].sort();
+    const fresh = computeRawProjectNamesFromState(aggregates, todayAcc).sort();
+    expect(fresh).toEqual(legacy);
+  });
+});
+
+describe("Phase 2 parity — getModelCosts (no project filter)", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("no filter: aggregate-path model summaries match legacy aggregateByModel", () => {
+    const legacy = aggregateByModel(records);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc);
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("today-only filter: aggregate-path matches legacy (records filtered to today)", () => {
+    const todayKey = localDateKey(now);
+    const filtered = filterByDate(records, { today: true });
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, { today: true });
+    expect(fresh).toEqual(legacy);
+    // Sanity: today's row date matches the accumulator.
+    expect(todayAcc.date).toBe(todayKey);
+  });
+
+  test("date window (since/until on a past day): same model set, same totals", () => {
+    const todayKey = localDateKey(now);
+    const [Y, M, D] = todayKey.split("-").map(Number);
+    const dt = new Date(Y, M - 1, D - 1);
+    const yesterdayKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    const filtered = filterByDate(records, { since: yesterdayKey, until: yesterdayKey });
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, {
+      since: yesterdayKey,
+      until: yesterdayKey,
+    });
+    expect(fresh).toEqual(legacy);
   });
 });
 
