@@ -131,6 +131,10 @@ function forwardMigrateAggregate(day: DailyAggregate): DailyAggregate {
     if (typeof p.lastUsed !== "number") p.lastUsed = 0;
     if (!p.modelBuckets) p.modelBuckets = {};
   }
+  for (const pr of Object.values(day.providers)) {
+    if (typeof pr.firstUsed !== "number") pr.firstUsed = 0;
+    if (typeof pr.lastUsed !== "number") pr.lastUsed = 0;
+  }
   return day;
 }
 
@@ -411,6 +415,8 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
       cost: 0,
       totalTokens: 0,
       recordCount: 0,
+      firstUsed: Number.POSITIVE_INFINITY,
+      lastUsed: Number.NEGATIVE_INFINITY,
       ...emptyBuckets(),
     };
     day.providers[r.provider] = provider;
@@ -418,6 +424,8 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
   provider.cost += r.cost;
   addBuckets(provider, r);
   provider.recordCount++;
+  if (r.timestamp < provider.firstUsed) provider.firstUsed = r.timestamp;
+  if (r.timestamp > provider.lastUsed) provider.lastUsed = r.timestamp;
 }
 
 function finalizeDay(day: DailyAggregate): DailyAggregate {
@@ -429,7 +437,11 @@ function finalizeDay(day: DailyAggregate): DailyAggregate {
     if (!Number.isFinite(p.lastUsed)) p.lastUsed = 0;
     for (const pm of Object.values(p.modelBuckets)) pm.totalTokens = tokensTotal(pm);
   }
-  for (const pr of Object.values(day.providers)) pr.totalTokens = tokensTotal(pr);
+  for (const pr of Object.values(day.providers)) {
+    pr.totalTokens = tokensTotal(pr);
+    if (!Number.isFinite(pr.firstUsed)) pr.firstUsed = 0;
+    if (!Number.isFinite(pr.lastUsed)) pr.lastUsed = 0;
+  }
   if (!Number.isFinite(day.firstUsed)) day.firstUsed = 0;
   if (!Number.isFinite(day.lastUsed)) day.lastUsed = 0;
   return day;

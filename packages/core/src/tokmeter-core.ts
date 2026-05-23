@@ -18,7 +18,7 @@ import {
 } from "./aggregate-consumers.js";
 import { DailyAccumulator } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
-import { aggregateByModel, filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
+import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import {
@@ -70,6 +70,14 @@ function isOpaqueModel(model: string): boolean {
   return OPAQUE_MODELS.has(model);
 }
 
+/**
+ * How many days of records to hold in {@link TokmeterCore.recentRecords}.
+ * Sized to the longest signal lookback (pace baseline = 7 days × 2 = 14)
+ * so {@link computeStatbarSignals} sees enough history without scaling RSS
+ * with lifetime record count.
+ */
+const RECENT_RECORDS_WINDOW_DAYS = 14;
+
 const EMPTY_SCAN_META: ScanMeta = {
   stableThrough: null,
   historySource: "none",
@@ -81,19 +89,25 @@ const EMPTY_SCAN_META: ScanMeta = {
 };
 
 export class TokmeterCore {
-  private records: TokenRecord[] = [];
   /**
-   * Per-day historical aggregates, keyed by `YYYY-MM-DD`. Populated alongside
-   * `this.records` during `scan()` and updated by `refreshToday()`. Today's
-   * day is tracked separately in {@link todayAccumulator}; this map covers
-   * days strictly before today.
+   * Rolling 14-day window of records — the lookback needed by `signals.ts`
+   * (burn rate, pace baseline, billing window). Replaces the lifetime
+   * `this.records` array we used to hold; lifetime data lives in
+   * {@link aggregates} + {@link todayAccumulator} now. Sized to the longest
+   * signal lookback so the daemon's hot path keeps its precision without
+   * paying the lifetime RSS cost.
    *
-   * This is dual-state phase 1 of the aggregate cutover (see
-   * docs/aggregate-snapshot-plan.md). Existing getters still read
-   * `this.records`; aggregate-aware getters can opt into reading this
-   * map. Phase 3 retires `this.records` and the snapshot stops storing raw
-   * records — at which point this map is the ONLY historical state and the
-   * daemon's RSS drops from ~1.5 GB to ~100 MB.
+   * Phase 3 retirement: external getters (`getRecords`, summary `records`
+   * field) now expose this 14-day window. Callers needing lifetime data
+   * should migrate to the aggregate getters (`getStats`, `getDailyBreakdown`,
+   * `getAllProjects`).
+   */
+  private recentRecords: TokenRecord[] = [];
+  /**
+   * Per-day historical aggregates, keyed by `YYYY-MM-DD`. Built from the full
+   * scan and updated by `refreshToday()`. Today's day is tracked separately
+   * in {@link todayAccumulator}; this map covers days strictly before today.
+   * Single source of truth for lifetime reporting after the Phase 3 cutover.
    */
   private aggregates: Map<string, DailyAggregate> = new Map();
   /**
@@ -258,13 +272,7 @@ export class TokmeterCore {
       }
     }
 
-    this.records = records;
-    // Phase 1 of the aggregate cutover: also populate the per-day aggregate
-    // map + today's accumulator. Consumers still read `this.records`; this
-    // is the foundation that consumer rewires (Phase 2) and the eventual
-    // removal of `this.records` (Phase 3) build on. Cost: one O(N) pass via
-    // `aggregateRecordsByDay`, paid once per scan — dwarfed by the scan
-    // itself, and the wins are paid back many times over once consumers move.
+    this.recentRecords = this.sliceRecent(records, referenceTimestamp);
     this.rebuildAggregateState(records, referenceTimestamp);
     this.scanMeta = {
       stableThrough: isTodayOnlyScan ? null : stableThrough,
@@ -304,7 +312,9 @@ export class TokmeterCore {
    * loaded yet) so there's a frozen base to splice onto.
    */
   async refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
-    if (this.records.length === 0) {
+    // Cold start: no aggregate state loaded → fall back to a full scan so
+    // the warm path has a frozen base to splice today's records onto.
+    if (this.todayAccumulator === null) {
       return this.scan();
     }
 
@@ -339,17 +349,16 @@ export class TokmeterCore {
       }
     }
 
-    // Keep frozen history (everything before today); replace only the today slice.
-    const history = this.records.filter((r) => isBeforeToday(r.timestamp, now));
-    this.records = [...history, ...today];
-    // Aggregate state stays in lockstep with `this.records`. Historical
-    // aggregates are already in `this.aggregates` from the last `scan()`;
-    // refreshToday only touches today's accumulator.
+    // Roll forward the 14-day window: drop today's stale slice from
+    // recentRecords, append the fresh today scan. Aggregates already hold
+    // historical days; only today's accumulator needs to be replaced.
+    const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
+    this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
     this.refreshTodayAccumulator(today, now);
 
     this.scanMeta = {
       ...this.scanMeta,
-      todayState: this.resolveTodayState(this.records, todayWarnings, false),
+      todayState: this.resolveTodayState(this.recentRecords, todayWarnings, false),
       lastScanAt: Date.now(),
       warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "today"), ...todayWarnings],
     };
@@ -364,13 +373,26 @@ export class TokmeterCore {
     // of the last full scan; "today" lags slightly, which is the acceptable
     // price for not torching memory on every warm refresh.
 
-    return this.records;
+    return this.recentRecords;
+  }
+
+  /**
+   * Slice the recent records window: keep the last
+   * {@link RECENT_RECORDS_WINDOW_DAYS} of records relative to the reference
+   * timestamp. Sized to the longest signal lookback (pace's 14-day baseline)
+   * so {@link computeStatbarSignals} keeps precision while RSS stays bounded.
+   */
+  private sliceRecent(records: TokenRecord[], referenceTimestamp: number): TokenRecord[] {
+    const cutoff = referenceTimestamp - RECENT_RECORDS_WINDOW_DAYS * 86_400_000;
+    const out: TokenRecord[] = [];
+    for (const r of records) if (r.timestamp >= cutoff) out.push(r);
+    return out;
   }
 
   /**
    * Rebuild the per-day aggregate map + today's accumulator from a fresh
-   * record set. Called from `scan()` after `this.records` is set, so the
-   * dual state stays in sync. Pure rebuild (no incremental delta) — cheap
+   * record set. Called from `scan()` after `this.recentRecords` is set, so
+   * the state stays in sync. Pure rebuild (no incremental delta) — cheap
    * relative to the scan that produced these records.
    */
   private rebuildAggregateState(records: TokenRecord[], referenceTimestamp: number): void {
@@ -425,9 +447,16 @@ export class TokmeterCore {
     return this.todayAccumulator?.toAggregate() ?? null;
   }
 
-  /** Get all loaded records. */
+  /**
+   * Returns the rolling 14-day records window — sized to the longest signal
+   * lookback. Callers needing lifetime data should migrate to the aggregate
+   * getters ({@link getStats}, {@link getDailyBreakdown}, {@link getAllProjects}).
+   *
+   * Semantic break landed in Phase 3 of the aggregate cutover so the daemon's
+   * RSS stops scaling with lifetime record count.
+   */
   getRecords(): TokenRecord[] {
-    return this.records;
+    return this.recentRecords;
   }
 
   /** Metadata describing the last scan's stable/live composition state. */
@@ -474,12 +503,14 @@ export class TokmeterCore {
     since?: string;
     until?: string;
     today?: boolean;
+    providers?: ProviderId[];
   }): ModelSummary[] {
     return computeModelCostsFromState(this.aggregates, this.todayAccumulator, {
       today: options?.today,
       since: options?.since,
       until: options?.until,
       project: options?.project,
+      providers: options?.providers,
     });
   }
 
@@ -520,29 +551,20 @@ export class TokmeterCore {
       projectedCost: number;
     }>;
   }> {
-    const refTs = Date.now();
-    const todayRecords = this.records.filter((r) => !isBeforeToday(r.timestamp, refTs));
+    const today = this.getTodayAggregate();
     const totals = {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      reasoning: 0,
+      input: today?.inputTokens ?? 0,
+      output: today?.outputTokens ?? 0,
+      cacheRead: today?.cacheReadTokens ?? 0,
+      cacheWrite: today?.cacheWriteTokens ?? 0,
+      reasoning: today?.reasoningTokens ?? 0,
     };
-    let actual = 0;
-    for (const r of todayRecords) {
-      totals.input += r.inputTokens;
-      totals.output += r.outputTokens;
-      totals.cacheRead += r.cacheReadTokens;
-      totals.cacheWrite += r.cacheWriteTokens;
-      totals.reasoning += r.reasoningTokens;
-      actual += r.cost;
-    }
+    const actual = today?.cost ?? 0;
     // Top 6 lifetime models — the lineup the user has demonstrated by use.
     // Hardcoding a "popular models" list would violate the universal-first
     // principle; projecting against the user's actual lineup is honest and
     // useful (these are the alternatives they'd realistically pick).
-    const topModels = aggregateByModel(this.records).slice(0, 6);
+    const topModels = this.getModelCosts().slice(0, 6);
     const projections = await Promise.all(
       topModels.map(async (m) => ({
         model: m.model,
@@ -571,25 +593,27 @@ export class TokmeterCore {
    * Same {@link DailyEntry} shape the legacy records-walking impl returned;
    * parity-tested in aggregate-migration-parity.test.ts.
    */
-  getDailyBreakdown(options?: { since?: string; until?: string; project?: string }): DailyEntry[] {
+  getDailyBreakdown(options?: {
+    since?: string;
+    until?: string;
+    project?: string;
+    providers?: ProviderId[];
+  }): DailyEntry[] {
     return computeDailyBreakdownFromState(this.aggregates, this.todayAccumulator, options);
   }
 
   /**
-   * Get overall stats — computed in a single pass over all records.
-   *
-   * Returns totals, unique counts, and longest activity streak.
+   * Overall stats. Two call shapes:
+   *   - `getStats({ providers })` — aggregate path, optionally provider-filtered
+   *   - `getStats(records[])` — legacy records-walking path, kept for callers
+   *      that already have a filtered array in hand (parity-tested).
    */
-  /**
-   * Overall stats. Dispatches by argument shape: with `records` (legacy path
-   * used by the daemon's `filterByProvider(getRecords(), providers)` pattern),
-   * walks the raw records. Without — reads from aggregate state. Both paths
-   * are parity-tested to return identical output for the same data.
-   */
-  getStats(records?: TokenRecord[]): TokmeterStats {
+  getStats(arg?: TokenRecord[] | { providers?: ProviderId[] }): TokmeterStats {
     const aliases = this.getAliases();
-    if (records !== undefined) return computeStatsFromRecords(records, aliases);
-    return computeStatsFromState(this.aggregates, this.todayAccumulator, aliases);
+    if (Array.isArray(arg)) return computeStatsFromRecords(arg, aliases);
+    return computeStatsFromState(this.aggregates, this.todayAccumulator, aliases, {
+      providers: arg?.providers,
+    });
   }
 
   /**
@@ -598,13 +622,13 @@ export class TokmeterCore {
    * bar can poll this and watch the numbers move.
    */
   getStatbarSignals(now: number = Date.now()): StatbarSignals {
-    return computeStatbarSignals(this.records, now);
+    return computeStatbarSignals(this.recentRecords, now);
   }
 
   /** Get a serialisable summary payload with data plus scan metadata. */
   getSummary(): TokmeterSummary {
     return {
-      records: this.records,
+      records: this.recentRecords,
       projects: this.getAllProjects(),
       models: this.getModelCosts(),
       daily: this.getDailyBreakdown(),

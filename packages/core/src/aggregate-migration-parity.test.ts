@@ -30,6 +30,7 @@ import {
   aggregateByProvider,
   filterByDate,
   filterByProject,
+  filterByProvider,
 } from "./aggregator.js";
 import type { AliasMap } from "./alias-service.js";
 import { isBeforeToday, localDateKey } from "./date-utils.js";
@@ -458,5 +459,36 @@ describe("Phase 2 parity — getModelCosts (project filter)", () => {
     const fresh = computeModelCostsFromState(aggregates, todayAcc, { project: "zzz" });
     expect(fresh).toEqual(legacy);
     expect(fresh).toEqual([]);
+  });
+});
+
+describe("Phase 3 parity — provider filter on aggregate getters", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("getStats({ providers: ['codex'] }) matches legacy filterByProvider path", () => {
+    const filtered = filterByProvider(records, ["codex"]);
+    const legacy = computeStatsFromRecords(filtered, aliasesEmpty);
+    const fresh = computeStatsFromState(aggregates, todayAcc, aliasesEmpty, {
+      providers: ["codex"],
+    });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("getDailyBreakdown({ providers }) matches legacy aggregateByDate(filtered)", () => {
+    const filtered = filterByProvider(records, ["claude-code"]);
+    const legacy = aggregateByDate(filtered);
+    const fresh = computeDailyBreakdownFromState(aggregates, todayAcc, {
+      providers: ["claude-code"],
+    });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("getModelCosts({ providers }) matches legacy aggregateByModel(filtered)", () => {
+    const filtered = filterByProvider(records, ["codex"]);
+    const legacy = aggregateByModel(filtered);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc, { providers: ["codex"] });
+    expect(fresh).toEqual(legacy);
   });
 });
