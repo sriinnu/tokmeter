@@ -88,7 +88,7 @@ export interface TokmeterScanWarning {
 
 export interface TokmeterScanMeta {
   stableThrough: string | null;
-  historySource: "snapshot" | "rebuilt" | "none";
+  historySource: "snapshot" | "extended" | "rebuilt" | "none";
   todayState: "live" | "degraded" | "snapshot-only";
   lastScanAt: number;
   warnings: TokmeterScanWarning[];

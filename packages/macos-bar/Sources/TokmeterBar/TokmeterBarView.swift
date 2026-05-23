@@ -33,6 +33,9 @@ struct TokmeterBarView: View {
     @State private var showAllSessions = false
     @State private var breathToggle = false
     @State private var showSettings = false
+    /// Drives the cache "wallet" slide-out drawer. Toggled by the wallet icon
+    /// in the hero header; the drawer renders as a trailing-edge overlay.
+    @State private var showCachePanel = false
     /// Top-anchored gradient ripple flashed briefly on theme change so the
     /// transition reads as deliberate, not a glitch.
     @State private var themeRipple: Bool = false
@@ -42,7 +45,7 @@ struct TokmeterBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HeroHeader(loader: loader, theme: theme, breathToggle: breathToggle)
+            HeroHeader(loader: loader, theme: theme, breathToggle: breathToggle, showCachePanel: $showCachePanel)
                 .cascadeIn(delay: 0.02)
 
             errorBanner
@@ -56,6 +59,8 @@ struct TokmeterBarView: View {
                     // compaction tax. Self-hides when there's no live signal.
                     SignalsRibbon(loader: loader, theme: theme)
                         .cascadeIn(delay: 0.10)
+                    // CACHE & CONTEXT is no longer inline — it lives in the
+                    // wallet drawer, opened from the hero header icon.
                     StatsGrid(loader: loader, theme: theme)
                         .cascadeIn(delay: 0.14)
                     if !loader.topModels.isEmpty || loader.isWarming {
@@ -91,6 +96,26 @@ struct TokmeterBarView: View {
         .frame(width: 400)
         .frame(minHeight: 620, maxHeight: 820)
         .background(popoverBackground)
+        // Cache "wallet" drawer — slides in from the trailing edge over the
+        // whole popover when the hero header's wallet icon is tapped.
+        .overlay {
+            if showCachePanel, let signals = loader.statbarSignals {
+                CacheWalletDrawer(signals: signals, theme: theme, isPresented: $showCachePanel)
+                    .zIndex(10)
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showCachePanel)
+        // If signals disappear while the drawer is open (daemon restart, brief
+        // /api/statbar-signals failure), the overlay's `if let` clause silently
+        // unmounts the drawer but `showCachePanel` stays true. When signals
+        // return on the next poll, the drawer would pop back unexpectedly —
+        // the user already moved on. Close the drawer when signals go nil so
+        // intent matches state.
+        .onChange(of: loader.statbarSignals == nil) { _, signalsAreNil in
+            if signalsAreNil && showCachePanel {
+                showCachePanel = false
+            }
+        }
         // Theme-switch ripple — a top-anchored gradient that flashes the new
         // theme's primary/secondary down from the menubar edge. Hint that the
         // change was real and intentional, not a render glitch.

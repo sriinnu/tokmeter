@@ -1,8 +1,9 @@
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   createRecord,
   expandHome,
   extractProjectFromPath,
+  filterFilesByMtime,
   findFiles,
   getCachedRecords,
   readJsonlFile,
@@ -41,9 +42,31 @@ interface ClaudeMessage {
    */
   compactMetadata?: {
     trigger?: "auto" | "manual";
+    success?: boolean;
     preTokens?: number;
     postTokens?: number;
     durationMs?: number;
+    error?: string;
+  };
+}
+
+function compactionTelemetry(metadata: ClaudeMessage["compactMetadata"] = {}) {
+  const preTokens = metadata.preTokens;
+  const postTokens = metadata.postTokens;
+  const compressionRatio =
+    typeof preTokens === "number" && preTokens > 0 && typeof postTokens === "number"
+      ? Math.max(0, Math.min(1, 1 - postTokens / preTokens))
+      : undefined;
+
+  return {
+    source: "tool_jsonl" as const,
+    trigger: metadata.trigger,
+    success: metadata.success,
+    durationMs: metadata.durationMs,
+    preTokens,
+    postTokens,
+    compressionRatio,
+    error: metadata.error,
   };
 }
 
@@ -65,14 +88,19 @@ function decodeClaudeSlugDir(filePath: string): string | undefined {
 export class ClaudeCodeParser implements SessionParser {
   readonly providerId = "claude-code" as const;
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const projectsDir = expandHome("~/.claude/projects", homeDir);
     // Depth 5: main sessions live at `<slug>/<sessionId>.jsonl` (depth 2),
     // subagent runs at `<slug>/<sessionId>/subagents/agent-*.jsonl` (depth 4).
     // Previous depth 3 silently missed every subagent file — those costs
     // vanished from totals. Bumping picks them up + the parser tags them via
     // `isSubagent` so the aggregator can break out "subagent share."
-    const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 5);
+    let files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 5);
+    // Today-only scans skip files untouched since the watermark — a warm
+    // daemon refresh reads only today's active sessions, not the whole vault.
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
@@ -98,19 +126,29 @@ export class ClaudeCodeParser implements SessionParser {
       // Dedup: using both usage values and a stable per-message discriminator so
       // distinct consecutive assistant messages with identical usage are kept.
       let lastUsageKey = "";
-      // Index of the most recent assistant record we've pushed. When a
-      // compact_boundary system message arrives, we retroactively flip that
-      // record's kind to "compaction" — Claude Code writes the summarization
-      // API call as a normal assistant message right before the boundary, so
-      // the most-recent record is the right one to tag.
-      let lastAssistantIdx = -1;
+      // Most recent assistant record, including cached tail records during
+      // append-only scans. A compact_boundary can arrive after we cached the
+      // assistant summarization call, so the boundary must be allowed to tag
+      // the cached tail record instead of only records parsed in this chunk.
+      //
+      // Important: if the cached tail is ALREADY tagged as compaction, leave
+      // it alone — re-tagging would overwrite its existing compaction
+      // telemetry with whichever boundary we see first in this chunk, which
+      // is the WRONG boundary (the one that fired AFTER an assistant turn we
+      // haven't parsed yet). The freshly-parsed assistant record will become
+      // the new lastAssistantRecord below and the right boundary will tag it.
+      const cachedTail =
+        cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
+      let lastAssistantRecord: TokenRecord | null =
+        cachedTail && cachedTail.kind === "compaction" ? null : cachedTail;
       for (const msg of lines) {
         if (msg.type === "system" && msg.subtype === "compact_boundary") {
-          if (lastAssistantIdx >= 0) {
-            newRecords[lastAssistantIdx].kind = "compaction";
+          if (lastAssistantRecord) {
+            lastAssistantRecord.kind = "compaction";
+            lastAssistantRecord.compaction = compactionTelemetry(msg.compactMetadata);
             // Don't re-tag if a second boundary follows without an assistant
             // turn in between (defensive — shouldn't happen in practice).
-            lastAssistantIdx = -1;
+            lastAssistantRecord = null;
           }
           continue;
         }
@@ -135,29 +173,33 @@ export class ClaudeCodeParser implements SessionParser {
           }
         }
 
-        newRecords.push(
-          createRecord({
-            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
-            provider: "claude-code",
-            model: msg.message.model || "unknown",
-            project,
-            cwd,
-            sourceFile: file,
-            inputTokens: usage.input_tokens ?? 0,
-            outputTokens: usage.output_tokens ?? 0,
-            cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-            cost: msg.costUSD ?? 0,
-            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            isSubagent: isSubagent ? true : undefined,
-          })
-        );
-        lastAssistantIdx = newRecords.length - 1;
+        const record = createRecord({
+          timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+          provider: "claude-code",
+          model: msg.message.model || "unknown",
+          project,
+          cwd,
+          sourceFile: file,
+          inputTokens: usage.input_tokens ?? 0,
+          outputTokens: usage.output_tokens ?? 0,
+          cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+          cost: msg.costUSD ?? 0,
+          usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          isSubagent: isSubagent ? true : undefined,
+        });
+        newRecords.push(record);
+        lastAssistantRecord = record;
       }
 
-      // Merge cached records with newly parsed ones
+      // Merge cached records with newly parsed ones. Pass the stat hint that
+      // getCachedRecords already took so the cache entry's mtime/size reflect
+      // the bytes we actually parsed — a concurrent writer appending between
+      // parse and cache-set would otherwise cause the next exact-match check
+      // to skip the new bytes (silent token loss).
       const allFileRecords = [...cacheResult.cachedRecords, ...newRecords];
-      await setCachedRecords(file, allFileRecords);
+      await setCachedRecords(file, allFileRecords, cacheResult.statHint);
       records.push(...allFileRecords);
     }
     return records;

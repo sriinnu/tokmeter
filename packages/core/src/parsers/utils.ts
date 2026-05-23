@@ -17,7 +17,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
-import type { TokenRecord } from "../types.js";
+import type { ProviderId, TokenRecord, UsageProvenance, UsageTelemetrySource } from "../types.js";
 
 // ─── Record Cache (append-aware, disk-persisted) ───────────────────
 //
@@ -61,6 +61,18 @@ let recordCache: Map<string, RecordCacheEntry> | null = null;
 let cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
 let cacheCreatedAt: string | null = null;
 let cacheKoshaMtime = 0;
+/** Set of paths touched in the current process so far — files we've actually
+ *  observed live during a scan in this daemon lifetime. On save, paths in the
+ *  cache that we've NOT touched recently AND that no longer exist on disk get
+ *  dropped, so a long-lived daemon doesn't keep growing as the user cleans up
+ *  or ages out old sessions. We rely on disk-existence (not "touched") as the
+ *  drop condition so a quiet session file (claude-code project that wasn't
+ *  active today) isn't evicted just because no parser visited it. */
+let cacheTouchedPaths: Set<string> | null = null;
+/** Throttle stale-path GC so a daemon scanning every 12s isn't fanning out N
+ *  stats every tick. Run at most every ~5 minutes. */
+let cacheLastGcAtMs = 0;
+const CACHE_GC_INTERVAL_MS = 5 * 60 * 1000;
 const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
 const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 
@@ -91,19 +103,23 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      (Bash, Read, Edit, Task, …). Existing caches don't carry the field
  *      so today's tool-cost view would be blank for cached records — force
  *      a re-parse.
- *  8 — claude-code parser now follows the depth bump (3→5) to pick up
+ *  8 — claude-code parser now follows the depth bump (3->5) to pick up
  *      subagent JSONLs under <slug>/<sessionId>/subagents/agent-*.jsonl.
  *      These records were previously invisible (cost vanished from totals).
  *      Records from subagent files are tagged `isSubagent:true`. Existing
  *      caches lack the new files + flag — force a re-parse.
+ *  9 — TokenRecord now carries usage provenance and optional compaction
+ *      metadata. Old caches lack per-bucket trust markers, so rebuild once.
  */
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
   recordCache = new Map();
   cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
   cacheKoshaMtime = 0;
+  cacheTouchedPaths = new Set();
+  cacheLastGcAtMs = 0;
   try {
     if (existsSync(CACHE_FILE)) {
       const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
@@ -129,9 +145,39 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
   return recordCache;
 }
 
+/**
+ * Throttled stale-path eviction. A long-lived daemon would otherwise carry
+ * cache entries for every file ever scanned in its lifetime, even ones the
+ * user has since deleted via `tokmeter cleanup` or that aged out of provider
+ * retention. We sweep at most every {@link CACHE_GC_INTERVAL_MS} so a tight
+ * scan loop (every 12 s) doesn't fan out N stats per tick.
+ *
+ * Eviction rule: a path is dropped only if (a) it wasn't observed live during
+ * this process AND (b) it does not exist on disk. The "observed live" guard
+ * keeps a quiet session file (e.g. a claude-code project the user didn't
+ * touch today) safe — we only evict files that are genuinely gone. This is
+ * safe to do synchronously: an evicted path that gets re-created later will
+ * just miss the cache once and re-parse.
+ */
+function gcStalePathsIfDue(): void {
+  if (!recordCache) return;
+  const nowMs = Date.now();
+  if (nowMs - cacheLastGcAtMs < CACHE_GC_INTERVAL_MS) return;
+  cacheLastGcAtMs = nowMs;
+  const touched = cacheTouchedPaths;
+  if (!touched) return;
+  for (const key of [...recordCache.keys()]) {
+    if (touched.has(key)) continue;
+    if (!existsSync(key)) {
+      recordCache.delete(key);
+    }
+  }
+}
+
 function saveRecordCache(): void {
   if (!recordCache) return;
   try {
+    gcStalePathsIfDue();
     if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
     const data: CacheFile = {
       version: CACHE_VERSION,
@@ -169,14 +215,29 @@ export function setCachedKoshaMtime(mtimeMs: number): void {
  * - { hit: true, records } — exact match, skip parsing entirely
  * - { hit: false, appendOffset } — file grew, only parse from offset
  * - { hit: false, appendOffset: 0 } — full re-parse needed
+ *
+ * On miss/append the returned `statHint` is the stat used to decide the
+ * branch. Parsers should pass it back to {@link setCachedRecords} so the
+ * cache entry reflects the bytes actually parsed (closing the parse-time /
+ * cache-set race that would otherwise let a concurrent writer's appended
+ * bytes vanish on the next exact-match check).
  */
 export async function getCachedRecords(
   path: string
 ): Promise<
   | { hit: true; records: TokenRecord[] }
-  | { hit: false; appendOffset: number; cachedRecords: TokenRecord[] }
+  | {
+      hit: false;
+      appendOffset: number;
+      cachedRecords: TokenRecord[];
+      statHint?: { mtimeMs: number; sizeBytes: number };
+    }
 > {
   const cache = loadRecordCache();
+  // Record that we've observed this path live during this process — keeps the
+  // GC sweep from evicting files we're actively scanning even if a transient
+  // stat fails inside the sweep.
+  cacheTouchedPaths?.add(path);
   const entry = cache.get(path);
   if (!entry) {
     cacheStats.cacheMisses++;
@@ -184,6 +245,7 @@ export async function getCachedRecords(
   }
   try {
     const s = await stat(path);
+    const statHint = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
     // Exact hit: nothing changed
     if (s.mtimeMs === entry.mtimeMs && s.size === entry.sizeBytes) {
       cacheStats.cacheHits++;
@@ -192,11 +254,16 @@ export async function getCachedRecords(
     // File grew: append-only parse from where we left off
     if (s.size > entry.sizeBytes) {
       cacheStats.appends++;
-      return { hit: false, appendOffset: entry.sizeBytes, cachedRecords: entry.records };
+      return {
+        hit: false,
+        appendOffset: entry.sizeBytes,
+        cachedRecords: entry.records,
+        statHint,
+      };
     }
     // File shrunk or rewritten: full re-parse
     cacheStats.cacheMisses++;
-    return { hit: false, appendOffset: 0, cachedRecords: [] };
+    return { hit: false, appendOffset: 0, cachedRecords: [], statHint };
   } catch {
     cacheStats.cacheMisses++;
     return { hit: false, appendOffset: 0, cachedRecords: [] };
@@ -205,10 +272,30 @@ export async function getCachedRecords(
 
 /**
  * Cache parsed records for a file, recording current mtime and size.
+ *
+ * Callers that already stat'd the file during parsing should pass `statHint`
+ * — using the stat at parse-time keeps mtime/size in sync with what was
+ * actually consumed. If we re-stat here, a writer that appends between parse
+ * and cache-set would advance mtime/size, and the next scan's exact-match
+ * check would skip the new bytes (silent token loss on append). The hint
+ * closes that race.
  */
-export async function setCachedRecords(path: string, records: TokenRecord[]): Promise<void> {
+export async function setCachedRecords(
+  path: string,
+  records: TokenRecord[],
+  statHint?: { mtimeMs: number; sizeBytes: number }
+): Promise<void> {
   const cache = loadRecordCache();
+  cacheTouchedPaths?.add(path);
   try {
+    if (statHint) {
+      cache.set(path, {
+        mtimeMs: statHint.mtimeMs,
+        sizeBytes: statHint.sizeBytes,
+        records,
+      });
+      return;
+    }
     const s = await stat(path);
     cache.set(path, { mtimeMs: s.mtimeMs, sizeBytes: s.size, records });
   } catch {}
@@ -243,6 +330,8 @@ export function clearRecordCache(): void {
   cache.clear();
   recordCache = cache;
   cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  cacheTouchedPaths = new Set();
+  cacheLastGcAtMs = 0;
   try {
     if (existsSync(CACHE_FILE)) {
       unlinkSync(CACHE_FILE);
@@ -252,23 +341,32 @@ export function clearRecordCache(): void {
 
 /** Read only the tail of a file from a byte offset (for append-only parsing). */
 export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: number): Promise<T[]> {
+  const { open } = await import("node:fs/promises");
+  let fd: Awaited<ReturnType<typeof open>> | null = null;
   try {
-    const fd = await import("node:fs/promises").then((m) => m.open(path, "r"));
+    fd = await open(path, "r");
     const fileStat = await fd.stat();
-    const tailSize = fileStat.size - offsetBytes;
+    // Back up one byte so we can KNOW whether the offset was newline-aligned
+    // instead of guessing from the first character. Sniffing for "{"/"[" drops
+    // a legitimate complete record whenever a line doesn't start with those
+    // (indentation, BOM, a future provider's format) — a silent token loss.
+    // Reading offset-1 lets us check the actual boundary byte.
+    const readFrom = offsetBytes > 0 ? offsetBytes - 1 : 0;
+    const tailSize = fileStat.size - readFrom;
     if (tailSize <= 0) {
-      await fd.close();
       return [];
     }
     const buf = Buffer.alloc(tailSize);
-    await fd.read(buf, 0, tailSize, offsetBytes);
-    await fd.close();
+    await fd.read(buf, 0, tailSize, readFrom);
 
     const raw = buf.toString("utf-8");
+    // 10 === "\n". If the byte just before the offset is a newline (or we read
+    // from the very start), the tail begins on a clean line boundary and every
+    // parsed line is complete. Otherwise the offset landed mid-line and the
+    // first fragment is a partial JSON line that must be discarded.
+    const alignedAtNewline = offsetBytes === 0 || raw.charCodeAt(0) === 10;
     let lines = raw.split("\n").filter((l: string) => l.trim());
-
-    // If offset landed mid-line, the first chunk is a partial JSON line — discard it
-    if (lines.length > 0 && !raw.startsWith("\n") && !raw.startsWith("{") && !raw.startsWith("[")) {
+    if (!alignedAtNewline && lines.length > 0) {
       lines = lines.slice(1);
     }
 
@@ -281,7 +379,42 @@ export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: numb
     return results;
   } catch {
     return [];
+  } finally {
+    // Guarantee the fd is released even if read() threw mid-buffer. Without
+    // the finally, repeated parse failures would leak fds and eventually
+    // panic the daemon with EMFILE.
+    if (fd) {
+      try {
+        await fd.close();
+      } catch {
+        /* close failure is best-effort */
+      }
+    }
   }
+}
+
+/**
+ * Keep only files modified at or after `minMtimeMs`. Used by today-only scans
+ * so a parser reads just the handful of files touched today instead of the
+ * whole corpus. Stat-ing N files is orders of magnitude cheaper than reading
+ * and parsing them — this is the difference between a ~30 MB statusline tick
+ * and a 2 GB one. A file that contains today's records always has an mtime
+ * today (records are appended, which advances mtime), so this can't drop a
+ * today record. Stat failures are kept (fail-open: better a wasted read than a
+ * lost record).
+ */
+export async function filterFilesByMtime(paths: string[], minMtimeMs: number): Promise<string[]> {
+  const kept = await Promise.all(
+    paths.map(async (p) => {
+      try {
+        const s = await stat(p);
+        return s.mtimeMs >= minMtimeMs ? p : null;
+      } catch {
+        return p; // fail-open
+      }
+    })
+  );
+  return kept.filter((p): p is string => p !== null);
 }
 
 /** Default maximum number of files returned by findFiles. */
@@ -391,14 +524,114 @@ export function extractProjectFromPath(filePath: string): string {
   return canonicalizeProjectName(parts[parts.length - 2] || "unknown", "unknown");
 }
 
+type CreateRecordOverrides = Omit<Partial<TokenRecord>, "usage"> & {
+  usage?: Partial<UsageProvenance>;
+};
+
+const directMetric = "direct" as const;
+const notExposedMetric = "not_exposed" as const;
+const calculatedMetric = "calculated" as const;
+const normalizedMetric = "normalized" as const;
+
+function baseProvenance(source: UsageTelemetrySource): UsageProvenance {
+  return {
+    source,
+    inputTokens: directMetric,
+    outputTokens: directMetric,
+    cacheReadTokens: directMetric,
+    cacheWriteTokens: directMetric,
+    reasoningTokens: notExposedMetric,
+    cost: calculatedMetric,
+  };
+}
+
+function withMetrics(base: UsageProvenance, overrides: Partial<UsageProvenance>): UsageProvenance {
+  return { ...base, ...overrides };
+}
+
+function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
+  switch (provider) {
+    case "claude-code":
+      return baseProvenance("tool_jsonl");
+    case "codex":
+      return {
+        ...baseProvenance("tool_jsonl"),
+        inputTokens: normalizedMetric,
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: directMetric,
+        notes: ["OpenAI-style total input is normalized to uncached input + cache read."],
+      };
+    case "gemini":
+    case "qwen":
+      return {
+        ...baseProvenance(provider === "gemini" ? "tool_json" : "tool_jsonl"),
+        inputTokens: normalizedMetric,
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: directMetric,
+        notes: ["Total prompt tokens are normalized to uncached input + cache read."],
+      };
+    case "cursor":
+      return withMetrics(baseProvenance("tool_csv"), {
+        cacheReadTokens: notExposedMetric,
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: notExposedMetric,
+      });
+    case "kilo-cli":
+      return withMetrics(baseProvenance("tool_sqlite"), {
+        reasoningTokens: directMetric,
+      });
+    case "opencode":
+      return withMetrics(baseProvenance("tool_sqlite"), {
+        reasoningTokens: directMetric,
+      });
+    case "kilo":
+    case "roo-code":
+      return baseProvenance("tool_json");
+    case "mux":
+      return withMetrics(baseProvenance("tool_json"), {
+        reasoningTokens: directMetric,
+      });
+    case "openclaw":
+      return withMetrics(baseProvenance("tool_jsonl"), {
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: notExposedMetric,
+      });
+    case "synthetic":
+      return withMetrics(baseProvenance("synthetic"), {
+        inputTokens: calculatedMetric,
+        outputTokens: calculatedMetric,
+        cacheReadTokens: calculatedMetric,
+        cacheWriteTokens: calculatedMetric,
+        reasoningTokens: calculatedMetric,
+        cost: calculatedMetric,
+      });
+    default:
+      return baseProvenance("tool_jsonl");
+  }
+}
+
+function mergeUsageProvenance(
+  provider: ProviderId,
+  overrides?: Partial<UsageProvenance>
+): UsageProvenance {
+  const defaults = defaultUsageProvenance(provider);
+  if (!overrides) return defaults;
+  return {
+    ...defaults,
+    ...overrides,
+    notes: [...(defaults.notes ?? []), ...(overrides.notes ?? [])],
+  };
+}
+
 /** Create a base token record with sensible defaults. */
 export function createRecord(
-  overrides: Partial<TokenRecord> & Pick<TokenRecord, "timestamp" | "provider" | "model">
+  overrides: CreateRecordOverrides & Pick<TokenRecord, "timestamp" | "provider" | "model">
 ): TokenRecord {
   const ts =
     typeof overrides.timestamp === "number" && Number.isFinite(overrides.timestamp)
       ? overrides.timestamp
       : Date.now();
+  const usage = mergeUsageProvenance(overrides.provider, overrides.usage);
   return {
     project: "unknown",
     inputTokens: 0,
@@ -408,6 +641,7 @@ export function createRecord(
     reasoningTokens: 0,
     cost: 0,
     ...overrides,
+    usage,
     timestamp: ts,
   };
 }

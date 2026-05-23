@@ -297,51 +297,78 @@ function todayKey(): string {
 }
 
 /**
- * Today's totals across all providers, cached for 60s.
+ * Today's totals across all providers — READ from the warm daemon, cached 60s.
  *
- * Cache key is the YYYY-MM-DD date — at midnight rollover the cache is
- * invalidated automatically so yesterday's number doesn't linger as
- * "today's." TTL is the secondary defense for intra-day refresh.
+ * The statusline runs as a fresh subprocess every ~200ms. It must NEVER scan
+ * the corpus itself: a full re-parse per tick was ballooning each invocation
+ * to ~2GB RSS and stacking faster than they exit (→ kernel panic). The single
+ * warm daemon is the source of truth; we just fetch `GET /api/today` (a cheap
+ * filtered pass over the daemon's already-loaded records).
  *
- * Fetching fresh requires a full disk scan which costs hundreds of ms on
- * power users — utterly unacceptable for a 200ms hot path. The 60s TTL
- * means today's number lags reality by up to a minute, which is fine
- * for an at-a-glance display.
+ * The 60s file-cache stays as a buffer over the daemon response so most ticks
+ * don't even hit the socket. Cache key is the YYYY-MM-DD date AND kosha mtime —
+ * midnight rollover and pricing edits both invalidate it on the next pass.
+ *
+ * If the daemon is unreachable, we fire-and-forget START it (the cross-process
+ * singleton guard prevents dupes) and SKIP the "today" segment for this tick.
  */
 async function getTodayTotalsCached(): Promise<TodayTotals | null> {
   const cachePath = join(CACHE_DIR, "today.json");
-  // Cache key: day rollover AND kosha registry mtime. Editing kosha
-  // invalidates the 60s cache on the next hot-path pass so updated pricing
-  // reflects immediately in the statusline without a manual clear.
   const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}`;
   const cached = readCache<TodayTotals>(cachePath, 60_000, contentKey);
   if (cached) return cached;
 
+  const { DAEMON_HOST, DAEMON_PORT } = await import("./daemon/protocol.js");
+  const HTTP_PORT = DAEMON_PORT + 1;
+  const url = `http://${DAEMON_HOST}:${HTTP_PORT}/api/today`;
+
   try {
-    const { TokmeterCore } = await import("@sriinnu/tokmeter");
-    const core = new TokmeterCore();
-    const records = await core.scan({ today: true });
-    let cost = 0;
-    let inT = 0;
-    let outT = 0;
-    const projects: Record<string, ProjectTotal> = {};
-    for (const r of records) {
-      cost += r.cost;
-      inT += r.inputTokens;
-      outT += r.outputTokens;
-      const pkey = r.project || "unknown";
-      if (!projects[pkey]) projects[pkey] = { cost: 0, in: 0, out: 0 };
-      const p = projects[pkey];
-      p.cost += r.cost;
-      p.in += r.inputTokens;
-      p.out += r.outputTokens;
+    // Bound the fetch hard — a hung daemon must never hold the hot path open.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    let totals: TodayTotals | null = null;
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (res.ok) {
+        totals = (await res.json()) as TodayTotals;
+      }
+    } finally {
+      clearTimeout(t);
     }
-    const totals: TodayTotals = { cost, in: inT, out: outT, projects, day: todayKey() };
-    writeCache(cachePath, totals, contentKey);
-    return totals;
+
+    if (totals) {
+      writeCache(cachePath, totals, contentKey);
+      return totals;
+    }
   } catch {
-    return null;
+    // Daemon unreachable — fall through to start it and skip this tick.
   }
+
+  // Daemon not reachable: fire-and-forget start it (detached, heap-capped),
+  // then skip the "today" segment for this tick. The singleton guard in the
+  // daemon prevents a stampede if many ticks race to start it.
+  //
+  // Heap cap: the daemon performs the one-time full-history scan, which on a
+  // real power-user corpus peaks well past 2GB. We must give it room to warm
+  // (a 768MB cap OOM-kills it before it finishes). The statusline's OWN 768MB
+  // intent doesn't apply here — this child IS the daemon. Default 6144MB,
+  // tunable via TOKMETER_DAEMON_HEAP_MB to match the daemon's own constant.
+  try {
+    const { spawn } = await import("node:child_process");
+    const daemonHeapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";
+    const child = spawn(process.execPath, [process.argv[1], "daemon", "start"], {
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        NODE_OPTIONS:
+          `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${daemonHeapMb}`.trim(),
+      },
+    });
+    child.unref();
+  } catch {}
+
+  return null;
 }
 
 /**
@@ -367,6 +394,13 @@ function findProjectTotal(totals: TodayTotals, projectName: string): ProjectTota
 // ─── Main ───────────────────────────────────────────────────────────────
 
 export async function runStatusline(): Promise<void> {
+  // Hard watchdog: no matter what hangs below (a stuck daemon fetch, stdin that
+  // never closes, a slow import), this process MUST NOT linger and squat RAM.
+  // After 4s, exit unconditionally. unref() so it doesn't itself keep the loop
+  // alive if everything finished cleanly first.
+  const watchdog = setTimeout(() => process.exit(0), 4000);
+  watchdog.unref();
+
   try {
     let input: StatuslineInput;
 
@@ -593,5 +627,21 @@ export async function runStatusline(): Promise<void> {
     try {
       process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
+  } finally {
+    // ALWAYS exit promptly once output is written. A backgrounded daemon
+    // fire-and-forget spawn or a lingering socket handle could otherwise keep
+    // the event loop alive and leave an orphan squatting RAM — the exact
+    // failure mode that stacked into a kernel panic. Flush, then exit.
+    clearTimeout(watchdog);
+    const done = () => process.exit(0);
+    if (process.stdout.writableLength > 0) {
+      process.stdout.once("drain", done);
+      // Belt-and-suspenders: if drain never fires, the watchdog already
+      // unref'd would normally cover it, but it's been cleared — so guard
+      // with a short timer too.
+      setTimeout(done, 500).unref();
+    } else {
+      done();
+    }
   }
 }

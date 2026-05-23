@@ -20,7 +20,7 @@ export interface LoadedSummaryCache {
   warnings: ScanWarning[];
 }
 
-const SUMMARY_CACHE_VERSION = 1;
+const SUMMARY_CACHE_VERSION = 2;
 const SUMMARY_CACHE_DIR_NAME = ".cache/tokmeter";
 const SUMMARY_CACHE_FILE_NAME = "summary-cache.json";
 

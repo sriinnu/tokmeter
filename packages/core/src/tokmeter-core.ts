@@ -16,8 +16,13 @@ import {
   filterByProvider,
 } from "./aggregator.js";
 import { type AliasMap, loadAliases, resolveProjectName } from "./alias-service.js";
-import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
-import { loadHistorySnapshot, saveHistorySnapshot } from "./history-snapshot.js";
+import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
+import {
+  loadHistorySnapshot,
+  saveHistorySnapshot,
+  shouldKeepExistingHistory,
+  sumSnapshotTokens,
+} from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
 import {
   getCachedKoshaMtime,
@@ -155,26 +160,13 @@ export class TokmeterCore {
     if (isTodayOnlyScan) {
       records = await this.scanTodayRecords(options?.providers, referenceTimestamp, todayWarnings);
     } else {
-      let stableRecords: TokenRecord[] = [];
-
-      if (!options?.rescanHistory) {
-        const snapshot = loadHistorySnapshot(this.homeDir, stableThrough);
-        stableRecords = snapshot.records;
-        historySource = snapshot.historySource;
-        historyWarnings.push(...snapshot.warnings);
-      }
-
-      if (options?.rescanHistory || historySource === "none") {
-        const rebuiltHistory = await this.scanHistoricalRecords(
-          undefined,
-          referenceTimestamp,
-          historyWarnings
-        );
-
-        stableRecords = rebuiltHistory;
-        historySource = rebuiltHistory.length > 0 ? "rebuilt" : historySource;
-        historyWarnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, rebuiltHistory));
-      }
+      const frozen = await this.resolveFrozenHistory(
+        stableThrough,
+        referenceTimestamp,
+        Boolean(options?.rescanHistory),
+        historyWarnings
+      );
+      historySource = frozen.historySource;
 
       const todayRecords = await this.scanTodayRecords(
         options?.providers,
@@ -182,7 +174,7 @@ export class TokmeterCore {
         todayWarnings
       );
 
-      records = [...stableRecords, ...todayRecords];
+      records = [...frozen.records, ...todayRecords];
     }
 
     // Apply filters
@@ -203,36 +195,34 @@ export class TokmeterCore {
       records = filterByDate(records, options);
     }
 
+    if (this.skipPricing) {
+      this.markPricingSkipped(records);
+    }
+
     // Calculate costs for records that don't have them
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (records.length > 0 && !this.skipPricing) {
-      const historicalRecords = records.filter((record) =>
-        isBeforeToday(record.timestamp, referenceTimestamp)
-      );
       const todayRecords = records.filter(
         (record) => !isBeforeToday(record.timestamp, referenceTimestamp)
       );
 
-      // Historical records are FROZEN — whatever cost was calculated when
-      // they were first priced is what they stay at forever. If yesterday's
-      // Qwen was $0 because the model wasn't in kosha, it stays $0. You don't
-      // retroactively rebill the past when today's rates change, same as you
-      // don't go back to the gas station when petrol gets cheaper.
+      // Historical records are FROZEN and are NEVER touched here. Whatever cost
+      // they carry is the value frozen when they were first priced — by the
+      // snapshot file (reused verbatim) or by the one-time pricing during a
+      // rebuild/gap scan. We deliberately do NOT run enrichCosts over history:
+      // a record frozen at $0 (model not in kosha that day) must STAY $0 even
+      // after a `kosha update`. Re-pricing $0 history at today's rates was the
+      // silent immutability leak — "even a second-ago record is history." The
+      // only way frozen cost ever changes is an explicit `rescanHistory`.
       //
-      // Only today's records get repriced when kosha is updated — today is
-      // still "in flight" so updated rates should flow through.
+      // Only today's records reprice when kosha is updated — today is still
+      // "in flight", so updated rates flow through (zero, then re-enrich).
       if (koshaChanged && todayRecords.length > 0) {
         for (const r of todayRecords) {
           r.cost = 0;
         }
       }
 
-      // Only track today's unpriced — historical $0s might be legitimately
-      // frozen at $0 from a time when pricing was unavailable, so flagging
-      // them as a current problem would generate noise the user can't fix.
-      if (historicalRecords.length > 0) {
-        await this.enrichCosts(historicalRecords, "history", historyWarnings);
-      }
       if (todayRecords.length > 0) {
         await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
       }
@@ -271,6 +261,76 @@ export class TokmeterCore {
     }
 
     return records;
+  }
+
+  /**
+   * Cheap warm-path refresh: re-scan ONLY today (stat-pruned to today's active
+   * files) and splice it into the loaded records, leaving frozen history
+   * untouched. This is what lets a long-lived daemon stay warm and update
+   * every few seconds without ever re-reading the whole corpus — the fix for
+   * the statusline/daemon RAM blow-up that was panicking the machine.
+   *
+   * Falls back to a single full {@link scan} when the core is cold (no history
+   * loaded yet) so there's a frozen base to splice onto.
+   */
+  async refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
+    if (this.records.length === 0) {
+      return this.scan();
+    }
+
+    const todayWarnings: ScanWarning[] = [];
+
+    // Detect a kosha edit so today (still in flight) reprices at current rates.
+    // History is never touched here — it stays frozen, per the immutability rule.
+    let koshaChanged = false;
+    if (!this.skipPricing) {
+      try {
+        await this.pricing.init();
+      } catch {
+        // enrichCosts re-warns if pricing stays unavailable.
+      }
+      const currentKoshaMtime = this.pricing.getRegistryMtime();
+      const cachedKoshaMtime = getCachedKoshaMtime();
+      koshaChanged = currentKoshaMtime > 0 && currentKoshaMtime !== cachedKoshaMtime;
+    }
+
+    const today = await this.scanTodayRecords(undefined, now, todayWarnings);
+
+    if (this.skipPricing) {
+      this.markPricingSkipped(today);
+    } else if (koshaChanged && today.length > 0) {
+      // today is mutable — drop stale cached cost and reprice at current kosha.
+      for (const r of today) r.cost = 0;
+      await this.enrichCosts(today, "today", todayWarnings);
+      const currentKoshaMtime = this.pricing.getRegistryMtime();
+      if (currentKoshaMtime > 0) {
+        setCachedKoshaMtime(currentKoshaMtime);
+        saveRecordCacheToDisk();
+      }
+    }
+
+    // Keep frozen history (everything before today); replace only the today slice.
+    const history = this.records.filter((r) => isBeforeToday(r.timestamp, now));
+    this.records = [...history, ...today];
+
+    this.scanMeta = {
+      ...this.scanMeta,
+      todayState: this.resolveTodayState(this.records, todayWarnings, false),
+      lastScanAt: Date.now(),
+      warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "today"), ...todayWarnings],
+    };
+
+    // We deliberately do NOT call `saveSummaryCache` here. The persisted
+    // summary cache is an OFFLINE FALLBACK read when the daemon is unreachable
+    // — not a per-tick hot-path artifact. `getSummary()` includes the full
+    // records array; stringifying ~272k records every 12s would spike the
+    // daemon by hundreds of MB on each refresh. The cache is refreshed on
+    // every full `scan()` (cold start, explicit rescan, pricing update) which
+    // is already the right cadence — a fallback reader gets the snapshot as
+    // of the last full scan; "today" lags slightly, which is the acceptable
+    // price for not torching memory on every warm refresh.
+
+    return this.records;
   }
 
   /** Get all loaded records. */
@@ -418,7 +478,7 @@ export class TokmeterCore {
    *
    * Returns totals, unique counts, and longest activity streak.
    */
-  getStats(): TokmeterStats {
+  getStats(records: TokenRecord[] = this.records): TokmeterStats {
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens = 0;
@@ -440,7 +500,7 @@ export class TokmeterCore {
     const providerSet = new Set<unknown>();
     const daySet = new Set<string>();
 
-    for (const r of this.records) {
+    for (const r of records) {
       inputTokens += r.inputTokens;
       outputTokens += r.outputTokens;
       cacheReadTokens += r.cacheReadTokens;
@@ -489,14 +549,14 @@ export class TokmeterCore {
       cacheReadTokens,
       cacheWriteTokens,
       reasoningTokens,
-      totalRecords: this.records.length,
+      totalRecords: records.length,
       projects: projectSet.size,
       models: modelSet.size,
       providers: providerSet.size,
       activeDays: daySet.size,
       longestStreak,
-      firstUsed: this.records.length ? firstUsed : 0,
-      lastUsed: this.records.length ? lastUsed : 0,
+      firstUsed: records.length ? firstUsed : 0,
+      lastUsed: records.length ? lastUsed : 0,
     };
   }
 
@@ -559,6 +619,21 @@ export class TokmeterCore {
           r.cacheWriteTokens,
           r.reasoningTokens
         );
+        const hasBillableTokens =
+          r.inputTokens +
+            r.outputTokens +
+            r.cacheReadTokens +
+            r.cacheWriteTokens +
+            r.reasoningTokens >
+          0;
+        const pricingUnavailable =
+          r.cost === 0 &&
+          hasBillableTokens &&
+          !this.pricing.hasUserOverride(r.model) &&
+          !isOpaqueModel(r.model);
+        if (r.usage) {
+          r.usage.cost = pricingUnavailable ? "not_exposed" : "calculated";
+        }
         // Silent $0: pricing returned null, calculateCost returned 0, but the
         // record has real token usage. Track so the UI can surface it instead
         // of letting it disappear into the totals. Skip the track when the
@@ -566,17 +641,12 @@ export class TokmeterCore {
         // means "intentionally free" (internal/local/negotiated deployment),
         // not a lookup miss, and we'd otherwise flood the amber pill with
         // every internal model the user has configured.
-        if (
-          unpricedTracker &&
-          r.cost === 0 &&
-          r.inputTokens + r.outputTokens + r.reasoningTokens > 0 &&
-          !this.pricing.hasUserOverride(r.model) &&
-          !isOpaqueModel(r.model)
-        ) {
+        if (unpricedTracker && pricingUnavailable) {
           unpricedTracker.models.add(r.model);
           unpricedTracker.records += 1;
         }
       } catch (error) {
+        if (r.usage) r.usage.cost = "not_exposed";
         warnings.push({
           scope: warningScope,
           message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
@@ -588,6 +658,118 @@ export class TokmeterCore {
       }
     });
     await Promise.all(costPromises);
+  }
+
+  /**
+   * Resolve the frozen pre-today history with an APPEND-ONLY strategy.
+   *
+   * The old behaviour discarded the snapshot and re-derived all of history
+   * from disk on every calendar rollover — which re-priced the past at today's
+   * kosha and lost tokens whenever a provider scan hiccuped. This is the fix:
+   *
+   *  1. Exact snapshot match → reuse verbatim. No scan, no reprice.
+   *  2. Stale snapshot (frozen through an EARLIER day) → keep its records as an
+   *     immutable base and freeze only the GAP days on top. Base cost is never
+   *     recomputed, so a record-cache version bump can't rewrite frozen days.
+   *  3. No usable snapshot / explicit rescan / schema bump → full rebuild,
+   *     guarded by {@link HISTORY_FLOOR_RATIO} so a partial or failed scan can
+   *     never clobber a materially larger frozen snapshot.
+   */
+  private async resolveFrozenHistory(
+    stableThrough: string,
+    referenceTimestamp: number,
+    forceRescan: boolean,
+    warnings: ScanWarning[]
+  ): Promise<{ records: TokenRecord[]; historySource: ScanMeta["historySource"] }> {
+    const snapshot = forceRescan ? null : loadHistorySnapshot(this.homeDir, stableThrough);
+    if (snapshot) warnings.push(...snapshot.warnings);
+
+    // 1) Exact match — reuse the frozen file as-is. No scan, no reprice.
+    if (snapshot && snapshot.historySource === "snapshot" && snapshot.matchesExpected) {
+      return { records: snapshot.records, historySource: "snapshot" };
+    }
+
+    // 2) Stale-but-usable snapshot frozen through an earlier day → append-only.
+    const storedThrough = snapshot?.storedStableThrough ?? null;
+    const canExtend =
+      snapshot?.historySource === "snapshot" &&
+      storedThrough !== null &&
+      storedThrough < stableThrough;
+    if (snapshot && canExtend && storedThrough !== null) {
+      // Base = EVERYTHING the snapshot already froze — kept verbatim, never
+      // dropped, re-scanned, or re-priced. We do NOT filter base to
+      // `<= storedThrough`: if clock skew/DST left a record dated past the
+      // stored key, filtering it out and trusting the gap re-scan to reproduce
+      // it would silently lose frozen history when the source file is gone.
+      // Keeping all of base makes the extension monotonic by construction
+      // (extended = base + gap ≥ base), so it can never shrink the snapshot.
+      const base = snapshot.records;
+      // Anchor the gap boundary to the LATEST day actually present in the
+      // snapshot (≥ storedThrough), so base and gap can never overlap (no
+      // double-count) and no in-between day is skipped (no loss).
+      let baseMaxDay = storedThrough;
+      for (const r of base) {
+        const key = localDateKey(r.timestamp);
+        if (key > baseMaxDay) baseMaxDay = key;
+      }
+      // Gap = days that have since rolled from "today" into the frozen past
+      // (> baseMaxDay and still before today). Only these get (re)derived.
+      const warnBefore = warnings.length;
+      const rebuilt = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
+      const gap = rebuilt.filter(
+        (r) =>
+          localDateKey(r.timestamp) > baseMaxDay && isBeforeToday(r.timestamp, referenceTimestamp)
+      );
+      const extended = [...base, ...gap];
+      // Only FREEZE the extension when the gap scan was clean. If a provider
+      // failed mid-scan, the gap is incomplete — persist nothing so the next
+      // healthy scan re-freezes it instead of locking in a degraded day. We
+      // still return the best-effort extended set for this scan's display.
+      // (extended ≥ base already, so a thin gap can never shrink the snapshot;
+      // this guard just avoids freezing a day with a missing provider.)
+      const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
+      if (!gapDegraded) {
+        warnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, extended));
+      }
+      return { records: extended, historySource: "extended" };
+    }
+
+    // 3) Full rebuild — first run, explicit rescan, schema bump, or a snapshot we
+    //    can't safely extend. Guarded so a partial/failed scan can't clobber a
+    //    healthy frozen snapshot.
+    const warnBefore = warnings.length;
+    const rebuilt = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
+    const providerFailed = warnings.slice(warnBefore).some((w) => w.scope === "provider");
+
+    // Only treat a snapshot as a protectable floor when it's a valid frozen-past
+    // (frozen through today's key or earlier); a future-dated snapshot from clock
+    // skew isn't trustworthy as a floor.
+    const protectable =
+      snapshot?.historySource === "snapshot" &&
+      storedThrough !== null &&
+      storedThrough <= stableThrough &&
+      snapshot.records.length > 0;
+    const existingTokens = protectable ? sumSnapshotTokens(snapshot.records) : 0;
+    const rebuiltTokens = sumSnapshotTokens(rebuilt);
+
+    if (
+      protectable &&
+      shouldKeepExistingHistory(existingTokens, rebuiltTokens, {
+        forceRescan,
+        providerFailed,
+      })
+    ) {
+      const rebuiltLabel = rebuiltTokens.toLocaleString();
+      const existingLabel = existingTokens.toLocaleString();
+      warnings.push({
+        scope: "history",
+        message: `Rebuilt history (${rebuiltLabel} tokens) fell below the safety floor relative to the frozen snapshot (${existingLabel} tokens) — keeping the snapshot to avoid clobbering frozen history (${stableThrough}); re-run with rescanHistory to override.`,
+      });
+      return { records: snapshot?.records ?? [], historySource: "snapshot" };
+    }
+
+    warnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, rebuilt));
+    return { records: rebuilt, historySource: rebuilt.length > 0 ? "rebuilt" : "none" };
   }
 
   private async scanHistoricalRecords(
@@ -604,14 +786,33 @@ export class TokmeterCore {
     referenceTimestamp: number,
     warnings: ScanWarning[]
   ): Promise<TokenRecord[]> {
-    const rawRecords = await this.scanRawRecords(providers, "today", warnings);
+    // Today's records can only live in files modified today, so hand parsers a
+    // mtime watermark of local midnight. Parsers that honor it stat-prune the
+    // corpus down to today's couple of active files — this is what keeps a
+    // warm-daemon refresh (and any today-only scan) from cold-reading months
+    // of history into memory.
+    const rawRecords = await this.scanRawRecords(
+      providers,
+      "today",
+      warnings,
+      startOfLocalDay(referenceTimestamp)
+    );
     return rawRecords.filter((record) => !isBeforeToday(record.timestamp, referenceTimestamp));
+  }
+
+  private markPricingSkipped(records: TokenRecord[]): void {
+    for (const record of records) {
+      if (record.usage?.cost === "calculated" && record.cost === 0) {
+        record.usage.cost = "skipped";
+      }
+    }
   }
 
   private async scanRawRecords(
     providers: ProviderId[] | undefined,
     warningScope: "history" | "today",
-    warnings: ScanWarning[]
+    warnings: ScanWarning[],
+    modifiedSinceMs?: number
   ): Promise<TokenRecord[]> {
     if (!this.skipPricing) {
       try {
@@ -625,10 +826,11 @@ export class TokmeterCore {
     }
 
     const parsers = getParsers(providers);
+    const scanOpts = modifiedSinceMs !== undefined ? { modifiedSinceMs } : undefined;
     const results = await Promise.all(
       parsers.map(async (parser) => {
         try {
-          return await parser.scan(this.homeDir);
+          return await parser.scan(this.homeDir, scanOpts);
         } catch (error) {
           warnings.push({
             scope: "provider",
@@ -643,7 +845,28 @@ export class TokmeterCore {
     const records = results.flat();
 
     if (records.length > 0 && !this.skipPricing) {
-      await this.enrichCosts(records, warningScope, warnings);
+      // Today-scope enrichment is gated to records actually dated today.
+      // A today-active file (e.g. a long-running Claude session whose JSONL
+      // is appended to today) can ALSO contain records from yesterday that
+      // appeared earlier in the same file. Those historical records are
+      // FROZEN — their cost must not be touched here, even if they currently
+      // sit at $0 (model wasn't in kosha that day). Without this gate, the
+      // first today-scope scan would silently price every yesterday-tail
+      // record at today's rates and write the new cost back through the
+      // record cache, breaking the snapshot's frozen-cost invariant on the
+      // next history extension.
+      //
+      // History-scope (rebuild / gap fill) prices everything as before —
+      // those records are being freshly committed to the snapshot and need
+      // an initial cost.
+      const referenceTimestamp = Date.now();
+      const recordsToPrice =
+        warningScope === "today"
+          ? records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp))
+          : records;
+      if (recordsToPrice.length > 0) {
+        await this.enrichCosts(recordsToPrice, warningScope, warnings);
+      }
     }
 
     saveRecordCacheToDisk();

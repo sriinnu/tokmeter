@@ -237,6 +237,8 @@ function formatHistorySource(historySource: TokmeterSummary["meta"]["historySour
   switch (historySource) {
     case "snapshot":
       return "snapshot cache";
+    case "extended":
+      return "snapshot + new days";
     case "rebuilt":
       return "fresh rebuild";
     default:

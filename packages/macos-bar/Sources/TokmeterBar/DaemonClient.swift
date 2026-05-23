@@ -69,7 +69,8 @@ final class DaemonClient {
     /// that happened to inherit the PID, or an attacker that pre-wrote the
     /// PID file in /tmp).
     var isDaemonRunning: Bool {
-        guard FileManager.default.fileExists(atPath: pidPath),
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: pidPath),
               let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
               let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return false
@@ -85,7 +86,34 @@ final class DaemonClient {
         let len = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
         guard len > 0 else { return false }
         let name = String(cString: nameBuf)
-        return name == "node" || name == "bun" || name.hasPrefix("drishti")
+        let nameOk = name == "node" || name == "bun" || name.hasPrefix("drishti")
+        guard nameOk else { return false }
+
+        // Stale-PID-file defense: if the daemon crashed and the OS recycled
+        // its PID to ANOTHER node/bun (e.g. the user spawned `node repl` in
+        // a terminal), proc_name() still says "node" and we'd report a false
+        // positive. Compare the PID file's mtime to the process's start time
+        // via proc_pidinfo(PROC_PIDTBSDINFO) — if the process started AFTER
+        // the PID file was written, it can't be the daemon that wrote it.
+        // We allow a 60s slack window to absorb clock skew and the small gap
+        // between fork and pidfile write at daemon startup.
+        var bsdInfo = proc_bsdinfo()
+        let infoSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+        let got = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsdInfo, infoSize)
+        if got == infoSize {
+            // proc_bsdinfo.pbi_start_tvsec is the process start time in
+            // seconds since the epoch (kernel-supplied, can't be spoofed).
+            let processStart = TimeInterval(bsdInfo.pbi_start_tvsec)
+            if let attrs = try? fm.attributesOfItem(atPath: pidPath),
+               let pidFileMtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 {
+                // Stale PID file: process started >60s AFTER the pidfile was
+                // written → the original daemon died and the PID was recycled.
+                if processStart > pidFileMtime + 60 {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     // MARK: - GET endpoints (read-only, no auth needed)

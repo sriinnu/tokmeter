@@ -65,6 +65,11 @@ final class TokmeterLoader: ObservableObject {
     private var timer: Timer?
     private var fetchInFlight: Bool = false
     private var cancellables: Set<AnyCancellable> = []
+    /// Debounce flag for the singleton daemon auto-start. Set true while a
+    /// `tokmeter daemon start` spawn is in flight so concurrent poll ticks /
+    /// fetches can't launch a stampede of starts. The daemon itself enforces
+    /// a PID singleton on disk; this just stops the bar from spamming spawns.
+    var isStartingDaemon: Bool = false
 
     init() {
         Task { await loadData() }
@@ -120,13 +125,18 @@ final class TokmeterLoader: ObservableObject {
                 self.hasFreshData = true
             }
         } catch DaemonError.daemonNotRunning {
-            // Daemon is offline — fall back to the CLI subprocess which reads
-            // the same session files and scan-cache directly from disk.
-            await loadFromCLI()
+            // Daemon is offline. We NEVER spawn a per-fetch CLI scan here —
+            // each `tokmeter stats --json` cold-reads the whole history into
+            // memory (~2GB RSS) and a stampede of those panicked the kernel.
+            // Instead we start the singleton daemon once (debounced) and show
+            // the warming skeleton; the next poll tick reads from HTTP.
+            await handleDaemonOffline()
             return
         } catch {
-            // Network error or decode failure — try CLI fallback too
-            await loadFromCLI()
+            // Network error or decode failure — the daemon may be mid-restart
+            // or warming. Surface a warming skeleton and try again next tick.
+            // Still no CLI scan: reads are daemon-only.
+            await handleDaemonOffline()
             return
         }
 

@@ -31,9 +31,13 @@ struct HubPulseCard: View {
                     // the honest signal: nothing to report, not a failure.
                     let burnActive = signals.burnRate.recordsInWindow > 0
                     let cacheActive = signals.cacheHitToday.cacheReadTokens
-                        + signals.cacheHitToday.inputTokens > 0
+                        + signals.cacheHitToday.inputTokens
+                        + (signals.cacheHitToday.cacheWriteTokens ?? 0) > 0
                     let compActive = signals.compactionToday.events > 0
                     let reasonActive = signals.reasoningToday.records > 0
+                    let cacheHit = signals.cacheHitToday.canonicalRate ?? signals.cacheHitToday.rate
+                    let cacheMiss = signals.cacheHitToday.missRate ?? max(0, 1 - cacheHit)
+                    let cacheWrite = signals.cacheHitToday.cacheWriteShare ?? 0
                     PulseTile(
                         label: "Burn rate",
                         value: burnActive
@@ -49,13 +53,12 @@ struct HubPulseCard: View {
                         theme: theme
                     )
                     PulseTile(
-                        label: "Cache hit",
+                        label: "Cache",
                         value: cacheActive
-                            ? "\(Int(signals.cacheHitToday.rate * 100))%"
+                            ? "hit \(pct(cacheHit))%"
                             : "—",
                         sub: cacheActive
-                            ? "\(Fmt.number(signals.cacheHitToday.cacheReadTokens)) cached / "
-                                + "\(Fmt.number(signals.cacheHitToday.inputTokens)) fresh"
+                            ? "miss \(pct(cacheMiss))% · write \(pct(cacheWrite))%"
                             : "no cache-eligible calls",
                         icon: "tray.full.fill",
                         accent: c.secondary,
@@ -108,6 +111,9 @@ struct HubPulseCard: View {
                         theme: theme
                     )
                 }
+                if let pressure = signals.contextPressure, pressure.status != "none" {
+                    ContextPressureStrip(pressure: pressure, theme: theme)
+                }
                 if let billing = signals.billingWindow {
                     BillingStrip(window: billing, theme: theme)
                 }
@@ -117,13 +123,20 @@ struct HubPulseCard: View {
 
     static func hasContent(_ s: StatbarSignals) -> Bool {
         if s.burnRate.recordsInWindow > 0 { return true }
-        if s.cacheHitToday.cacheReadTokens + s.cacheHitToday.inputTokens > 0 { return true }
+        if s.cacheHitToday.cacheReadTokens
+            + s.cacheHitToday.inputTokens
+            + (s.cacheHitToday.cacheWriteTokens ?? 0) > 0 { return true }
+        if let pressure = s.contextPressure, pressure.status != "none" { return true }
         if s.compactionToday.events > 0 { return true }
         if s.reasoningToday.records > 0 { return true }
         if s.subagentToday.records > 0 { return true }
         if s.billingWindow != nil { return true }
         return false
     }
+}
+
+private func pct(_ value: Double) -> Int {
+    Int((max(0, min(1, value)) * 100).rounded())
 }
 
 /// One signal in the "Today's pulse" card — small tile, sub-line carries the
@@ -175,6 +188,97 @@ struct PulseTile: View {
         .scaleEffect(hovered ? 1.015 : 1.0)
         .animation(.spring(response: 0.30, dampingFraction: 0.72), value: hovered)
         .onHover { hovered = $0 }
+    }
+}
+
+struct ContextPressureStrip: View {
+    let pressure: ContextPressure
+    let theme: AppTheme
+
+    private var bg: BackgroundMode { theme.backgroundMode }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "memorychip.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(accent)
+                Text("Context drag")
+                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text(pressure.status.uppercased())
+                    .font(.system(size: 9, weight: .bold, design: theme.fonts.labelDesign))
+                    .tracking(0.8)
+                    .foregroundColor(accent)
+                Spacer()
+                Text("\(pct(pressure.dragShare))%")
+                    .font(.system(size: 13, weight: .bold, design: theme.fonts.valueDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text("· \(Fmt.number(pressure.dragTokens)) tokens")
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(bg.secondaryTextColor.opacity(0.12))
+                        .frame(height: 5)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(accent)
+                        .frame(width: max(2, geo.size.width * pressure.dragShare), height: 5)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.85),
+                                   value: pressure.dragShare)
+                }
+            }
+            .frame(height: 5)
+            HStack(spacing: 12) {
+                metric("current", Fmt.number(pressure.currentInputTokens))
+                metric("base", Fmt.number(pressure.baselineInputTokens))
+                metric("turns", "\(pressure.turnCount)")
+                metric("age", "\(pressure.sessionAgeMinutes)m")
+            }
+            Text(pressure.reason)
+                .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                .foregroundColor(bg.secondaryTextColor)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(bg.secondaryTextColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(bg.secondaryTextColor.opacity(0.10), lineWidth: 0.6)
+                )
+        )
+        .help(
+            "Estimated from latest-session input growth. Providers do not expose a true context_drag field."
+        )
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .semibold, design: theme.fonts.labelDesign))
+                .tracking(0.7)
+                .foregroundColor(bg.secondaryTextColor)
+            Text(value)
+                .font(.system(size: 10, weight: .semibold, design: theme.fonts.valueDesign))
+                .foregroundColor(bg.primaryTextColor.opacity(0.9))
+        }
+    }
+
+    private var accent: Color {
+        switch pressure.status {
+        case "critical":
+            return Color.tokDanger
+        case "high":
+            return Color.tokWarning
+        case "medium":
+            return theme.colors.tertiary
+        default:
+            return theme.backgroundMode.secondaryTextColor
+        }
     }
 }
 

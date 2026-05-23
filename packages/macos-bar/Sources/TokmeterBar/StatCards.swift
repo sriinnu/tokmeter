@@ -26,6 +26,29 @@ struct StatsGrid: View {
 
     private var c: ThemeColors { theme.colors }
 
+    /// Local YYYY-MM-DD for "today". Used to drop the still-accumulating
+    /// current day from trend math — comparing a half-day against yesterday's
+    /// full day is what made a frozen lifetime total read as "↓93%" mid-day.
+    private var todayKey: String {
+        let f = DateFormatter()
+        f.calendar = Calendar.current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
+    /// `recentDaily` with today's partial day removed. The KPI cards are an
+    /// all-time/settled-history view — "today" already lives in the hero — so
+    /// their delta and sparkline must describe COMPLETE days only. A lifetime
+    /// cumulative can never actually shrink; pairing it with a partial-day
+    /// dip was a pure display artifact (the depletion the user kept seeing).
+    private var settledDaily: [DailyUsage] {
+        let complete = loader.recentDaily.filter { $0.date < todayKey }
+        // Fall back to the raw series only if we have no settled days yet
+        // (brand-new user), so the sparkline doesn't vanish on day one.
+        return complete.isEmpty ? loader.recentDaily : complete
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             StatCard(
@@ -34,7 +57,7 @@ struct StatsGrid: View {
                 value: Fmt.number(loader.totalTokens),
                 role: c.secondary,
                 delta: weekDelta { Double($0.tokens) },
-                sparkValues: loader.recentDaily.map { Double($0.tokens) },
+                sparkValues: settledDaily.map { Double($0.tokens) },
                 theme: theme,
                 isWarming: loader.isWarming,
                 index: 0
@@ -45,7 +68,7 @@ struct StatsGrid: View {
                 value: Fmt.cost(loader.totalCost),
                 role: c.highlight,
                 delta: weekDelta { $0.cost },
-                sparkValues: loader.recentDaily.map { $0.cost },
+                sparkValues: settledDaily.map { $0.cost },
                 theme: theme,
                 isWarming: loader.isWarming,
                 index: 1
@@ -104,16 +127,18 @@ struct StatsGrid: View {
         return c.tertiary
     }
 
-    /// Percentage delta between today and yesterday. Returns nil when the
-    /// week series is too short or yesterday is near-zero — the UI hides the
-    /// pill in that case rather than showing a meaningless "∞%".
+    /// Day-over-day delta between the two most recent COMPLETE days (today's
+    /// partial day is excluded via `settledDaily`). This is an honest daily-flow
+    /// trend — never a half-day-vs-full-day comparison — so it can't make a
+    /// frozen lifetime total look like it's depleting. Returns nil when there
+    /// aren't two settled days or the prior day is near-zero.
     private func weekDelta(extract: (DailyUsage) -> Double) -> Double? {
-        guard loader.recentDaily.count >= 2 else { return nil }
-        let sorted = loader.recentDaily
-        let today = extract(sorted.last!)
-        let yesterday = extract(sorted[sorted.count - 2])
-        guard yesterday > 0.0001 else { return nil }
-        return ((today - yesterday) / yesterday) * 100
+        let days = settledDaily
+        guard days.count >= 2 else { return nil }
+        let latest = extract(days[days.count - 1])
+        let prior = extract(days[days.count - 2])
+        guard prior > 0.0001 else { return nil }
+        return ((latest - prior) / prior) * 100
     }
 
     /// A visually-balanced sparkline for the streak card — a gently rising

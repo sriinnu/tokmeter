@@ -20,6 +20,10 @@ struct HeroHeader: View {
     /// Shared slow breathing flag driven by the parent — syncs the ♾️ scale
     /// with the hero glow and any shimmer placeholders.
     let breathToggle: Bool
+    /// Drives the cache "wallet" slide-out drawer owned by the parent popover.
+    /// The header only renders the toggle; the drawer itself lives as an
+    /// overlay on the top-level VStack so it floats above the scroll content.
+    @Binding var showCachePanel: Bool
 
     /// Briefly bumped to >1 / non-zero degrees when `todayCost` changes so
     /// the hero number reacts visibly to fresh data — secondary action that
@@ -69,7 +73,50 @@ struct HeroHeader: View {
                 .tracking(2.5)
                 .foregroundColor(foreground.opacity(0.88))
             Spacer()
+            cacheWalletToggle
             statusIndicator
+        }
+    }
+
+    /// Cache "wallet" toggle — opens the slide-out CACHE & CONTEXT drawer.
+    /// Only surfaces when there's cache/context telemetry to show. When
+    /// context drag is high/critical it tints to the warning/danger hue and
+    /// breathes a touch so the user feels the pressure without opening it.
+    @ViewBuilder
+    private var cacheWalletToggle: some View {
+        if let signals = loader.statbarSignals,
+           ContextTelemetryPanel.hasContent(signals) {
+            let status = signals.contextPressure?.status
+            let pressured = status == "critical" || status == "high"
+            let tint: Color = {
+                switch status {
+                case "critical": return Color.tokDanger
+                case "high":     return Color.tokWarning
+                default:         return foreground.opacity(0.7)
+                }
+            }()
+            Button {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    showCachePanel = true
+                }
+            } label: {
+                Image(systemName: "tray.full.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(tint)
+                    .scaleEffect(pressured && breathToggle ? 1.12 : 1.0)
+                    .animation(
+                        pressured
+                            ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true)
+                            : .default,
+                        value: breathToggle
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(
+                pressured
+                    ? "Cache & context — context drag is \(status ?? "high"). Tap to open."
+                    : "Cache & context wallet — tap to open."
+            )
         }
     }
 

@@ -109,6 +109,7 @@ export class OpenCodeParser implements SessionParser {
           reasoningTokens: msg.tokens.reasoning ?? 0,
           cacheReadTokens: msg.tokens.cache?.read ?? 0,
           cacheWriteTokens: msg.tokens.cache?.write ?? 0,
+          usage: { source: "tool_json" },
         })
       );
     }

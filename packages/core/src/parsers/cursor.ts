@@ -28,6 +28,8 @@ export class CursorParser implements SessionParser {
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].split(",");
           if (cols.length < 4) continue;
+          const parsedCost = Number(cols[5]);
+          const hasCost = cols[5] !== undefined && cols[5] !== "" && Number.isFinite(parsedCost);
 
           records.push(
             createRecord({
@@ -38,7 +40,8 @@ export class CursorParser implements SessionParser {
               sourceFile: file,
               inputTokens: Number(cols[3]) || 0,
               outputTokens: Number(cols[4]) || 0,
-              cost: Number(cols[5]) || 0,
+              cost: hasCost ? parsedCost : 0,
+              usage: hasCost ? { cost: "direct" } : { cost: "calculated" },
             })
           );
         }

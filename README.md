@@ -330,6 +330,13 @@ tokmeter daemon stop
 
 When multiple Claude Code, Codex, or OpenCode instances are running, the statusline shows **aggregated totals** across all of them in real-time via WebSocket.
 
+The daemon is the **single source of truth**: it holds usage warm in memory and
+every consumer (macOS bar, statusline, MCP) is a thin **reader** of it. Opening
+the macOS bar starts the daemon if it's down (singleton — only one ever runs),
+and nothing else scans the corpus on a hot path. This keeps reads fast and
+memory bounded. See [docs/architecture.md](docs/architecture.md) for the data
+freshness, immutability, and memory model.
+
 ### Live TUI
 
 ```bash

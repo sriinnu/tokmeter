@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-05-23
+
+The "no more kernel panics" release — one warm singleton daemon as the single
+source of truth, every reader (CLI, statusline, bar) becomes a thin HTTP
+client, full-corpus scans stop happening on the hot path. Plus the
+history-immutability fixes ("the past never moves") and the macOS bar's cache
+"wallet" + KPI-display correction.
+
+### Added — performance & architecture (one daemon, many readers)
+
+- **@sriinnu/tokmeter-core** — `TokmeterCore.refreshToday()` warm-path API:
+  re-scans only today (stat-pruned via a new `modifiedSinceMs` parser hint) and
+  splices into loaded records, leaving frozen history untouched. The foundation
+  for a daemon that stays warm without re-reading history.
+- **@sriinnu/tokmeter-core** — **mtime-pruned today scans.** A today-only scan
+  passes parsers a `modifiedSinceMs` watermark; honoring parsers (Claude Code,
+  Codex) stat-prune to files touched today before reading. Turns a today
+  refresh from a full-corpus read (~2 GB on Codex) into ~30 MB.
+- **@sriinnu/tokmeter-core** — `getStats(records?)` accepts an optional record
+  set so the daemon can serve provider-filtered stats from its warm core.
+- **@sriinnu/drishti** — Daemon stays warm: history scanned once at startup,
+  then only today refreshes via `refreshToday()` on a 12 s TTL — no more full
+  `core.scan()` on a 5 s loop. New `/api/today` endpoint computes today's
+  totals from the warm core (statusline reads this instead of scanning). New
+  `?providers=` query filter on `/api/stats`, `/api/daily`, `/api/models`.
+- **@sriinnu/drishti** — **Robust cross-process singleton.** `startDaemon()`
+  checks the PID file + `process.kill(pid, 0)` and bows out cleanly if a live
+  daemon already owns the port; `EADDRINUSE` on bind exits 0 instead of
+  crash-looping. Bounded memory via `DAEMON_HEAP_CAP_MB` (default 6144 — high
+  enough for the cold warm scan, low enough to bound a runaway).
+- **@sriinnu/drishti** — Statusline reads `GET /api/today` instead of running
+  its own `core.scan({today:true})`; 4 s watchdog + guaranteed `process.exit`
+  + fire-and-forget daemon autostart on miss. Statusline subprocesses are now
+  ~70 MB / sub-second (was ~2 GB ballooning to kernel panic).
+- **@sriinnu/tokmeter-cli** — `--json` read commands (`stats`, `daily`,
+  `models`, `projects`) read the warm daemon over HTTP when reachable
+  (`ready` OR `warming` — never falls back to a local scan while the daemon
+  is up). Each call ≈ 100 MB / 0.16 s versus the prior ~2 GB. External
+  pollers calling `tokmeter stats --json --codex` on a loop become cheap.
+- **TokmeterBar** — Auto-starts the singleton daemon when offline and reads
+  the daemon only; removed the per-fetch `tokmeter --json` CLI-scan fallback
+  that was the immediate kernel-panic trigger.
+
+### Fixed — history immutability ("the past never moves")
+
+- **@sriinnu/tokmeter-core** — Frozen history is no longer re-priced on a scan.
+  Cost enrichment now runs over **today's** records only; historical records
+  keep the cost frozen when first priced (a legitimate `$0` stays `$0` after a
+  `kosha update`). Re-pricing `$0` history at today's rates on every scan was a
+  silent immutability leak.
+- **@sriinnu/tokmeter-core** — **Append-only history rollover.** On a calendar
+  rollover the frozen snapshot is extended with the newly-frozen gap days
+  instead of being discarded and re-derived from disk (`historySource:
+  "extended"`). The old rebuild re-priced all history at today's rates and lost
+  tokens whenever a provider scan hiccuped — the "tokens/cost keep depleting"
+  bug. The append is monotonic by construction and can never shrink history.
+- **@sriinnu/tokmeter-core** — **Monotonic floor guard.** A full rebuild that
+  comes back materially smaller than the frozen snapshot (a provider parser
+  threw, a scan was interrupted) is refused; the healthy snapshot is kept. A
+  transient failure can no longer permanently shrink frozen history.
+- **@sriinnu/tokmeter-core** — Append-boundary record-loss fix:
+  `readJsonlFileFromOffset` checks the real newline boundary (byte before the
+  offset) instead of sniffing the first character, so a complete record at the
+  seam is never dropped.
+- **TokmeterBar** — KPI cards (TOKENS / SPENT) no longer make a frozen lifetime
+  total *look* like it's depleting. The delta pill and sparkline use settled
+  days only (today's partial day excluded), so a half-day mid-day no longer
+  reads as "↓93%".
+- **TokmeterBar** — Cache "wallet" slide-out drawer (CACHE & CONTEXT moved out
+  of the main scroll into an on-demand panel opened from a hero-header icon),
+  with the FRESH/MISS/WRITE buckets fixed to a non-duplicated HIT/MISS/WRITE
+  partition plus a derived FRESH roll-up.
+
+See [docs/architecture.md](docs/architecture.md) for the full data-freshness,
+immutability, and singleton-daemon model.
+
 ## [1.3.0] - 2026-05-16
 
 The biggest release since 1.2.0 — honest accounting (Tier 1), animated chrome

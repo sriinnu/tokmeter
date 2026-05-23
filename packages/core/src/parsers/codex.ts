@@ -24,8 +24,8 @@
 import { stat } from "node:fs/promises";
 
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 // ─── Codex JSONL Event Types ──────────────────────────────────────────────
 
@@ -113,6 +113,15 @@ interface CodexFileMeta {
   sessionId: string;
   forkedFromId: string | null;
   mtimeMs: number;
+  /**
+   * File size on disk. Used as the tiebreaker for fork-sibling dedup instead
+   * of mtimeMs — size is strictly monotonic per file (codex JSONL is append-
+   * only), so the "winner" never swaps backwards as quiet siblings get
+   * touched. mtime-based dedup caused today flux: an mtime tick on an older
+   * sibling with smaller cumulative content would briefly become the winner,
+   * dropping today's total. Size keeps the most-complete fork winning.
+   */
+  sizeBytes: number;
 }
 
 /**
@@ -125,9 +134,11 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
   let sessionId = "";
   let forkedFromId: string | null = null;
   let mtimeMs = 0;
+  let sizeBytes = 0;
   try {
     const st = await stat(file);
     mtimeMs = st.mtimeMs;
+    sizeBytes = st.size;
     const fd = await open(file, "r");
     try {
       const buf = Buffer.alloc(Math.min(65_536, st.size));
@@ -159,7 +170,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
     // the file is still parsed standalone (no dedup group, keeps it safe).
     sessionId = file;
   }
-  return { file, sessionId, forkedFromId, mtimeMs };
+  return { file, sessionId, forkedFromId, mtimeMs, sizeBytes };
 }
 
 /**
@@ -182,9 +193,14 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
 
 /**
  * Given a list of rollout files, keep only one file per root-ancestor session
- * group. The winner is the most-recently-modified sibling — that's the file
- * representing the latest post-resume state, which is typically the one the
- * user actually cares about.
+ * group. The winner is the LARGEST sibling by bytes on disk — codex rollouts
+ * are append-only JSONL, so size is monotonic per file and a fork that
+ * replays its ancestor's history is at least as large as the ancestor. Size
+ * also doesn't tick backwards under any benign condition (mtime can, if a
+ * filesystem tool touches a quiet sibling), so today's total stays stable
+ * across scans rather than swapping winners under the user.
+ *
+ * Tiebreaker: latest mtime, then path order. Both are deterministic.
  */
 async function dedupForkedFiles(files: string[]): Promise<string[]> {
   const metas = (await Promise.all(files.map((f) => readSessionMeta(f)))).filter(
@@ -194,21 +210,27 @@ async function dedupForkedFiles(files: string[]): Promise<string[]> {
   const bySessionId = new Map<string, CodexFileMeta>();
   for (const m of metas) bySessionId.set(m.sessionId, m);
 
-  const latestByRoot = new Map<string, CodexFileMeta>();
+  const winnerByRoot = new Map<string, CodexFileMeta>();
   for (const m of metas) {
     const root = resolveRoot(m, bySessionId);
-    const existing = latestByRoot.get(root);
-    if (!existing || m.mtimeMs > existing.mtimeMs) {
-      latestByRoot.set(root, m);
+    const existing = winnerByRoot.get(root);
+    if (!existing) {
+      winnerByRoot.set(root, m);
+      continue;
+    }
+    if (m.sizeBytes > existing.sizeBytes) {
+      winnerByRoot.set(root, m);
+    } else if (m.sizeBytes === existing.sizeBytes && m.mtimeMs > existing.mtimeMs) {
+      winnerByRoot.set(root, m);
     }
   }
-  return [...latestByRoot.values()].map((m) => m.file);
+  return [...winnerByRoot.values()].map((m) => m.file);
 }
 
 export class CodexParser implements SessionParser {
   readonly providerId = "codex" as const;
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     // Respect CODEX_HOME env var, fall back to ~/.codex
     const codexHome = process.env.CODEX_HOME
       ? process.env.CODEX_HOME
@@ -216,7 +238,14 @@ export class CodexParser implements SessionParser {
     const sessionsDir = `${codexHome}/sessions`;
 
     // Sessions are in YYYY/MM/DD/ subdirectories — need depth 5
-    const allFiles = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 5);
+    let allFiles = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 5);
+    // Today-only scans skip files untouched since the watermark BEFORE the
+    // (expensive) fork-dedup + full re-parse. Codex keeps no record cache, so
+    // this is the single biggest win: a today refresh stops cold-reading
+    // months of rollout-*.jsonl and reads only today's couple of files.
+    if (opts?.modifiedSinceMs !== undefined) {
+      allFiles = await filterFilesByMtime(allFiles, opts.modifiedSinceMs);
+    }
     const files = await dedupForkedFiles(allFiles);
     const records: TokenRecord[] = [];
 
