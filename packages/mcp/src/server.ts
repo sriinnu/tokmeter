@@ -53,19 +53,30 @@ function optionsKey(options?: ScanOptions): string {
   return JSON.stringify(options ?? {});
 }
 
-/** Get a core instance, reusing cached data if recent and same options. */
-async function getCore(options?: ScanOptions): Promise<TokmeterCore> {
+/**
+ * Get a core instance plus the records its most recent scan produced.
+ * Pairing them prevents tools from reading a stale `_cachedRecords` after a
+ * different-scope tool call invalidates the cache between the await points.
+ *
+ * The DAEMON retired `this.records` in Phase 3 to drop RSS, so
+ * `core.getRecords()` now returns only a rolling 14-day window. MCP tool
+ * processes are short-lived (cached 5min) and per-tool-call, so paying to
+ * hold the scoped records for that window is cheap — and lets the tools
+ * keep their lifetime / scope-aware record math correct.
+ */
+async function getCore(
+  options?: ScanOptions
+): Promise<{ core: TokmeterCore; records: TokenRecord[] }> {
   const key = optionsKey(options);
   const now = Date.now();
   if (_cachedCore && key === _cacheOptionsKey && now - _cacheTimestamp < CORE_CACHE_TTL_MS) {
-    return _cachedCore;
+    return { core: _cachedCore, records: _cachedRecords };
   }
   const scanStart = Date.now();
   const core = new TokmeterCore();
   const records = await core.scan(options);
   const scanDuration = Date.now() - scanStart;
 
-  // Compute scan metadata for transparency
   const hasTokens = (r: TokenRecord) => r.inputTokens + r.outputTokens > 0;
   const unpriced = records.filter((r) => r.cost === 0 && hasTokens(r));
   const unpricedModels = [...new Set(unpriced.map((r) => r.model))];
@@ -80,7 +91,7 @@ async function getCore(options?: ScanOptions): Promise<TokmeterCore> {
   _cachedRecords = records;
   _cacheTimestamp = now;
   _cacheOptionsKey = key;
-  return core;
+  return { core, records };
 }
 
 /** Build a transparency footer for tool outputs. */
@@ -312,7 +323,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const stats = core.getStats();
 
       if (stats.totalRecords === 0) {
@@ -374,7 +385,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const models = core.getModelCosts({ project: params.project });
 
       if (models.length === 0) {
@@ -430,7 +441,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const providers = core.getProviderBreakdown();
 
       if (providers.length === 0) {
@@ -480,7 +491,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
 
       if (projects.length === 0) {
@@ -540,7 +551,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const daily = core.getDailyBreakdown({ project: params.project });
 
       if (daily.length === 0) {
@@ -607,7 +618,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const stats = core.getStats();
       const daily = core.getDailyBreakdown({ project: params.project });
 
@@ -716,8 +727,8 @@ export function createServer(): McpServer {
         project: params.project,
         providers: params.providers,
       });
-      const core = await getCore(opts);
-      let records = core.getRecords();
+      const scanned = await getCore(opts);
+      let records = scanned.records;
 
       // Additional filters
       if (params.model) {
@@ -807,7 +818,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
 
       const lines = [
         header("COMPARE"),
@@ -974,7 +985,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core, records: scopedRecords } = await getCore(opts);
       const dataType = params.data ?? "all";
 
       if (params.format === "json") {
@@ -982,7 +993,7 @@ export function createServer(): McpServer {
         if (dataType === "all") {
           payload = core.toJSON();
         } else if (dataType === "records") {
-          payload = core.getRecords();
+          payload = scopedRecords;
         } else if (dataType === "models") {
           payload = core.getModelCosts({ project: params.project });
         } else if (dataType === "providers") {
@@ -1002,7 +1013,7 @@ export function createServer(): McpServer {
       if (params.format === "csv") {
         let csv: string;
         if (dataType === "records" || dataType === "all") {
-          const records = core.getRecords();
+          const records = scopedRecords;
           const csvHeaders = [
             "timestamp",
             "date",
@@ -1187,7 +1198,7 @@ export function createServer(): McpServer {
 
       // Today
       if (params.daily_budget) {
-        const core = await getCore(
+        const { core } = await getCore(
           buildScanOptions({
             scope: "today",
             project: params.project,
@@ -1213,7 +1224,7 @@ export function createServer(): McpServer {
 
       // This week
       if (params.weekly_budget) {
-        const core = await getCore(
+        const { core } = await getCore(
           buildScanOptions({
             scope: "week",
             project: params.project,
@@ -1244,7 +1255,7 @@ export function createServer(): McpServer {
 
       // This month
       if (params.monthly_budget) {
-        const core = await getCore(
+        const { core } = await getCore(
           buildScanOptions({
             scope: "month",
             project: params.project,
@@ -1300,8 +1311,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
-      const records = core.getRecords();
+      const { records } = await getCore(opts);
 
       if (records.length === 0) {
         return {
@@ -1433,8 +1443,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
-      const records = core.getRecords();
+      const { core, records } = await getCore(opts);
       const daily = core.getDailyBreakdown({ project: params.project });
 
       if (daily.length < 2) {
@@ -1625,7 +1634,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core, records } = await getCore(opts);
       const stats = core.getStats();
       const models = core.getModelCosts({ project: params.project });
 
@@ -1636,7 +1645,7 @@ export function createServer(): McpServer {
       }
 
       // Global efficiency metrics
-      const usage = sumUsage(core.getRecords());
+      const usage = sumUsage(records);
       const cacheHitRate = usage.cacheHitRate * 100;
       const totalAll = stats.totalTokens;
       const reasoningRatio = totalAll > 0 ? (stats.reasoningTokens / totalAll) * 100 : 0;
@@ -1680,7 +1689,7 @@ export function createServer(): McpServer {
         const mReasonRate = m.totalTokens > 0 ? (m.reasoningTokens / m.totalTokens) * 100 : 0;
         const mCostPer1M = m.totalTokens > 0 ? (m.cost / m.totalTokens) * 1_000_000 : 0;
         // Approximate requests: total records for this model
-        const modelRecords = core.getRecords().filter((r) => r.model === m.model);
+        const modelRecords = records.filter((r) => r.model === m.model);
         const mAvgCost = modelRecords.length > 0 ? m.cost / modelRecords.length : 0;
 
         modelRows.push([
@@ -1775,7 +1784,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core, records } = await getCore(opts);
       const rankBy = params.rank_by ?? "cost";
       const entity = params.entity ?? "models";
       const limit = params.limit ?? 10;
@@ -1789,7 +1798,6 @@ export function createServer(): McpServer {
 
       if (entity === "models") {
         const models = core.getModelCosts({ project: params.project });
-        const records = core.getRecords();
 
         if (models.length === 0) {
           return {
@@ -1891,7 +1899,6 @@ export function createServer(): McpServer {
       } else {
         // providers
         const providers = core.getProviderBreakdown();
-        const records = core.getRecords();
 
         if (providers.length === 0) {
           return {
@@ -1960,7 +1967,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
+      const { core, records } = await getCore(opts);
       const stats = core.getStats();
 
       if (stats.totalRecords === 0) {
@@ -2046,7 +2053,7 @@ export function createServer(): McpServer {
       }
 
       // Cache efficiency note
-      const usage = sumUsage(core.getRecords());
+      const usage = sumUsage(records);
       const cacheRate = usage.cacheHitRate * 100;
       if (cacheRate > 0) {
         lines.push(
@@ -2094,8 +2101,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions(params);
-      const core = await getCore(opts);
-      const records = core.getRecords();
+      const { core, records } = await getCore(opts);
       const daily = core.getDailyBreakdown({ project: params.project });
       const stats = core.getStats();
 
@@ -2292,8 +2298,7 @@ export function createServer(): McpServer {
         project: params.project,
         providers: params.provider ? [params.provider] : undefined,
       });
-      const core = await getCore(opts);
-      const records = core.getRecords();
+      const { records } = await getCore(opts);
 
       if (records.length === 0) {
         return {
@@ -2494,7 +2499,7 @@ export function createServer(): McpServer {
         scope: params.period,
         project: params.project,
       });
-      const core = await getCore(opts);
+      const { core } = await getCore(opts);
       const models = core.getModelCosts({ project: params.project });
 
       if (models.length === 0) {
@@ -2646,17 +2651,13 @@ export function createServer(): McpServer {
       const now = new Date();
       const todayStr = now.toISOString().slice(0, 10);
 
-      // Fetch records for each period
-      const coreToday = await getCore({ today: true });
-      const todayRecords = coreToday.getRecords();
+      const { core: coreToday, records: todayRecords } = await getCore({ today: true });
       const todaySpend = todayRecords.reduce((s, r) => s + r.cost, 0);
 
-      const coreWeek = await getCore({ week: true });
-      const weekRecords = coreWeek.getRecords();
+      const { records: weekRecords } = await getCore({ week: true });
       const weekSpend = weekRecords.reduce((s, r) => s + r.cost, 0);
 
-      const coreMonth = await getCore({ month: true });
-      const monthRecords = coreMonth.getRecords();
+      const { records: monthRecords } = await getCore({ month: true });
       const monthSpend = monthRecords.reduce((s, r) => s + r.cost, 0);
 
       /** Determine status color based on usage percentage. */
@@ -2785,8 +2786,7 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const opts = buildScanOptions({ scope: params.period });
-      const core = await getCore(opts);
-      const records = core.getRecords();
+      const { core, records } = await getCore(opts);
       const models = core.getModelCosts();
       const stats = core.getStats();
 
@@ -2964,7 +2964,7 @@ export function createServer(): McpServer {
       try {
         const { CleanupService } = await import("@sriinnu/tokmeter");
         const opts = buildScanOptions(params);
-        const core = await getCore(opts);
+        const { core } = await getCore(opts);
         const service = new CleanupService(core);
 
         const filter = buildCleanupFilter(params);
