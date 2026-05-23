@@ -9,10 +9,8 @@ import { homedir } from "node:os";
 import { DailyAccumulator } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import {
-  aggregateByDate,
   aggregateByModel,
   aggregateByProject,
-  aggregateByProvider,
   filterByDate,
   filterByProject,
   filterByProvider,
@@ -67,6 +65,297 @@ const OPAQUE_MODELS: ReadonlySet<string> = new Set(["codex-auto-review"]);
 
 function isOpaqueModel(model: string): boolean {
   return OPAQUE_MODELS.has(model);
+}
+
+// ─── Aggregate-state pure computers ──────────────────────────────────────────
+//
+// Phase 2 of the cutover (docs/aggregate-snapshot-plan.md). Each consumer's
+// new implementation is a pure function that reads from the aggregate state
+// (Map<date, DailyAggregate> + a today accumulator snapshot) and produces the
+// same shape its legacy `this.records`-based sibling did. The class methods
+// dispatch: if a caller passes raw records (legacy `getStats(filteredRecords)`
+// path used by daemon endpoints), the legacy computer runs. Otherwise the new
+// aggregate computer runs against the live state. Parity tests in
+// `aggregate-migration-parity.test.ts` seed records, run BOTH computers, and
+// assert they produce identical output — so the migration is provably
+// equivalent before `this.records` is retired in Phase 3.
+
+/** Yield each day's aggregate snapshot — historical first, then today. */
+function* iterateAllDays(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null
+): Iterable<DailyAggregate> {
+  yield* aggregates.values();
+  const today = todayAccumulator?.toAggregate();
+  if (today) yield today;
+}
+
+/**
+ * Stats from raw records (the legacy `getStats` body, extracted as a pure
+ * function). Kept around so the daemon's `filterByProvider(records).getStats`
+ * path still works without an aggregate-aware filter API. Phase 3 retires
+ * this once consumers stop passing pre-filtered records.
+ */
+function computeStatsFromRecords(records: TokenRecord[], aliases: AliasMap): TokmeterStats {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
+  let totalCost = 0;
+  let firstUsed = Number.POSITIVE_INFINITY;
+  let lastUsed = Number.NEGATIVE_INFINITY;
+  const displayVisible = new Map<string, boolean>();
+  const projectSet = new Set<string>();
+  const modelSet = new Set<string>();
+  const providerSet = new Set<unknown>();
+  const daySet = new Set<string>();
+  for (const r of records) {
+    inputTokens += r.inputTokens;
+    outputTokens += r.outputTokens;
+    cacheReadTokens += r.cacheReadTokens;
+    cacheWriteTokens += r.cacheWriteTokens;
+    reasoningTokens += r.reasoningTokens;
+    totalCost += r.cost;
+    if (r.timestamp < firstUsed) firstUsed = r.timestamp;
+    if (r.timestamp > lastUsed) lastUsed = r.timestamp;
+    const display = resolveProjectName(r.project, aliases);
+    const isHidden = aliases[r.project]?.hidden === true;
+    if (!isHidden) displayVisible.set(display, true);
+    else if (!displayVisible.has(display)) displayVisible.set(display, false);
+    modelSet.add(r.model);
+    providerSet.add(r.provider);
+    daySet.add(localDateKey(r.timestamp));
+  }
+  for (const [display, visible] of displayVisible) if (visible) projectSet.add(display);
+  const days = [...daySet].sort();
+  let longestStreak = 0;
+  let currentStreak = 1;
+  for (let i = 1; i < days.length; i++) {
+    const diff = (new Date(days[i]).getTime() - new Date(days[i - 1]).getTime()) / 86_400_000;
+    if (diff === 1) {
+      currentStreak++;
+      if (currentStreak > longestStreak) longestStreak = currentStreak;
+    } else {
+      currentStreak = 1;
+    }
+  }
+  longestStreak = Math.max(longestStreak, currentStreak, days.length > 0 ? 1 : 0);
+  return {
+    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens,
+    totalCost,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    totalRecords: records.length,
+    projects: projectSet.size,
+    models: modelSet.size,
+    providers: providerSet.size,
+    activeDays: daySet.size,
+    longestStreak,
+    firstUsed: records.length ? firstUsed : 0,
+    lastUsed: records.length ? lastUsed : 0,
+  };
+}
+
+/**
+ * Stats from aggregate state. Same output shape as
+ * {@link computeStatsFromRecords}; parity-tested. The schema-level
+ * equivalence holds because every per-day {@link DailyAggregate} already
+ * sums the same fields the legacy single-pass loop summed — we just sum
+ * across days instead of records.
+ */
+function computeStatsFromState(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null,
+  aliases: AliasMap
+): TokmeterStats {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
+  let totalCost = 0;
+  let totalRecords = 0;
+  let firstUsed = Number.POSITIVE_INFINITY;
+  let lastUsed = Number.NEGATIVE_INFINITY;
+  const displayVisible = new Map<string, boolean>();
+  const projectSet = new Set<string>();
+  const modelSet = new Set<string>();
+  const providerSet = new Set<string>();
+  const daySet = new Set<string>();
+  for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+    inputTokens += day.inputTokens;
+    outputTokens += day.outputTokens;
+    cacheReadTokens += day.cacheReadTokens;
+    cacheWriteTokens += day.cacheWriteTokens;
+    reasoningTokens += day.reasoningTokens;
+    totalCost += day.cost;
+    totalRecords += day.recordCount;
+    if (day.recordCount > 0) {
+      if (day.firstUsed < firstUsed) firstUsed = day.firstUsed;
+      if (day.lastUsed > lastUsed) lastUsed = day.lastUsed;
+      daySet.add(day.date);
+    }
+    for (const key of Object.keys(day.models)) modelSet.add(key);
+    for (const key of Object.keys(day.providers)) providerSet.add(key);
+    for (const rawProject of Object.keys(day.projects)) {
+      const display = resolveProjectName(rawProject, aliases);
+      const isHidden = aliases[rawProject]?.hidden === true;
+      if (!isHidden) displayVisible.set(display, true);
+      else if (!displayVisible.has(display)) displayVisible.set(display, false);
+    }
+  }
+  for (const [display, visible] of displayVisible) if (visible) projectSet.add(display);
+  const sortedDays = [...daySet].sort();
+  let longestStreak = 0;
+  let currentStreak = 1;
+  for (let i = 1; i < sortedDays.length; i++) {
+    const diff =
+      (new Date(sortedDays[i]).getTime() - new Date(sortedDays[i - 1]).getTime()) / 86_400_000;
+    if (diff === 1) {
+      currentStreak++;
+      if (currentStreak > longestStreak) longestStreak = currentStreak;
+    } else {
+      currentStreak = 1;
+    }
+  }
+  longestStreak = Math.max(longestStreak, currentStreak, sortedDays.length > 0 ? 1 : 0);
+  return {
+    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens,
+    totalCost,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    totalRecords,
+    projects: projectSet.size,
+    models: modelSet.size,
+    providers: providerSet.size,
+    activeDays: daySet.size,
+    longestStreak,
+    firstUsed: totalRecords ? firstUsed : 0,
+    lastUsed: totalRecords ? lastUsed : 0,
+  };
+}
+
+/** Convert one {@link DailyAggregate} to the public {@link DailyEntry} shape. */
+function dayToEntry(day: DailyAggregate): DailyEntry {
+  return {
+    date: day.date,
+    totalTokens: day.totalTokens,
+    inputTokens: day.inputTokens,
+    outputTokens: day.outputTokens,
+    cacheReadTokens: day.cacheReadTokens,
+    cacheWriteTokens: day.cacheWriteTokens,
+    reasoningTokens: day.reasoningTokens,
+    cost: day.cost,
+    records: day.recordCount,
+  };
+}
+
+/**
+ * Daily breakdown from aggregates + today, with optional date/project filter.
+ * Project filter projects onto each day's per-project bucket — same fuzzy
+ * substring rule the legacy {@link filterByProject} uses on raw records.
+ */
+function computeDailyBreakdownFromState(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null,
+  opts?: { since?: string; until?: string; project?: string }
+): DailyEntry[] {
+  const projectMatch = opts?.project?.toLowerCase();
+  const since = opts?.since;
+  const until = opts?.until;
+  const out: DailyEntry[] = [];
+  for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+    if (since && day.date < since) continue;
+    if (until && day.date > until) continue;
+    if (projectMatch) {
+      // Collapse the day to only the buckets whose project name matches.
+      let cost = 0;
+      let input = 0;
+      let output = 0;
+      let cacheRead = 0;
+      let cacheWrite = 0;
+      let reasoning = 0;
+      let records = 0;
+      for (const [name, bucket] of Object.entries(day.projects)) {
+        if (!projectNameIncludes(name, projectMatch)) continue;
+        cost += bucket.cost;
+        input += bucket.inputTokens;
+        output += bucket.outputTokens;
+        cacheRead += bucket.cacheReadTokens;
+        cacheWrite += bucket.cacheWriteTokens;
+        reasoning += bucket.reasoningTokens;
+        records += bucket.recordCount;
+      }
+      if (records === 0) continue;
+      out.push({
+        date: day.date,
+        totalTokens: input + output + cacheRead + cacheWrite + reasoning,
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: cacheRead,
+        cacheWriteTokens: cacheWrite,
+        reasoningTokens: reasoning,
+        cost,
+        records,
+      });
+    } else {
+      out.push(dayToEntry(day));
+    }
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+/**
+ * Provider breakdown from aggregates + today. Reuses per-day perProvider
+ * buckets for totals + walks per-day perModel.providers lists to compute
+ * each provider's distinct-models set (same {@code models: string[]} field
+ * the legacy {@link aggregateByProvider} returned).
+ */
+function computeProviderBreakdownFromState(
+  aggregates: Map<string, DailyAggregate>,
+  todayAccumulator: DailyAccumulator | null
+): import("./types.js").ProviderSummary[] {
+  const totals = new Map<string, { cost: number; totalTokens: number; models: Set<string> }>();
+  let grandTotalCost = 0;
+  for (const day of iterateAllDays(aggregates, todayAccumulator)) {
+    grandTotalCost += day.cost;
+    for (const [pid, bucket] of Object.entries(day.providers)) {
+      let entry = totals.get(pid);
+      if (!entry) {
+        entry = { cost: 0, totalTokens: 0, models: new Set() };
+        totals.set(pid, entry);
+      }
+      entry.cost += bucket.cost;
+      entry.totalTokens += bucket.totalTokens;
+    }
+    for (const model of Object.values(day.models)) {
+      for (const pid of model.providers) {
+        let entry = totals.get(pid);
+        if (!entry) {
+          entry = { cost: 0, totalTokens: 0, models: new Set() };
+          totals.set(pid, entry);
+        }
+        entry.models.add(model.model);
+      }
+    }
+  }
+  return [...totals.entries()]
+    .map(([provider, t]) => ({
+      provider: provider as ProviderId,
+      totalTokens: t.totalTokens,
+      cost: t.cost,
+      models: [...t.models],
+      percentageOfTotal: grandTotalCost > 0 ? (t.cost / grandTotalCost) * 100 : 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
 }
 
 const EMPTY_SCAN_META: ScanMeta = {
@@ -476,8 +765,13 @@ export class TokmeterCore {
   }
 
   /** Get provider breakdown across all records. */
+  /**
+   * Provider breakdown — total cost / tokens / models / percentage-of-total
+   * per provider. Reads from per-day perProvider buckets + perModel.providers
+   * lists. Phase 2 of the cutover; parity-tested.
+   */
   getProviderBreakdown() {
-    return aggregateByProvider(this.records);
+    return computeProviderBreakdownFromState(this.aggregates, this.todayAccumulator);
   }
 
   /**
@@ -552,16 +846,14 @@ export class TokmeterCore {
     };
   }
 
-  /** Get daily breakdown, optionally filtered by date range and project. */
+  /**
+   * Get daily breakdown, optionally filtered by date range and project. Reads
+   * from per-day aggregates + today's accumulator — Phase 2 of the cutover.
+   * Same {@link DailyEntry} shape the legacy records-walking impl returned;
+   * parity-tested in aggregate-migration-parity.test.ts.
+   */
   getDailyBreakdown(options?: { since?: string; until?: string; project?: string }): DailyEntry[] {
-    let records = this.records;
-    if (options?.project) {
-      records = filterByProject(records, options.project);
-    }
-    if (options?.since || options?.until) {
-      records = filterByDate(records, options);
-    }
-    return aggregateByDate(records);
+    return computeDailyBreakdownFromState(this.aggregates, this.todayAccumulator, options);
   }
 
   /**
@@ -569,86 +861,16 @@ export class TokmeterCore {
    *
    * Returns totals, unique counts, and longest activity streak.
    */
-  getStats(records: TokenRecord[] = this.records): TokmeterStats {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheWriteTokens = 0;
-    let reasoningTokens = 0;
-    let totalCost = 0;
-    let firstUsed = Number.POSITIVE_INFINITY;
-    let lastUsed = Number.NEGATIVE_INFINITY;
-
-    // Count distinct projects by their RESOLVED display name, but skip raws
-    // that are entirely hidden — so stats.projects always matches the number
-    // of rows in the per-project table. A display is hidden only when EVERY
-    // raw contributing to it is hidden; any non-hidden contributor keeps it
-    // visible (same rule as aggregateByProject).
+  /**
+   * Overall stats. Dispatches by argument shape: with `records` (legacy path
+   * used by the daemon's `filterByProvider(getRecords(), providers)` pattern),
+   * walks the raw records. Without — reads from aggregate state. Both paths
+   * are parity-tested to return identical output for the same data.
+   */
+  getStats(records?: TokenRecord[]): TokmeterStats {
     const aliases = this.getAliases();
-    const displayVisible = new Map<string, boolean>();
-    const projectSet = new Set<string>();
-    const modelSet = new Set<string>();
-    const providerSet = new Set<unknown>();
-    const daySet = new Set<string>();
-
-    for (const r of records) {
-      inputTokens += r.inputTokens;
-      outputTokens += r.outputTokens;
-      cacheReadTokens += r.cacheReadTokens;
-      cacheWriteTokens += r.cacheWriteTokens;
-      reasoningTokens += r.reasoningTokens;
-      totalCost += r.cost;
-      if (r.timestamp < firstUsed) firstUsed = r.timestamp;
-      if (r.timestamp > lastUsed) lastUsed = r.timestamp;
-      const display = resolveProjectName(r.project, aliases);
-      // A display stays "visible" as long as at least one of its raws is
-      // not hidden. Track visibility incrementally across the single pass.
-      const isHidden = aliases[r.project]?.hidden === true;
-      if (!isHidden) displayVisible.set(display, true);
-      else if (!displayVisible.has(display)) displayVisible.set(display, false);
-      modelSet.add(r.model);
-      providerSet.add(r.provider);
-      daySet.add(localDateKey(r.timestamp));
-    }
-    for (const [display, visible] of displayVisible) {
-      if (visible) projectSet.add(display);
-    }
-
-    const totalTokens =
-      inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens;
-    const days = [...daySet].sort();
-
-    // Calculate longest consecutive-day streak
-    let longestStreak = 0;
-    let currentStreak = 1;
-    for (let i = 1; i < days.length; i++) {
-      const diff = (new Date(days[i]).getTime() - new Date(days[i - 1]).getTime()) / 86400000;
-      if (diff === 1) {
-        currentStreak++;
-        longestStreak = Math.max(longestStreak, currentStreak);
-      } else {
-        currentStreak = 1;
-      }
-    }
-    longestStreak = Math.max(longestStreak, currentStreak, days.length > 0 ? 1 : 0);
-
-    return {
-      totalTokens,
-      totalCost,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      reasoningTokens,
-      totalRecords: records.length,
-      projects: projectSet.size,
-      models: modelSet.size,
-      providers: providerSet.size,
-      activeDays: daySet.size,
-      longestStreak,
-      firstUsed: records.length ? firstUsed : 0,
-      lastUsed: records.length ? lastUsed : 0,
-    };
+    if (records !== undefined) return computeStatsFromRecords(records, aliases);
+    return computeStatsFromState(this.aggregates, this.todayAccumulator, aliases);
   }
 
   /**
@@ -1050,3 +1272,18 @@ export class TokmeterCore {
     }
   }
 }
+
+/**
+ * Module-private computers exposed for parity testing only. Each Phase 2
+ * migration ships a pure function pair (legacy `*FromRecords` walks raw
+ * records; new `*FromState` walks aggregates), and the parity test feeds
+ * the same seed data through both and asserts equality. Do NOT import these
+ * from production code — they're an implementation detail.
+ */
+export const __test_internals = {
+  computeStatsFromRecords,
+  computeStatsFromState,
+  computeDailyBreakdownFromState,
+  computeProviderBreakdownFromState,
+  iterateAllDays,
+};

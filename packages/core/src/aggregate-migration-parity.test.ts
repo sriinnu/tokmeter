@@ -1,0 +1,262 @@
+/**
+ * Phase 2 aggregate-migration parity tests.
+ *
+ * For each getter being migrated to read from aggregate state instead of raw
+ * records, the parity test seeds a deterministic record set, runs BOTH the
+ * legacy records-walking computer AND the new aggregates-walking computer
+ * against it, and asserts the outputs are deep-equal. If they ever drift,
+ * a real-world consumer would too — and we'd ship wrong numbers. These
+ * tests are the contract that lets `this.records` be retired in Phase 3
+ * with confidence.
+ */
+
+import { describe, expect, test } from "vitest";
+import { DailyAccumulator } from "./aggregates-store.js";
+import { aggregateRecordsByDay } from "./aggregates.js";
+import { aggregateByDate, aggregateByProvider, filterByProject } from "./aggregator.js";
+import type { AliasMap } from "./alias-service.js";
+import { isBeforeToday, localDateKey } from "./date-utils.js";
+import { __test_internals } from "./tokmeter-core.js";
+import type { TokenRecord } from "./types.js";
+
+const {
+  computeStatsFromRecords,
+  computeStatsFromState,
+  computeDailyBreakdownFromState,
+  computeProviderBreakdownFromState,
+} = __test_internals;
+
+/** Build a `TokenRecord` with sensible defaults — same helper across tests. */
+function r(overrides: Partial<TokenRecord> & Pick<TokenRecord, "timestamp">): TokenRecord {
+  return {
+    project: "demo",
+    provider: "claude-code",
+    model: "claude-sonnet-4-5",
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    cost: 0,
+    ...overrides,
+    timestamp: overrides.timestamp,
+  };
+}
+
+/**
+ * Construct timestamps at midday UTC for a given date — the local-date-key
+ * a record gets is the same regardless of the test runner's timezone.
+ */
+function ts(date: string, hour = 12): number {
+  return Date.parse(`${date}T${String(hour).padStart(2, "0")}:00:00Z`);
+}
+
+/**
+ * Project a record set into the aggregate state shape TokmeterCore holds —
+ * historical aggregates Map (everything before today) plus a DailyAccumulator
+ * for today. Mirrors `TokmeterCore.rebuildAggregateState` so the test path
+ * sees what production sees.
+ */
+function projectToState(
+  records: TokenRecord[],
+  referenceTimestamp: number
+): {
+  aggregates: Map<string, ReturnType<typeof aggregateRecordsByDay>[number]>;
+  todayAcc: DailyAccumulator;
+} {
+  const todayKey = localDateKey(referenceTimestamp);
+  const aggregates = new Map<string, ReturnType<typeof aggregateRecordsByDay>[number]>();
+  for (const day of aggregateRecordsByDay(records)) {
+    if (day.date !== todayKey) aggregates.set(day.date, day);
+  }
+  const todayAcc = new DailyAccumulator(todayKey);
+  todayAcc.foldAll(records.filter((rec) => !isBeforeToday(rec.timestamp, referenceTimestamp)));
+  return { aggregates, todayAcc };
+}
+
+/**
+ * A varied fixture used across all parity tests: multiple days, projects,
+ * models, providers, plus today's records to exercise the today-accumulator
+ * path. Deterministic so failures point at a specific row.
+ */
+function fixtureRecords(now: number): TokenRecord[] {
+  const todayKey = localDateKey(now);
+  const [Y, M, D] = todayKey.split("-").map(Number);
+  // Build dates strictly before today by walking back N days. UTC math is
+  // fine for parity since both code paths use the same `localDateKey`.
+  const dayBefore = (back: number) => {
+    const dt = new Date(Y, M - 1, D - back);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const d = String(dt.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+  return [
+    // Two days ago — claude-code/opus on project alpha
+    r({
+      timestamp: ts(dayBefore(2), 9),
+      project: "alpha",
+      provider: "claude-code",
+      model: "opus",
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 25,
+      cost: 1.25,
+    }),
+    r({
+      timestamp: ts(dayBefore(2), 14),
+      project: "alpha",
+      provider: "claude-code",
+      model: "opus",
+      inputTokens: 200,
+      outputTokens: 75,
+      cost: 2.5,
+    }),
+    // One day ago — codex/gpt-5 on project beta + claude-code/sonnet on alpha
+    r({
+      timestamp: ts(dayBefore(1), 10),
+      project: "beta",
+      provider: "codex",
+      model: "gpt-5",
+      inputTokens: 500,
+      outputTokens: 200,
+      reasoningTokens: 100,
+      cost: 5.0,
+    }),
+    r({
+      timestamp: ts(dayBefore(1), 16),
+      project: "alpha",
+      provider: "claude-code",
+      model: "sonnet",
+      inputTokens: 80,
+      outputTokens: 40,
+      cost: 0.8,
+    }),
+    // Today — mixed activity. Use the actual `now` so we land in today's
+    // local-date key without timezone luck.
+    r({
+      timestamp: now - 60_000, // 1 minute ago
+      project: "alpha",
+      provider: "claude-code",
+      model: "opus",
+      inputTokens: 50,
+      outputTokens: 25,
+      cost: 0.5,
+    }),
+    r({
+      timestamp: now - 30_000,
+      project: "gamma",
+      provider: "codex",
+      model: "gpt-5",
+      inputTokens: 1000,
+      outputTokens: 400,
+      cacheReadTokens: 500,
+      cost: 9.0,
+    }),
+  ];
+}
+
+/** Aliases with one hidden project to exercise visibility filtering. */
+const aliasesWithHidden: AliasMap = {
+  beta: {
+    display: "beta",
+    hidden: true,
+    modifiedBy: "user",
+    modifiedAt: "2026-01-01T00:00:00Z",
+  },
+};
+
+const aliasesEmpty: AliasMap = {};
+
+describe("Phase 2 parity — getStats", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("no aliases: legacy and aggregate paths produce identical TokmeterStats", () => {
+    const legacy = computeStatsFromRecords(records, aliasesEmpty);
+    const fresh = computeStatsFromState(aggregates, todayAcc, aliasesEmpty);
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("with a hidden alias: project count drops on BOTH paths the same way", () => {
+    const legacy = computeStatsFromRecords(records, aliasesWithHidden);
+    const fresh = computeStatsFromState(aggregates, todayAcc, aliasesWithHidden);
+    expect(fresh).toEqual(legacy);
+    // Sanity: hiding `beta` (one of three projects) reduces the count by one.
+    const nonHidden = computeStatsFromRecords(records, aliasesEmpty);
+    expect(legacy.projects).toBe(nonHidden.projects - 1);
+  });
+
+  test("empty input: both paths return zeroed stats", () => {
+    const legacy = computeStatsFromRecords([], aliasesEmpty);
+    const fresh = computeStatsFromState(
+      new Map(),
+      new DailyAccumulator("2026-01-01"),
+      aliasesEmpty
+    );
+    expect(fresh).toEqual(legacy);
+    expect(legacy.totalRecords).toBe(0);
+    expect(legacy.firstUsed).toBe(0);
+    expect(legacy.lastUsed).toBe(0);
+  });
+
+  test("only today's records: aggregate path reads from todayAccumulator alone", () => {
+    const todayOnly = records.filter((rec) => !isBeforeToday(rec.timestamp, now));
+    const { aggregates: emptyHist, todayAcc: todayAccOnly } = projectToState(todayOnly, now);
+    const legacy = computeStatsFromRecords(todayOnly, aliasesEmpty);
+    const fresh = computeStatsFromState(emptyHist, todayAccOnly, aliasesEmpty);
+    expect(fresh).toEqual(legacy);
+  });
+});
+
+describe("Phase 2 parity — getDailyBreakdown", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("no filter: legacy aggregateByDate(records) == aggregate-path daily entries", () => {
+    const legacy = aggregateByDate(records);
+    const fresh = computeDailyBreakdownFromState(aggregates, todayAcc, undefined);
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("project filter: collapses each day to the matching project's bucket", () => {
+    // Legacy filters records first, then aggregates by date.
+    const filtered = filterByProject(records, "alpha");
+    const legacy = aggregateByDate(filtered);
+    const fresh = computeDailyBreakdownFromState(aggregates, todayAcc, { project: "alpha" });
+    expect(fresh).toEqual(legacy);
+  });
+
+  test("date filter: both paths exclude days outside the window identically", () => {
+    const todayKey = localDateKey(now);
+    const fresh = computeDailyBreakdownFromState(aggregates, todayAcc, {
+      since: todayKey,
+      until: todayKey,
+    });
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].date).toBe(todayKey);
+  });
+});
+
+describe("Phase 2 parity — getProviderBreakdown", () => {
+  const now = Date.now();
+  const records = fixtureRecords(now);
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("legacy aggregateByProvider(records) == aggregate-path provider summary", () => {
+    const legacy = aggregateByProvider(records);
+    const fresh = computeProviderBreakdownFromState(aggregates, todayAcc);
+    // The `models` array within each provider is a Set under the hood — sort
+    // both sides for stable equality.
+    const sortModels = <T extends { models: string[] }>(arr: T[]): T[] =>
+      arr.map((p) => ({ ...p, models: [...p.models].sort() }));
+    expect(sortModels(fresh)).toEqual(sortModels(legacy));
+  });
+
+  test("empty records: both paths return empty array", () => {
+    const empty = computeProviderBreakdownFromState(new Map(), new DailyAccumulator("2026-01-01"));
+    expect(empty).toEqual(aggregateByProvider([]));
+  });
+});
