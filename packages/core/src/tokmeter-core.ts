@@ -6,6 +6,8 @@
  */
 
 import { homedir } from "node:os";
+import { DailyAccumulator } from "./aggregates-store.js";
+import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import {
   aggregateByDate,
   aggregateByModel,
@@ -79,6 +81,26 @@ const EMPTY_SCAN_META: ScanMeta = {
 
 export class TokmeterCore {
   private records: TokenRecord[] = [];
+  /**
+   * Per-day historical aggregates, keyed by `YYYY-MM-DD`. Populated alongside
+   * `this.records` during `scan()` and updated by `refreshToday()`. Today's
+   * day is tracked separately in {@link todayAccumulator}; this map covers
+   * days strictly before today.
+   *
+   * This is dual-state phase 1 of the aggregate cutover (see
+   * docs/aggregate-snapshot-plan.md). Existing getters still read
+   * `this.records`; aggregate-aware getters can opt into reading this
+   * map. Phase 3 retires `this.records` and the snapshot stops storing raw
+   * records — at which point this map is the ONLY historical state and the
+   * daemon's RSS drops from ~1.5 GB to ~100 MB.
+   */
+  private aggregates: Map<string, DailyAggregate> = new Map();
+  /**
+   * Live in-memory accumulator for today's running aggregate. Folds today's
+   * records as they come in from the warm scan. Sealed and written to disk
+   * at midnight rollover. Null only before the first `scan()` completes.
+   */
+  private todayAccumulator: DailyAccumulator | null = null;
   private pricing: PricingService;
   private homeDir: string;
   private skipPricing: boolean;
@@ -236,6 +258,13 @@ export class TokmeterCore {
     }
 
     this.records = records;
+    // Phase 1 of the aggregate cutover: also populate the per-day aggregate
+    // map + today's accumulator. Consumers still read `this.records`; this
+    // is the foundation that consumer rewires (Phase 2) and the eventual
+    // removal of `this.records` (Phase 3) build on. Cost: one O(N) pass via
+    // `aggregateRecordsByDay`, paid once per scan — dwarfed by the scan
+    // itself, and the wins are paid back many times over once consumers move.
+    this.rebuildAggregateState(records, referenceTimestamp);
     this.scanMeta = {
       stableThrough: isTodayOnlyScan ? null : stableThrough,
       historySource: isTodayOnlyScan ? "none" : historySource,
@@ -312,6 +341,10 @@ export class TokmeterCore {
     // Keep frozen history (everything before today); replace only the today slice.
     const history = this.records.filter((r) => isBeforeToday(r.timestamp, now));
     this.records = [...history, ...today];
+    // Aggregate state stays in lockstep with `this.records`. Historical
+    // aggregates are already in `this.aggregates` from the last `scan()`;
+    // refreshToday only touches today's accumulator.
+    this.refreshTodayAccumulator(today, now);
 
     this.scanMeta = {
       ...this.scanMeta,
@@ -331,6 +364,64 @@ export class TokmeterCore {
     // price for not torching memory on every warm refresh.
 
     return this.records;
+  }
+
+  /**
+   * Rebuild the per-day aggregate map + today's accumulator from a fresh
+   * record set. Called from `scan()` after `this.records` is set, so the
+   * dual state stays in sync. Pure rebuild (no incremental delta) — cheap
+   * relative to the scan that produced these records.
+   */
+  private rebuildAggregateState(records: TokenRecord[], referenceTimestamp: number): void {
+    const todayKey = localDateKey(referenceTimestamp);
+    const allDays = aggregateRecordsByDay(records);
+    this.aggregates = new Map();
+    let todayAgg: DailyAggregate | undefined;
+    for (const day of allDays) {
+      if (day.date === todayKey) {
+        todayAgg = day;
+      } else {
+        this.aggregates.set(day.date, day);
+      }
+    }
+    const acc = new DailyAccumulator(todayKey);
+    if (todayAgg) acc.hydrate(todayAgg);
+    this.todayAccumulator = acc;
+  }
+
+  /**
+   * Lightweight today-only update for the warm-refresh path (`refreshToday`).
+   * Replaces just the today accumulator without rebuilding historical
+   * aggregates (those are already correct from the last `scan()`).
+   */
+  private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
+    const todayKey = localDateKey(referenceTimestamp);
+    const [todayAgg] = aggregateRecordsByDay(todayRecords);
+    const acc = new DailyAccumulator(todayKey);
+    if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
+    this.todayAccumulator = acc;
+  }
+
+  /**
+   * Historical aggregates only (days before today). Phase 1 of the aggregate
+   * cutover: this is read-only state that consumers can opt into; existing
+   * consumers still read `getRecords()`. Returns a stable snapshot — callers
+   * may iterate while the daemon refreshes (today is excluded; only frozen
+   * days are here).
+   */
+  getDailyAggregates(): DailyAggregate[] {
+    return [...this.aggregates.values()].sort((a, b) =>
+      a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+    );
+  }
+
+  /**
+   * Today's live aggregate view (current accumulator snapshot). Null only
+   * before the first scan completes. Returns a new object — caller can hold
+   * it across refreshes without seeing the accumulator mutate underneath.
+   */
+  getTodayAggregate(): DailyAggregate | null {
+    return this.todayAccumulator?.toAggregate() ?? null;
   }
 
   /** Get all loaded records. */
