@@ -32,6 +32,8 @@ describe("computeStatbarSignals", () => {
     expect(s.burnRate.costPerHour).toBe(0);
     expect(s.burnRate.recordsInWindow).toBe(0);
     expect(s.cacheHitToday.rate).toBe(0);
+    expect(s.contextPressure.status).toBe("none");
+    expect(s.contextPressure.provenance).toBe("not_exposed");
     expect(s.pace.multiple).toBeNull();
     expect(s.compactionToday.cost).toBe(0);
     expect(s.liveSession).toBeNull();
@@ -48,18 +50,112 @@ describe("computeStatbarSignals", () => {
     expect(s.burnRate.costPerHour).toBeCloseTo(2.25);
   });
 
-  test("cache hit rate uses today's input + cache read", () => {
+  test("cache hit rate uses today's canonical total input, including cache writes", () => {
     const records = [
-      r({ timestamp: now - 1 * HOUR, inputTokens: 100, cacheReadTokens: 900 }),
+      r({
+        timestamp: now - 1 * HOUR,
+        inputTokens: 100,
+        cacheReadTokens: 900,
+        cacheWriteTokens: 100,
+      }),
       r({ timestamp: now - 2 * HOUR, inputTokens: 50, cacheReadTokens: 50 }),
       // Yesterday's record should NOT count toward today's cache hit.
       r({ timestamp: now - 30 * HOUR, inputTokens: 0, cacheReadTokens: 10_000 }),
     ];
     const s = computeStatbarSignals(records, now);
-    // input=150, cacheRead=950 → 950/1100 ≈ 0.863
+    // Legacy `rate` keeps the older read/(input+read) denominator.
     expect(s.cacheHitToday.rate).toBeCloseTo(950 / 1100, 5);
+    expect(s.cacheHitToday.readShare).toBeCloseTo(950 / 1100, 5);
+    // input=150, cacheRead=950, cacheWrite=100 -> canonical read = 950/1200.
+    expect(s.cacheHitToday.canonicalRate).toBeCloseTo(950 / 1200, 5);
+    expect(s.cacheHitToday.missRate).toBeCloseTo(150 / 1200, 5);
+    expect(s.cacheHitToday.freshInputShare).toBeCloseTo(250 / 1200, 5);
+    expect(s.cacheHitToday.cacheWriteShare).toBeCloseTo(100 / 1200, 5);
     expect(s.cacheHitToday.cacheReadTokens).toBe(950);
+    expect(s.cacheHitToday.cacheWriteTokens).toBe(100);
     expect(s.cacheHitToday.inputTokens).toBe(150);
+    expect(s.cacheHitToday.freshInputTokens).toBe(250);
+    expect(s.cacheHitToday.totalInputTokens).toBe(1200);
+  });
+
+  test("project context today ranks projects by fresh input and drag pressure", () => {
+    const records = [
+      r({
+        timestamp: now - 50 * MIN,
+        project: "small",
+        inputTokens: 20,
+        cacheReadTokens: 80,
+        sourceFile: "/tmp/small.jsonl",
+      }),
+      r({
+        timestamp: now - 45 * MIN,
+        project: "heavy",
+        inputTokens: 500,
+        cacheReadTokens: 500,
+        sourceFile: "/tmp/heavy.jsonl",
+      }),
+      r({
+        timestamp: now - 5 * MIN,
+        project: "heavy",
+        inputTokens: 5_000,
+        cacheReadTokens: 20_000,
+        cacheWriteTokens: 500,
+        sourceFile: "/tmp/heavy.jsonl",
+      }),
+    ];
+    const s = computeStatbarSignals(records, now);
+    expect(s.projectContextToday).toHaveLength(2);
+    expect(s.projectContextToday[0].project).toBe("heavy");
+    expect(s.projectContextToday[0].cacheHitRate).toBeCloseTo(20_500 / 26_500, 5);
+    expect(s.projectContextToday[0].missRate).toBeCloseTo(5_500 / 26_500, 5);
+    expect(s.projectContextToday[0].freshInputShare).toBeCloseTo(6_000 / 26_500, 5);
+    expect(s.projectContextToday[0].dragTokens).toBe(24_500);
+    expect(s.projectContextToday[1].project).toBe("small");
+  });
+
+  test("context pressure estimates latest-session drag from input growth", () => {
+    const records = [
+      r({
+        timestamp: now - 4 * HOUR,
+        inputTokens: 1_000,
+        cacheReadTokens: 1_000,
+        sourceFile: "/tmp/session-a.jsonl",
+      }),
+      r({
+        timestamp: now - 2 * HOUR,
+        inputTokens: 3_000,
+        cacheReadTokens: 7_000,
+        sourceFile: "/tmp/session-a.jsonl",
+      }),
+      r({
+        timestamp: now - 10 * MIN,
+        inputTokens: 7_000,
+        cacheReadTokens: 33_000,
+        sourceFile: "/tmp/session-a.jsonl",
+      }),
+      // Older/different session should not set the active baseline.
+      r({
+        timestamp: now - 5 * MIN,
+        inputTokens: 50,
+        cacheReadTokens: 50,
+        sourceFile: "/tmp/session-b.jsonl",
+      }),
+    ];
+    const s = computeStatbarSignals(records, now);
+    expect(s.contextPressure.status).toBe("low");
+    expect(s.contextPressure.dragTokens).toBe(0);
+    expect(s.contextPressure.currentInputTokens).toBe(100);
+    expect(s.contextPressure.baselineInputTokens).toBe(100);
+    expect(s.contextPressure.turnCount).toBe(1);
+
+    const grown = computeStatbarSignals(records.slice(0, 3), now);
+    expect(grown.contextPressure.currentInputTokens).toBe(40_000);
+    expect(grown.contextPressure.baselineInputTokens).toBe(2_000);
+    expect(grown.contextPressure.dragTokens).toBe(38_000);
+    expect(grown.contextPressure.dragShare).toBeCloseTo(38_000 / 40_000, 5);
+    expect(grown.contextPressure.status).toBe("critical");
+    expect(grown.contextPressure.source).toBe("sourceFile");
+    expect(grown.contextPressure.provenance).toBe("estimated");
   });
 
   test("pace multiple compares today vs typical cost by this hour", () => {

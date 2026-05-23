@@ -6,23 +6,37 @@
  * aggregated totals from all active sessions.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import {
   type IncomingMessage,
   type ServerResponse,
   createServer as createHttpServer,
 } from "node:http";
-import { homedir } from "node:os";
-import type { ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
-import { refreshKoshaRegistry } from "@sriinnu/tokmeter";
+import { homedir, setPriority } from "node:os";
+import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
+import { localDateKey, refreshKoshaRegistry } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
   DAEMON_HOST,
   DAEMON_PID_FILE,
   DAEMON_PORT,
+  DAEMON_STATE_DIR,
   DAEMON_STATE_FILE,
+  DAEMON_TOKEN_FILE,
   DAEMON_URL,
+  LEGACY_DAEMON_PID_FILE,
+  LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
 import { SessionManager } from "./session.js";
 
@@ -35,23 +49,86 @@ let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 const HTTP_PORT = DAEMON_PORT + 1;
 
+/**
+ * V8 old-space cap (MB) for the spawned daemon child — the guardrail against a
+ * runaway scan ballooning the box back into kernel-panic territory.
+ *
+ * NOTE: this is deliberately MUCH higher than the statusline's 768MB cap. The
+ * statusline never scans anymore (it reads the daemon), so 768 is plenty for
+ * it. The daemon, by contrast, MUST perform the one-time full-history
+ * `scan()` to load frozen history, and on a real power-user corpus that cold
+ * scan peaks well past 2GB (measured ~4.5GB peak / ~3.9GB warm on the dev
+ * corpus). A 768MB cap here OOM-kills the daemon before it can ever finish
+ * warming, which would break the whole architecture (everything reads the
+ * daemon). We cap high enough to clear the cold scan with headroom while still
+ * bounding true runaway. Tune via TOKMETER_DAEMON_HEAP_MB if a corpus needs
+ * more. The held working set is the cost of keeping all history warm — that's
+ * the design — but it now lives in ONE singleton, not a stack of scanners.
+ */
+const DAEMON_HEAP_CAP_MB = Number.parseInt(process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144", 10);
+
 // ─── Auth Token ────────────────────────────────────────────────────────
 // Generate a random bearer token on daemon start. Written to a file (mode 0600)
 // so only the owning user can read it. All HTTP POST requests must include it.
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
-const DAEMON_TOKEN_FILE = DAEMON_PID_FILE.replace(".pid", ".token");
 let _authToken: string | null = null;
+
+/**
+ * Write `data` to `path` with mode 0600 using `O_CREAT|O_EXCL|O_WRONLY`. The
+ * EXCL flag closes the symlink-race / pre-created-file attack: if anything
+ * already exists at `path`, the open fails (EEXIST) and we unlink + retry.
+ * This is the local-multi-user TOCTOU defense — an attacker cannot pre-create
+ * the token file with their own owner/perms and read what we write.
+ */
+function writeSecretFile(path: string, data: string): void {
+  // Best-effort cleanup of any stale file at the path. If it's not ours,
+  // the unlink will fail and the open below will EEXIST → we surface.
+  try {
+    unlinkSync(path);
+  } catch {
+    /* file may not exist; that's fine — EXCL open will catch races */
+  }
+  const fd = openSync(
+    path,
+    fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY,
+    0o600
+  );
+  try {
+    writeSync(fd, data);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function initAuthToken(): void {
   _authToken = randomBytes(32).toString("hex");
-  writeFileSync(DAEMON_TOKEN_FILE, _authToken, { mode: 0o600 });
+  // Ensure the state dir exists (and is locked to the owner) before writing.
+  try {
+    mkdirSync(DAEMON_STATE_DIR, { recursive: true, mode: 0o700 });
+  } catch {}
+  writeSecretFile(DAEMON_TOKEN_FILE, _authToken);
+  // Compat shim for bar v1.4.0 which still reads /tmp/drishti-daemon.token.
+  // /tmp is shared, so this is the TOCTOU-exposed copy — best-effort, never
+  // fatal. Future bar releases should switch to DAEMON_TOKEN_FILE and we drop
+  // this shim.
+  try {
+    writeSecretFile(LEGACY_DAEMON_TOKEN_FILE, _authToken);
+  } catch {
+    /* ignore — legacy clients just won't authenticate */
+  }
 }
 
 function checkAuth(req: IncomingMessage): boolean {
   if (!_authToken) return true; // no token = dev mode
   const header = req.headers.authorization ?? "";
-  return header === `Bearer ${_authToken}`;
+  const expected = `Bearer ${_authToken}`;
+  // Constant-time compare so an attacker can't probe the token via timing.
+  // Lengths must match for timingSafeEqual; bail early when they don't, since
+  // a length mismatch is itself a public fact (it's the request the attacker
+  // sent vs. a fixed-length expected string).
+  if (header.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
 }
 
 // Client tracking: WebSocket -> { provider, sessionId }
@@ -65,6 +142,76 @@ export function startDaemon(): void {
     return;
   }
 
+  // Lower the daemon's CPU priority so the macOS scheduler keeps interactive
+  // UI (Ghostty, Cursor, the menubar) responsive while we GC, refresh today,
+  // and aggregate. We are background data infrastructure; we MUST yield to
+  // the foreground. Without this, a 200 ms GC pause in a 1.5 GB heap stalls
+  // every other process briefly because macOS's compressor and scheduler
+  // share global pools — exactly what was murdering Ghostty.
+  //
+  // +10 = "nice", same as the standard background-daemon convention on Unix.
+  // setPriority is best-effort; macOS may clamp to its own range.
+  try {
+    setPriority(0, 10);
+  } catch {
+    // Non-fatal — if the OS refuses, the daemon still works, just less polite.
+  }
+
+  // Cross-process singleton guard. The statusline + bar both fire-and-forget
+  // a `daemon start` when they can't reach the daemon; without this guard a
+  // burst of those would spawn a stampede of servers all fighting for the
+  // port. If a live daemon already owns the PID file, bow out silently.
+  if (existsSync(DAEMON_PID_FILE)) {
+    const raw = (() => {
+      try {
+        return readFileSync(DAEMON_PID_FILE, "utf-8").trim();
+      } catch {
+        return "";
+      }
+    })();
+    const pid = Number.parseInt(raw, 10);
+    if (Number.isFinite(pid) && pid > 1 && pid !== process.pid) {
+      // process.kill(pid, 0) probes the process WITHOUT signalling it.
+      //   - succeeds         → process exists and is signalable by us → alive, bow out
+      //   - throws EPERM     → process exists but is owned by another user (or restricted) → alive, bow out
+      //   - throws ESRCH     → no such process → stale PID, safe to reclaim
+      //   - throws anything else → conservative: treat as alive (avoid stomping on a real daemon)
+      let liveness: "alive" | "stale" = "stale";
+      try {
+        process.kill(pid, 0);
+        liveness = "alive";
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM") {
+          liveness = "alive";
+        } else if (code === "ESRCH") {
+          liveness = "stale";
+        } else {
+          // Unknown errno — fail safe by assuming alive. Better to bow out
+          // than to double-bind and crash a working daemon.
+          liveness = "alive";
+        }
+      }
+      if (liveness === "alive") {
+        console.log(`daemon already running (pid ${pid})`);
+        return;
+      }
+      // Stale PID file — clean up both canonical and legacy paths.
+      for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
+        try {
+          unlinkSync(f);
+        } catch {}
+      }
+    } else {
+      // Garbage PID (empty / non-numeric / self) — treat as stale.
+      for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
+        try {
+          unlinkSync(f);
+        } catch {}
+      }
+    }
+  }
+
   sessionManager = new SessionManager();
   initAuthToken();
 
@@ -73,8 +220,13 @@ export function startDaemon(): void {
   wss.on("listening", () => {
     console.log(`【♾️】 Drishti Daemon listening on ${DAEMON_URL}`);
 
-    // Write PID file
-    writeFileSync(DAEMON_PID_FILE, String(process.pid));
+    // Write PID file (canonical + legacy /tmp shim for bar v1.4.0 compat).
+    writeFileSync(DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+    try {
+      writeFileSync(LEGACY_DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+    } catch {
+      /* legacy path optional */
+    }
 
     // Start cleanup interval
     cleanupInterval = setInterval(() => {
@@ -128,7 +280,14 @@ export function startDaemon(): void {
     });
   });
 
-  wss.on("error", (err) => {
+  wss.on("error", (err: Error & { code?: string }) => {
+    if (err.code === "EADDRINUSE") {
+      // Another daemon won the bind race (the PID-file check above has a
+      // small TOCTOU window). Exit cleanly rather than crash-looping — the
+      // other daemon is the live singleton and there's nothing for us to do.
+      console.log(`daemon port ${DAEMON_PORT} already in use — another daemon won the race`);
+      process.exit(0);
+    }
     console.error("Server error:", err.message);
   });
 
@@ -309,8 +468,13 @@ export function stopDaemon(): void {
     httpServer = null;
   }
 
-  // Clean up PID and token files
-  for (const f of [DAEMON_PID_FILE, DAEMON_TOKEN_FILE]) {
+  // Clean up PID and token files (canonical + legacy /tmp shims).
+  for (const f of [
+    DAEMON_PID_FILE,
+    DAEMON_TOKEN_FILE,
+    LEGACY_DAEMON_PID_FILE,
+    LEGACY_DAEMON_TOKEN_FILE,
+  ]) {
     try {
       unlinkSync(f);
     } catch {
@@ -323,21 +487,41 @@ export function stopDaemon(): void {
   console.log("Daemon stopped");
 }
 
-export function isDaemonRunning(): boolean {
-  if (!existsSync(DAEMON_PID_FILE)) return false;
-
+/**
+ * Distinguish a truly-dead PID from one we just don't have permission to
+ * signal. EPERM ⇒ the process exists (alive); ESRCH ⇒ no such process (stale).
+ * Anything else ⇒ unknown — fail conservatively as "alive" so we never blow
+ * away the canonical singleton.
+ */
+function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 1) return false;
   try {
-    const pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
-    // Check if process is running
     process.kill(pid, 0);
     return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    return true; // unknown errno → conservative
+  }
+}
+
+export function isDaemonRunning(): boolean {
+  if (!existsSync(DAEMON_PID_FILE)) return false;
+  let pid: number;
+  try {
+    pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
   } catch {
-    // Process not running, clean up PID file
-    try {
-      unlinkSync(DAEMON_PID_FILE);
-    } catch {}
     return false;
   }
+  if (isPidAlive(pid)) return true;
+  // Truly stale — clean up so the next start can reclaim cleanly.
+  for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
+    try {
+      unlinkSync(f);
+    } catch {}
+  }
+  return false;
 }
 
 export function getDaemonStatus(): {
@@ -348,27 +532,52 @@ export function getDaemonStatus(): {
   if (!existsSync(DAEMON_PID_FILE)) {
     return { running: false, port: DAEMON_PORT };
   }
-
+  let pid: number;
   try {
-    const pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
-    process.kill(pid, 0);
-    return { running: true, pid, port: DAEMON_PORT };
+    pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
   } catch {
     return { running: false, port: DAEMON_PORT };
   }
+  if (isPidAlive(pid)) return { running: true, pid, port: DAEMON_PORT };
+  return { running: false, port: DAEMON_PORT };
 }
 
 // ─── HTTP REST API ──────────────────────────────────────────────────────
 
-/** Cached core for HTTP API (same 5s TTL pattern as MCP server). */
+/**
+ * The daemon holds ONE persistent TokmeterCore for its entire lifetime — the
+ * single warm source of truth. Frozen history is scanned once; only TODAY is
+ * refreshed incrementally (cheap, stat-pruned to today's active files) on a
+ * sane cadence. This is the fix for the RAM blow-up: we no longer build a new
+ * core and full-scan the whole corpus on a 5s TTL.
+ *
+ * `_httpCore` holds the singleton; `ts` is the last time TODAY was refreshed.
+ */
 let _httpCore: { core: any; ts: number } | null = null;
-const HTTP_CACHE_TTL = 5_000;
+/**
+ * Single chokepoint for invalidating the warm core. Anywhere we null `_httpCore`
+ * we MUST also reset `_httpCoreReady` and the today-floor so `/api/ready`
+ * doesn't lie ("ready: true" with no warm core) and the floor doesn't pin
+ * yesterday's high-water onto a freshly-rebuilt core. Use this helper
+ * everywhere instead of `_httpCore = null` so the invariant can't drift.
+ */
+function invalidateHttpCore(): void {
+  _httpCore = null;
+  _httpCoreReady = false;
+  _todayHighWater = null;
+  _statsHighWater = null;
+}
+/**
+ * How stale today's data may get before a warm `refreshToday()` runs. The full
+ * frozen history is never re-read here — only today's ~2 active files.
+ */
+const TODAY_REFRESH_TTL = 12_000;
 const MAX_BODY_BYTES = 1_048_576; // 1MB
 
 /**
- * Tracks the in-flight scan so concurrent callers don't trigger duplicate
- * scans. The first caller does the work; subsequent callers await the same
- * promise.
+ * Tracks the in-flight refresh/scan so concurrent callers don't trigger
+ * duplicate work. The first caller does the work; subsequent callers await the
+ * same promise.
  */
 let _httpCorePromise: Promise<any> | null = null;
 /** True once the first warmup scan has completed. */
@@ -385,17 +594,76 @@ let _httpCoreReady = false;
 const DRISHTI_API_VERSION = 1;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
 
-async function getHttpCore(): Promise<any> {
-  const now = Date.now();
-  if (_httpCore && now - _httpCore.ts < HTTP_CACHE_TTL) return _httpCore.core;
+/**
+ * Set by `rescanHttpCore()` when a pricing update arrives while another core
+ * operation is in flight. The in-flight promise will see this on completion
+ * and queue exactly one fullRescan after it — collapsing N back-to-back
+ * pricing-update bursts into a single follow-up scan instead of stacking N
+ * full-corpus scans. Resets to false when consumed.
+ */
+let _pendingFullRescan = false;
 
-  // Coalesce concurrent callers — only one scan runs at a time. Without
-  // this, the menubar app + a browser tab + an MCP tool can all trigger
-  // the same expensive scan in parallel.
-  if (_httpCorePromise) return _httpCorePromise;
+/**
+ * Single mediator for ALL core work — warm reads, today refreshes, and full
+ * rescans — through ONE single-flight promise. Without this, a concurrent
+ * `rescanHttpCore()` could replace `_httpCorePromise` after awaiting it,
+ * back-to-back-running TWO full-corpus scans (the exact stampede the rebuild
+ * exists to prevent, just serialized instead of parallel).
+ *
+ * Rules:
+ *   - Warm + fresh (within {@link TODAY_REFRESH_TTL}) and no rescan requested
+ *     → return the warm core instantly.
+ *   - Something already in flight → wait for it. If a rescan was requested
+ *     while a refresh was running, mark it pending so we queue exactly one
+ *     rescan after the current operation completes.
+ *   - Nothing in flight → claim `_httpCorePromise` and run the right work
+ *     (refresh / fullRescan / cold start).
+ */
+async function ensureCoreFresh(forceFullRescan = false, depth = 0): Promise<any> {
+  const now = Date.now();
+  if (!forceFullRescan && _httpCore && now - _httpCore.ts < TODAY_REFRESH_TTL) {
+    return _httpCore.core;
+  }
+
+  if (_httpCorePromise) {
+    if (forceFullRescan) _pendingFullRescan = true;
+    // Tolerate rejection so a single failed scan doesn't poison every caller
+    // (the inner finally still clears `_httpCorePromise`).
+    await _httpCorePromise.catch(() => undefined);
+    // Re-evaluate: the just-finished work may already have satisfied us, or
+    // we may need to chain a rescan if `_pendingFullRescan` was set. Cap
+    // the recursion depth as a belt-and-suspenders against a pathological
+    // rescan-storm livelock — at depth > 4 we just return whatever core we
+    // have (even if "stale" by TTL), since the queued rescan will eventually
+    // catch up on the next caller.
+    if (depth > 4) {
+      if (_httpCore) return _httpCore.core;
+      throw new Error("ensureCoreFresh exceeded recursion depth without producing a core");
+    }
+    return ensureCoreFresh(forceFullRescan || _pendingFullRescan, depth + 1);
+  }
+
+  const wantFullRescan = forceFullRescan || _pendingFullRescan;
+  _pendingFullRescan = false;
 
   _httpCorePromise = (async () => {
     try {
+      if (_httpCore && !wantFullRescan) {
+        // Warm + stale → cheap incremental today refresh. `refreshToday()`
+        // re-reads ONLY today's active files and splices onto frozen history,
+        // which is never touched (immutability rule).
+        await _httpCore.core.refreshToday();
+        _httpCore.ts = Date.now();
+        return _httpCore.core;
+      }
+      if (_httpCore) {
+        // Warm + full rescan (e.g. after `/api/update-pricing`). Core's own
+        // immutability rules keep frozen history frozen; only today reprices.
+        await _httpCore.core.scan();
+        _httpCore.ts = Date.now();
+        return _httpCore.core;
+      }
+      // Cold start: build the ONE persistent core and load frozen history once.
       const { TokmeterCore } = await import("@sriinnu/tokmeter");
       const core = new TokmeterCore();
       await core.scan();
@@ -403,11 +671,29 @@ async function getHttpCore(): Promise<any> {
       _httpCoreReady = true;
       return core;
     } finally {
+      // Promise tracking ends here regardless of success/failure — the next
+      // caller starts a fresh attempt. `_httpCoreReady` is NOT flipped here
+      // because we want it to reflect "have we ever produced a warm core",
+      // not "did the last attempt succeed".
       _httpCorePromise = null;
     }
   })();
 
   return _httpCorePromise;
+}
+
+async function getHttpCore(): Promise<any> {
+  return ensureCoreFresh(false);
+}
+
+/**
+ * Force a full re-scan of the persistent core (history reloaded, today
+ * repriced). Used after a pricing update. Routes through the single mediator
+ * so concurrent calls and concurrent refreshes don't stack into back-to-back
+ * full-corpus scans.
+ */
+async function rescanHttpCore(): Promise<void> {
+  await ensureCoreFresh(true);
 }
 
 async function getHttpSummaryPayload(): Promise<{
@@ -467,16 +753,23 @@ function startHttpApi(): void {
     }
 
     const url = req.url ?? "/";
+    // Path without query so endpoints that accept `?providers=` (used by the
+    // CLI's daemon-read fast path for `stats/daily/models --json --codex`) still
+    // route correctly. Endpoints without params can keep matching `url`.
+    const pathname = url.split("?")[0];
 
     try {
       const { CleanupService } = await import("@sriinnu/tokmeter");
 
-      // GET endpoints
+      // GET endpoints — all routing keys off `pathname` (i.e. URL minus query
+      // string) so a stray `?foo=bar` on a parameterless endpoint can never
+      // bypass the route into the 404 default. Endpoints that accept query
+      // params parse them off `url` explicitly.
       if (req.method === "GET") {
         // Fast endpoints — never trigger a fresh scan, just report state.
         // /api/ready is a tiny health check the menubar uses to know whether
         // it's worth firing the slow endpoints yet.
-        if (url === "/api/ready") {
+        if (pathname === "/api/ready") {
           json(res, {
             ready: _httpCoreReady,
             warming: _httpCorePromise !== null,
@@ -488,9 +781,9 @@ function startHttpApi(): void {
         // /api/quick returns just the stats from whatever cache is available.
         // If the core has never been scanned, returns zeros + ready: false so
         // the UI can render a skeleton instead of timing out.
-        if (url === "/api/quick") {
+        if (pathname === "/api/quick") {
           if (_httpCore) {
-            const stats = _httpCore.core.getStats();
+            const stats = applyStatsFloor(_httpCore.core.getStats());
             json(res, { ready: true, stats });
           } else {
             // Kick off the warmup but don't wait for it.
@@ -510,7 +803,7 @@ function startHttpApi(): void {
         }
 
         // Slow endpoints — wait for the core to be ready.
-        if (url === "/api/summary") {
+        if (pathname === "/api/summary") {
           const { summary, source } = await getHttpSummaryPayload();
           res.setHeader(SUMMARY_SOURCE_HEADER, source);
           json(res, summary);
@@ -519,9 +812,16 @@ function startHttpApi(): void {
 
         const core = await getHttpCore();
 
-        if (url === "/api/projects") {
+        if (pathname === "/api/today") {
+          // Today's cross-provider totals, computed from the WARM core — no
+          // scan. The statusline reads this so it NEVER scans on its 200ms hot
+          // path. Shape matches statusline's TodayTotals. The today-floor pins
+          // each field to its per-day high-water mark so codex fork-dedup
+          // swaps can't show today *decreasing* (user can't un-spend money).
+          json(res, applyTodayFloor(computeTodayTotals(core)));
+        } else if (pathname === "/api/projects") {
           json(res, core.getAllProjects());
-        } else if (url === "/api/sessions") {
+        } else if (pathname === "/api/sessions") {
           // All projects across providers, sorted by most-recently-used descending.
           // Used by the menubar's expandable session list — supports 10/20/50+ items.
           const projects = core
@@ -529,20 +829,38 @@ function startHttpApi(): void {
             .slice()
             .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed);
           json(res, projects.slice(0, 50));
-        } else if (url.startsWith("/api/projects/")) {
-          const name = decodeURIComponent(url.slice("/api/projects/".length));
+        } else if (pathname.startsWith("/api/projects/")) {
+          const name = decodeURIComponent(pathname.slice("/api/projects/".length));
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
-        } else if (url === "/api/stats") {
-          json(res, core.getStats());
-        } else if (url === "/api/statbar-signals") {
+        } else if (pathname === "/api/stats") {
+          const providers = parseProviders(url);
+          if (providers) {
+            const { filterByProvider } = await import("@sriinnu/tokmeter");
+            // Provider-filtered stats: NOT floored. The floor is a
+            // display-stability guard for the BAR's lifetime hero, which
+            // reads unfiltered /api/stats. A provider-scoped read is a
+            // different number and shouldn't inherit the lifetime floor.
+            json(res, core.getStats(filterByProvider(core.getRecords(), providers)));
+          } else {
+            // Lifetime stats — floored so the bar's hero stays monotonic
+            // within the day. See applyStatsFloor for the why.
+            json(res, applyStatsFloor(core.getStats()));
+          }
+        } else if (pathname === "/api/statbar-signals") {
           // Live "right now" signals for the menubar — burn rate, cache hit,
           // pace vs typical, compaction tax, and the live session pointer.
           // Cheap to compute (single pass over records), so polled on the
           // same 30s cadence as everything else.
           json(res, core.getStatbarSignals());
-        } else if (url === "/api/models") {
-          json(res, core.getModelCosts());
-        } else if (url === "/api/health") {
+        } else if (pathname === "/api/models") {
+          const providers = parseProviders(url);
+          if (providers) {
+            const { filterByProvider, aggregateByModel } = await import("@sriinnu/tokmeter");
+            json(res, aggregateByModel(filterByProvider(core.getRecords(), providers)));
+          } else {
+            json(res, core.getModelCosts());
+          }
+        } else if (pathname === "/api/health") {
           // Surface silent-pricing leaks: today-records that priced at $0
           // because no tier (kosha runtime, manifest, override) had pricing.
           // The bar UI uses unpricedModels.length to flip to amber state.
@@ -562,18 +880,21 @@ function startHttpApi(): void {
             warnings: meta.warnings,
             lastScanAt: meta.lastScanAt,
           });
-        } else if (url === "/api/today-models") {
-          const core = await getHttpCore();
+        } else if (pathname === "/api/today-models") {
           json(res, core.getModelCosts({ today: true }));
-        } else if (url === "/api/cross-tool") {
+        } else if (pathname === "/api/cross-tool") {
           // Project today's token shape against the user's top lifetime
           // models. Surfaces "what would today have cost on model X" — the
           // kind of comparison only kosha-backed tools can ship honestly.
           json(res, await core.getCrossToolComparison());
-        } else if (url === "/api/update-pricing") {
+        } else if (pathname === "/api/update-pricing") {
           try {
             await refreshKoshaRegistry();
-            _httpCore = null;
+            // Pricing changed → today must reprice. Trigger a full re-scan of
+            // the warm singleton (history stays frozen per the core's rules)
+            // instead of nulling the core and paying a cold-start on the next
+            // read. Keeps the daemon warm and bounded.
+            await rescanHttpCore();
             json(res, { ok: true });
           } catch (err) {
             res.writeHead(500);
@@ -582,7 +903,7 @@ function startHttpApi(): void {
               error: err instanceof Error ? err.message : String(err),
             });
           }
-        } else if (url === "/api/pricing-status") {
+        } else if (pathname === "/api/pricing-status") {
           // Reports the mtime of ~/.kosha/registry.json so the menubar can
           // surface "Pricing: 2h ago". 0 if the registry is missing.
           let mtime = 0;
@@ -593,7 +914,7 @@ function startHttpApi(): void {
             mtime = statSync(join(homedir(), ".kosha", "registry.json")).mtimeMs;
           } catch {}
           json(res, { registryMtime: mtime });
-        } else if (url === "/api/anomalies") {
+        } else if (pathname === "/api/anomalies") {
           // Pricing anomalies kosha logs at merge time. Read-only window:
           // last 24h of >25% rate movements. Caps the response so a
           // pathological diff burst (provider migration day) doesn't ship
@@ -616,7 +937,7 @@ function startHttpApi(): void {
             recent = all.slice(-ANOM_CAP).reverse(); // newest first
           } catch {}
           json(res, { anomalies: recent, total, cappedAt: ANOM_CAP });
-        } else if (url === "/api/cron-status") {
+        } else if (pathname === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
           // and the result of its last run. The plist truncates the log on
           // every run, so the entire file contents represent the last run
@@ -671,14 +992,37 @@ function startHttpApi(): void {
             // through to defaults. Fail closed.
           }
           json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
-        } else if (url === "/api/daily") {
-          json(res, core.getDailyBreakdown());
-        } else if (url === "/api/providers") {
+        } else if (pathname === "/api/daily") {
+          const providers = parseProviders(url);
+          if (providers) {
+            const { filterByProvider, aggregateByDate } = await import("@sriinnu/tokmeter");
+            json(res, aggregateByDate(filterByProvider(core.getRecords(), providers)));
+          } else {
+            // Floor today's last entry to the per-day high-water so the macOS
+            // bar's hero (which reads daily.last.cost) is monotonic upward —
+            // codex fork-dedup winner swaps can't make today's display drop.
+            const daily = core.getDailyBreakdown() as Array<{
+              date: string;
+              cost: number;
+              totalTokens: number;
+              [k: string]: unknown;
+            }>;
+            const todayKey = localDateKey();
+            const floored = applyTodayFloor(computeTodayTotals(core));
+            if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
+              const last = daily[daily.length - 1];
+              if (floored.cost > last.cost) last.cost = floored.cost;
+              const flooredTokens = floored.in + floored.out;
+              if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
+            }
+            json(res, daily);
+          }
+        } else if (pathname === "/api/providers") {
           json(res, core.getProviderBreakdown());
-        } else if (url === "/api/backups") {
+        } else if (pathname === "/api/backups") {
           const service = new CleanupService(core);
           json(res, service.listBackups());
-        } else if (url === "/api/themes") {
+        } else if (pathname === "/api/themes") {
           const { listThemes } = await import("@sriinnu/tokmeter");
           json(res, listThemes());
         } else {
@@ -688,6 +1032,7 @@ function startHttpApi(): void {
             endpoints: [
               "/api/ready",
               "/api/quick",
+              "/api/today",
               "/api/summary",
               "/api/projects",
               "/api/sessions",
@@ -711,14 +1056,16 @@ function startHttpApi(): void {
       if (req.method === "POST") {
         if (!checkAuth(req)) {
           res.writeHead(401);
-          json(res, {
-            error: `Unauthorized — include Authorization: Bearer <token> from ${DAEMON_TOKEN_FILE}`,
-          });
+          // Do NOT echo the token file path here — it's an info leak that
+          // tells an unauthenticated probe exactly where the secret lives.
+          // Legit clients already know the path from the daemon's own
+          // startup log (visible only to the owning user).
+          json(res, { error: "Unauthorized" });
           return;
         }
         const body = await readBody(req);
 
-        if (url === "/api/cleanup/preview") {
+        if (pathname === "/api/cleanup/preview") {
           const core = await getHttpCore();
           const service = new CleanupService(core);
           const { project, providers, since, until, today, week, month } = body;
@@ -732,7 +1079,7 @@ function startHttpApi(): void {
             month,
           });
           json(res, preview);
-        } else if (url === "/api/cleanup/execute") {
+        } else if (pathname === "/api/cleanup/execute") {
           if (body.confirm !== "DELETE") {
             res.writeHead(403);
             json(res, { error: "confirm must be 'DELETE'" });
@@ -746,9 +1093,9 @@ function startHttpApi(): void {
             { project, providers, since, until, today, week, month },
             { backup: backup ?? true }
           );
-          _httpCore = null; // Invalidate cache after mutation
+          invalidateHttpCore(); // Cache + floors must follow the mutation.
           json(res, result);
-        } else if (url === "/api/restore") {
+        } else if (pathname === "/api/restore") {
           if (body.confirm !== "RESTORE") {
             res.writeHead(403);
             json(res, { error: "confirm must be 'RESTORE'" });
@@ -758,7 +1105,7 @@ function startHttpApi(): void {
           const core = new TokmeterCore({ skipPricing: true });
           const service = new CleanupService(core);
           const result = service.restore(body.backup_id);
-          _httpCore = null; // Invalidate cache after mutation
+          invalidateHttpCore(); // Cache + floors must follow the mutation.
           json(res, result);
         } else {
           res.writeHead(404);
@@ -769,7 +1116,20 @@ function startHttpApi(): void {
 
       res.writeHead(405);
       json(res, { error: "Method not allowed" });
-    } catch {
+    } catch (err) {
+      // Log the real cause — a silent 500 here is exactly what made the
+      // daemon's read endpoints look "broken" with no way to diagnose. We
+      // log `.message` only (NOT `.stack`) — stack traces contain absolute
+      // paths and internal file structure that's an info leak when daemon
+      // logs end up in a shared location (e.g. `/tmp/d_b.log` during dev,
+      // launchd logs, screenshots in support tickets). Daemon authors who
+      // need a stack trace can attach a debugger or set TOKMETER_DAEMON_DEBUG.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (process.env.TOKMETER_DAEMON_DEBUG === "1" && err instanceof Error) {
+        console.error(`HTTP request failed [${req.url}]:`, err.stack);
+      } else {
+        console.error(`HTTP request failed [${req.url}]: ${msg}`);
+      }
       res.writeHead(500);
       json(res, { error: "Internal server error" });
     }
@@ -791,6 +1151,215 @@ function startHttpApi(): void {
 
 function json(res: ServerResponse, data: unknown): void {
   res.end(JSON.stringify(data));
+}
+
+interface TodayTotals {
+  cost: number;
+  in: number;
+  out: number;
+  projects: Record<string, { cost: number; in: number; out: number }>;
+  day: string;
+}
+
+/**
+ * Compute today's cross-provider totals from the warm core's loaded records.
+ * Cheap — a single filtered pass, no disk scan. Shape MUST stay in lockstep
+ * with the statusline's TodayTotals consumer in src/statusline.ts.
+ */
+/**
+ * Parse a `?providers=codex,claude-code` (or `?provider=codex`) filter off a
+ * request URL. Returns null when absent. Lets read endpoints serve a
+ * provider-scoped view from the warm core — so the CLI's `--codex` flag maps to
+ * a cheap filtered read instead of a fresh provider-scoped scan.
+ */
+/**
+ * Defensive caps:
+ *   - MAX_PROVIDERS: hard upper bound on list length so a pathological URL
+ *     `?providers=a,a,a,...` (10MB worth) can't get fanned into a giant array
+ *     and a quadratic filter scan.
+ *   - MAX_PROVIDER_LEN: per-id length cap — provider IDs are short slugs
+ *     (`codex`, `claude-code`, ...). Anything over this is junk input.
+ *   - PROVIDER_PATTERN: alphanumeric + hyphen only. Rejects `?providers=../../`
+ *     style probes, control chars, and Unicode shenanigans before they reach
+ *     the filter layer.
+ */
+const MAX_PROVIDERS = 32;
+const MAX_PROVIDER_LEN = 64;
+const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+
+function parseProviders(url: string): ProviderId[] | null {
+  const qi = url.indexOf("?");
+  if (qi < 0) return null;
+  const params = new URLSearchParams(url.slice(qi + 1));
+  const raw = params.get("providers") ?? params.get("provider");
+  if (!raw) return null;
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const part of raw.split(",")) {
+    const s = part.trim();
+    if (!s || s.length > MAX_PROVIDER_LEN) continue;
+    if (!PROVIDER_PATTERN.test(s)) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    list.push(s);
+    if (list.length >= MAX_PROVIDERS) break;
+  }
+  return list.length > 0 ? (list as ProviderId[]) : null;
+}
+
+/**
+ * Per-day high-water marks for "today" — today's cost MUST be monotonic
+ * upward within a day (you cannot un-spend money), but the codex parser's
+ * fork-dedup ("latest mtime sibling wins") can swap winners as new sibling
+ * rollouts appear, momentarily showing a SMALLER today total than the prior
+ * scan. That's parser flux, not a real refund. The floor pins each field to
+ * the high-water mark observed during the current local day so the displayed
+ * "today" only ever grows. Resets automatically on day rollover (when
+ * `localDateKey()` changes). Note: the underlying records and the
+ * non-today endpoints are unaffected — this is a display-stability guard
+ * scoped to /api/today only.
+ */
+let _todayHighWater: TodayTotals | null = null;
+
+/**
+ * Lifetime-cost high-water for /api/stats and /api/quick. Same rationale as
+ * `_todayHighWater`: lifetime = frozen history + today, frozen history is
+ * immutable, so the only thing that can move lifetime is today — and today
+ * must be monotonic upward within the day. Reset on day rollover (tracked
+ * by `localDateKey()`) so a new day's totals can climb fresh.
+ *
+ * Why a separate floor from today's: the bar's lifetime hero reads
+ * `stats.totalCost`, not `today.cost`. They live on different endpoints and
+ * a parser swap that nudges today by $0.10 nudges lifetime by the same
+ * $0.10 — both displays would flicker if we only floored one.
+ */
+interface StatsFloor {
+  day: string;
+  totalCost: number;
+  totalTokens: number;
+}
+let _statsHighWater: StatsFloor | null = null;
+
+function applyTodayFloor(computed: TodayTotals): TodayTotals {
+  // Day rollover (or first call) — reset the floor and accept what we see.
+  if (!_todayHighWater || _todayHighWater.day !== computed.day) {
+    _todayHighWater = {
+      cost: computed.cost,
+      in: computed.in,
+      out: computed.out,
+      day: computed.day,
+      projects: { ...computed.projects },
+    };
+    return _todayHighWater;
+  }
+
+  const dropped = computed.cost + 0.005 < _todayHighWater.cost;
+  if (dropped) {
+    // Surface the suppression so it's not invisible — small per-scan dips are
+    // usually codex fork-dedup winner swaps and we DELIBERATELY keep the
+    // high-water. Logged at console.warn for daemon stderr only.
+    console.warn(
+      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water ` +
+        `$${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex ` +
+        "fork-dedup winner swap; data not lost, just a parser-side reweighting)."
+    );
+  }
+
+  // Take per-field max (cost/in/out and per-project) so each number is
+  // pinned to its own monotone-upward floor. Build a NEW snapshot rather
+  // than mutating either side so callers can't see partial state.
+  const allKeys = new Set([
+    ...Object.keys(computed.projects),
+    ...Object.keys(_todayHighWater.projects),
+  ]);
+  const projects: Record<string, { cost: number; in: number; out: number }> = {};
+  for (const k of allKeys) {
+    const a = computed.projects[k] ?? { cost: 0, in: 0, out: 0 };
+    const b = _todayHighWater.projects[k] ?? { cost: 0, in: 0, out: 0 };
+    projects[k] = {
+      cost: Math.max(a.cost, b.cost),
+      in: Math.max(a.in, b.in),
+      out: Math.max(a.out, b.out),
+    };
+  }
+
+  const merged: TodayTotals = {
+    cost: Math.max(computed.cost, _todayHighWater.cost),
+    in: Math.max(computed.in, _todayHighWater.in),
+    out: Math.max(computed.out, _todayHighWater.out),
+    day: computed.day,
+    projects,
+  };
+  _todayHighWater = merged;
+  return merged;
+}
+
+/**
+ * Pin lifetime `totalCost` and `totalTokens` to a within-day high-water mark.
+ * Other fields (counts, streaks, firstUsed/lastUsed) pass through unchanged —
+ * they aren't subject to the same parser-flux drop pattern that motivates the
+ * today-floor. If the input shape doesn't look like the stats object we expect
+ * (e.g. a future signature change), we pass through unmodified.
+ */
+function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(stats: T): T {
+  if (
+    !stats ||
+    typeof stats.totalCost !== "number" ||
+    typeof stats.totalTokens !== "number"
+  ) {
+    return stats;
+  }
+  const day = localDateKey();
+  if (!_statsHighWater || _statsHighWater.day !== day) {
+    _statsHighWater = {
+      day,
+      totalCost: stats.totalCost,
+      totalTokens: stats.totalTokens,
+    };
+    return stats;
+  }
+  if (stats.totalCost + 0.005 < _statsHighWater.totalCost) {
+    console.warn(
+      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water ` +
+        `$${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches ` +
+        "today-floor; almost certainly a codex fork-dedup winner swap)."
+    );
+  }
+  const floored = {
+    ...stats,
+    totalCost: Math.max(stats.totalCost, _statsHighWater.totalCost),
+    totalTokens: Math.max(stats.totalTokens, _statsHighWater.totalTokens),
+  };
+  _statsHighWater.totalCost = floored.totalCost;
+  _statsHighWater.totalTokens = floored.totalTokens;
+  return floored;
+}
+
+function computeTodayTotals(core: any): TodayTotals {
+  const day = localDateKey();
+  let cost = 0;
+  let inT = 0;
+  let outT = 0;
+  const projects: Record<string, { cost: number; in: number; out: number }> = {};
+  for (const r of core.getRecords() as Array<{
+    timestamp: number;
+    project: string;
+    cost: number;
+    inputTokens: number;
+    outputTokens: number;
+  }>) {
+    if (localDateKey(r.timestamp) !== day) continue;
+    cost += r.cost;
+    inT += r.inputTokens;
+    outT += r.outputTokens;
+    const pkey = r.project || "unknown";
+    if (!projects[pkey]) projects[pkey] = { cost: 0, in: 0, out: 0 };
+    const p = projects[pkey];
+    p.cost += r.cost;
+    p.in += r.inputTokens;
+    p.out += r.outputTokens;
+  }
+  return { cost, in: inT, out: outT, projects, day };
 }
 
 function appendSummaryWarnings(
@@ -879,10 +1448,18 @@ export async function runDaemonCLI(command: string): Promise<void> {
       // starts a clean Node process with the same argv.
       {
         const { spawn } = await import("node:child_process");
+        // Cap the daemon's heap so even a runaway scan can't balloon the box
+        // back into kernel-panic territory. Threaded via NODE_OPTIONS so it
+        // applies whether the child is launched directly or re-execs.
         const child = spawn(process.execPath, [process.argv[1], "daemon", "start"], {
           detached: true,
           stdio: "ignore",
-          env: { ...process.env, [DAEMON_CHILD_FLAG]: "1" },
+          env: {
+            ...process.env,
+            [DAEMON_CHILD_FLAG]: "1",
+            NODE_OPTIONS:
+              `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${DAEMON_HEAP_CAP_MB}`.trim(),
+          },
         });
         child.unref();
 

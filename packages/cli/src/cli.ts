@@ -737,6 +737,161 @@ async function runRoutes(options: {
   }
 }
 
+// ---- Daemon-read fast path ----
+
+/**
+ * HTTP base for the local drishti daemon: DAEMON_HOST:DAEMON_PORT+1
+ * (9876 + 1 = 9877). Hardcoded to avoid a build-time subpath dependency on the
+ * drishti package internals; the daemon's port is a stable protocol constant.
+ */
+const DAEMON_HTTP_BASE = "http://127.0.0.1:9877";
+
+async function daemonReady(base: string, timeoutMs: number): Promise<"ready" | "warming" | "down"> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${base}/api/ready`, { signal: ctrl.signal });
+      if (!res.ok) return "down";
+      const j = (await res.json()) as { ready?: boolean };
+      return j.ready ? "ready" : "warming";
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return "down";
+  }
+}
+
+/**
+ * Fast path for `--json` read commands: read the warm singleton daemon over
+ * HTTP instead of doing a full-corpus scan. Keeps an external poller (e.g. a
+ * status bridge calling `tokmeter stats --json --codex` on a loop) from
+ * spawning repeated multi-GB scans — each call becomes a millisecond warm read.
+ *
+ * Returns false (→ caller falls back to a normal scan) when the daemon is
+ * down/warming or the query uses a filter the daemon endpoints don't express
+ * (project or date windows). When the daemon is down, we also nudge the
+ * singleton up (detached, heap-capped) so the NEXT call is cheap.
+ */
+async function tryServeFromDaemon(
+  command: string,
+  args: {
+    providers?: ProviderId[];
+    project?: string;
+    since?: string;
+    until?: string;
+    today?: boolean;
+    week?: boolean;
+    month?: boolean;
+    year?: number;
+  }
+): Promise<boolean> {
+  const endpoints: Record<string, string> = {
+    stats: "/api/stats",
+    daily: "/api/daily",
+    models: "/api/models",
+    projects: "/api/projects",
+  };
+  const path = endpoints[command];
+  if (!path) return false; // overview / unknown shape → scan
+  // The daemon read path only expresses a provider filter; anything narrower
+  // must scan so results stay exact. `today` is in this list because the
+  // daemon endpoints return LIFETIME data — silently returning lifetime
+  // when the caller asked for today would be a correctness bug
+  // (`tokmeter stats --json --today --codex` getting all-time numbers).
+  if (
+    args.project ||
+    args.since ||
+    args.until ||
+    args.today ||
+    args.week ||
+    args.month ||
+    args.year
+  ) {
+    return false;
+  }
+  // Endpoint capability guard: /api/projects on the daemon ignores the
+  // ?providers= filter (it serves the cross-provider per-project breakdown
+  // verbatim from the warm core). Letting `projects --json --codex` hit the
+  // fast path would silently return all-provider projects — a correctness
+  // bug. Force a local scan instead so `--codex` actually narrows. The other
+  // three endpoints (stats/daily/models) honor ?providers= correctly.
+  if (command === "projects" && args.providers && args.providers.length > 0) {
+    return false;
+  }
+
+  const base = DAEMON_HTTP_BASE;
+  const state = await daemonReady(base, 1500);
+  if (state === "down") {
+    // Genuinely unreachable — bring the singleton daemon up for next time (it
+    // enforces its own PID singleton), then scan this one cold call.
+    try {
+      const { spawn } = await import("node:child_process");
+      const heapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";
+      spawn(process.execPath, [process.argv[1], "daemon", "start"], {
+        detached: true,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${heapMb}`.trim(),
+        },
+      }).unref();
+    } catch {}
+    return false;
+  }
+  // Reachable — read it whether "ready" or "warming". A local scan here is
+  // exactly the multi-GB balloon we're eliminating, so we MUST NOT fall back to
+  // one just because the daemon is mid-refresh. The daemon coalesces refreshes
+  // (~0.2s, mtime-pruned) and the data endpoint awaits its own warm core, so a
+  // call landing during a refresh just waits briefly.
+  //
+  // Two-tier timeout (concurrency guard): when the daemon is "ready", data
+  // endpoints serve from memory in milliseconds. Anything slower than 15s
+  // means a stuck handler — short timeout so 40 concurrent callers can't pile
+  // 40 idle sockets each holding the process alive. When "warming", we give a
+  // generous 90s for the cold first-warm to finish.
+
+  const qs =
+    args.providers && args.providers.length > 0
+      ? `?providers=${encodeURIComponent(args.providers.join(","))}`
+      : "";
+  const timeoutMs = state === "warming" ? 90_000 : 15_000;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${base}${path}${qs}`, { signal: ctrl.signal });
+      if (!res.ok) {
+        // Daemon errored (e.g. 500 from a parser bug or a transient warm
+        // failure). Surface a one-line hint to stderr so the operator knows
+        // why the next call did a local scan, but keep stdout clean for the
+        // caller (JSON pipelines must not see this hint mixed in).
+        process.stderr.write(
+          `tokmeter: daemon returned ${res.status} for ${path}; falling back to local scan.\n`
+        );
+        return false;
+      }
+      const body = await res.json();
+      console.log(JSON.stringify(body, null, 2));
+      return true;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch (err) {
+    // Differentiate a real abort (timeout) from a transient connection error
+    // so the operator can tell "daemon is wedged" from "daemon died mid-read".
+    const msg = err instanceof Error ? err.message : String(err);
+    const isAbort = err instanceof Error && (err.name === "AbortError" || /aborted/i.test(msg));
+    process.stderr.write(
+      isAbort
+        ? `tokmeter: daemon read timed out after ${timeoutMs}ms (${path}); falling back to local scan.\n`
+        : `tokmeter: daemon read failed (${msg}); falling back to local scan.\n`
+    );
+    return false;
+  }
+}
+
 // ---- Main ----
 
 async function main() {
@@ -1006,6 +1161,16 @@ async function main() {
       scanOptions: args,
     });
     return;
+  }
+
+  // Daemon-read fast path: for `--json` read commands, prefer the warm
+  // singleton daemon over a fresh full-corpus scan. This is the fix for
+  // external pollers that loop `tokmeter stats/daily --json --codex` — each
+  // call becomes a cheap warm read instead of a multi-GB scan. Falls through to
+  // a normal scan when the daemon is down/warming or the query is narrower.
+  if (args.json) {
+    const cmd = args.command || "overview";
+    if (await tryServeFromDaemon(cmd, args)) return;
   }
 
   // Scan session files

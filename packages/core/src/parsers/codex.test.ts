@@ -96,6 +96,13 @@ describe("CodexParser", () => {
     expect(r.outputTokens).toBe(5_000);
     expect(r.provider).toBe("codex");
     expect(r.model).toBe("gpt-5.4");
+    expect(r.usage).toMatchObject({
+      source: "tool_jsonl",
+      inputTokens: "normalized",
+      cacheReadTokens: "direct",
+      cacheWriteTokens: "not_exposed",
+      reasoningTokens: "direct",
+    });
   });
 
   it("computes deltas across consecutive cumulative events", async () => {

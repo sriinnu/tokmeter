@@ -55,6 +55,7 @@ export class RooCodeParser implements SessionParser {
             } catch {
               continue;
             }
+            const hasCost = typeof data.cost === "number";
 
             records.push(
               createRecord({
@@ -68,6 +69,7 @@ export class RooCodeParser implements SessionParser {
                 cacheReadTokens: data.cacheReads ?? 0,
                 cacheWriteTokens: data.cacheWrites ?? 0,
                 cost: data.cost ?? 0,
+                usage: hasCost ? { cost: "direct" } : { cost: "calculated" },
               })
             );
           }

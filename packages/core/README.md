@@ -19,7 +19,7 @@ npm install @sriinnu/tokmeter-core
 ## Usage
 
 ```typescript
-import { TokmeterCore } from "@sriinnu/tokmeter-core";
+import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter-core";
 
 const core = new TokmeterCore();
 const records = await core.scan();
@@ -37,6 +37,10 @@ const daily = core.getDailyBreakdown({ since: "2025-01-01" });
 // Overall stats
 const stats = core.getStats();
 console.log(`$${stats.totalCost.toFixed(2)} across ${stats.projects} projects`);
+
+// Derived usage math works across every parser's canonical buckets.
+const usage = sumUsage(records);
+console.log(`Cache hit: ${(usage.cacheHitRate * 100).toFixed(1)}%`);
 ```
 
 ## Supported Providers
@@ -52,6 +56,35 @@ Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, 
 4. **null** -- unpriced
 
 Covers: input, output, cache read, cache write, and reasoning tokens.
+
+Every `TokenRecord` also carries optional `usage` provenance so consumers can
+distinguish direct provider/tool telemetry from normalized, calculated,
+estimated, or not-exposed buckets. Cache rates are derived from canonical
+input buckets: `cacheRead / (input + cacheRead + cacheWrite)`.
+
+## Data freshness & immutability
+
+History is **frozen**: anything recorded before today keeps its tokens, usage,
+and cost forever. Only *today* (still in flight) re-prices when kosha pricing
+changes. The frozen pre-today snapshot is **append-only** across calendar
+rollovers — never discarded and re-derived — and a monotonic floor guard
+refuses to overwrite it with a materially smaller (partial/failed) rebuild.
+
+For hot paths that only need today, use the warm-path refresh instead of a full
+scan — it stat-prunes to files modified today and leaves frozen history
+untouched:
+
+```typescript
+const core = new TokmeterCore();
+await core.scan();          // once: loads frozen history + today
+
+// later (e.g. on a timer) — cheap, reads only today's active files:
+await core.refreshToday();
+```
+
+A today-only `scan({ today: true })` is likewise mtime-pruned. See
+[docs/architecture.md](../../docs/architecture.md) for the full data-freshness,
+immutability, and daemon model.
 
 ## License
 

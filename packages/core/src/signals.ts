@@ -9,6 +9,7 @@
 
 import { localDateKey } from "./date-utils.js";
 import type { StatbarSignals, TokenRecord } from "./types.js";
+import { deriveUsage, sumUsage } from "./usage.js";
 
 /** How long we look back when computing burn rate. */
 const BURN_WINDOW_MINUTES = 60;
@@ -39,9 +40,7 @@ const BILLING_LOOKBACK_MS = BILLING_WINDOW_MS * 2;
 
 /** Total token count helper — keep parity with aggregator's sumTokens. */
 function recordTotal(r: TokenRecord): number {
-  return (
-    r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens
-  );
+  return deriveUsage(r).ledgerTotalTokens;
 }
 
 /** Count distinct 5h billing blocks in a chronologically-sorted slice. A new
@@ -57,6 +56,135 @@ function countBlocks(sorted: TokenRecord[]): number {
     }
   }
   return count;
+}
+
+function totalInputForRecord(record: TokenRecord): number {
+  return deriveUsage(record).totalInputTokens;
+}
+
+function contextPressureStatus(
+  dragShare: number,
+  currentInputTokens: number,
+  turnCount: number
+): StatbarSignals["contextPressure"]["status"] {
+  if (currentInputTokens <= 0) return "none";
+  if (currentInputTokens >= 180_000 || (turnCount >= 3 && dragShare >= 0.85)) return "critical";
+  if (currentInputTokens >= 120_000 || (turnCount >= 3 && dragShare >= 0.65)) return "high";
+  if (currentInputTokens >= 50_000 || (turnCount >= 3 && dragShare >= 0.35)) return "medium";
+  return "low";
+}
+
+function estimateContextPressure(
+  records: TokenRecord[],
+  now: number
+): StatbarSignals["contextPressure"] {
+  const candidates = records
+    .filter((r) => r.timestamp <= now && totalInputForRecord(r) > 0)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (candidates.length === 0) {
+    return {
+      status: "none",
+      dragShare: 0,
+      dragTokens: 0,
+      currentInputTokens: 0,
+      baselineInputTokens: 0,
+      turnCount: 0,
+      sessionAgeMinutes: 0,
+      source: "none",
+      provenance: "not_exposed",
+      reason: "No request input telemetry was available.",
+    };
+  }
+
+  const normalCandidates = candidates.filter((r) => r.kind !== "compaction");
+  const latest = normalCandidates[normalCandidates.length - 1] ?? candidates[candidates.length - 1];
+  const latestInput = totalInputForRecord(latest);
+  const hasSourceFile = Boolean(latest.sourceFile);
+  const fallbackKey = `${latest.project}|${latest.provider}|${latest.model}`;
+
+  const sessionRecords = candidates.filter((r) => {
+    if (r.kind === "compaction") return false;
+    if (hasSourceFile) return r.sourceFile === latest.sourceFile;
+    return `${r.project}|${r.provider}|${r.model}` === fallbackKey;
+  });
+  const activeRecords = sessionRecords.length > 0 ? sessionRecords : [latest];
+  const sessionInputs = activeRecords.map(totalInputForRecord).filter((v) => v > 0);
+  const firstInputs = sessionInputs.slice(0, Math.min(3, sessionInputs.length));
+  const baselineInput = firstInputs.length > 0 ? Math.min(...firstInputs) : latestInput;
+  const dragTokens = Math.max(0, latestInput - baselineInput);
+  const dragShare = latestInput > 0 ? dragTokens / latestInput : 0;
+  const first = activeRecords[0];
+  const sessionAgeMinutes = Math.max(0, Math.round((latest.timestamp - first.timestamp) / 60_000));
+  const status = contextPressureStatus(dragShare, latestInput, activeRecords.length);
+  const source = hasSourceFile ? "sourceFile" : "project_provider_model";
+  const reason =
+    activeRecords.length <= 1
+      ? "Only one active-session record is available, so Tokmeter cannot see much session growth yet."
+      : `Latest request carried ${latestInput.toLocaleString()} total input tokens; early-session baseline was ${baselineInput.toLocaleString()}.`;
+
+  return {
+    status,
+    dragShare,
+    dragTokens,
+    currentInputTokens: latestInput,
+    baselineInputTokens: baselineInput,
+    turnCount: activeRecords.length,
+    sessionAgeMinutes,
+    source,
+    provider: latest.provider,
+    model: latest.model,
+    project: latest.project,
+    provenance: "estimated",
+    reason,
+  };
+}
+
+function summarizeProjectContextToday(
+  todayRecords: TokenRecord[],
+  now: number
+): StatbarSignals["projectContextToday"] {
+  const byProject = new Map<string, TokenRecord[]>();
+  for (const record of todayRecords) {
+    const cur = byProject.get(record.project);
+    if (cur) cur.push(record);
+    else byProject.set(record.project, [record]);
+  }
+
+  return [...byProject.entries()]
+    .map(([project, projectRecords]) => {
+      const usage = sumUsage(projectRecords);
+      const pressure = estimateContextPressure(projectRecords, now);
+      let lastUsed = 0;
+      for (const record of projectRecords) {
+        if (record.timestamp > lastUsed) lastUsed = record.timestamp;
+      }
+      return {
+        project,
+        cacheHitRate: usage.cacheHitRate,
+        missRate: usage.cacheMissRate,
+        freshInputShare: usage.freshInputShare,
+        cacheWriteShare: usage.cacheWriteShare,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        inputTokens: usage.uncachedInputTokens,
+        freshInputTokens: usage.freshInputTokens,
+        totalInputTokens: usage.totalInputTokens,
+        contextStatus: pressure.status,
+        dragShare: pressure.dragShare,
+        dragTokens: pressure.dragTokens,
+        turnCount: pressure.turnCount,
+        lastUsed,
+      };
+    })
+    .filter((project) => project.totalInputTokens > 0)
+    .sort((a, b) => {
+      const pressureA = a.freshInputTokens + a.dragTokens;
+      const pressureB = b.freshInputTokens + b.dragTokens;
+      if (pressureA !== pressureB) return pressureB - pressureA;
+      return b.lastUsed - a.lastUsed;
+    })
+    .slice(0, 5);
 }
 
 function median(values: number[]): number {
@@ -99,7 +227,6 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
   // the old `localDateKey(r.timestamp)` path was ~5-10 ms per scan (Date ctor
   // × N). One day boundary computation up front + integer compare per record
   // drops it to a hot loop, ~0.1 ms.
-  const todayKey = localDateKey(now);
   const nowDateForBounds = new Date(now);
   const todayStartMs = new Date(
     nowDateForBounds.getFullYear(),
@@ -118,19 +245,23 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
   }
 
   // ── Cache hit today ────────────────────────────────────────────────────
-  let todayCacheRead = 0;
-  let todayInput = 0;
   let todayCost = 0;
   for (const r of todayRecords) {
-    todayCacheRead += r.cacheReadTokens;
-    todayInput += r.inputTokens;
     todayCost += r.cost;
   }
-  const cacheDenominator = todayCacheRead + todayInput;
+  const todayUsage = sumUsage(todayRecords);
   const cacheHitToday = {
-    rate: cacheDenominator > 0 ? todayCacheRead / cacheDenominator : 0,
-    cacheReadTokens: todayCacheRead,
-    inputTokens: todayInput,
+    rate: todayUsage.cacheReadShare,
+    canonicalRate: todayUsage.cacheHitRate,
+    readShare: todayUsage.cacheReadShare,
+    missRate: todayUsage.cacheMissRate,
+    freshInputShare: todayUsage.freshInputShare,
+    cacheWriteShare: todayUsage.cacheWriteShare,
+    cacheReadTokens: todayUsage.cacheReadTokens,
+    cacheWriteTokens: todayUsage.cacheWriteTokens,
+    inputTokens: todayUsage.uncachedInputTokens,
+    freshInputTokens: todayUsage.freshInputTokens,
+    totalInputTokens: todayUsage.totalInputTokens,
   };
 
   // ── Pace vs. typical ───────────────────────────────────────────────────
@@ -373,6 +504,8 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
   return {
     burnRate,
     cacheHitToday,
+    contextPressure: estimateContextPressure(records, now),
+    projectContextToday: summarizeProjectContextToday(todayRecords, now),
     pace,
     compactionToday,
     subagentToday,

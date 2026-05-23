@@ -213,3 +213,31 @@ npx -y @sriinnu/drishti install-mcp
 npx -y @sriinnu/drishti install-statusline claude cursor
 npx -y @sriinnu/drishti install-mcp claude opencode
 ```
+
+---
+
+## Performance & freshness hardening — 2026-05-22
+
+Root-cause work on the RAM/kernel-panic class of bugs and on history
+immutability. See [architecture.md](architecture.md) and the CHANGELOG
+`[Unreleased]` section for detail.
+
+**Landed:**
+- History immutability: stop re-pricing frozen history; append-only snapshot
+  rollover; monotonic floor guard; append-boundary record-loss fix.
+- KPI cards no longer show frozen lifetime totals as "depleting" mid-day.
+- Core: mtime-pruned today scans + `TokmeterCore.refreshToday()` warm path.
+- macOS bar: reads the daemon only and auto-starts the singleton daemon when
+  offline; removed the per-fetch CLI-scan fallback that spawned a stampede of
+  multi-GB processes (the kernel-panic trigger).
+
+**Remaining (next session):**
+- Daemon: stay warm and refresh only today via `refreshToday()` instead of a
+  full `core.scan()` on a short TTL.
+- Statusline: read the daemon's `/api/today` instead of running its own
+  `core.scan({ today: true })`.
+- Daemon: hard cross-process singleton (PID guard + `EADDRINUSE`) and process
+  rails (guaranteed exit, bounded heap on spawn).
+- Verification: simulate multiple concurrent Claude + Codex sessions hammering
+  the statusline/daemon; measure RSS + process count; confirm token/cost stays
+  accurate under load (warm-daemon numbers == ground-truth full scan).

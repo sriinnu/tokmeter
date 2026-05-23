@@ -99,8 +99,14 @@ export {
 export type { Theme, ThemeColors } from "./themes.js";
 
 export { computeStatbarSignals } from "./signals.js";
+export { deriveUsage, sumUsage } from "./usage.js";
+export type { DerivedUsage, UsageBreakdown } from "./usage.js";
 export type {
   TokenRecord,
+  UsageMetricProvenance,
+  UsageProvenance,
+  UsageTelemetrySource,
+  CompactionTelemetry,
   ProjectSummary,
   ModelSummary,
   ProviderSummary,

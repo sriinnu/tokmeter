@@ -135,7 +135,9 @@ struct ProjectData: Codable, Identifiable {
 }
 
 /// Full CLI output from `tokmeter --json`.
-/// Used as the fallback data source when the daemon is offline.
+/// Legacy decode shape — no longer used as a fetch path. The bar reads data
+/// only from the daemon over HTTP; when the daemon is offline it auto-starts
+/// the singleton instead of spawning a CLI scan. Retained for the wire shape.
 struct TokmeterFullJSON: Codable {
     let stats: StatsData
     let daily: [DailyData]
@@ -193,10 +195,59 @@ struct BurnRate: Codable, Equatable {
 }
 
 struct CacheHitToday: Codable, Equatable {
-    /// 0…1 — share of read tokens served from cache today. 1 = perfect cache.
+    /// 0…1 — legacy read share: cacheRead / (input + cacheRead).
     let rate: Double
+    /// 0…1 — cache reads divided by canonical total input today.
+    let canonicalRate: Double?
+    /// Older denominator: cacheRead / (input + cacheRead). Optional for older daemons.
+    let readShare: Double?
+    /// 0…1 — fresh input divided by canonical total input.
+    let missRate: Double?
+    /// 0…1 — uncached input + cache writes divided by canonical total input.
+    let freshInputShare: Double?
+    /// 0…1 — cache writes divided by canonical total input.
+    let cacheWriteShare: Double?
     let cacheReadTokens: Int
+    let cacheWriteTokens: Int?
     let inputTokens: Int
+    let freshInputTokens: Int?
+    let totalInputTokens: Int?
+}
+
+struct ContextPressure: Codable, Equatable {
+    let status: String
+    let dragShare: Double
+    let dragTokens: Int
+    let currentInputTokens: Int
+    let baselineInputTokens: Int
+    let turnCount: Int
+    let sessionAgeMinutes: Int
+    let source: String
+    let provider: String?
+    let model: String?
+    let project: String?
+    let provenance: String
+    let reason: String
+}
+
+struct ProjectContextToday: Codable, Equatable, Identifiable {
+    let project: String
+    let cacheHitRate: Double
+    let missRate: Double
+    let freshInputShare: Double
+    let cacheWriteShare: Double
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
+    let inputTokens: Int
+    let freshInputTokens: Int
+    let totalInputTokens: Int
+    let contextStatus: String
+    let dragShare: Double
+    let dragTokens: Int
+    let turnCount: Int
+    let lastUsed: Double
+
+    var id: String { project }
 }
 
 struct PaceSignal: Codable, Equatable {
@@ -319,6 +370,8 @@ struct CrossToolComparison: Codable, Equatable {
 struct StatbarSignals: Codable, Equatable {
     let burnRate: BurnRate
     let cacheHitToday: CacheHitToday
+    let contextPressure: ContextPressure?
+    let projectContextToday: [ProjectContextToday]?
     let pace: PaceSignal
     let compactionToday: CompactionToday
     let subagentToday: SubagentToday

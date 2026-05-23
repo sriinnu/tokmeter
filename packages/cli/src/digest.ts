@@ -7,7 +7,7 @@
  */
 
 import type { ScanOptions, TokenRecord } from "@sriinnu/tokmeter";
-import { TokmeterCore } from "@sriinnu/tokmeter";
+import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter";
 import chalk from "chalk";
 import Table from "cli-table3";
 
@@ -161,9 +161,10 @@ function renderDigest(
 ) {
   const totalCost = currentRecords.reduce((s, r) => s + r.cost, 0);
   const prevTotalCost = prevRecords.reduce((s, r) => s + r.cost, 0);
-  const totalInput = currentRecords.reduce((s, r) => s + r.inputTokens, 0);
-  const totalCacheRead = currentRecords.reduce((s, r) => s + r.cacheReadTokens, 0);
-  const totalCacheWrite = currentRecords.reduce((s, r) => s + r.cacheWriteTokens, 0);
+  const currentUsage = sumUsage(currentRecords);
+  const totalCacheRead = currentUsage.cacheReadTokens;
+  const totalCacheWrite = currentUsage.cacheWriteTokens;
+  const canonicalCacheHitRate = currentUsage.cacheHitRate * 100;
 
   // Daily breakdown for busiest-day detection
   const dailyMap = new Map<string, number>();
@@ -253,16 +254,15 @@ function renderDigest(
   console.log(chalk.cyan.bold("  Cache Efficiency"));
   console.log(chalk.dim(`  ${"\u2500".repeat(42)}`));
 
-  const totalReadable = totalInput + totalCacheRead;
-  const cacheHitRate = totalReadable > 0 ? (totalCacheRead / totalReadable) * 100 : 0;
+  const cacheHitRate = currentUsage.cacheReadShare * 100;
 
   // Estimate savings: cache reads are ~90% cheaper than regular input
   const avgInputCostPerToken =
-    totalInput > 0
+    currentUsage.totalInputTokens > 0
       ? currentRecords.reduce((s, r) => {
           const totalTok = r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens;
           return totalTok > 0 ? s + (r.cost * r.inputTokens) / totalTok : s;
-        }, 0) / totalInput
+        }, 0) / currentUsage.totalInputTokens
       : 0;
   const estimatedSavings = totalCacheRead * avgInputCostPerToken * 0.9;
 
@@ -278,6 +278,10 @@ function renderDigest(
   const cacheColor =
     cacheHitRate >= 80 ? chalk.green : cacheHitRate >= 50 ? chalk.yellow : chalk.red;
   console.log(`  ${chalk.dim("Cache Hit Rate:")}  ${cacheColor(`${cacheHitRate.toFixed(1)}%`)}`);
+  console.log(
+    `  ${chalk.dim("Total Input Hit:")} ${cacheColor(`${canonicalCacheHitRate.toFixed(1)}%`)}`
+  );
+  console.log(`  ${chalk.dim("Fresh Input:")}     ${formatNumber(currentUsage.freshInputTokens)}`);
   console.log(`  ${chalk.dim("Est. Savings:")}    ${chalk.green(formatCost(estimatedSavings))}`);
   console.log(`  ${chalk.dim("Write Waste:")}     ${cacheWriteWaste}`);
   console.log(`  ${chalk.dim("Read Tokens:")}     ${formatNumber(totalCacheRead)}`);
@@ -406,11 +410,8 @@ function buildDigestJSON(
 ) {
   const totalCost = currentRecords.reduce((s, r) => s + r.cost, 0);
   const prevTotalCost = prevRecords.reduce((s, r) => s + r.cost, 0);
-  const totalInput = currentRecords.reduce((s, r) => s + r.inputTokens, 0);
-  const totalCacheRead = currentRecords.reduce((s, r) => s + r.cacheReadTokens, 0);
-  const totalCacheWrite = currentRecords.reduce((s, r) => s + r.cacheWriteTokens, 0);
-  const totalReadable = totalInput + totalCacheRead;
-  const cacheHitRate = totalReadable > 0 ? (totalCacheRead / totalReadable) * 100 : 0;
+  const currentUsage = sumUsage(currentRecords);
+  const cacheHitRate = currentUsage.cacheReadShare * 100;
 
   const modelMap = new Map<string, { tokens: number; cost: number; model: string }>();
   for (const r of currentRecords) {
@@ -458,8 +459,15 @@ function buildDigestJSON(
       })),
     cache: {
       hitRate: cacheHitRate,
-      readTokens: totalCacheRead,
-      writeTokens: totalCacheWrite,
+      canonicalHitRate: currentUsage.cacheHitRate * 100,
+      readShare: currentUsage.cacheReadShare * 100,
+      missRate: currentUsage.cacheMissRate * 100,
+      freshInputShare: currentUsage.freshInputShare * 100,
+      cacheWriteShare: currentUsage.cacheWriteShare * 100,
+      readTokens: currentUsage.cacheReadTokens,
+      writeTokens: currentUsage.cacheWriteTokens,
+      freshInputTokens: currentUsage.freshInputTokens,
+      totalInputTokens: currentUsage.totalInputTokens,
     },
     projects: [...projectMap.entries()]
       .sort((a, b) => b[1] - a[1])

@@ -77,10 +77,15 @@ switch (command) {
     try {
       const { runStatusline } = await import("./statusline.js");
       await runStatusline();
+      // runStatusline() exits in its own finally once output drains; this is a
+      // belt-and-suspenders exit for the rare path where it returns without
+      // exiting (e.g. a future refactor). The statusline must NEVER linger.
+      process.exit(0);
     } catch {
       try {
         process.stdout.write(FALLBACK_STATUSLINE);
       } catch {}
+      process.exit(0);
     }
     break;
   }

@@ -21,6 +21,62 @@ export type ProviderId =
   | "mux"
   | "synthetic";
 
+/** Where a record's usage facts came from. */
+export type UsageTelemetrySource =
+  | "provider_api_usage"
+  | "tool_jsonl"
+  | "tool_json"
+  | "tool_sqlite"
+  | "tool_csv"
+  | "otel"
+  | "statusline"
+  | "synthetic"
+  | "unknown";
+
+/**
+ * How a single usage bucket should be trusted.
+ *
+ * - direct: the upstream telemetry exposed this bucket directly
+ * - normalized: Tokmeter transformed upstream fields into its canonical shape
+ * - calculated: deterministic math after parsing, usually pricing
+ * - estimated: heuristic/tokenizer approximation
+ * - not_exposed: this tool/provider does not expose the bucket
+ * - skipped: Tokmeter intentionally skipped calculating this bucket
+ */
+export type UsageMetricProvenance =
+  | "direct"
+  | "normalized"
+  | "calculated"
+  | "estimated"
+  | "not_exposed"
+  | "skipped";
+
+/** Provenance for each canonical usage bucket on a TokenRecord. */
+export interface UsageProvenance {
+  source: UsageTelemetrySource;
+  inputTokens: UsageMetricProvenance;
+  outputTokens: UsageMetricProvenance;
+  cacheReadTokens: UsageMetricProvenance;
+  cacheWriteTokens: UsageMetricProvenance;
+  reasoningTokens: UsageMetricProvenance;
+  cost: UsageMetricProvenance;
+  /** Short human-readable hints for source quirks, normalization, or gaps. */
+  notes?: string[];
+}
+
+/** Optional compaction facts when the upstream tool exposes them. */
+export interface CompactionTelemetry {
+  source: UsageTelemetrySource;
+  trigger?: "auto" | "manual";
+  success?: boolean;
+  durationMs?: number;
+  preTokens?: number;
+  postTokens?: number;
+  /** 0..1, calculated as 1 - postTokens / preTokens when both are known. */
+  compressionRatio?: number;
+  error?: string;
+}
+
 /** A single token usage record parsed from a session file. */
 export interface TokenRecord {
   /** Unix timestamp (ms) of the usage event. */
@@ -43,6 +99,10 @@ export interface TokenRecord {
   reasoningTokens: number;
   /** Calculated cost in USD (via kosha-discovery pricing). */
   cost: number;
+  /** Per-bucket source/trust metadata. */
+  usage?: UsageProvenance;
+  /** Compaction metadata for records tagged kind:"compaction", when exposed. */
+  compaction?: CompactionTelemetry;
   /** Original session file path (for debugging). */
   sourceFile?: string;
   /** Actual working directory the session ran in (not the session log path). */
@@ -165,8 +225,16 @@ export interface ScanWarning {
 export interface ScanMeta {
   /** Local date key (YYYY-MM-DD) through which history is frozen. */
   stableThrough: string | null;
-  /** Whether frozen history came from cache, rebuild, or is unavailable. */
-  historySource: "snapshot" | "rebuilt" | "none";
+  /**
+   * Where frozen history came from:
+   * - "snapshot"  — reused as-is from the frozen file (no re-derivation).
+   * - "extended"  — base frozen records reused, only newly-frozen gap days
+   *                 appended (append-only rollover; base cost untouched).
+   * - "rebuilt"   — fully re-derived from disk (first run, explicit rescan,
+   *                 or snapshot-schema bump). The only path that reprices.
+   * - "none"      — unavailable / today-only scan.
+   */
+  historySource: "snapshot" | "extended" | "rebuilt" | "none";
   /** Current state of today's overlay data. */
   todayState: "live" | "degraded" | "snapshot-only";
   /** Epoch ms of the last completed scan. */
@@ -208,8 +276,7 @@ export interface TokmeterStats {
  * of just totals.
  *
  *   - burnRate: dollars per hour over a recent window (default 60 min)
- *   - cacheHitToday: fraction of today's input bytes served from cache
- *     (1.0 = perfect cache, 0.0 = re-reading the world)
+ *   - cacheHitToday: legacy read-share plus canonical total-input cache rate
  *   - pace: today's cost divided by typical cost-at-this-hour over the last
  *     N active days. >1 = above your usual rhythm, <1 = under.
  *   - compactionToday: how much of today's spend went to /compact overhead
@@ -228,13 +295,74 @@ export interface StatbarSignals {
     recordsInWindow: number;
   };
   cacheHitToday: {
-    /** 0..1 — share of read tokens (input + cacheRead) served from cache. */
+    /** 0..1 — legacy read share: cacheRead / (input + cacheRead). */
     rate: number;
+    /** 0..1 — cache reads divided by total canonical input, including writes. */
+    canonicalRate?: number;
+    /** Alias of rate, kept explicit for consumers comparing both denominators. */
+    readShare?: number;
+    /** 0..1 — uncached input divided by total canonical input. */
+    missRate?: number;
+    /** 0..1 — uncached input + cache writes divided by total canonical input. */
+    freshInputShare?: number;
+    /** 0..1 — cache writes divided by total canonical input. */
+    cacheWriteShare?: number;
     /** Total cache-read tokens today. */
     cacheReadTokens: number;
+    /** Total cache-write tokens today. */
+    cacheWriteTokens?: number;
     /** Total non-cached input tokens today. */
     inputTokens: number;
+    /** inputTokens + cacheWriteTokens. */
+    freshInputTokens?: number;
+    /** inputTokens + cacheReadTokens + cacheWriteTokens. */
+    totalInputTokens?: number;
   };
+  contextPressure: {
+    /** Heuristic confidence/status for context drag in the latest active session. */
+    status: "none" | "low" | "medium" | "high" | "critical";
+    /** 0..1 — estimated share of the latest request that is session growth. */
+    dragShare: number;
+    /** Estimated carried-context growth since the session baseline. */
+    dragTokens: number;
+    /** Latest request's canonical total input: input + cacheRead + cacheWrite. */
+    currentInputTokens: number;
+    /** Early-session input baseline used as the comparison floor. */
+    baselineInputTokens: number;
+    /** Number of records in the active session group. */
+    turnCount: number;
+    /** Minutes between the first and latest record in the active session group. */
+    sessionAgeMinutes: number;
+    /** How Tokmeter grouped the records to infer the active session. */
+    source: "sourceFile" | "project_provider_model" | "none";
+    provider?: ProviderId;
+    model?: string;
+    project?: string;
+    /** Context drag is not provider-exposed; Tokmeter estimates it. */
+    provenance: Extract<UsageMetricProvenance, "estimated" | "not_exposed">;
+    reason: string;
+  };
+  projectContextToday: Array<{
+    project: string;
+    /** 0..1 — cache reads divided by canonical total input today. */
+    cacheHitRate: number;
+    /** 0..1 — uncached input divided by canonical total input today. */
+    missRate: number;
+    /** 0..1 — uncached input + cache writes divided by canonical total input. */
+    freshInputShare: number;
+    /** 0..1 — cache writes divided by canonical total input. */
+    cacheWriteShare: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    inputTokens: number;
+    freshInputTokens: number;
+    totalInputTokens: number;
+    contextStatus: StatbarSignals["contextPressure"]["status"];
+    dragShare: number;
+    dragTokens: number;
+    turnCount: number;
+    lastUsed: number;
+  }>;
   pace: {
     /** today.cost / typicalCostAtThisHour. null when we have no baseline. */
     multiple: number | null;
@@ -361,12 +489,27 @@ export interface TokmeterConfig {
   skipPricing?: boolean;
 }
 
+/**
+ * Optional hints a parser may honor to avoid reading the whole corpus.
+ *
+ * `modifiedSinceMs` is the big one: for a today-only scan there is no reason to
+ * touch session files that haven't been written since midnight. Parsers that
+ * respect it stat-prune their file list so a statusline/daemon "today" refresh
+ * reads ~2 active files instead of months of history — the difference between
+ * a 30 MB tick and a 2 GB one. Parsers may ignore it (correctness is
+ * unaffected; they just stay on the slow path until updated).
+ */
+export interface ScanFilterOptions {
+  /** Skip files whose mtime is strictly before this epoch-ms watermark. */
+  modifiedSinceMs?: number;
+}
+
 /** The interface every session parser must implement. */
 export interface SessionParser {
   /** Unique provider identifier. */
   readonly providerId: ProviderId;
   /** Scan local session files and return token records. */
-  scan(homeDir: string): Promise<TokenRecord[]>;
+  scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]>;
 }
 
 // ─── Cleanup Types ──────────────────────────────────────────────────────────

@@ -142,6 +142,8 @@ function getHistorySourceLabel(historySource: TokmeterScanMeta["historySource"])
   switch (historySource) {
     case "snapshot":
       return "Snapshot cache";
+    case "extended":
+      return "Snapshot + new days";
     case "rebuilt":
       return "Fresh rebuild";
     default:

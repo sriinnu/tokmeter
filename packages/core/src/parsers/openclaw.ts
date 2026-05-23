@@ -65,6 +65,8 @@ export class OpenClawParser implements SessionParser {
             }
             if (msg.type !== "message" || msg.message?.role !== "assistant") continue;
             if (!msg.message?.usage) continue;
+            const cost = msg.message.usage.cost?.total;
+            const hasCost = typeof cost === "number";
 
             records.push(
               createRecord({
@@ -76,7 +78,8 @@ export class OpenClawParser implements SessionParser {
                 inputTokens: msg.message.usage.input ?? 0,
                 outputTokens: msg.message.usage.output ?? 0,
                 cacheReadTokens: msg.message.usage.cacheRead ?? 0,
-                cost: msg.message.usage.cost?.total ?? 0,
+                cost: hasCost ? cost : 0,
+                usage: hasCost ? { cost: "direct" } : { cost: "calculated" },
               })
             );
           }

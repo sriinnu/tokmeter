@@ -36,14 +36,29 @@ struct SignalsRibbon: View {
                     burnChip(signals.burnRate)
                     divider
                 }
+                let cacheHit = signals.cacheHitToday.canonicalRate ?? signals.cacheHitToday.rate
+                let cacheMiss = signals.cacheHitToday.missRate ?? max(0, 1 - cacheHit)
                 chip(
                     icon: "tray.full.fill",
-                    iconColor: cacheColor(signals.cacheHitToday.rate),
-                    text: "cache \(Int(signals.cacheHitToday.rate * 100))%",
+                    iconColor: cacheColor(cacheHit),
+                    text: "hit \(pct(cacheHit))% miss \(pct(cacheMiss))%",
                     help:
-                        "Cache hit rate today — cacheRead / (cacheRead + input). "
-                        + "Higher is better."
+                        "Cache today — hit is cacheRead / total input; miss is uncached input / total input. "
+                        + "\(signals.cacheHitToday.cacheReadTokens) cached, "
+                        + "\(signals.cacheHitToday.inputTokens) missed."
                 )
+                if let pressure = signals.contextPressure, pressure.status != "none" {
+                    divider
+                    chip(
+                        icon: "memorychip.fill",
+                        iconColor: contextColor(pressure.status),
+                        text: "drag \(pct(pressure.dragShare))%",
+                        help:
+                            "Context drag estimate: \(pressure.reason) "
+                            + "\(pressure.dragTokens) estimated drag tokens across "
+                            + "\(pressure.turnCount) turn(s)."
+                    )
+                }
                 if signals.compactionToday.events > 0 {
                     divider
                     chip(
@@ -117,11 +132,18 @@ struct SignalsRibbon: View {
     /// would otherwise misrepresent "no signal" as "perfect efficiency."
     private func shouldShow(_ s: StatbarSignals) -> Bool {
         if s.burnRate.recordsInWindow > 0 { return true }
-        if s.cacheHitToday.cacheReadTokens + s.cacheHitToday.inputTokens > 0 { return true }
+        if s.cacheHitToday.cacheReadTokens
+            + s.cacheHitToday.inputTokens
+            + (s.cacheHitToday.cacheWriteTokens ?? 0) > 0 { return true }
+        if let pressure = s.contextPressure, pressure.status != "none" { return true }
         if s.compactionToday.events > 0 { return true }
         if s.reasoningToday.records > 0 { return true }
         if s.billingWindow != nil { return true }
         return false
+    }
+
+    private func pct(_ value: Double) -> Int {
+        Int((max(0, min(1, value)) * 100).rounded())
     }
 
     private var divider: some View {
@@ -218,6 +240,19 @@ struct SignalsRibbon: View {
         if rate >= 0.90 { return Color.tokSuccess }
         if rate >= 0.60 { return Color.tokWarning }
         return Color.tokDanger
+    }
+
+    private func contextColor(_ status: String) -> Color {
+        switch status {
+        case "critical":
+            return Color.tokDanger
+        case "high":
+            return Color.tokWarning
+        case "medium":
+            return c.tertiary
+        default:
+            return theme.backgroundMode.secondaryTextColor
+        }
     }
 
     /// Reasoning color: a heads-up signal, not a failure signal. Stays neutral

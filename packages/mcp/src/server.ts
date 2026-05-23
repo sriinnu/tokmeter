@@ -16,6 +16,8 @@ import {
   type ScanOptions,
   type TokenRecord,
   TokmeterCore,
+  deriveUsage,
+  sumUsage,
 } from "@sriinnu/tokmeter";
 import { z } from "zod";
 
@@ -853,8 +855,8 @@ export function createServer(): McpServer {
           [
             "Cache Hit Rate",
             ...models.map((m) => {
-              const totalIn = m.inputTokens + m.cacheReadTokens;
-              return totalIn > 0 ? fmtPct((m.cacheReadTokens / totalIn) * 100) : "—";
+              const usage = deriveUsage(m);
+              return usage.totalInputTokens > 0 ? fmtPct(usage.cacheHitRate * 100) : "—";
             }),
           ],
           ["Cost Bar", ...models.map((m) => barChart(m.cost, maxCost, 12))],
@@ -1627,8 +1629,8 @@ export function createServer(): McpServer {
       }
 
       // Global efficiency metrics
-      const totalInput = stats.inputTokens + stats.cacheReadTokens;
-      const cacheHitRate = totalInput > 0 ? (stats.cacheReadTokens / totalInput) * 100 : 0;
+      const usage = sumUsage(core.getRecords());
+      const cacheHitRate = usage.cacheHitRate * 100;
       const totalAll = stats.totalTokens;
       const reasoningRatio = totalAll > 0 ? (stats.reasoningTokens / totalAll) * 100 : 0;
       const outputRatio = totalAll > 0 ? (stats.outputTokens / totalAll) * 100 : 0;
@@ -1666,8 +1668,8 @@ export function createServer(): McpServer {
       const modelRows: string[][] = [];
 
       for (const m of models.slice(0, 15)) {
-        const mTotalIn = m.inputTokens + m.cacheReadTokens;
-        const mCacheRate = mTotalIn > 0 ? (m.cacheReadTokens / mTotalIn) * 100 : 0;
+        const modelUsage = deriveUsage(m);
+        const mCacheRate = modelUsage.cacheHitRate * 100;
         const mReasonRate = m.totalTokens > 0 ? (m.reasoningTokens / m.totalTokens) * 100 : 0;
         const mCostPer1M = m.totalTokens > 0 ? (m.cost / m.totalTokens) * 1_000_000 : 0;
         // Approximate requests: total records for this model
@@ -1802,11 +1804,11 @@ export function createServer(): McpServer {
         }
 
         const enriched: ModelMetrics[] = models.map((m) => {
-          const totalIn = m.inputTokens + m.cacheReadTokens;
+          const usage = deriveUsage(m);
           return {
             ...m,
             costPer1M: m.totalTokens > 0 ? (m.cost / m.totalTokens) * 1_000_000 : 0,
-            cacheRate: totalIn > 0 ? (m.cacheReadTokens / totalIn) * 100 : 0,
+            cacheRate: usage.cacheHitRate * 100,
             reasoningRate: m.totalTokens > 0 ? (m.reasoningTokens / m.totalTokens) * 100 : 0,
             recordCount: metricsMap.get(m.model) ?? 0,
           };
@@ -2037,8 +2039,8 @@ export function createServer(): McpServer {
       }
 
       // Cache efficiency note
-      const totalInput = stats.inputTokens + stats.cacheReadTokens;
-      const cacheRate = totalInput > 0 ? (stats.cacheReadTokens / totalInput) * 100 : 0;
+      const usage = sumUsage(core.getRecords());
+      const cacheRate = usage.cacheHitRate * 100;
       if (cacheRate > 0) {
         lines.push(
           `  Cache utilization: ${fmtPct(cacheRate)} of input tokens are served from cache.`,
@@ -2293,9 +2295,10 @@ export function createServer(): McpServer {
       }
 
       // Aggregate totals
-      let totalCacheRead = 0;
-      let totalCacheWrite = 0;
-      let totalInputTokens = 0;
+      const usage = sumUsage(records);
+      const totalCacheRead = usage.cacheReadTokens;
+      const totalCacheWrite = usage.cacheWriteTokens;
+      const totalInputTokens = usage.totalInputTokens;
 
       // Per-model aggregation
       const modelMap = new Map<
@@ -2310,10 +2313,6 @@ export function createServer(): McpServer {
       >();
 
       for (const r of records) {
-        totalCacheRead += r.cacheReadTokens;
-        totalCacheWrite += r.cacheWriteTokens;
-        totalInputTokens += r.inputTokens;
-
         const existing = modelMap.get(r.model) ?? {
           cacheRead: 0,
           cacheWrite: 0,
@@ -2329,9 +2328,9 @@ export function createServer(): McpServer {
         modelMap.set(r.model, existing);
       }
 
-      // Cache hit rate: reads / (reads + writes). If no cache activity, 0%.
+      // Cache hit rate: reads / (input + reads + writes). If no input activity, 0%.
       const totalCacheTokens = totalCacheRead + totalCacheWrite;
-      const hitRate = totalCacheTokens > 0 ? (totalCacheRead / totalCacheTokens) * 100 : 0;
+      const hitRate = usage.cacheHitRate * 100;
 
       // Estimate savings: cache reads cost ~10% of input price, so you save ~90% per cached token.
       // We approximate by looking at average input cost per token across the dataset.
@@ -2358,7 +2357,8 @@ export function createServer(): McpServer {
         `  📊 Overall Cache Hit Rate:  ${fmtPct(hitRate)}`,
         `     ├─ Cache Reads:   ${fmtNum(totalCacheRead)} tokens`,
         `     ├─ Cache Writes:  ${fmtNum(totalCacheWrite)} tokens`,
-        `     └─ Input Tokens:  ${fmtNum(totalInputTokens)} tokens`,
+        `     ├─ Fresh Input:   ${fmtNum(usage.freshInputTokens)} tokens`,
+        `     └─ Total Input:   ${fmtNum(usage.totalInputTokens)} tokens`,
         "",
         `  💰 Cache Savings:   ~${fmtCost(cacheSavings)}  (what you saved vs full input price)`,
         `  🗑️  Cache Waste:     ~${fmtCost(cacheWaste)}  (premium paid on writes never amortized)`,
@@ -2375,8 +2375,14 @@ export function createServer(): McpServer {
         lines.push("  Per-Model Cache Breakdown", separator(), "");
         const tableHeaders = ["Model", "Hit Rate", "Reads", "Writes", "Calls"];
         const tableRows = modelEntries.map(([model, v]) => {
-          const mTotal = v.cacheRead + v.cacheWrite;
-          const mHitRate = mTotal > 0 ? (v.cacheRead / mTotal) * 100 : 0;
+          const modelUsage = deriveUsage({
+            inputTokens: v.inputTokens,
+            outputTokens: 0,
+            cacheReadTokens: v.cacheRead,
+            cacheWriteTokens: v.cacheWrite,
+            reasoningTokens: 0,
+          });
+          const mHitRate = modelUsage.cacheHitRate * 100;
           return [
             model,
             fmtPct(mHitRate),
@@ -2402,10 +2408,17 @@ export function createServer(): McpServer {
           `     Potential additional savings if you reach 90%+: ~${fmtCost(cacheSavings * 0.3)}/period.`
         );
       } else if (totalCacheTokens > 0) {
-        lines.push(
-          `  ⚠️  Low cache hit rate: ${fmtPct(hitRate)}. You're paying for cache writes but not reusing them.`,
-          "     Try: longer conversations, fewer new sessions, and keeping context warm."
-        );
+        if (totalCacheWrite > totalCacheRead) {
+          lines.push(
+            `  ⚠️  Low cache hit rate: ${fmtPct(hitRate)}. You're paying for cache writes but not reusing them.`,
+            "     Try: longer conversations, fewer new sessions, and keeping context warm."
+          );
+        } else {
+          lines.push(
+            `  ⚠️  Low total-input cache hit rate: ${fmtPct(hitRate)}. Fresh input is dominating this period.`,
+            "     Try keeping stable context warm and avoiding large one-off prompt reloads."
+          );
+        }
       } else {
         lines.push(
           "  ℹ️  No cache activity detected. Your providers may not support prompt caching,",
@@ -2788,10 +2801,8 @@ export function createServer(): McpServer {
       const tips: Tip[] = [];
 
       // ── Tip 1: Cache efficiency ──
-      const totalCacheRead = records.reduce((s, r) => s + r.cacheReadTokens, 0);
-      const totalCacheWrite = records.reduce((s, r) => s + r.cacheWriteTokens, 0);
-      const totalCacheTokens = totalCacheRead + totalCacheWrite;
-      const cacheHitRate = totalCacheTokens > 0 ? (totalCacheRead / totalCacheTokens) * 100 : -1;
+      const usage = sumUsage(records);
+      const cacheHitRate = usage.hasCacheTelemetry ? usage.cacheHitRate * 100 : -1;
 
       if (cacheHitRate >= 0 && cacheHitRate < 80) {
         const potentialSavings = totalCost * 0.1; // ~10% savings from better caching
@@ -2823,8 +2834,7 @@ export function createServer(): McpServer {
       }
 
       // ── Tip 3: Large input tokens (conversation bloat) ──
-      const avgInputPerCall =
-        records.length > 0 ? records.reduce((s, r) => s + r.inputTokens, 0) / records.length : 0;
+      const avgInputPerCall = records.length > 0 ? usage.freshInputTokens / records.length : 0;
 
       if (avgInputPerCall > 100_000) {
         const potentialSavings = totalCost * 0.15;
