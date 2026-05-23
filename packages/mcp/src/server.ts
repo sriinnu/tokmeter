@@ -287,7 +287,14 @@ const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for cust
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "drishti",
-    version: "0.4.0",
+    // Keep in sync with packages/mcp/package.json `version`. MCP clients see
+    // this string in the `initialize` response's `serverInfo.version`, so
+    // drift here means clients can't tell which build they're talking to.
+    // The published package version is the source of truth; this constant
+    // shadows it because @modelcontextprotocol/sdk's McpServer takes a
+    // literal in the constructor — no runtime import-from-package.json that
+    // would survive bundling/cp into the meta package across all consumers.
+    version: "1.4.0",
     description: "∞ — Token usage observatory for AI coding agents",
   });
 
