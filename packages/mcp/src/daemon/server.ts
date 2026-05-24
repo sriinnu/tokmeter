@@ -8,8 +8,8 @@
 
 import {
   closeSync,
-  constants as fsConstants,
   existsSync,
+  constants as fsConstants,
   mkdirSync,
   openSync,
   readFileSync,
@@ -89,11 +89,7 @@ function writeSecretFile(path: string, data: string): void {
   } catch {
     /* file may not exist; that's fine — EXCL open will catch races */
   }
-  const fd = openSync(
-    path,
-    fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY,
-    0o600
-  );
+  const fd = openSync(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
   try {
     writeSync(fd, data);
   } finally {
@@ -835,12 +831,11 @@ function startHttpApi(): void {
         } else if (pathname === "/api/stats") {
           const providers = parseProviders(url);
           if (providers) {
-            const { filterByProvider } = await import("@sriinnu/tokmeter");
             // Provider-filtered stats: NOT floored. The floor is a
             // display-stability guard for the BAR's lifetime hero, which
             // reads unfiltered /api/stats. A provider-scoped read is a
             // different number and shouldn't inherit the lifetime floor.
-            json(res, core.getStats(filterByProvider(core.getRecords(), providers)));
+            json(res, core.getStats({ providers }));
           } else {
             // Lifetime stats — floored so the bar's hero stays monotonic
             // within the day. See applyStatsFloor for the why.
@@ -854,12 +849,7 @@ function startHttpApi(): void {
           json(res, core.getStatbarSignals());
         } else if (pathname === "/api/models") {
           const providers = parseProviders(url);
-          if (providers) {
-            const { filterByProvider, aggregateByModel } = await import("@sriinnu/tokmeter");
-            json(res, aggregateByModel(filterByProvider(core.getRecords(), providers)));
-          } else {
-            json(res, core.getModelCosts());
-          }
+          json(res, core.getModelCosts(providers ? { providers } : undefined));
         } else if (pathname === "/api/health") {
           // Surface silent-pricing leaks: today-records that priced at $0
           // because no tier (kosha runtime, manifest, override) had pricing.
@@ -995,8 +985,7 @@ function startHttpApi(): void {
         } else if (pathname === "/api/daily") {
           const providers = parseProviders(url);
           if (providers) {
-            const { filterByProvider, aggregateByDate } = await import("@sriinnu/tokmeter");
-            json(res, aggregateByDate(filterByProvider(core.getRecords(), providers)));
+            json(res, core.getDailyBreakdown({ providers }));
           } else {
             // Floor today's last entry to the per-day high-water so the macOS
             // bar's hero (which reads daily.last.cost) is monotonic upward —
@@ -1259,9 +1248,7 @@ function applyTodayFloor(computed: TodayTotals): TodayTotals {
     // usually codex fork-dedup winner swaps and we DELIBERATELY keep the
     // high-water. Logged at console.warn for daemon stderr only.
     console.warn(
-      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water ` +
-        `$${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex ` +
-        "fork-dedup winner swap; data not lost, just a parser-side reweighting)."
+      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water $${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex fork-dedup winner swap; data not lost, just a parser-side reweighting).`
     );
   }
 
@@ -1302,11 +1289,7 @@ function applyTodayFloor(computed: TodayTotals): TodayTotals {
  * (e.g. a future signature change), we pass through unmodified.
  */
 function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(stats: T): T {
-  if (
-    !stats ||
-    typeof stats.totalCost !== "number" ||
-    typeof stats.totalTokens !== "number"
-  ) {
+  if (!stats || typeof stats.totalCost !== "number" || typeof stats.totalTokens !== "number") {
     return stats;
   }
   const day = localDateKey();
@@ -1320,9 +1303,7 @@ function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>
   }
   if (stats.totalCost + 0.005 < _statsHighWater.totalCost) {
     console.warn(
-      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water ` +
-        `$${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches ` +
-        "today-floor; almost certainly a codex fork-dedup winner swap)."
+      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water $${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches today-floor; almost certainly a codex fork-dedup winner swap).`
     );
   }
   const floored = {
@@ -1337,29 +1318,24 @@ function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>
 
 function computeTodayTotals(core: any): TodayTotals {
   const day = localDateKey();
-  let cost = 0;
-  let inT = 0;
-  let outT = 0;
-  const projects: Record<string, { cost: number; in: number; out: number }> = {};
-  for (const r of core.getRecords() as Array<{
-    timestamp: number;
-    project: string;
+  const today = core.getTodayAggregate?.() as {
     cost: number;
     inputTokens: number;
     outputTokens: number;
-  }>) {
-    if (localDateKey(r.timestamp) !== day) continue;
-    cost += r.cost;
-    inT += r.inputTokens;
-    outT += r.outputTokens;
-    const pkey = r.project || "unknown";
-    if (!projects[pkey]) projects[pkey] = { cost: 0, in: 0, out: 0 };
-    const p = projects[pkey];
-    p.cost += r.cost;
-    p.in += r.inputTokens;
-    p.out += r.outputTokens;
+    projects: Record<string, { cost: number; inputTokens: number; outputTokens: number }>;
+  } | null;
+  const projects: Record<string, { cost: number; in: number; out: number }> = {};
+  if (today) {
+    for (const [name, pb] of Object.entries(today.projects)) {
+      projects[name || "unknown"] = {
+        cost: pb.cost,
+        in: pb.inputTokens,
+        out: pb.outputTokens,
+      };
+    }
+    return { cost: today.cost, in: today.inputTokens, out: today.outputTokens, projects, day };
   }
-  return { cost, in: inT, out: outT, projects, day };
+  return { cost: 0, in: 0, out: 0, projects, day };
 }
 
 function appendSummaryWarnings(

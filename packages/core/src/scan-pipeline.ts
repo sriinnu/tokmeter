@@ -1,0 +1,141 @@
+/**
+ * @sriinnu/tokmeter-core — Parser orchestration + windowed raw scans.
+ *
+ * The scan pipeline is the layer between TokmeterCore and the provider
+ * parsers. It runs every registered parser in parallel, flattens the
+ * results, and enriches today's records with pricing. Historical-scope
+ * scans get a 14-day mtime watermark; today-scope scans get a local-midnight
+ * watermark — both stat-prune the corpus so RSS scales with the window,
+ * not lifetime.
+ */
+
+import { isBeforeToday, startOfLocalDay } from "./date-utils.js";
+import { getParsers } from "./parsers/index.js";
+import { saveRecordCacheToDisk } from "./parsers/utils.js";
+import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
+import type { PricingService } from "./pricing.js";
+import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+
+export interface ScanContext {
+  homeDir: string;
+  pricing: PricingService;
+  skipPricing: boolean;
+}
+
+/** Top-level parser fan-out: runs every parser, optional mtime watermark. */
+export async function scanRawRecords(
+  ctx: ScanContext,
+  providers: ProviderId[] | undefined,
+  warningScope: "history" | "today",
+  warnings: ScanWarning[],
+  modifiedSinceMs?: number
+): Promise<TokenRecord[]> {
+  if (!ctx.skipPricing) {
+    try {
+      await ctx.pricing.init();
+    } catch (error) {
+      warnings.push({
+        scope: warningScope,
+        message: `Pricing initialization failed — continuing without pricing (${toErrorMessage(error)}).`,
+      });
+    }
+  }
+
+  const parsers = getParsers(providers);
+  const scanOpts = modifiedSinceMs !== undefined ? { modifiedSinceMs } : undefined;
+  const results = await Promise.all(
+    parsers.map(async (parser) => {
+      try {
+        return await parser.scan(ctx.homeDir, scanOpts);
+      } catch (error) {
+        warnings.push({
+          scope: "provider",
+          provider: parser.providerId,
+          message: `${parser.providerId} scan failed — skipped (${toErrorMessage(error)}).`,
+        });
+        return [] as TokenRecord[];
+      }
+    })
+  );
+
+  const records = results.flat();
+
+  if (records.length > 0 && !ctx.skipPricing) {
+    // Today-scope enrichment is gated to records actually dated today.
+    // A today-active file (e.g. a long-running Claude session whose JSONL
+    // is appended to today) can ALSO contain records from yesterday that
+    // appeared earlier in the same file. Those historical records are
+    // FROZEN — their cost must not be touched here, even if they currently
+    // sit at $0 (model wasn't in kosha that day). Without this gate, the
+    // first today-scope scan would silently price every yesterday-tail
+    // record at today's rates and write the new cost back through the
+    // record cache, breaking the snapshot's frozen-cost invariant on the
+    // next history extension.
+    //
+    // History-scope (rebuild / gap fill) prices everything as before —
+    // those records are being freshly committed to the snapshot and need
+    // an initial cost.
+    const referenceTimestamp = Date.now();
+    const recordsToPrice =
+      warningScope === "today"
+        ? records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp))
+        : records;
+    if (recordsToPrice.length > 0) {
+      await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings);
+    }
+  }
+
+  saveRecordCacheToDisk();
+  return records;
+}
+
+/** Today's records — mtime-pruned to today's active files, filtered to today's timestamps. */
+export async function scanTodayRecords(
+  ctx: ScanContext,
+  providers: ProviderId[] | undefined,
+  referenceTimestamp: number,
+  warnings: ScanWarning[]
+): Promise<TokenRecord[]> {
+  const rawRecords = await scanRawRecords(
+    ctx,
+    providers,
+    "today",
+    warnings,
+    startOfLocalDay(referenceTimestamp)
+  );
+  return rawRecords.filter((record) => !isBeforeToday(record.timestamp, referenceTimestamp));
+}
+
+/** Unbounded historical scan — used only for first-ever cold start / explicit rescan. */
+export async function scanHistoricalRecords(
+  ctx: ScanContext,
+  providers: ProviderId[] | undefined,
+  referenceTimestamp: number,
+  warnings: ScanWarning[]
+): Promise<TokenRecord[]> {
+  const rawRecords = await scanRawRecords(ctx, providers, "history", warnings);
+  return rawRecords.filter((record) => isBeforeToday(record.timestamp, referenceTimestamp));
+}
+
+/** Bounded N-day raw scan that feeds the signals layer's rolling window. */
+export async function scanRecentRecords(
+  ctx: ScanContext,
+  providers: ProviderId[] | undefined,
+  referenceTimestamp: number,
+  warnings: ScanWarning[],
+  daysBack: number
+): Promise<TokenRecord[]> {
+  const floor = referenceTimestamp - daysBack * 86_400_000;
+  const raw = await scanRawRecords(ctx, providers, "history", warnings, floor);
+  return raw.filter((r) => r.timestamp >= floor && isBeforeToday(r.timestamp, referenceTimestamp));
+}
+
+export function resolveTodayState(
+  records: TokenRecord[],
+  todayWarnings: ScanWarning[],
+  isTodayOnlyScan: boolean
+): ScanMeta["todayState"] {
+  if (todayWarnings.length === 0) return "live";
+  if (records.length > 0 || isTodayOnlyScan) return "degraded";
+  return "snapshot-only";
+}
