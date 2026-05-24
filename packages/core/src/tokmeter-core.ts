@@ -5,7 +5,9 @@
  * Consumable by CLI, TUI, web app, macOS bar, and external projects.
  */
 
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   computeAllProjectsFromState,
   computeDailyBreakdownFromState,
@@ -16,17 +18,17 @@ import {
   computeStatsFromRecords,
   computeStatsFromState,
 } from "./aggregate-consumers.js";
-import { DailyAccumulator } from "./aggregates-store.js";
+import {
+  DailyAccumulator,
+  listDaysOnDisk,
+  loadAggregates,
+  migrateMonolithSnapshotIfNeeded,
+  writeDayFile,
+} from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
-import {
-  loadHistorySnapshot,
-  saveHistorySnapshot,
-  shouldKeepExistingHistory,
-  sumSnapshotTokens,
-} from "./history-snapshot.js";
 import { getParsers } from "./parsers/index.js";
 import {
   getCachedKoshaMtime,
@@ -191,104 +193,97 @@ export class TokmeterCore {
     const koshaChanged =
       !this.skipPricing && currentKoshaMtime > 0 && currentKoshaMtime !== cachedKoshaMtime;
 
-    let records: TokenRecord[];
-    let historySource: ScanMeta["historySource"] = "none";
-
-    if (isTodayOnlyScan) {
-      records = await this.scanTodayRecords(options?.providers, referenceTimestamp, todayWarnings);
-    } else {
-      const frozen = await this.resolveFrozenHistory(
-        stableThrough,
+    // Phase 3.3 relay cutover: history lives on disk as per-day immutable
+    // aggregate files (`~/.cache/tokmeter/aggregates/YYYY-MM-DD.json`). The
+    // daemon NEVER materialises a lifetime `TokenRecord[]` again — only
+    // today's records + a bounded 14-day recent window get held in memory.
+    let historySource: ScanMeta["historySource"] = "snapshot";
+    if (!isTodayOnlyScan) {
+      historySource = await this.refreshFromRelay(
         referenceTimestamp,
-        Boolean(options?.rescanHistory),
-        historyWarnings
+        historyWarnings,
+        Boolean(options?.rescanHistory)
       );
-      historySource = frozen.historySource;
-
-      const todayRecords = await this.scanTodayRecords(
-        options?.providers,
-        referenceTimestamp,
-        todayWarnings
-      );
-
-      records = [...frozen.records, ...todayRecords];
     }
 
-    // Apply filters
-    if (options?.providers && options.providers.length > 0) {
-      records = filterByProvider(records, options.providers);
-    }
-    if (options?.project) {
-      records = filterByProject(records, options.project);
-    }
-    if (
-      options?.since ||
-      options?.until ||
-      options?.today ||
-      options?.week ||
-      options?.month ||
-      options?.year
-    ) {
-      records = filterByDate(records, options);
-    }
+    const todayRecords = await this.scanTodayRecords(
+      options?.providers,
+      referenceTimestamp,
+      todayWarnings
+    );
 
-    if (this.skipPricing) {
-      this.markPricingSkipped(records);
-    }
-
-    // Calculate costs for records that don't have them
+    // Today reprice — historical days are frozen on disk and never touched
+    // here. Kosha edits only flow through today (still in flight).
     const unpricedTracker = { models: new Set<string>(), records: 0 };
-    if (records.length > 0 && !this.skipPricing) {
-      const todayRecords = records.filter(
-        (record) => !isBeforeToday(record.timestamp, referenceTimestamp)
-      );
-
-      // Historical records are FROZEN and are NEVER touched here. Whatever cost
-      // they carry is the value frozen when they were first priced — by the
-      // snapshot file (reused verbatim) or by the one-time pricing during a
-      // rebuild/gap scan. We deliberately do NOT run enrichCosts over history:
-      // a record frozen at $0 (model not in kosha that day) must STAY $0 even
-      // after a `kosha update`. Re-pricing $0 history at today's rates was the
-      // silent immutability leak — "even a second-ago record is history." The
-      // only way frozen cost ever changes is an explicit `rescanHistory`.
-      //
-      // Only today's records reprice when kosha is updated — today is still
-      // "in flight", so updated rates flow through (zero, then re-enrich).
-      if (koshaChanged && todayRecords.length > 0) {
-        for (const r of todayRecords) {
-          r.cost = 0;
-        }
+    if (todayRecords.length > 0 && !this.skipPricing) {
+      if (koshaChanged) {
+        for (const r of todayRecords) r.cost = 0;
       }
-
-      if (todayRecords.length > 0) {
-        await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
-      }
-
-      // Persist the kosha mtime tied to the cost values we just wrote so
-      // subsequent runs know whether another reprice is needed.
+      await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
       if (currentKoshaMtime > 0) {
         setCachedKoshaMtime(currentKoshaMtime);
         saveRecordCacheToDisk();
       }
     }
 
-    this.recentRecords = this.sliceRecent(records, referenceTimestamp);
-    this.rebuildAggregateState(records, referenceTimestamp);
+    // 14-day rolling window for signal computation — bounded so RSS stays flat.
+    let recentHistory: TokenRecord[] = [];
+    if (!isTodayOnlyScan) {
+      recentHistory = await this.scanRecentRecords(
+        options?.providers,
+        referenceTimestamp,
+        historyWarnings
+      );
+    }
+
+    this.recentRecords = this.sliceRecent([...recentHistory, ...todayRecords], referenceTimestamp);
+    this.refreshTodayAccumulator(todayRecords, referenceTimestamp);
+
+    // Determine what to return. For an explicit window (digest, `--year`, etc.)
+    // do an ad-hoc bounded raw scan — the window is finite and the caller
+    // needs per-record granularity. Instance state is unaffected.
+    const hasExplicitRange = Boolean(
+      options?.since || options?.until || options?.week || options?.month || options?.year
+    );
+    let returned: TokenRecord[];
+    if (hasExplicitRange && !isTodayOnlyScan) {
+      const mtimeFloor = options?.since ? new Date(options.since).getTime() : 0;
+      const adHoc = await this.scanRawRecords(
+        options?.providers,
+        "history",
+        historyWarnings,
+        mtimeFloor
+      );
+      returned = adHoc;
+      if (options?.providers && options.providers.length > 0) {
+        returned = filterByProvider(returned, options.providers);
+      }
+      if (options?.project) returned = filterByProject(returned, options.project);
+      returned = filterByDate(returned, options ?? {});
+      if (this.skipPricing) this.markPricingSkipped(returned);
+    } else {
+      returned = this.recentRecords;
+      if (options?.providers && options.providers.length > 0) {
+        returned = filterByProvider(returned, options.providers);
+      }
+      if (options?.project) returned = filterByProject(returned, options.project);
+      if (isTodayOnlyScan) returned = filterByDate(returned, options ?? {});
+      if (this.skipPricing) this.markPricingSkipped(returned);
+    }
+
     this.scanMeta = {
       stableThrough: isTodayOnlyScan ? null : stableThrough,
       historySource: isTodayOnlyScan ? "none" : historySource,
-      todayState: this.resolveTodayState(records, todayWarnings, isTodayOnlyScan),
+      todayState: this.resolveTodayState(returned, todayWarnings, isTodayOnlyScan),
       lastScanAt: Date.now(),
       warnings: [...historyWarnings, ...todayWarnings],
       unpricedModels: [...unpricedTracker.models].sort(),
       unpricedRecords: unpricedTracker.records,
     };
 
-    // Feedback channel to kosha: drop a wishlist of models we couldn't price
-    // along with their hit counts. Kosha reads this on the next `update` and
-    // can bias provider priority toward what's actually being used. Without
-    // this, kosha has no way to know which models matter to the user.
-    this.writeKoshaWishlist(unpricedTracker, records);
+    // Kosha wishlist + offline summary cache (both bounded — wishlist looks
+    // at today only, summary cache writes recentRecords via getSummary()).
+    this.writeKoshaWishlist(unpricedTracker, returned);
 
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
     if (summaryCacheWarnings.length > 0) {
@@ -298,7 +293,7 @@ export class TokmeterCore {
       };
     }
 
-    return records;
+    return returned;
   }
 
   /**
@@ -390,32 +385,9 @@ export class TokmeterCore {
   }
 
   /**
-   * Rebuild the per-day aggregate map + today's accumulator from a fresh
-   * record set. Called from `scan()` after `this.recentRecords` is set, so
-   * the state stays in sync. Pure rebuild (no incremental delta) — cheap
-   * relative to the scan that produced these records.
-   */
-  private rebuildAggregateState(records: TokenRecord[], referenceTimestamp: number): void {
-    const todayKey = localDateKey(referenceTimestamp);
-    const allDays = aggregateRecordsByDay(records);
-    this.aggregates = new Map();
-    let todayAgg: DailyAggregate | undefined;
-    for (const day of allDays) {
-      if (day.date === todayKey) {
-        todayAgg = day;
-      } else {
-        this.aggregates.set(day.date, day);
-      }
-    }
-    const acc = new DailyAccumulator(todayKey);
-    if (todayAgg) acc.hydrate(todayAgg);
-    this.todayAccumulator = acc;
-  }
-
-  /**
-   * Lightweight today-only update for the warm-refresh path (`refreshToday`).
-   * Replaces just the today accumulator without rebuilding historical
-   * aggregates (those are already correct from the last `scan()`).
+   * Lightweight today-only update. Replaces just the today accumulator
+   * without rebuilding historical aggregates (those are loaded from per-day
+   * files via {@link refreshFromRelay}).
    */
   private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
     const todayKey = localDateKey(referenceTimestamp);
@@ -717,115 +689,138 @@ export class TokmeterCore {
   }
 
   /**
-   * Resolve the frozen pre-today history with an APPEND-ONLY strategy.
+   * Phase 3.3 — Refresh historical aggregates from the per-day relay store.
    *
-   * The old behaviour discarded the snapshot and re-derived all of history
-   * from disk on every calendar rollover — which re-priced the past at today's
-   * kosha and lost tokens whenever a provider scan hiccuped. This is the fix:
+   * Loads every per-day file present on disk into `this.aggregates`, then
+   * fills any gap between the newest on-disk day and yesterday by doing a
+   * bounded mtime-watermarked raw scan. Bounded so cold start scales with
+   * the gap (typically 0–1 days), not with lifetime corpus size.
    *
-   *  1. Exact snapshot match → reuse verbatim. No scan, no reprice.
-   *  2. Stale snapshot (frozen through an EARLIER day) → keep its records as an
-   *     immutable base and freeze only the GAP days on top. Base cost is never
-   *     recomputed, so a record-cache version bump can't rewrite frozen days.
-   *  3. No usable snapshot / explicit rescan / schema bump → full rebuild,
-   *     guarded by {@link HISTORY_FLOOR_RATIO} so a partial or failed scan can
-   *     never clobber a materially larger frozen snapshot.
+   * Returns the `historySource` label for `scanMeta`: `"snapshot"` when the
+   * relay was fully up to date, `"extended"` after a gap fill, `"rebuilt"`
+   * for a first-ever cold start or explicit `rescanHistory`, `"none"` when
+   * the corpus is genuinely empty.
    */
-  private async resolveFrozenHistory(
-    stableThrough: string,
+  private async refreshFromRelay(
     referenceTimestamp: number,
-    forceRescan: boolean,
-    warnings: ScanWarning[]
-  ): Promise<{ records: TokenRecord[]; historySource: ScanMeta["historySource"] }> {
-    const snapshot = forceRescan ? null : loadHistorySnapshot(this.homeDir, stableThrough);
-    if (snapshot) warnings.push(...snapshot.warnings);
+    warnings: ScanWarning[],
+    forceRebuild: boolean
+  ): Promise<ScanMeta["historySource"]> {
+    this.migrateV2IfNeeded();
 
-    // 1) Exact match — reuse the frozen file as-is. No scan, no reprice.
-    if (snapshot && snapshot.historySource === "snapshot" && snapshot.matchesExpected) {
-      return { records: snapshot.records, historySource: "snapshot" };
+    if (forceRebuild) return this.rebuildHistoricalFromScratch(referenceTimestamp, warnings);
+
+    this.aggregates = loadAggregates(this.homeDir);
+    const onDisk = listDaysOnDisk(this.homeDir);
+    const maxOnDisk = onDisk.length > 0 ? onDisk[onDisk.length - 1] : null;
+    const yesterday = yesterdayDateKey(referenceTimestamp);
+
+    if (maxOnDisk === null) {
+      return this.rebuildHistoricalFromScratch(referenceTimestamp, warnings);
     }
+    if (maxOnDisk >= yesterday) return "snapshot";
 
-    // 2) Stale-but-usable snapshot frozen through an earlier day → append-only.
-    const storedThrough = snapshot?.storedStableThrough ?? null;
-    const canExtend =
-      snapshot?.historySource === "snapshot" &&
-      storedThrough !== null &&
-      storedThrough < stableThrough;
-    if (snapshot && canExtend && storedThrough !== null) {
-      // Base = EVERYTHING the snapshot already froze — kept verbatim, never
-      // dropped, re-scanned, or re-priced. We do NOT filter base to
-      // `<= storedThrough`: if clock skew/DST left a record dated past the
-      // stored key, filtering it out and trusting the gap re-scan to reproduce
-      // it would silently lose frozen history when the source file is gone.
-      // Keeping all of base makes the extension monotonic by construction
-      // (extended = base + gap ≥ base), so it can never shrink the snapshot.
-      const base = snapshot.records;
-      // Anchor the gap boundary to the LATEST day actually present in the
-      // snapshot (≥ storedThrough), so base and gap can never overlap (no
-      // double-count) and no in-between day is skipped (no loss).
-      let baseMaxDay = storedThrough;
-      for (const r of base) {
-        const key = localDateKey(r.timestamp);
-        if (key > baseMaxDay) baseMaxDay = key;
-      }
-      // Gap = days that have since rolled from "today" into the frozen past
-      // (> baseMaxDay and still before today). Only these get (re)derived.
-      const warnBefore = warnings.length;
-      const rebuilt = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
-      const gap = rebuilt.filter(
-        (r) =>
-          localDateKey(r.timestamp) > baseMaxDay && isBeforeToday(r.timestamp, referenceTimestamp)
-      );
-      const extended = [...base, ...gap];
-      // Only FREEZE the extension when the gap scan was clean. If a provider
-      // failed mid-scan, the gap is incomplete — persist nothing so the next
-      // healthy scan re-freezes it instead of locking in a degraded day. We
-      // still return the best-effort extended set for this scan's display.
-      // (extended ≥ base already, so a thin gap can never shrink the snapshot;
-      // this guard just avoids freezing a day with a missing provider.)
-      const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
-      if (!gapDegraded) {
-        warnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, extended));
-      }
-      return { records: extended, historySource: "extended" };
-    }
-
-    // 3) Full rebuild — first run, explicit rescan, schema bump, or a snapshot we
-    //    can't safely extend. Guarded so a partial/failed scan can't clobber a
-    //    healthy frozen snapshot.
+    // Gap fill — watermark at the start of the first uncovered day.
+    const floorMs = new Date(`${maxOnDisk}T00:00:00`).getTime() + 86_400_000;
     const warnBefore = warnings.length;
-    const rebuilt = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
-    const providerFailed = warnings.slice(warnBefore).some((w) => w.scope === "provider");
+    const raw = await this.scanRawRecords(undefined, "history", warnings, floorMs);
+    const todayKey = localDateKey(referenceTimestamp);
+    const gap = raw.filter((r) => {
+      const k = localDateKey(r.timestamp);
+      return k > maxOnDisk && k < todayKey;
+    });
+    // A partial gap scan (provider crash mid-fill) writes nothing — a healthy
+    // re-run will fill it correctly. Better to retry than freeze a degraded day.
+    const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
+    if (gapDegraded) return "extended";
 
-    // Only treat a snapshot as a protectable floor when it's a valid frozen-past
-    // (frozen through today's key or earlier); a future-dated snapshot from clock
-    // skew isn't trustworthy as a floor.
-    const protectable =
-      snapshot?.historySource === "snapshot" &&
-      storedThrough !== null &&
-      storedThrough <= stableThrough &&
-      snapshot.records.length > 0;
-    const existingTokens = protectable ? sumSnapshotTokens(snapshot.records) : 0;
-    const rebuiltTokens = sumSnapshotTokens(rebuilt);
-
-    if (
-      protectable &&
-      shouldKeepExistingHistory(existingTokens, rebuiltTokens, {
-        forceRescan,
-        providerFailed,
-      })
-    ) {
-      const rebuiltLabel = rebuiltTokens.toLocaleString();
-      const existingLabel = existingTokens.toLocaleString();
-      warnings.push({
-        scope: "history",
-        message: `Rebuilt history (${rebuiltLabel} tokens) fell below the safety floor relative to the frozen snapshot (${existingLabel} tokens) — keeping the snapshot to avoid clobbering frozen history (${stableThrough}); re-run with rescanHistory to override.`,
-      });
-      return { records: snapshot?.records ?? [], historySource: "snapshot" };
+    for (const day of aggregateRecordsByDay(gap)) {
+      if (day.date <= maxOnDisk || day.date >= todayKey) continue;
+      try {
+        writeDayFile(this.homeDir, day);
+        this.aggregates.set(day.date, day);
+      } catch (error) {
+        warnings.push({
+          scope: "cache",
+          message: `Failed to persist day ${day.date} to relay: ${this.toErrorMessage(error)}`,
+        });
+      }
     }
+    return "extended";
+  }
 
-    warnings.push(...saveHistorySnapshot(this.homeDir, stableThrough, rebuilt));
-    return { records: rebuilt, historySource: rebuilt.length > 0 ? "rebuilt" : "none" };
+  /**
+   * Full historical rebuild — first-ever cold start, explicit `rescanHistory`,
+   * or empty relay. Scans every historical file, splatters into per-day relay
+   * files, populates `this.aggregates`. One-time cost (and the only path that
+   * touches lifetime raw records — caller-scoped and immediately released).
+   */
+  private async rebuildHistoricalFromScratch(
+    referenceTimestamp: number,
+    warnings: ScanWarning[]
+  ): Promise<ScanMeta["historySource"]> {
+    const raw = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
+    const todayKey = localDateKey(referenceTimestamp);
+    const days = aggregateRecordsByDay(raw);
+    this.aggregates = new Map();
+    for (const day of days) {
+      if (day.date >= todayKey) continue;
+      try {
+        writeDayFile(this.homeDir, day);
+        this.aggregates.set(day.date, day);
+      } catch (error) {
+        warnings.push({
+          scope: "cache",
+          message: `Failed to persist day ${day.date} to relay: ${this.toErrorMessage(error)}`,
+        });
+      }
+    }
+    return raw.length > 0 ? "rebuilt" : "none";
+  }
+
+  /**
+   * One-shot v2 monolith → per-day relay migration. Idempotent: when per-day
+   * files already exist OR no legacy file is present, returns immediately.
+   * After a successful migration we rename the legacy file to `.legacy` so
+   * future cold starts read the relay only.
+   */
+  private migrateV2IfNeeded(): void {
+    const v2Path = join(this.homeDir, ".cache/tokmeter/history-snapshot.json");
+    const result = migrateMonolithSnapshotIfNeeded(this.homeDir, v2Path, () => {
+      if (!existsSync(v2Path)) return null;
+      try {
+        const parsed = JSON.parse(readFileSync(v2Path, "utf-8"));
+        if (parsed?.version === 3 && Array.isArray(parsed.days)) return { days: parsed.days };
+        if (Array.isArray(parsed?.records)) return { records: parsed.records };
+      } catch {
+        return null;
+      }
+      return null;
+    });
+    if (!result.migrated) return;
+    try {
+      if (existsSync(v2Path)) renameSync(v2Path, `${v2Path}.legacy`);
+    } catch {
+      // Best-effort — leftover legacy file is harmless once the relay is live.
+    }
+  }
+
+  /**
+   * Bounded raw scan for the rolling {@link RECENT_RECORDS_WINDOW_DAYS} window
+   * that the signals layer (`burn rate`, `pace baseline`) needs. mtime
+   * watermark stat-prunes the corpus to files touched in the window, so cold
+   * start scales with recent activity, not lifetime.
+   */
+  private async scanRecentRecords(
+    providers: ProviderId[] | undefined,
+    referenceTimestamp: number,
+    warnings: ScanWarning[]
+  ): Promise<TokenRecord[]> {
+    const floor = referenceTimestamp - RECENT_RECORDS_WINDOW_DAYS * 86_400_000;
+    const raw = await this.scanRawRecords(providers, "history", warnings, floor);
+    return raw.filter(
+      (r) => r.timestamp >= floor && isBeforeToday(r.timestamp, referenceTimestamp)
+    );
   }
 
   private async scanHistoricalRecords(
