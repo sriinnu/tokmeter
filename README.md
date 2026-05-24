@@ -492,6 +492,56 @@ Historical records are immutable: prices freeze at write time. Only today repric
 
 All formatters are NaN/Infinity-safe — malformed data never leaks into output.
 
+## Performance
+
+The daemon scans your sessions once, persists them as per-day immutable aggregate files, and serves every reader (CLI, statusline, bar, web) from in-memory state.
+
+**Storage layout** (`~/.cache/tokmeter/aggregates/`):
+
+| | before (v2 monolith) | after (v3 relay) | delta |
+|---|---|---|---|
+| History store on disk | 1 file × 187 MB | 146 files × ~6 KB each (848 KB total) | **220× smaller** |
+| Lifetime `TokenRecord[]` in heap | held warm | structurally eliminated | gone |
+| Cold-start I/O | parse 187 MB JSON + dispatch | load 848 KB + bounded 14-day mtime-pruned scan | bounded by gap, not corpus |
+
+**Hot-path query latency** (measured against a 77 GB / 292k-record corpus, daemon HTTP port):
+
+| endpoint | cache hit (within 12s TTL) | cache miss (TTL refresh) | response size |
+|---|---|---|---|
+| `/api/stats` | ~1–6 ms | ~5 s (today scan) | 341 B |
+| `/api/today` | ~1 ms | — | ~700 B |
+| `/api/projects` | ~2–4 ms | — | 170 KB |
+| `/api/models` | ~1 ms | — | 7.5 KB |
+| `/api/daily` | ~1 ms | — | 30 KB |
+| `/api/statbar-signals` | ~38–58 ms | — | 4.6 KB |
+| `/api/cross-tool` | ~2 ms | — | 600 B |
+
+The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan is mtime-pruned, so it only touches files modified today (typically a handful of active session files).
+
+**Memory:** RSS is noisy on macOS due to V8 arena retention and the parser-level scan cache, but the architectural shift is real — the daemon no longer pins lifetime records in heap, and the on-disk store is 220× smaller. Idle RSS varies from ~30 MB (deep idle after GC) to ~1.5 GB (active scan + cache); the pre-v1.5 daemon stably held ~1 GB+ regardless.
+
+**Reproduce locally:**
+
+```bash
+# Stop daemon, restart, sample RSS over warmup
+node packages/cli/dist/cli.js daemon stop
+node packages/cli/dist/cli.js daemon start
+PID=$(cat ~/.tokmeter/daemon/daemon.pid)
+for i in 1 2 3 4 5; do ps -o rss,pcpu -p $PID | tail -1; sleep 2; done
+
+# Endpoint latency battery
+TOK=$(cat ~/.tokmeter/daemon/daemon.token)
+for ep in api/stats api/today api/projects api/models api/daily; do
+  curl -s -H "Authorization: Bearer $TOK" -o /dev/null \
+    -w "$ep  %{time_total}s  %{size_download}B\n" \
+    http://127.0.0.1:9877/$ep
+done
+
+# Relay store inspection
+ls -1 ~/.cache/tokmeter/aggregates/ | wc -l   # day count
+du -sh ~/.cache/tokmeter/aggregates/          # total size
+```
+
 ## Architecture
 
 ```
@@ -499,6 +549,9 @@ Session Files (local disk)
     |
 @sriinnu/tokmeter-core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
     |
+    +-- per-day relay store (~/.cache/tokmeter/aggregates/YYYY-MM-DD.json, immutable)
+    +-- rolling 14-day record window (signals lookback)
+    +-- live today accumulator (DailyAccumulator, sealed at midnight)
     +-- StatbarSignals (burn/cache/pace/compaction/live)
     |
 +----------+----------+----------+----------+-----------+----------+

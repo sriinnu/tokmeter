@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-24
+
+The "no more lifetime records" release — Phase 3.3 of the aggregate cutover.
+The daemon's history layer moves from a single 187 MB monolithic snapshot to
+a directory of per-day immutable aggregate files. The lifetime
+`TokenRecord[]` is structurally eliminated from `TokmeterCore`; cold start
+scales with the gap between disk-newest and yesterday (typically 0–1 days),
+not lifetime corpus size.
+
+### Changed — per-day relay store (the "relay race" architecture)
+
+- **@sriinnu/tokmeter-core** — On-disk history layout switched from
+  `~/.cache/tokmeter/history-snapshot.json` (monolith, ~187 MB on a 77 GB
+  corpus) to `~/.cache/tokmeter/aggregates/YYYY-MM-DD.json` (one immutable
+  file per completed day, ~6 KB each, ~848 KB total). Files are write-once;
+  midnight rollover seals today's accumulator into the next day-file
+  without touching anything older. Rsync-friendly, language-agnostic,
+  `cat day.json | jq`-inspectable.
+- **@sriinnu/tokmeter-core** — `TokmeterCore.scan()` no longer materialises
+  a lifetime `TokenRecord[]`. The default daemon path now: load per-day
+  aggregates → bounded 14-day mtime-watermarked recent scan → today scan
+  → fold today into the live accumulator. Explicit-range queries
+  (`since`/`until`/`--year`/...) do an ad-hoc bounded raw scan against just
+  the requested window.
+- **@sriinnu/tokmeter-core** — One-shot v2 → relay migration runs once on
+  first cold start, splatters the legacy monolith into per-day files, and
+  renames the legacy file to `.legacy` so future starts read the relay
+  only. Idempotent — safe to call when per-day files already exist.
+- **@sriinnu/tokmeter-core** — `tokmeter-core.ts` refactored from 1017 LOC
+  into a 392-line state holder + 5 focused modules:
+  `scan-pipeline.ts` (parser fan-out, windowed scans),
+  `relay-loader.ts` (per-day store + v2 migration),
+  `pricing-enrichment.ts` (enrichCosts, opaque-model gate),
+  `kosha-wishlist.ts` (atomic wishlist writer),
+  `cross-tool.ts` (today × top-models projection).
+
+### Performance (verified on a 77 GB / 292k-record / 147-day corpus)
+
+- History store on disk: 187 MB → 848 KB (**220× smaller**).
+- Lifetime records held in heap: gone (structurally; verifiable in source).
+- Hot-path queries (cache hit, within 12 s TTL): ~1–6 ms per endpoint;
+  `api/projects` (170 KB payload) ~2–4 ms.
+- Today-scope refresh on TTL miss: ~5 s for the 77 GB Codex corpus
+  (unchanged — that's parser I/O, not the relay).
+- Daemon RSS: noisy due to V8 arena retention and the parser-level scan
+  cache, but the floor dropped — idle RSS observed as low as ~30 MB
+  (post-GC), versus the pre-v1.5 ~1.08 GB warm steady-state.
+
+### Notes
+
+- 170 tests pass, including 27 aggregate-migration parity assertions
+  comparing legacy records-walking against the new aggregate-state path.
+- Branch `feat/aggregate-cutover`: commits `cf75d33`..`0c582dc`.
+- See `README.md` → Performance section for benchmark commands you can run
+  locally.
+
 ## [1.4.0] - 2026-05-23
 
 The "no more kernel panics" release — one warm singleton daemon as the single
