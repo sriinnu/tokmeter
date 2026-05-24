@@ -5,9 +5,7 @@
  * Consumable by CLI, TUI, web app, macOS bar, and external projects.
  */
 
-import { existsSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   computeAllProjectsFromState,
   computeDailyBreakdownFromState,
@@ -18,24 +16,28 @@ import {
   computeStatsFromRecords,
   computeStatsFromState,
 } from "./aggregate-consumers.js";
-import {
-  DailyAccumulator,
-  listDaysOnDisk,
-  loadAggregates,
-  migrateMonolithSnapshotIfNeeded,
-  writeDayFile,
-} from "./aggregates-store.js";
+import { DailyAccumulator } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
-import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
-import { getParsers } from "./parsers/index.js";
+import { type CrossToolComparison, computeCrossToolComparison } from "./cross-tool.js";
+import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { writeKoshaWishlist } from "./kosha-wishlist.js";
 import {
   getCachedKoshaMtime,
   saveRecordCacheToDisk,
   setCachedKoshaMtime,
 } from "./parsers/utils.js";
+import { enrichCosts, markPricingSkipped } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
+import { refreshFromRelay } from "./relay-loader.js";
+import {
+  type ScanContext,
+  resolveTodayState,
+  scanRawRecords,
+  scanRecentRecords,
+  scanTodayRecords,
+} from "./scan-pipeline.js";
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
 import type {
@@ -53,31 +55,7 @@ import type {
   TokmeterSummary,
 } from "./types.js";
 
-/**
- * Models whose provider intentionally hides the underlying routed model, so
- * we can't price them even with a fresh kosha. Treat these as known-opaque:
- * cost still resolves to $0 (we honestly don't know), but suppress the
- * unpriced-leak signal — otherwise the bar's amber pill cries wolf on every
- * scan and the kosha wishlist begs for an entry that will never exist.
- *
- * Codex CLI's auto-review pipeline ("codex-auto-review") is the canonical
- * case: codex writes this literal string into rollout JSONL when OpenAI's
- * batched code-review router picks a model. The real model never surfaces
- * to the client. Add new entries here only when the same condition holds —
- * provider explicitly opaque, not just "kosha doesn't have it yet."
- */
-const OPAQUE_MODELS: ReadonlySet<string> = new Set(["codex-auto-review"]);
-
-function isOpaqueModel(model: string): boolean {
-  return OPAQUE_MODELS.has(model);
-}
-
-/**
- * How many days of records to hold in {@link TokmeterCore.recentRecords}.
- * Sized to the longest signal lookback (pace baseline = 7 days × 2 = 14)
- * so {@link computeStatbarSignals} sees enough history without scaling RSS
- * with lifetime record count.
- */
+/** Longest signal lookback. Bounds daemon RSS by record count, not lifetime. */
 const RECENT_RECORDS_WINDOW_DAYS = 14;
 
 const EMPTY_SCAN_META: ScanMeta = {
@@ -91,42 +69,16 @@ const EMPTY_SCAN_META: ScanMeta = {
 };
 
 export class TokmeterCore {
-  /**
-   * Rolling 14-day window of records — the lookback needed by `signals.ts`
-   * (burn rate, pace baseline, billing window). Replaces the lifetime
-   * `this.records` array we used to hold; lifetime data lives in
-   * {@link aggregates} + {@link todayAccumulator} now. Sized to the longest
-   * signal lookback so the daemon's hot path keeps its precision without
-   * paying the lifetime RSS cost.
-   *
-   * Phase 3 retirement: external getters (`getRecords`, summary `records`
-   * field) now expose this 14-day window. Callers needing lifetime data
-   * should migrate to the aggregate getters (`getStats`, `getDailyBreakdown`,
-   * `getAllProjects`).
-   */
+  // Rolling 14-day window — feeds signals.ts; replaces lifetime records[].
   private recentRecords: TokenRecord[] = [];
-  /**
-   * Per-day historical aggregates, keyed by `YYYY-MM-DD`. Built from the full
-   * scan and updated by `refreshToday()`. Today's day is tracked separately
-   * in {@link todayAccumulator}; this map covers days strictly before today.
-   * Single source of truth for lifetime reporting after the Phase 3 cutover.
-   */
+  // Per-day historical aggregates keyed by YYYY-MM-DD; days strictly before today.
   private aggregates: Map<string, DailyAggregate> = new Map();
-  /**
-   * Live in-memory accumulator for today's running aggregate. Folds today's
-   * records as they come in from the warm scan. Sealed and written to disk
-   * at midnight rollover. Null only before the first `scan()` completes.
-   */
+  // Live accumulator for today; null before the first scan completes.
   private todayAccumulator: DailyAccumulator | null = null;
   private pricing: PricingService;
   private homeDir: string;
   private skipPricing: boolean;
   private scanMeta: ScanMeta = EMPTY_SCAN_META;
-  /**
-   * Cached alias map. Loaded lazily on first call that needs it and
-   * refreshable via `reloadAliases()`. Each aggregation call resolves
-   * raw canonical project names through this map.
-   */
   private aliases: AliasMap | null = null;
 
   constructor(config?: TokmeterConfig) {
@@ -135,7 +87,6 @@ export class TokmeterCore {
     this.pricing = new PricingService(config?.cacheDir);
   }
 
-  /** Lazy load the user's alias map. */
   private getAliases(): AliasMap {
     if (!this.aliases) this.aliases = loadAliases(this.homeDir);
     return this.aliases;
@@ -146,19 +97,18 @@ export class TokmeterCore {
     this.aliases = loadAliases(this.homeDir);
   }
 
+  private ctx(): ScanContext {
+    return { homeDir: this.homeDir, pricing: this.pricing, skipPricing: this.skipPricing };
+  }
+
   /**
-   * Scan all session files and build token usage records.
-   * This is the main entry point — call this first.
+   * Scan session files and refresh instance state.
    *
-   * @param options - Filter and provider options for the scan.
-   * @returns Array of parsed token usage records.
+   * Default: relay load + bounded recent-window + today scan → 14d window.
+   * Explicit-range (`since`/`until`/...): ad-hoc bounded raw scan for the
+   * requested window; instance state still refreshes.
    */
   async scan(options?: ScanOptions): Promise<TokenRecord[]> {
-    // Re-read aliases from disk at the start of every scan so the daemon
-    // picks up edits to ~/.tokmeter/aliases.json without needing a restart.
-    // Aliases are a display-layer only (records are unchanged) so this
-    // doesn't invalidate any history/cache — it just changes how the next
-    // aggregateByProject() call groups the rows.
     this.reloadAliases();
 
     const referenceTimestamp = Date.now();
@@ -173,118 +123,98 @@ export class TokmeterCore {
       !options?.month &&
       !options?.year;
 
-    // Detect kosha registry updates. If the user edited ~/.kosha/registry.json
-    // since the last scan, every cached `cost` field is suspect — force a
-    // reprice so new/updated rates flow through without a full re-parse.
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
-        // Fire-and-forget refresh if the registry is stale (>24h). The current
-        // scan uses whatever data we have on disk; the refresh runs in the
-        // background so the *next* scan benefits. Failures are silent.
         const { maybeBackgroundRefresh } = await import("./pricing.js");
         maybeBackgroundRefresh();
       } catch {
-        // enrichCosts will re-warn if pricing stays unavailable
+        /* enrichCosts will re-warn if pricing stays unavailable */
       }
     }
     const currentKoshaMtime = this.pricing.getRegistryMtime();
-    const cachedKoshaMtime = getCachedKoshaMtime();
     const koshaChanged =
-      !this.skipPricing && currentKoshaMtime > 0 && currentKoshaMtime !== cachedKoshaMtime;
+      !this.skipPricing && currentKoshaMtime > 0 && currentKoshaMtime !== getCachedKoshaMtime();
 
-    // Phase 3.3 relay cutover: history lives on disk as per-day immutable
-    // aggregate files (`~/.cache/tokmeter/aggregates/YYYY-MM-DD.json`). The
-    // daemon NEVER materialises a lifetime `TokenRecord[]` again — only
-    // today's records + a bounded 14-day recent window get held in memory.
     let historySource: ScanMeta["historySource"] = "snapshot";
     if (!isTodayOnlyScan) {
-      historySource = await this.refreshFromRelay(
+      const relay = await refreshFromRelay(
+        this.ctx(),
         referenceTimestamp,
         historyWarnings,
         Boolean(options?.rescanHistory)
       );
+      this.aggregates = relay.aggregates;
+      historySource = relay.historySource;
     }
 
-    const todayRecords = await this.scanTodayRecords(
+    const todayRecords = await scanTodayRecords(
+      this.ctx(),
       options?.providers,
       referenceTimestamp,
       todayWarnings
     );
 
-    // Today reprice — historical days are frozen on disk and never touched
-    // here. Kosha edits only flow through today (still in flight).
+    // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (todayRecords.length > 0 && !this.skipPricing) {
-      if (koshaChanged) {
-        for (const r of todayRecords) r.cost = 0;
-      }
-      await this.enrichCosts(todayRecords, "today", todayWarnings, unpricedTracker);
+      if (koshaChanged) for (const r of todayRecords) r.cost = 0;
+      await enrichCosts(todayRecords, this.pricing, "today", todayWarnings, unpricedTracker);
       if (currentKoshaMtime > 0) {
         setCachedKoshaMtime(currentKoshaMtime);
         saveRecordCacheToDisk();
       }
     }
 
-    // 14-day rolling window for signal computation — bounded so RSS stays flat.
-    let recentHistory: TokenRecord[] = [];
-    if (!isTodayOnlyScan) {
-      recentHistory = await this.scanRecentRecords(
-        options?.providers,
-        referenceTimestamp,
-        historyWarnings
-      );
-    }
-
+    const recentHistory = isTodayOnlyScan
+      ? []
+      : await scanRecentRecords(
+          this.ctx(),
+          options?.providers,
+          referenceTimestamp,
+          historyWarnings,
+          RECENT_RECORDS_WINDOW_DAYS
+        );
     this.recentRecords = this.sliceRecent([...recentHistory, ...todayRecords], referenceTimestamp);
     this.refreshTodayAccumulator(todayRecords, referenceTimestamp);
 
-    // Determine what to return. For an explicit window (digest, `--year`, etc.)
-    // do an ad-hoc bounded raw scan — the window is finite and the caller
-    // needs per-record granularity. Instance state is unaffected.
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
     );
     let returned: TokenRecord[];
     if (hasExplicitRange && !isTodayOnlyScan) {
       const mtimeFloor = options?.since ? new Date(options.since).getTime() : 0;
-      const adHoc = await this.scanRawRecords(
+      const adHoc = await scanRawRecords(
+        this.ctx(),
         options?.providers,
         "history",
         historyWarnings,
         mtimeFloor
       );
       returned = adHoc;
-      if (options?.providers && options.providers.length > 0) {
-        returned = filterByProvider(returned, options.providers);
-      }
+      if (options?.providers?.length) returned = filterByProvider(returned, options.providers);
       if (options?.project) returned = filterByProject(returned, options.project);
       returned = filterByDate(returned, options ?? {});
-      if (this.skipPricing) this.markPricingSkipped(returned);
+      if (this.skipPricing) markPricingSkipped(returned);
     } else {
       returned = this.recentRecords;
-      if (options?.providers && options.providers.length > 0) {
-        returned = filterByProvider(returned, options.providers);
-      }
+      if (options?.providers?.length) returned = filterByProvider(returned, options.providers);
       if (options?.project) returned = filterByProject(returned, options.project);
       if (isTodayOnlyScan) returned = filterByDate(returned, options ?? {});
-      if (this.skipPricing) this.markPricingSkipped(returned);
+      if (this.skipPricing) markPricingSkipped(returned);
     }
 
     this.scanMeta = {
       stableThrough: isTodayOnlyScan ? null : stableThrough,
       historySource: isTodayOnlyScan ? "none" : historySource,
-      todayState: this.resolveTodayState(returned, todayWarnings, isTodayOnlyScan),
+      todayState: resolveTodayState(returned, todayWarnings, isTodayOnlyScan),
       lastScanAt: Date.now(),
       warnings: [...historyWarnings, ...todayWarnings],
       unpricedModels: [...unpricedTracker.models].sort(),
       unpricedRecords: unpricedTracker.records,
     };
 
-    // Kosha wishlist + offline summary cache (both bounded — wishlist looks
-    // at today only, summary cache writes recentRecords via getSummary()).
-    this.writeKoshaWishlist(unpricedTracker, returned);
-
+    writeKoshaWishlist(this.homeDir, unpricedTracker, returned);
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
     if (summaryCacheWarnings.length > 0) {
       this.scanMeta = {
@@ -297,86 +227,54 @@ export class TokmeterCore {
   }
 
   /**
-   * Cheap warm-path refresh: re-scan ONLY today (stat-pruned to today's active
-   * files) and splice it into the loaded records, leaving frozen history
-   * untouched. This is what lets a long-lived daemon stay warm and update
-   * every few seconds without ever re-reading the whole corpus — the fix for
-   * the statusline/daemon RAM blow-up that was panicking the machine.
-   *
-   * Falls back to a single full {@link scan} when the core is cold (no history
-   * loaded yet) so there's a frozen base to splice onto.
+   * Warm-path refresh: today-only scan + splice into the rolling window.
+   * The daemon's hot path. Falls back to a full {@link scan} on cold start.
    */
   async refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
-    // Cold start: no aggregate state loaded → fall back to a full scan so
-    // the warm path has a frozen base to splice today's records onto.
-    if (this.todayAccumulator === null) {
-      return this.scan();
-    }
+    if (this.todayAccumulator === null) return this.scan();
 
     const todayWarnings: ScanWarning[] = [];
-
-    // Detect a kosha edit so today (still in flight) reprices at current rates.
-    // History is never touched here — it stays frozen, per the immutability rule.
     let koshaChanged = false;
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
       } catch {
-        // enrichCosts re-warns if pricing stays unavailable.
+        /* enrichCosts re-warns if pricing stays unavailable */
       }
-      const currentKoshaMtime = this.pricing.getRegistryMtime();
-      const cachedKoshaMtime = getCachedKoshaMtime();
-      koshaChanged = currentKoshaMtime > 0 && currentKoshaMtime !== cachedKoshaMtime;
+      const mtime = this.pricing.getRegistryMtime();
+      koshaChanged = mtime > 0 && mtime !== getCachedKoshaMtime();
     }
 
-    const today = await this.scanTodayRecords(undefined, now, todayWarnings);
+    const today = await scanTodayRecords(this.ctx(), undefined, now, todayWarnings);
 
     if (this.skipPricing) {
-      this.markPricingSkipped(today);
+      markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
-      // today is mutable — drop stale cached cost and reprice at current kosha.
       for (const r of today) r.cost = 0;
-      await this.enrichCosts(today, "today", todayWarnings);
-      const currentKoshaMtime = this.pricing.getRegistryMtime();
-      if (currentKoshaMtime > 0) {
-        setCachedKoshaMtime(currentKoshaMtime);
+      await enrichCosts(today, this.pricing, "today", todayWarnings);
+      const mtime = this.pricing.getRegistryMtime();
+      if (mtime > 0) {
+        setCachedKoshaMtime(mtime);
         saveRecordCacheToDisk();
       }
     }
 
-    // Roll forward the 14-day window: drop today's stale slice from
-    // recentRecords, append the fresh today scan. Aggregates already hold
-    // historical days; only today's accumulator needs to be replaced.
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
     this.refreshTodayAccumulator(today, now);
 
     this.scanMeta = {
       ...this.scanMeta,
-      todayState: this.resolveTodayState(this.recentRecords, todayWarnings, false),
+      todayState: resolveTodayState(this.recentRecords, todayWarnings, false),
       lastScanAt: Date.now(),
       warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "today"), ...todayWarnings],
     };
 
-    // We deliberately do NOT call `saveSummaryCache` here. The persisted
-    // summary cache is an OFFLINE FALLBACK read when the daemon is unreachable
-    // — not a per-tick hot-path artifact. `getSummary()` includes the full
-    // records array; stringifying ~272k records every 12s would spike the
-    // daemon by hundreds of MB on each refresh. The cache is refreshed on
-    // every full `scan()` (cold start, explicit rescan, pricing update) which
-    // is already the right cadence — a fallback reader gets the snapshot as
-    // of the last full scan; "today" lags slightly, which is the acceptable
-    // price for not torching memory on every warm refresh.
-
+    // No saveSummaryCache here: that's an offline fallback, not per-tick —
+    // serializing recentRecords every 12s would spike RSS by hundreds of MB.
     return this.recentRecords;
   }
 
-  /**
-   * Slice the recent records window: keep the last
-   * {@link RECENT_RECORDS_WINDOW_DAYS} of records relative to the reference
-   * timestamp. Sized to the longest signal lookback (pace's 14-day baseline)
-   * so {@link computeStatbarSignals} keeps precision while RSS stays bounded.
-   */
   private sliceRecent(records: TokenRecord[], referenceTimestamp: number): TokenRecord[] {
     const cutoff = referenceTimestamp - RECENT_RECORDS_WINDOW_DAYS * 86_400_000;
     const out: TokenRecord[] = [];
@@ -384,11 +282,6 @@ export class TokmeterCore {
     return out;
   }
 
-  /**
-   * Lightweight today-only update. Replaces just the today accumulator
-   * without rebuilding historical aggregates (those are loaded from per-day
-   * files via {@link refreshFromRelay}).
-   */
   private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
     const todayKey = localDateKey(referenceTimestamp);
     const [todayAgg] = aggregateRecordsByDay(todayRecords);
@@ -397,65 +290,35 @@ export class TokmeterCore {
     this.todayAccumulator = acc;
   }
 
-  /**
-   * Historical aggregates only (days before today). Phase 1 of the aggregate
-   * cutover: this is read-only state that consumers can opt into; existing
-   * consumers still read `getRecords()`. Returns a stable snapshot — callers
-   * may iterate while the daemon refreshes (today is excluded; only frozen
-   * days are here).
-   */
+  // ─── Read API — delegators to aggregate-consumers + signals ──────────────
+
   getDailyAggregates(): DailyAggregate[] {
     return [...this.aggregates.values()].sort((a, b) =>
       a.date < b.date ? -1 : a.date > b.date ? 1 : 0
     );
   }
 
-  /**
-   * Today's live aggregate view (current accumulator snapshot). Null only
-   * before the first scan completes. Returns a new object — caller can hold
-   * it across refreshes without seeing the accumulator mutate underneath.
-   */
   getTodayAggregate(): DailyAggregate | null {
     return this.todayAccumulator?.toAggregate() ?? null;
   }
 
-  /**
-   * Returns the rolling 14-day records window — sized to the longest signal
-   * lookback. Callers needing lifetime data should migrate to the aggregate
-   * getters ({@link getStats}, {@link getDailyBreakdown}, {@link getAllProjects}).
-   *
-   * Semantic break landed in Phase 3 of the aggregate cutover so the daemon's
-   * RSS stops scaling with lifetime record count.
-   */
+  /** Rolling 14-day window; lifetime callers should use the aggregate getters. */
   getRecords(): TokenRecord[] {
     return this.recentRecords;
   }
 
-  /** Metadata describing the last scan's stable/live composition state. */
   getScanMeta(): ScanMeta {
-    return {
-      ...this.scanMeta,
-      warnings: [...this.scanMeta.warnings],
-    };
+    return { ...this.scanMeta, warnings: [...this.scanMeta.warnings] };
   }
 
-  /** Get summaries for all projects. Respects user aliases (merge + hide). */
-  /** Project rollup — alias-resolved displays + per-(model, provider)
-   *  cross-cut totals + per-day breakdown. Phase 2.3 aggregate migration;
-   *  parity-tested. */
   getAllProjects(): ProjectSummary[] {
     return computeAllProjectsFromState(this.aggregates, this.todayAccumulator, this.getAliases());
   }
 
-  /** All raw canonical project names seen during scan (pre-alias). Used by
-   *  the `alias suggest` command to detect case-insensitive duplicates.
-   *  Aggregate-path migration (Phase 2.2); parity-tested. */
   getRawProjectNames(): string[] {
     return computeRawProjectNamesFromState(this.aggregates, this.todayAccumulator);
   }
 
-  /** Single ProjectSummary lookup — exact match first, then substring.
-   *  Phase 2.3 aggregate migration. */
   getProjectSummary(projectName: string): ProjectSummary | undefined {
     return computeProjectSummaryFromState(
       this.aggregates,
@@ -465,11 +328,6 @@ export class TokmeterCore {
     );
   }
 
-  /**
-   * Get model summaries, optionally filtered by project / date window.
-   * Reads from aggregate state — project filter walks per-(project, model)
-   * cross-cut buckets added in Phase 2.3. Parity-tested.
-   */
   getModelCosts(options?: {
     project?: string;
     since?: string;
@@ -477,94 +335,18 @@ export class TokmeterCore {
     today?: boolean;
     providers?: ProviderId[];
   }): ModelSummary[] {
-    return computeModelCostsFromState(this.aggregates, this.todayAccumulator, {
-      today: options?.today,
-      since: options?.since,
-      until: options?.until,
-      project: options?.project,
-      providers: options?.providers,
-    });
+    return computeModelCostsFromState(this.aggregates, this.todayAccumulator, options ?? {});
   }
 
-  /** Get provider breakdown across all records. */
-  /**
-   * Provider breakdown — total cost / tokens / models / percentage-of-total
-   * per provider. Reads from per-day perProvider buckets + perModel.providers
-   * lists. Phase 2 of the cutover; parity-tested.
-   */
   getProviderBreakdown() {
     return computeProviderBreakdownFromState(this.aggregates, this.todayAccumulator);
   }
 
-  /**
-   * Cross-tool comparison: project today's exact token shape against each of
-   * the user's top N models from lifetime usage. Surfaces "if all of today's
-   * tokens had run on model X instead, you'd have spent $Y" — the kind of
-   * comparison nobody else ships because most trackers don't have a unified
-   * pricing oracle. Universal-first: no hardcoded model list; the projection
-   * uses kosha live so the lineup reflects what's actually billable today.
-   *
-   * Returns an array of {model, provider, projectedCost} sorted by projected
-   * cost ascending (cheapest alternative first). Actual today's cost is
-   * exposed separately so the UI can mark the "you used these" baseline.
-   */
-  async getCrossToolComparison(): Promise<{
-    todayActualCost: number;
-    todayTokens: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      reasoning: number;
-    };
-    projections: Array<{
-      model: string;
-      provider: ProviderId;
-      projectedCost: number;
-    }>;
-  }> {
-    const today = this.getTodayAggregate();
-    const totals = {
-      input: today?.inputTokens ?? 0,
-      output: today?.outputTokens ?? 0,
-      cacheRead: today?.cacheReadTokens ?? 0,
-      cacheWrite: today?.cacheWriteTokens ?? 0,
-      reasoning: today?.reasoningTokens ?? 0,
-    };
-    const actual = today?.cost ?? 0;
-    // Top 6 lifetime models — the lineup the user has demonstrated by use.
-    // Hardcoding a "popular models" list would violate the universal-first
-    // principle; projecting against the user's actual lineup is honest and
-    // useful (these are the alternatives they'd realistically pick).
-    const topModels = this.getModelCosts().slice(0, 6);
-    const projections = await Promise.all(
-      topModels.map(async (m) => ({
-        model: m.model,
-        provider: m.provider,
-        projectedCost: await this.pricing.calculateCost(
-          m.model,
-          totals.input,
-          totals.output,
-          totals.cacheRead,
-          totals.cacheWrite,
-          totals.reasoning
-        ),
-      }))
-    );
-    projections.sort((a, b) => a.projectedCost - b.projectedCost);
-    return {
-      todayActualCost: actual,
-      todayTokens: totals,
-      projections,
-    };
+  async getCrossToolComparison(): Promise<CrossToolComparison> {
+    const top = this.getModelCosts().slice(0, 6);
+    return computeCrossToolComparison(this.pricing, this.getTodayAggregate(), top);
   }
 
-  /**
-   * Get daily breakdown, optionally filtered by date range and project. Reads
-   * from per-day aggregates + today's accumulator — Phase 2 of the cutover.
-   * Same {@link DailyEntry} shape the legacy records-walking impl returned;
-   * parity-tested in aggregate-migration-parity.test.ts.
-   */
   getDailyBreakdown(options?: {
     since?: string;
     until?: string;
@@ -588,16 +370,10 @@ export class TokmeterCore {
     });
   }
 
-  /**
-   * Live "right now" signals — burn rate, cache hit, pace, compaction tax,
-   * live session. Each call recomputes against the current wall clock so the
-   * bar can poll this and watch the numbers move.
-   */
   getStatbarSignals(now: number = Date.now()): StatbarSignals {
     return computeStatbarSignals(this.recentRecords, now);
   }
 
-  /** Get a serialisable summary payload with data plus scan metadata. */
   getSummary(): TokmeterSummary {
     return {
       records: this.recentRecords,
@@ -610,403 +386,7 @@ export class TokmeterCore {
     };
   }
 
-  /**
-   * Export everything as a JSON-serialisable object.
-   *
-   * The output shape matches what the web app and macOS bar expect.
-   */
   toJSON(): TokmeterSummary {
     return this.getSummary();
-  }
-
-  /**
-   * Enrich records that lack a cost with pricing data from kosha-discovery.
-   *
-   * Only processes records where `cost === 0`. Each record's cost is
-   * calculated based on its model's per-million-token pricing for all
-   * five token types: input, output, cache read, cache write, reasoning.
-   *
-   * Records whose model has no pricing entry will remain at cost 0.
-   * Consumers should treat `cost === 0 && (inputTokens + outputTokens) > 0`
-   * as a signal that pricing data was unavailable.
-   */
-  private async enrichCosts(
-    records: TokenRecord[],
-    warningScope: "history" | "today",
-    warnings: ScanWarning[],
-    unpricedTracker?: { models: Set<string>; records: number }
-  ): Promise<void> {
-    const costPromises = records.map(async (r) => {
-      if (r.cost > 0) return; // already has cost
-      try {
-        r.cost = await this.pricing.calculateCost(
-          r.model,
-          r.inputTokens,
-          r.outputTokens,
-          r.cacheReadTokens,
-          r.cacheWriteTokens,
-          r.reasoningTokens
-        );
-        const hasBillableTokens =
-          r.inputTokens +
-            r.outputTokens +
-            r.cacheReadTokens +
-            r.cacheWriteTokens +
-            r.reasoningTokens >
-          0;
-        const pricingUnavailable =
-          r.cost === 0 &&
-          hasBillableTokens &&
-          !this.pricing.hasUserOverride(r.model) &&
-          !isOpaqueModel(r.model);
-        if (r.usage) {
-          r.usage.cost = pricingUnavailable ? "not_exposed" : "calculated";
-        }
-        // Silent $0: pricing returned null, calculateCost returned 0, but the
-        // record has real token usage. Track so the UI can surface it instead
-        // of letting it disappear into the totals. Skip the track when the
-        // user has an explicit override for this model — a $0 entry there
-        // means "intentionally free" (internal/local/negotiated deployment),
-        // not a lookup miss, and we'd otherwise flood the amber pill with
-        // every internal model the user has configured.
-        if (unpricedTracker && pricingUnavailable) {
-          unpricedTracker.models.add(r.model);
-          unpricedTracker.records += 1;
-        }
-      } catch (error) {
-        if (r.usage) r.usage.cost = "not_exposed";
-        warnings.push({
-          scope: warningScope,
-          message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${this.toErrorMessage(error)}).`,
-        });
-        if (unpricedTracker && !isOpaqueModel(r.model)) {
-          unpricedTracker.models.add(r.model);
-          unpricedTracker.records += 1;
-        }
-      }
-    });
-    await Promise.all(costPromises);
-  }
-
-  /**
-   * Phase 3.3 — Refresh historical aggregates from the per-day relay store.
-   *
-   * Loads every per-day file present on disk into `this.aggregates`, then
-   * fills any gap between the newest on-disk day and yesterday by doing a
-   * bounded mtime-watermarked raw scan. Bounded so cold start scales with
-   * the gap (typically 0–1 days), not with lifetime corpus size.
-   *
-   * Returns the `historySource` label for `scanMeta`: `"snapshot"` when the
-   * relay was fully up to date, `"extended"` after a gap fill, `"rebuilt"`
-   * for a first-ever cold start or explicit `rescanHistory`, `"none"` when
-   * the corpus is genuinely empty.
-   */
-  private async refreshFromRelay(
-    referenceTimestamp: number,
-    warnings: ScanWarning[],
-    forceRebuild: boolean
-  ): Promise<ScanMeta["historySource"]> {
-    this.migrateV2IfNeeded();
-
-    if (forceRebuild) return this.rebuildHistoricalFromScratch(referenceTimestamp, warnings);
-
-    this.aggregates = loadAggregates(this.homeDir);
-    const onDisk = listDaysOnDisk(this.homeDir);
-    const maxOnDisk = onDisk.length > 0 ? onDisk[onDisk.length - 1] : null;
-    const yesterday = yesterdayDateKey(referenceTimestamp);
-
-    if (maxOnDisk === null) {
-      return this.rebuildHistoricalFromScratch(referenceTimestamp, warnings);
-    }
-    if (maxOnDisk >= yesterday) return "snapshot";
-
-    // Gap fill — watermark at the start of the first uncovered day.
-    const floorMs = new Date(`${maxOnDisk}T00:00:00`).getTime() + 86_400_000;
-    const warnBefore = warnings.length;
-    const raw = await this.scanRawRecords(undefined, "history", warnings, floorMs);
-    const todayKey = localDateKey(referenceTimestamp);
-    const gap = raw.filter((r) => {
-      const k = localDateKey(r.timestamp);
-      return k > maxOnDisk && k < todayKey;
-    });
-    // A partial gap scan (provider crash mid-fill) writes nothing — a healthy
-    // re-run will fill it correctly. Better to retry than freeze a degraded day.
-    const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
-    if (gapDegraded) return "extended";
-
-    for (const day of aggregateRecordsByDay(gap)) {
-      if (day.date <= maxOnDisk || day.date >= todayKey) continue;
-      try {
-        writeDayFile(this.homeDir, day);
-        this.aggregates.set(day.date, day);
-      } catch (error) {
-        warnings.push({
-          scope: "cache",
-          message: `Failed to persist day ${day.date} to relay: ${this.toErrorMessage(error)}`,
-        });
-      }
-    }
-    return "extended";
-  }
-
-  /**
-   * Full historical rebuild — first-ever cold start, explicit `rescanHistory`,
-   * or empty relay. Scans every historical file, splatters into per-day relay
-   * files, populates `this.aggregates`. One-time cost (and the only path that
-   * touches lifetime raw records — caller-scoped and immediately released).
-   */
-  private async rebuildHistoricalFromScratch(
-    referenceTimestamp: number,
-    warnings: ScanWarning[]
-  ): Promise<ScanMeta["historySource"]> {
-    const raw = await this.scanHistoricalRecords(undefined, referenceTimestamp, warnings);
-    const todayKey = localDateKey(referenceTimestamp);
-    const days = aggregateRecordsByDay(raw);
-    this.aggregates = new Map();
-    for (const day of days) {
-      if (day.date >= todayKey) continue;
-      try {
-        writeDayFile(this.homeDir, day);
-        this.aggregates.set(day.date, day);
-      } catch (error) {
-        warnings.push({
-          scope: "cache",
-          message: `Failed to persist day ${day.date} to relay: ${this.toErrorMessage(error)}`,
-        });
-      }
-    }
-    return raw.length > 0 ? "rebuilt" : "none";
-  }
-
-  /**
-   * One-shot v2 monolith → per-day relay migration. Idempotent: when per-day
-   * files already exist OR no legacy file is present, returns immediately.
-   * After a successful migration we rename the legacy file to `.legacy` so
-   * future cold starts read the relay only.
-   */
-  private migrateV2IfNeeded(): void {
-    const v2Path = join(this.homeDir, ".cache/tokmeter/history-snapshot.json");
-    const result = migrateMonolithSnapshotIfNeeded(this.homeDir, v2Path, () => {
-      if (!existsSync(v2Path)) return null;
-      try {
-        const parsed = JSON.parse(readFileSync(v2Path, "utf-8"));
-        if (parsed?.version === 3 && Array.isArray(parsed.days)) return { days: parsed.days };
-        if (Array.isArray(parsed?.records)) return { records: parsed.records };
-      } catch {
-        return null;
-      }
-      return null;
-    });
-    if (!result.migrated) return;
-    try {
-      if (existsSync(v2Path)) renameSync(v2Path, `${v2Path}.legacy`);
-    } catch {
-      // Best-effort — leftover legacy file is harmless once the relay is live.
-    }
-  }
-
-  /**
-   * Bounded raw scan for the rolling {@link RECENT_RECORDS_WINDOW_DAYS} window
-   * that the signals layer (`burn rate`, `pace baseline`) needs. mtime
-   * watermark stat-prunes the corpus to files touched in the window, so cold
-   * start scales with recent activity, not lifetime.
-   */
-  private async scanRecentRecords(
-    providers: ProviderId[] | undefined,
-    referenceTimestamp: number,
-    warnings: ScanWarning[]
-  ): Promise<TokenRecord[]> {
-    const floor = referenceTimestamp - RECENT_RECORDS_WINDOW_DAYS * 86_400_000;
-    const raw = await this.scanRawRecords(providers, "history", warnings, floor);
-    return raw.filter(
-      (r) => r.timestamp >= floor && isBeforeToday(r.timestamp, referenceTimestamp)
-    );
-  }
-
-  private async scanHistoricalRecords(
-    providers: ProviderId[] | undefined,
-    referenceTimestamp: number,
-    warnings: ScanWarning[]
-  ): Promise<TokenRecord[]> {
-    const rawRecords = await this.scanRawRecords(providers, "history", warnings);
-    return rawRecords.filter((record) => isBeforeToday(record.timestamp, referenceTimestamp));
-  }
-
-  private async scanTodayRecords(
-    providers: ProviderId[] | undefined,
-    referenceTimestamp: number,
-    warnings: ScanWarning[]
-  ): Promise<TokenRecord[]> {
-    // Today's records can only live in files modified today, so hand parsers a
-    // mtime watermark of local midnight. Parsers that honor it stat-prune the
-    // corpus down to today's couple of active files — this is what keeps a
-    // warm-daemon refresh (and any today-only scan) from cold-reading months
-    // of history into memory.
-    const rawRecords = await this.scanRawRecords(
-      providers,
-      "today",
-      warnings,
-      startOfLocalDay(referenceTimestamp)
-    );
-    return rawRecords.filter((record) => !isBeforeToday(record.timestamp, referenceTimestamp));
-  }
-
-  private markPricingSkipped(records: TokenRecord[]): void {
-    for (const record of records) {
-      if (record.usage?.cost === "calculated" && record.cost === 0) {
-        record.usage.cost = "skipped";
-      }
-    }
-  }
-
-  private async scanRawRecords(
-    providers: ProviderId[] | undefined,
-    warningScope: "history" | "today",
-    warnings: ScanWarning[],
-    modifiedSinceMs?: number
-  ): Promise<TokenRecord[]> {
-    if (!this.skipPricing) {
-      try {
-        await this.pricing.init();
-      } catch (error) {
-        warnings.push({
-          scope: warningScope,
-          message: `Pricing initialization failed — continuing without pricing (${this.toErrorMessage(error)}).`,
-        });
-      }
-    }
-
-    const parsers = getParsers(providers);
-    const scanOpts = modifiedSinceMs !== undefined ? { modifiedSinceMs } : undefined;
-    const results = await Promise.all(
-      parsers.map(async (parser) => {
-        try {
-          return await parser.scan(this.homeDir, scanOpts);
-        } catch (error) {
-          warnings.push({
-            scope: "provider",
-            provider: parser.providerId,
-            message: `${parser.providerId} scan failed — skipped (${this.toErrorMessage(error)}).`,
-          });
-          return [] as TokenRecord[];
-        }
-      })
-    );
-
-    const records = results.flat();
-
-    if (records.length > 0 && !this.skipPricing) {
-      // Today-scope enrichment is gated to records actually dated today.
-      // A today-active file (e.g. a long-running Claude session whose JSONL
-      // is appended to today) can ALSO contain records from yesterday that
-      // appeared earlier in the same file. Those historical records are
-      // FROZEN — their cost must not be touched here, even if they currently
-      // sit at $0 (model wasn't in kosha that day). Without this gate, the
-      // first today-scope scan would silently price every yesterday-tail
-      // record at today's rates and write the new cost back through the
-      // record cache, breaking the snapshot's frozen-cost invariant on the
-      // next history extension.
-      //
-      // History-scope (rebuild / gap fill) prices everything as before —
-      // those records are being freshly committed to the snapshot and need
-      // an initial cost.
-      const referenceTimestamp = Date.now();
-      const recordsToPrice =
-        warningScope === "today"
-          ? records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp))
-          : records;
-      if (recordsToPrice.length > 0) {
-        await this.enrichCosts(recordsToPrice, warningScope, warnings);
-      }
-    }
-
-    saveRecordCacheToDisk();
-    return records;
-  }
-
-  private resolveTodayState(
-    records: TokenRecord[],
-    todayWarnings: ScanWarning[],
-    isTodayOnlyScan: boolean
-  ): ScanMeta["todayState"] {
-    if (todayWarnings.length === 0) {
-      return "live";
-    }
-
-    if (records.length > 0 || isTodayOnlyScan) {
-      return "degraded";
-    }
-
-    return "snapshot-only";
-  }
-
-  private toErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-  }
-
-  /**
-   * Write the kosha wishlist — every model tokmeter saw real usage on but
-   * couldn't price. Kosha reads this on `kosha update` to bias provider
-   * priority toward what the user actually needs.
-   *
-   * Synchronous + best-effort. Writing this should never block or fail a
-   * scan. File is atomic-renamed so kosha can read mid-write safely.
-   */
-  private writeKoshaWishlist(
-    unpricedTracker: { models: Set<string>; records: number },
-    records: TokenRecord[]
-  ): void {
-    try {
-      const fs = require("node:fs") as typeof import("node:fs");
-      const path = require("node:path") as typeof import("node:path");
-      const crypto = require("node:crypto") as typeof import("node:crypto");
-      const dir = path.join(this.homeDir, ".tokmeter");
-      const filePath = path.join(dir, "wishlist.json");
-
-      // Empty tracker but a stale wishlist exists — clean it up so consumers
-      // (bar, CI, kosha) don't keep flagging models that are no longer
-      // unpriced. Without this, the file freezes at its last non-empty state
-      // forever, which is exactly what bit codex-auto-review after the
-      // opaque-models filter landed.
-      if (unpricedTracker.models.size === 0) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch {
-          /* missing is fine */
-        }
-        return;
-      }
-      fs.mkdirSync(dir, { recursive: true });
-
-      // Count hits per unpriced model from today's records.
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const sinceMs = todayStart.getTime();
-      const hits = new Map<string, { hits: number; lastSeenAt: number }>();
-      for (const r of records) {
-        if (r.timestamp < sinceMs) continue;
-        if (!unpricedTracker.models.has(r.model)) continue;
-        const cur = hits.get(r.model);
-        if (cur) {
-          cur.hits += 1;
-          if (r.timestamp > cur.lastSeenAt) cur.lastSeenAt = r.timestamp;
-        } else {
-          hits.set(r.model, { hits: 1, lastSeenAt: r.timestamp });
-        }
-      }
-
-      const payload = {
-        schemaVersion: 1,
-        writtenAt: Date.now(),
-        models: [...hits.entries()]
-          .map(([id, v]) => ({ id, hits: v.hits, lastSeenAt: v.lastSeenAt }))
-          .sort((a, b) => b.hits - a.hits),
-      };
-      const tmp = `${filePath}.${crypto.randomBytes(4).toString("hex")}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
-      fs.renameSync(tmp, filePath);
-    } catch {
-      // Wishlist is observability only — never block a scan.
-    }
   }
 }
