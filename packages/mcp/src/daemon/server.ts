@@ -1248,9 +1248,7 @@ function applyTodayFloor(computed: TodayTotals): TodayTotals {
     // usually codex fork-dedup winner swaps and we DELIBERATELY keep the
     // high-water. Logged at console.warn for daemon stderr only.
     console.warn(
-      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water ` +
-        `$${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex ` +
-        "fork-dedup winner swap; data not lost, just a parser-side reweighting)."
+      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water $${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex fork-dedup winner swap; data not lost, just a parser-side reweighting).`
     );
   }
 
@@ -1305,9 +1303,7 @@ function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>
   }
   if (stats.totalCost + 0.005 < _statsHighWater.totalCost) {
     console.warn(
-      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water ` +
-        `$${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches ` +
-        "today-floor; almost certainly a codex fork-dedup winner swap)."
+      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water $${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches today-floor; almost certainly a codex fork-dedup winner swap).`
     );
   }
   const floored = {
