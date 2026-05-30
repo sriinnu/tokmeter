@@ -58,8 +58,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-1.5.0}"
-BUILD_VERSION="${CFBundleVersion:-20}"
+SHORT_VERSION="${CFBundleShortVersionString:-1.6.0}"
+BUILD_VERSION="${CFBundleVersion:-21}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
@@ -261,10 +261,13 @@ if [[ "${MODE}" == "release" ]]; then
     # Supports two auth methods:
     #   a) API Key file: TOKMETER_API_KEY_FILE (or auto-detected) + KEY_ID + ISSUER_ID (preferred)
     #   b) Apple ID: APPLE_ID + APPLE_APP_PASSWORD + APPLE_TEAM_ID (legacy)
-    # Tokmeter-specific defaults (key lives in ~/Sriinnu/apple-dev-account/tokmeter/)
-    TOKMETER_DEFAULT_KEY="${HOME}/Sriinnu/apple-dev-account/tokmeter/AuthKey_JVBYT392FU.p8/AuthKey_JVBYT392FU.p8"
-    TOKMETER_DEFAULT_KEY_ID="JVBYT392FU"
-    TOKMETER_DEFAULT_ISSUER="0445be98-b570-461d-8cae-7cbcd90e90a7"
+    # Notarization defaults come from the environment only — no account key IDs,
+    # issuer UUIDs, or personal key paths are baked into this tracked file.
+    # Set these (or the APP_STORE_CONNECT_* vars, or the APPLE_ID trio) in
+    # packages/macos-bar/.env. See .env.example.
+    TOKMETER_DEFAULT_KEY="${TOKMETER_DEFAULT_KEY:-}"
+    TOKMETER_DEFAULT_KEY_ID="${TOKMETER_DEFAULT_KEY_ID:-}"
+    TOKMETER_DEFAULT_ISSUER="${TOKMETER_DEFAULT_ISSUER:-}"
 
     USE_API_KEY=0
     USE_KEY_FILE=0
@@ -279,7 +282,7 @@ if [[ "${MODE}" == "release" ]]; then
     elif [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ]]; then
         echo "ERROR: --release requires notarization credentials."
         echo "       Option A (preferred): APP_STORE_CONNECT_API_KEY_P8 + KEY_ID + ISSUER_ID"
-        echo "       Option A2 (local): place key at ${TOKMETER_DEFAULT_KEY}"
+        echo "       Option A2 (local): set TOKMETER_DEFAULT_KEY[_ID]/_ISSUER (or TOKMETER_API_KEY_FILE)"
         echo "       Option B: APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD"
         exit 4
     fi

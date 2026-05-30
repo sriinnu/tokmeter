@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Token usage tracking for AI coding agents \u2014 parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",

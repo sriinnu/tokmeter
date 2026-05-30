@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-05-30
+
+Durability + survivability hardening for the relay and daemon, plus launchd
+supervision so the daemon self-heals across crash, OOM, and login. The relay's
+"no data loss" promise now holds across a hard power loss, not just a clean
+exit. Also splits the core library to MPL-2.0 and redesigns the macOS Hub
+sidebar.
+
+### Added
+
+- **@sriinnu/drishti** — launchd supervision: `tokmeter daemon install-agent`
+  / `uninstall-agent` install a `com.tokmeter.daemon` LaunchAgent with
+  conditional `KeepAlive{SuccessfulExit:false}` — the daemon respawns on a
+  crash, OOM-kill, or login, but a clean exit (EADDRINUSE bow-out, normal
+  shutdown) stays down instead of storming. `resolveLaunchTarget` prefers a
+  `node + dist` entry over `bun + source` so the `NODE_OPTIONS` heap cap is
+  actually enforced (bun ignores it). Install aborts on a held port, is
+  transactional (unlinks the plist on bootstrap failure), and `start`/`stop`/
+  `restart` dispatch on whether the agent is actually loaded.
+- **macOS bar** — Hub sidebar redesign: brand lockup, live connection status,
+  ambient "Today" card, grouped navigation with ⌘-number shortcuts.
+
+### Changed
+
+- **@sriinnu/tokmeter-core** — license changed from AGPL-3.0-only to
+  **MPL-2.0** so the parsing/pricing/relay engine can be embedded in any
+  project; the application surfaces stay AGPL-3.0-only.
+- **README** — de-marketed, honest memory/RSS band, relay-store and
+  daemon-lifecycle architecture sections, corrected signal/test/store counts.
+
+### Fixed
+
+- **@sriinnu/tokmeter-core** — `writeDayFile` now fsyncs the data and the
+  directory around the rename and uses a per-process tmp suffix: a sealed day
+  survives a hard power loss, and concurrent sealers can't tear each other's
+  temp file. Daemon `saveState` made atomic the same way.
+- **@sriinnu/tokmeter-core** — `DailyAccumulator.fold()` drops malformed
+  records (NaN/Infinity/negative numerics, empty model id) so a single bad
+  JSONL line can't poison the day's totals or the cache-math identity.
+- **@sriinnu/drishti** — the daemon survives a recoverable throw: an unhandled
+  promise rejection logs and continues instead of exiting; an uncaught
+  exception exits cleanly for a launchd respawn rather than dying silently.
+
 ## [1.5.0] - 2026-05-24
 
 The "no more lifetime records" release — Phase 3.3 of the aggregate cutover.
