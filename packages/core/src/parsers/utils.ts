@@ -222,9 +222,7 @@ export function setCachedKoshaMtime(mtimeMs: number): void {
  * cache-set race that would otherwise let a concurrent writer's appended
  * bytes vanish on the next exact-match check).
  */
-export async function getCachedRecords(
-  path: string
-): Promise<
+export async function getCachedRecords(path: string): Promise<
   | { hit: true; records: TokenRecord[] }
   | {
       hit: false;

@@ -192,8 +192,7 @@ export function loadHistorySnapshot(
     if (!SUPPORTED_VERSIONS.has(snapshot.version)) {
       warnings.push({
         scope: "history",
-        message:
-          `History snapshot version ${snapshot.version} is not supported by this build — rebuilding frozen history.`,
+        message: `History snapshot version ${snapshot.version} is not supported by this build — rebuilding frozen history.`,
       });
       return {
         records: [],

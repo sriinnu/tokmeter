@@ -27,7 +27,7 @@ Below is exactly what tokmeter prints on a real machine — same code you'd `npm
   <tr>
     <td align="center" width="50%">
       <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="280" />
-      <br/><em>macOS menu bar — five live signals at a glance.</em>
+      <br/><em>macOS menu bar — live signals at a glance.</em>
     </td>
     <td align="center" width="50%">
       <img src="docs/assets/screenshots/cli-digest.png" alt="tokmeter digest --period week" width="380" />
@@ -432,15 +432,19 @@ bun run bar                        # build, install to /Applications, launch
 ```
 
 Beyond the standard totals (today's cost, week sparkline, top models, per-project
-sessions), the bar shows **five "right now" signals** so the surface reads as
-a speedometer, not a scoreboard:
+sessions), the bar surfaces a set of live "right now" signals so the surface reads
+as a speedometer, not a scoreboard. The statbar foregrounds these six; the rest
+(subagent share, reasoning share, per-tool cost, Claude 5-hour billing window,
+per-project context pressure) live in the Hub. All eleven are computed in one pass
+in [`packages/core/src/signals.ts`](packages/core/src/signals.ts):
 
 | Signal | What it tells you |
 |--------|-------------------|
 | **Burn rate** | $/hr over the last 60 min — color ramps green → amber → red as you heat up. |
-| **Cache hit %** today | Share of read tokens served from cache. Green ≥90%, amber 60–90%, red below. |
+| **Cache hit %** today | Read tokens served from cache. Two denominators are tracked: the *canonical* rate `cacheRead / (input + cacheRead + cacheWrite)` (counts cache writes as a cost, the honest number) and a *legacy read-share* `cacheRead / (input + cacheRead)` for back-compat. The bar shows the read-share; `missRate + cacheWriteShare + canonicalRate` always sums to exactly 1. |
 | **Pace** | Today's cost-by-this-hour vs. the median of your last 7 active days. Tortoise / hare / equal icon. |
 | **Compaction tax** | % of today's spend going to `/compact` overhead (Claude Code-specific signal). |
+| **Context pressure** | How much the latest request's input has grown over the session's early baseline (the "drag" cache reads add) — the lever behind when to `/compact`. |
 | **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
 
 Seven themes (Terminal / Paper / Nebula / Aurora / Noise / Nocturne / Glass) and
@@ -500,11 +504,11 @@ The daemon scans your sessions once, persists them as per-day immutable aggregat
 
 | | before (v2 monolith) | after (v3 relay) | delta |
 |---|---|---|---|
-| History store on disk | 1 file × 187 MB | 146 files × ~6 KB each (848 KB total) | **220× smaller** |
+| History store on disk | 1 file × 187 MB | 152 files × ~6 KB each (~892 KB total) | **220× smaller** |
 | Lifetime `TokenRecord[]` in heap | held warm | structurally eliminated | gone |
-| Cold-start I/O | parse 187 MB JSON + dispatch | load 848 KB + bounded 14-day mtime-pruned scan | bounded by gap, not corpus |
+| Cold-start I/O | parse 187 MB JSON + dispatch | load ~892 KB + bounded 14-day mtime-pruned scan | bounded by gap, not corpus |
 
-**Hot-path query latency** (measured against a 77 GB / 292k-record corpus, daemon HTTP port):
+**Hot-path query latency** (measured against a 77 GB / 319k-record corpus, daemon HTTP port):
 
 | endpoint | cache hit (within 12s TTL) | cache miss (TTL refresh) | response size |
 |---|---|---|---|
@@ -518,7 +522,7 @@ The daemon scans your sessions once, persists them as per-day immutable aggregat
 
 The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan is mtime-pruned, so it only touches files modified today (typically a handful of active session files).
 
-**Memory:** RSS is noisy on macOS due to V8 arena retention and the parser-level scan cache, but the architectural shift is real — the daemon no longer pins lifetime records in heap, and the on-disk store is 220× smaller. Idle RSS varies from ~30 MB (deep idle after GC) to ~1.5 GB (active scan + cache); the pre-v1.5 daemon stably held ~1 GB+ regardless.
+**Memory — the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB – 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ — not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (bounded 14-day window instead), and the on-disk store is 220× smaller. The remaining heap bulk is the scan cache; bounding it to the same 14-day watermark is the next memory fight.
 
 **Reproduce locally:**
 
@@ -560,6 +564,41 @@ Session Files (local disk)
 | (digest) |          | (live)   | (24 tools)|           | (Swift)  |
 +----------+----------+----------+----------+-----------+----------+
 ```
+
+### Relay store (history persistence)
+
+History is a relay race of **per-day immutable aggregate files** at
+`~/.cache/tokmeter/aggregates/YYYY-MM-DD.json` (~6 KB each). Each sealed day is
+write-once-ever — no code path rewrites an existing day file. "Today" lives only
+in an in-memory `DailyAccumulator`; at the midnight rollover (or the first scan
+after it) the accumulator seals to its own day file and a fresh one starts. The
+raw session JSONL is just the *source* today is re-derived from — once a day is
+sealed, **deleting the underlying JSONL loses nothing**, because the sealed
+aggregate already holds that day's counts. Cross-machine sync is plain `rsync`:
+each day file is a self-contained unit, so union-merging two machines'
+`aggregates/` directories yields unified history with no coordination protocol.
+
+### Daemon lifecycle (and why the bar reads `/tmp`)
+
+The daemon binds two localhost ports — `9876` (WebSocket, live registration) and
+`9877` (HTTP REST, every reader's query path). On a successful bind it writes its
+PID and an auth token to **two** locations:
+
+- **Canonical** — `~/.tokmeter/daemon/daemon.{pid,token}` (the source of truth;
+  the daemon's own singleton guard reads this).
+- **Legacy shim** — `/tmp/drishti-daemon.{pid,token}` (what the macOS bar reads).
+
+The bar treats "is the daemon up?" as `fileExists(/tmp/drishti-daemon.pid)` +
+`kill(pid, 0)` + a `proc_name` check, *before* it ever hits HTTP — this avoids a
+60 s URLSession hang when the daemon is genuinely down. The catch: macOS reaps
+`/tmp` files untouched for ~3 days. A daemon that stays up for days writes the
+shim once at startup and never again, so the reaper eventually deletes it — after
+which the bar reports **"offline" against a perfectly healthy daemon**, and a
+naive restart can't recover (the live daemon still owns the *canonical* pidfile,
+so the singleton guard makes the new start bow out). The fix: the daemon
+re-asserts the `/tmp` shims on its 10 s state-save tick whenever they go missing,
+so the reaper can never outlast it (`reassertLegacyShims` in
+`packages/mcp/src/daemon/server.ts`).
 
 ## Development
 
@@ -610,16 +649,14 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (260+ cases across the monorepo)
+bun run test                   # Run tests (177 passing + 11 todo across the monorepo)
 bun run lint                   # Lint
 bun run format                 # Format
 ```
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0-only) — see [LICENSE](./LICENSE).
+- Application — AGPL-3.0-only: [LICENSE](./LICENSE)
+- Core library `@sriinnu/tokmeter-core` — MPL-2.0: [packages/core/LICENSE](./packages/core/LICENSE)
 
-Copyright (c) 2026 Srinivas Pendela. tokmeter is free software: you can
-redistribute it and/or modify it under the terms of the AGPL v3. If you run a
-modified version of tokmeter as a network service, AGPL section 13 requires you
-to make the modified source available to your users.
+Copyright (c) 2026 Srinivas Pendela.

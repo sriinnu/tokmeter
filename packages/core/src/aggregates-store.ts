@@ -23,8 +23,11 @@
  */
 
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -164,9 +167,17 @@ export function loadAggregates(
 // ─── Write ─────────────────────────────────────────────────────────────────
 
 /**
- * Atomically write one per-day aggregate. Writes through a `.tmp` sibling
- * then renames — a kill mid-write leaves either the prior file intact or
- * (on first write) no file at all, never a half-written one.
+ * Atomically + durably write one per-day aggregate. Writes through a
+ * per-process `.tmp` sibling, fsyncs the data, then renames — a kill mid-write
+ * leaves either the prior file intact or (on first write) no file at all,
+ * never a half-written one, and a power loss after the rename can't surface an
+ * unflushed (empty/truncated) file in its place.
+ *
+ * Durability matters here specifically because the relay's promise is "a
+ * sealed day never gets lost even if its JSONL is later deleted" — that
+ * promise has to survive a hard crash, not just a clean exit. The tmp suffix
+ * carries the pid so a daemon and a concurrent CLI cold-scan sealing the same
+ * day can't tear each other's temp file.
  *
  * The file is intended to be **write-once**. The function does not refuse
  * overwrites (rollover may legitimately overwrite TODAY's tentative file on
@@ -177,9 +188,29 @@ export function loadAggregates(
 export function writeDayFile(homeDir: string, aggregate: DailyAggregate): void {
   const dir = ensureStoreDir(homeDir);
   const path = join(dir, `${aggregate.date}.json`);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(aggregate), { encoding: "utf-8", mode: 0o600 });
+  const tmp = `${path}.${process.pid}.tmp`;
+  // Write + fsync the data through an explicit fd before the rename so the
+  // bytes are on stable storage when the rename makes them visible.
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeFileSync(fd, JSON.stringify(aggregate), { encoding: "utf-8" });
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, path);
+  // fsync the directory so the rename entry itself is durable, not just the
+  // file contents. Best-effort: some filesystems reject directory fsync.
+  try {
+    const dfd = openSync(dir, "r");
+    try {
+      fsyncSync(dfd);
+    } finally {
+      closeSync(dfd);
+    }
+  } catch {
+    /* directory fsync unsupported here — file fsync above still holds */
+  }
 }
 
 /**
@@ -201,6 +232,34 @@ export function dayFileMtime(homeDir: string, date: string): number | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Seal a rolled-over day into the relay. Called when the daemon crosses
+ * midnight and the outgoing {@link DailyAccumulator} holds a now-complete past
+ * day: freezing it here means the day survives even if its raw JSONL is later
+ * deleted, instead of depending on a later cold-start gap-fill that re-reads
+ * the JSONL. Write-once — only persists when the day isn't already on disk, so
+ * the immutable on-disk version always wins. Returns the sealed aggregate (so
+ * the caller can splice it into its in-memory map) or null when nothing was
+ * sealed (no rollover, empty day, or the day is already on disk). The disk
+ * write is best-effort: a failure still returns the aggregate so live queries
+ * stay correct, and the next cold-start gap-fill re-seals it from JSONL.
+ */
+export function sealRolledOverDay(
+  homeDir: string,
+  prev: DailyAccumulator,
+  todayKey: string
+): DailyAggregate | null {
+  if (prev.date >= todayKey || prev.isEmpty()) return null;
+  if (dayFileMtime(homeDir, prev.date) !== null) return null;
+  const sealed = prev.seal();
+  try {
+    writeDayFile(homeDir, sealed);
+  } catch {
+    /* gap-fill on next cold start re-seals from JSONL if this write fails */
+  }
+  return sealed;
 }
 
 // ─── DailyAccumulator — the in-memory "today" runner ───────────────────────
@@ -271,9 +330,16 @@ export class DailyAccumulator {
   /**
    * Fold a single record into the running aggregate. Idempotent: re-folding
    * the same record (by fingerprint) is a no-op. Returns true if the record
-   * was new, false if it was a duplicate.
+   * was new, false if it was a duplicate OR malformed.
+   *
+   * A record with a NaN/Infinity/negative numeric field would silently poison
+   * every total and break the cache-math invariant (missRate +
+   * cacheWriteShare + canonicalRate = 1.0) with no way to recover short of a
+   * full rebuild. We drop such records at the door rather than let one bad
+   * line corrupt the whole day's aggregate.
    */
   fold(record: TokenRecord): boolean {
+    if (!isFoldableRecord(record)) return false;
     const fp = recordFingerprint(record);
     if (this.fingerprints.has(fp)) return false;
     this.fingerprints.add(fp);
@@ -458,6 +524,31 @@ function finalizeDay(day: DailyAggregate): DailyAggregate {
  */
 function recordFingerprint(r: TokenRecord): string {
   return `${r.timestamp}|${r.provider}|${r.model}|${r.inputTokens}|${r.outputTokens}|${r.cacheReadTokens}|${r.cacheWriteTokens}|${r.reasoningTokens}|${r.cost}`;
+}
+
+/**
+ * Guard against a malformed record poisoning the running aggregate. Every
+ * numeric must be a finite, non-negative number; the model identity must be a
+ * non-empty string (an empty model key would create a junk bucket). A record
+ * that fails any check is dropped — it never reaches {@link foldRecordIntoDay},
+ * so totals and the cache-math identity stay sound regardless of upstream
+ * parser bugs or hand-edited JSONL.
+ */
+function isFoldableRecord(r: TokenRecord): boolean {
+  const nums = [
+    r.timestamp,
+    r.inputTokens,
+    r.outputTokens,
+    r.cacheReadTokens,
+    r.cacheWriteTokens,
+    r.reasoningTokens,
+    r.cost,
+  ];
+  for (const n of nums) {
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return false;
+  }
+  if (typeof r.model !== "string" || r.model.length === 0) return false;
+  return true;
 }
 
 // ─── Migration helper (one-shot v2/v3-monolith → per-day directory) ────────

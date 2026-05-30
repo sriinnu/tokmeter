@@ -24,7 +24,7 @@
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0"
   },
-  "license": "AGPL-3.0-only",
+  "license": "MPL-2.0",
   "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
   "repository": {
     "type": "git",

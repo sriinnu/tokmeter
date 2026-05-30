@@ -137,8 +137,7 @@ export class ClaudeCodeParser implements SessionParser {
       // is the WRONG boundary (the one that fired AFTER an assistant turn we
       // haven't parsed yet). The freshly-parsed assistant record will become
       // the new lastAssistantRecord below and the right boundary will tag it.
-      const cachedTail =
-        cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
+      const cachedTail = cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
       let lastAssistantRecord: TokenRecord | null =
         cachedTail && cachedTail.kind === "compaction" ? null : cachedTail;
       for (const msg of lines) {

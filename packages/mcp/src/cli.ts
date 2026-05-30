@@ -26,6 +26,11 @@
 // NOTE: import the constant from formatter so we don't drift two copies.
 import { FALLBACK_STATUSLINE } from "./formatter.js";
 const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
+// The detached/launchd daemon child runs in the foreground with this env flag
+// set (see server.ts). It's a long-lived singleton, so its crash policy
+// differs from one-shot CLI commands: a recoverable throw must not silently
+// take it down (that's the "offline" class of bug).
+const isDaemonChild = process.argv[2] === "daemon" && process.env.__DRISHTI_DAEMON_CHILD__ === "1";
 
 process.on("unhandledRejection", (reason) => {
   if (isStatusline) {
@@ -33,6 +38,13 @@ process.on("unhandledRejection", (reason) => {
       process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
+  }
+  // A rejected promise (a dropped kosha fetch, a client socket reset) doesn't
+  // corrupt process state — the daemon logs it and keeps serving instead of
+  // dying. launchd is the backstop for states we genuinely can't recover.
+  if (isDaemonChild) {
+    console.error("[daemon] unhandled rejection (continuing):", reason);
+    return;
   }
   console.error("Unhandled rejection:", reason);
   process.exit(1);
@@ -44,6 +56,14 @@ process.on("uncaughtException", (error) => {
       process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
     process.exit(0);
+  }
+  // Unlike a rejection, an uncaught *exception* can leave V8 state
+  // inconsistent, so we don't limp on. Exit cleanly and let launchd respawn
+  // within ~1s; the daemon cold-starts and gap-fills from sealed aggregates +
+  // JSONL, so no usage data is lost across the blip.
+  if (isDaemonChild) {
+    console.error("[daemon] uncaught exception, exiting for respawn:", error);
+    process.exit(1);
   }
   console.error("Uncaught exception:", error);
   process.exit(1);
