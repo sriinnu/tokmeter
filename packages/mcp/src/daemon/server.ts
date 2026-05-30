@@ -10,9 +10,11 @@ import {
   closeSync,
   existsSync,
   constants as fsConstants,
+  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -26,6 +28,15 @@ import { homedir, setPriority } from "node:os";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import { localDateKey, refreshKoshaRegistry } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  AGENT_LABEL,
+  agentPlistPath,
+  installAgent,
+  isAgentInstalled,
+  isAgentLoaded,
+  kickstartAgent,
+  uninstallAgent,
+} from "./launchd.js";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
   DAEMON_HOST,
@@ -235,6 +246,14 @@ export function startDaemon(): void {
     // Save state periodically
     saveStateInterval = setInterval(() => {
       saveState();
+      // macOS reaps /tmp files untouched for ~3 days. The legacy pid/token
+      // shims are written once at startup, so a daemon that stays up for days
+      // loses them to the reaper — after which the macOS bar (which reads
+      // /tmp/drishti-daemon.pid) reports "offline" despite a healthy daemon,
+      // and a restart can't recover because this live daemon still owns the
+      // canonical pidfile and the singleton guard bows out. Re-assert the
+      // shims whenever they go missing so the reaper can never outlast us.
+      reassertLegacyShims();
     }, 10_000);
 
     // Start HTTP API server alongside WebSocket
@@ -420,9 +439,39 @@ function saveState(): void {
   };
 
   try {
-    writeFileSync(DAEMON_STATE_FILE, JSON.stringify(state, null, 2));
+    // Atomic write: a crash mid-write must never leave a truncated JSON that
+    // would throw on the next loadState. tmp(pid)+fsync+rename.
+    const tmp = `${DAEMON_STATE_FILE}.${process.pid}.tmp`;
+    const fd = openSync(tmp, "w", 0o600);
+    try {
+      writeSync(fd, JSON.stringify(state, null, 2));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, DAEMON_STATE_FILE);
   } catch {
     // Ignore save errors
+  }
+}
+
+// Re-create the legacy /tmp pid/token shims if the OS reaper removed them.
+// Canonical state lives under $HOME (reaper-safe); only the /tmp copies the
+// macOS bar reads are at risk. Cheap existsSync gate — writes only on miss.
+function reassertLegacyShims(): void {
+  try {
+    if (!existsSync(LEGACY_DAEMON_PID_FILE)) {
+      writeFileSync(LEGACY_DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+    }
+  } catch {
+    /* legacy path optional — canonical pidfile is the source of truth */
+  }
+  try {
+    if (_authToken && !existsSync(LEGACY_DAEMON_TOKEN_FILE)) {
+      writeSecretFile(LEGACY_DAEMON_TOKEN_FILE, _authToken);
+    }
+  } catch {
+    /* legacy clients just won't authenticate POSTs until next tick */
   }
 }
 
@@ -1400,7 +1449,29 @@ export async function runDaemonCLI(command: string): Promise<void> {
         break;
       }
 
-      // If we ARE the detached child, run the daemon in the foreground.
+      // If launchd is actively managing the daemon, don't fork our own
+      // detached child (it would race the agent's copy on port 9876). Ask
+      // launchd to start it. We gate on isAgentLoaded() (actually bootstrapped)
+      // rather than isAgentInstalled() (plist merely on disk) so a plist that
+      // exists but isn't loaded falls through to the normal fork path below
+      // instead of stranding the user offline on a kickstart that errors.
+      // The DAEMON_CHILD_FLAG guard lets launchd's OWN `daemon start` fall
+      // through to the foreground path below.
+      if (process.env[DAEMON_CHILD_FLAG] !== "1" && isAgentLoaded()) {
+        try {
+          kickstartAgent();
+          await new Promise((r) => setTimeout(r, 800));
+          console.log("【♾️】 Drishti Daemon started via launchd");
+          console.log(getDaemonStatus());
+          break;
+        } catch (err) {
+          // Fall through to the manual fork path rather than leave it down.
+          console.log(`launchd kickstart failed (${err}); starting manually instead`);
+        }
+      }
+
+      // If we ARE the detached child (or launchd's foreground process), run
+      // the daemon in the foreground.
       if (process.env[DAEMON_CHILD_FLAG] === "1") {
         startDaemon();
         process.on("SIGINT", () => {
@@ -1452,6 +1523,17 @@ export async function runDaemonCLI(command: string): Promise<void> {
       break;
 
     case "stop":
+      // Under launchd, a plain SIGTERM is futile — the agent respawns it on
+      // abnormal exit. Bail with the real instruction instead of looking like
+      // the stop failed. Gate on isAgentLoaded() (actually managing it), not a
+      // stale plist on disk.
+      if (isAgentLoaded()) {
+        console.log(
+          "Daemon is launchd-supervised — stopping it directly won't stick.\n" +
+            "    To stop it, run: drishti daemon uninstall-agent"
+        );
+        break;
+      }
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
         if (pid) {
@@ -1474,6 +1556,20 @@ export async function runDaemonCLI(command: string): Promise<void> {
       break;
 
     case "restart":
+      // launchd-managed: a single kickstart -k kills + restarts atomically,
+      // and avoids a SIGTERM the agent would just respawn anyway. Gate on
+      // loaded, and fall through to the manual path if the kickstart errors.
+      if (isAgentLoaded()) {
+        try {
+          kickstartAgent();
+          await new Promise((r) => setTimeout(r, 800));
+          console.log("【♾️】 Drishti Daemon restarted via launchd");
+          console.log(getDaemonStatus());
+          break;
+        } catch (err) {
+          console.log(`launchd kickstart failed (${err}); restarting manually instead`);
+        }
+      }
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
         if (pid) {
@@ -1492,7 +1588,73 @@ export async function runDaemonCLI(command: string): Promise<void> {
       await runDaemonCLI("start");
       break;
 
+    case "install-agent": {
+      if (process.platform !== "darwin") {
+        console.log("launchd supervision is macOS-only; on this platform use `daemon start`.");
+        break;
+      }
+      // Stop any manually-spawned daemon first so launchd's RunAtLoad copy
+      // doesn't race it on the port.
+      if (isDaemonRunning()) {
+        const { pid } = getDaemonStatus();
+        if (pid) {
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {}
+          let retries = 10;
+          while (retries > 0 && isDaemonRunning()) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+            retries--;
+          }
+        }
+      }
+      // If it's STILL alive, bootstrapping now would just collide on the port
+      // (the launchd copy bows out on EADDRINUSE). Abort cleanly instead of
+      // installing into a guaranteed race.
+      if (isDaemonRunning()) {
+        console.log(
+          "A daemon is still running and wouldn't release port. Aborting install.\n" +
+            "    Stop it (drishti daemon stop) and retry install-agent."
+        );
+        break;
+      }
+      try {
+        const { plistPath, heapEnforced } = installAgent();
+        console.log(`【♾️】 launchd agent installed: ${plistPath}`);
+        console.log("    Respawns on crash, OOM, and login (clean exits stay down).");
+        if (!heapEnforced) {
+          console.log(
+            "    ⚠ heap cap NOT enforced — the agent launches via bun, which ignores\n" +
+              "      NODE_OPTIONS --max-old-space-size. Build the dist (bun run build) so a\n" +
+              "      node+dist entry is available, or set TOKMETER_DAEMON_HEAP_MB awareness."
+          );
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+        console.log(getDaemonStatus());
+      } catch (err) {
+        console.log(`Failed to install launchd agent: ${err}`);
+      }
+      break;
+    }
+
+    case "uninstall-agent": {
+      if (!isAgentInstalled()) {
+        console.log("No launchd agent installed.");
+        break;
+      }
+      try {
+        uninstallAgent();
+        console.log(`Removed launchd agent (${AGENT_LABEL}) and plist at ${agentPlistPath()}`);
+        console.log("    The daemon is no longer supervised. Use `daemon start` to run it.");
+      } catch (err) {
+        console.log(`Failed to remove launchd agent: ${err}`);
+      }
+      break;
+    }
+
     default:
-      console.log("Usage: drishti daemon [start|stop|status|restart]");
+      console.log(
+        "Usage: drishti daemon [start|stop|status|restart|install-agent|uninstall-agent]"
+      );
   }
 }

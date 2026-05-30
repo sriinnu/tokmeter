@@ -63,8 +63,8 @@ struct HubView: View {
 
     var body: some View {
         NavigationSplitView {
-            HubSidebar(selection: $selection, theme: theme)
-                .frame(minWidth: 200, idealWidth: 220)
+            HubSidebar(selection: $selection, loader: loader, theme: theme)
+                .frame(minWidth: 212, idealWidth: 232)
                 .background(sidebarBackground)
         } detail: {
             detailPanel

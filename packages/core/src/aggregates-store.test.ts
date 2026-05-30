@@ -10,6 +10,7 @@ import {
   loadAggregates,
   migrateMonolithSnapshotIfNeeded,
   readDayFile,
+  sealRolledOverDay,
   writeDayFile,
 } from "./aggregates-store.js";
 import { aggregateRecordsByDay } from "./aggregates.js";
@@ -315,5 +316,96 @@ describe("JSON round-trip — per-day file is lossless", () => {
     writeDayFile(home, sealed);
     const restored = readDayFile(home, "2026-05-22");
     expect(restored).toEqual(sealed);
+  });
+});
+
+describe("sealRolledOverDay — midnight rollover persists yesterday", () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-roll-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("seals a complete past day to disk so it survives JSONL deletion", () => {
+    const acc = new DailyAccumulator("2026-05-20");
+    acc.fold(r({ timestamp: ts("2026-05-20"), cost: 2, inputTokens: 50 }));
+    // Daemon ticks just after midnight → todayKey is the next day.
+    const sealed = sealRolledOverDay(home, acc, "2026-05-21");
+    expect(sealed?.date).toBe("2026-05-20");
+    // The day is now on disk, independent of any raw JSONL.
+    expect(readDayFile(home, "2026-05-20")?.cost).toBe(2);
+    expect(listDaysOnDisk(home)).toEqual(["2026-05-20"]);
+  });
+
+  test("write-once: never clobbers a day already sealed on disk", () => {
+    const [existing] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 99 })]);
+    writeDayFile(home, existing);
+    const acc = new DailyAccumulator("2026-05-20");
+    acc.fold(r({ timestamp: ts("2026-05-20"), cost: 2 }));
+    const sealed = sealRolledOverDay(home, acc, "2026-05-21");
+    expect(sealed).toBeNull(); // skipped — already on disk
+    expect(readDayFile(home, "2026-05-20")?.cost).toBe(99); // untouched
+  });
+
+  test("no-op when the accumulator is still today (no rollover happened)", () => {
+    const acc = new DailyAccumulator("2026-05-21");
+    acc.fold(r({ timestamp: ts("2026-05-21"), cost: 2 }));
+    expect(sealRolledOverDay(home, acc, "2026-05-21")).toBeNull();
+    expect(listDaysOnDisk(home)).toEqual([]);
+  });
+
+  test("no-op on an empty accumulator (a quiet day seals nothing)", () => {
+    const acc = new DailyAccumulator("2026-05-20");
+    expect(sealRolledOverDay(home, acc, "2026-05-21")).toBeNull();
+    expect(listDaysOnDisk(home)).toEqual([]);
+  });
+});
+
+describe("DailyAccumulator.fold — malformed records can't poison totals", () => {
+  test("drops NaN / Infinity / negative numeric fields", () => {
+    const acc = new DailyAccumulator("2026-05-22");
+    const bad: Array<Partial<TokenRecord>> = [
+      { inputTokens: Number.NaN },
+      { outputTokens: Number.POSITIVE_INFINITY },
+      { cacheReadTokens: -5 },
+      { cost: Number.NaN },
+      { cost: -1 },
+      { reasoningTokens: Number.NEGATIVE_INFINITY },
+      { timestamp: Number.NaN },
+    ];
+    for (const o of bad) {
+      // timestamp default is overridden last in r(); set it explicitly so the
+      // NaN-timestamp case actually exercises the timestamp guard.
+      const rec = r({ timestamp: ts("2026-05-22"), ...o }) as TokenRecord;
+      if (o.timestamp !== undefined) rec.timestamp = o.timestamp;
+      expect(acc.fold(rec)).toBe(false);
+    }
+    expect(acc.isEmpty()).toBe(true);
+    const day = acc.toAggregate();
+    expect(day.recordCount).toBe(0);
+    expect(day.cost).toBe(0);
+    expect(day.totalTokens).toBe(0);
+  });
+
+  test("drops a record with an empty model id (no junk bucket created)", () => {
+    const acc = new DailyAccumulator("2026-05-22");
+    expect(acc.fold(r({ timestamp: ts("2026-05-22"), model: "", cost: 1 }))).toBe(false);
+    expect(acc.toAggregate().recordCount).toBe(0);
+    expect(Object.keys(acc.toAggregate().models)).toEqual([]);
+  });
+
+  test("a bad record between two good ones doesn't disturb the running total", () => {
+    const acc = new DailyAccumulator("2026-05-22");
+    expect(acc.fold(r({ timestamp: ts("2026-05-22"), inputTokens: 10, cost: 1 }))).toBe(true);
+    expect(acc.fold(r({ timestamp: ts("2026-05-22"), inputTokens: Number.NaN, cost: 999 }))).toBe(
+      false
+    );
+    expect(acc.fold(r({ timestamp: ts("2026-05-22"), inputTokens: 20, cost: 2 }))).toBe(true);
+    const day = acc.toAggregate();
+    expect(day.recordCount).toBe(2);
+    expect(day.cost).toBe(3);
+    expect(day.totalTokens).toBe(30);
   });
 });

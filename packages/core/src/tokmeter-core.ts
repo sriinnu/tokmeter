@@ -16,7 +16,7 @@ import {
   computeStatsFromRecords,
   computeStatsFromState,
 } from "./aggregate-consumers.js";
-import { DailyAccumulator } from "./aggregates-store.js";
+import { DailyAccumulator, sealRolledOverDay } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
@@ -284,6 +284,17 @@ export class TokmeterCore {
 
   private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
     const todayKey = localDateKey(referenceTimestamp);
+
+    // Seal-on-rollover. If the daemon ran across midnight, the outgoing
+    // accumulator holds a now-complete past day — freeze it into the relay so
+    // the day survives even if its raw JSONL is later deleted, instead of
+    // waiting for a cold-start gap-fill that re-reads the JSONL.
+    const prev = this.todayAccumulator;
+    if (prev) {
+      const sealed = sealRolledOverDay(this.homeDir, prev, todayKey);
+      if (sealed) this.aggregates.set(sealed.date, sealed);
+    }
+
     const [todayAgg] = aggregateRecordsByDay(todayRecords);
     const acc = new DailyAccumulator(todayKey);
     if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
