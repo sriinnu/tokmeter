@@ -36,7 +36,7 @@ struct HubOverviewPanel: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
                 header
                     .cascadeIn(delay: 0.06)
@@ -66,6 +66,7 @@ struct HubOverviewPanel: View {
             }
             .padding(28)
         }
+        .scrollIndicators(.never)
     }
 
     // MARK: - Header
@@ -83,8 +84,19 @@ struct HubOverviewPanel: View {
 
     // MARK: - KPI row
 
+    // A LazyVGrid with fixed flexible columns — NOT an HStack of
+    // `.frame(maxWidth: .infinity)` cards. Four greedy equal-priority cards in an
+    // HStack let the flex solver re-divide width on every render; when a tile's
+    // numericText value changes on the 30s poll, its transient intrinsic width
+    // perturbs the split and, at large width (lots of slack), the solver never
+    // settles within AppKit's Update-Constraints pass budget → crash. A grid
+    // resolves column widths deterministically (available/4), so a tile's content
+    // can no longer feed back into the row's geometry.
     private var kpiRow: some View {
-        HStack(spacing: 12) {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4),
+            spacing: 12
+        ) {
             HubKpiTile(
                 label: "Total cost",
                 value: Fmt.cost(loader.totalCost),

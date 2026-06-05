@@ -210,7 +210,7 @@ struct HubProjectModelsList: View {
                                 startPoint: .leading, endPoint: .trailing
                             )
                         )
-                        .frame(width: max(4, geo.size.width * CGFloat(m.percentageOfTotal / 100.0)))
+                        .frame(width: safeDim(geo.size.width * CGFloat(m.percentageOfTotal / 100.0), floor: 4))
                 }
             }
             .frame(height: 5)

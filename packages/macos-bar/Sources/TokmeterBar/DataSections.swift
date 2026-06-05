@@ -106,7 +106,7 @@ struct ModelsSection: View {
                                         startPoint: .leading, endPoint: .trailing
                                     )
                                 ))
-                                .frame(width: max(geo.size.width * pct, 4))
+                                .frame(width: safeDim(geo.size.width * pct, floor: 4))
                             Spacer(minLength: 0)
                         }
                     )
@@ -241,7 +241,7 @@ struct WeekSection: View {
                 .mask(
                     GeometryReader { geo in
                         Rectangle()
-                            .frame(width: geo.size.width * drawProgress)
+                            .frame(width: safeDim(geo.size.width * drawProgress))
                     }
                 )
                 .animation(.spring(response: 0.7, dampingFraction: 0.80), value: loader.recentDaily.map(\.cost))

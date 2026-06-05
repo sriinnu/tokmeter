@@ -157,7 +157,7 @@ struct HubTopModelRow: View {
                                 startPoint: .leading, endPoint: .trailing
                             )
                         ))
-                        .frame(width: max(4, geo.size.width * CGFloat(shareOfTotal)))
+                        .frame(width: safeDim(geo.size.width * CGFloat(shareOfTotal), floor: 4))
                 }
             }
             .frame(height: 5)

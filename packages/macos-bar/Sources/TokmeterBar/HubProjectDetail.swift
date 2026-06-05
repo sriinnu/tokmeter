@@ -19,6 +19,14 @@ struct HubProjectsPanel: View {
     @State private var selected: ProjectData?
 
     var body: some View {
+        // The list↔detail swap is a plain, UNANIMATED `.id`-keyed change. Wrapping
+        // a structural swap (different identity, a whole detail subtree with its own
+        // GeometryReaders appearing) in `withAnimation` / `.transition` makes AppKit
+        // re-enter the window's Update-Constraints pass without converging — the
+        // "more Update Constraints passes than there are views in the window" crash.
+        // Property animations (hover, scale) on stable views are fine; structural
+        // swaps must not be animated. Each side still fades its content in via
+        // `cascadeIn`, so the drill-in/out still feels alive.
         Group {
             if let project = selected {
                 HubProjectDetailView(
@@ -27,28 +35,15 @@ struct HubProjectsPanel: View {
                     onBack: { selected = nil }
                 )
                 .id("detail-\(project.id)")
-                .transition(
-                    .asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    )
-                )
             } else {
                 HubProjectsList(
                     projects: loader.sessions,
                     theme: theme,
-                    onSelect: { selected = $0 }
+                    onSelect: { proj in selected = proj }
                 )
                 .id("list")
-                .transition(
-                    .asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    )
-                )
             }
         }
-        .animation(.spring(response: 0.50, dampingFraction: 0.70), value: selected?.id)
     }
 }
 
@@ -125,9 +120,9 @@ struct HubProjectsList: View {
                     isSelected: sort == opt,
                     theme: theme
                 ) {
-                    withAnimation(.spring(response: 0.40, dampingFraction: 0.62)) {
-                        sort = opt
-                    }
+                    // Re-sorting reorders up to 50 rows; animating that structural
+                    // change re-enters the constraint pass. Keep it instant.
+                    sort = opt
                 }
             }
             Spacer()

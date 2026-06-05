@@ -64,9 +64,9 @@ struct HubSettingsPanel: View {
                         isSelected: theme == t,
                         currentTheme: theme
                     ) {
-                        withAnimation(.spring(response: 0.50, dampingFraction: 0.65)) {
-                            theme = t
-                        }
+                        // Theme change re-renders the whole Hub; animating that
+                        // structural change re-enters the constraint pass. Instant.
+                        theme = t
                     }
                 }
             }
@@ -305,9 +305,7 @@ struct HubSettingsPanel: View {
                 theme: theme,
                 tint: .warning
             ) {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.65)) {
-                    store.reset()
-                }
+                store.reset()
             }
             HubSettingsActionButton(
                 icon: "doc.text",

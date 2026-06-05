@@ -62,55 +62,51 @@ struct HubView: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        NavigationSplitView {
+        // A plain HStack sidebar+detail, NOT a NavigationSplitView. The split view's
+        // internal AppKit Auto-Layout machinery (divider/column constraints, bridged
+        // through NSHostingView) re-enters the window's Update-Constraints pass at
+        // large window sizes and never converges → "more Update Constraints passes
+        // than there are views in the window". A fixed-width sidebar + greedy detail
+        // in an HStack has no divider negotiation and no split-view constraint graph,
+        // so the loop has nowhere to live. Fixed 232pt sidebar matches the prior
+        // pinned column.
+        HStack(spacing: 0) {
             HubSidebar(selection: $selection, loader: loader, theme: theme)
-                .frame(minWidth: 212, idealWidth: 232)
+                .frame(width: 232)
+                .frame(maxHeight: .infinity)
                 .background(sidebarBackground)
-        } detail: {
+            Divider()
+                .ignoresSafeArea()
             detailPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(hubBackground)
         }
-        .navigationSplitViewStyle(.balanced)
         .preferredColorScheme(bg.isLight ? .light : .dark)
-        // Pixar-spring sensibility: visible overshoot, things land with weight.
-        // Lower damping = more bounce. 0.62 is right at the edge of playful
-        // without looking buggy.
-        .animation(.spring(response: 0.55, dampingFraction: 0.62), value: selection)
-        .animation(.spring(response: 0.55, dampingFraction: 0.72), value: theme)
     }
 
     // MARK: - Detail panel switching
 
+    // Panel switching is a plain `.id`-keyed swap — NO `.transition` here and NO
+    // `.animation(value: selection)` on the NavigationSplitView (see body). An
+    // implicit animation on a NavigationSplitView tries to animate the split
+    // view's own AppKit Auto Layout constraints; combined with a `.transition`
+    // on `.id`-keyed detail content it re-enters the window's Update-Constraints
+    // pass without converging and AppKit throws "more Update Constraints passes
+    // than there are views in the window", crashing on *every* navigation.
+    // Each panel still animates its own entrance via `cascadeIn`, so the staged
+    // fade-in stays — only the crashing split-view-level animation is gone.
     @ViewBuilder
     private var detailPanel: some View {
         switch selection {
         case .overview:
-            HubOverviewPanel(loader: loader, theme: theme)
-                .id(HubSection.overview)
-                .transition(panelTransition)
+            HubOverviewPanel(loader: loader, theme: theme).id(HubSection.overview)
         case .projects:
-            HubProjectsPanel(loader: loader, theme: theme)
-                .id(HubSection.projects)
-                .transition(panelTransition)
+            HubProjectsPanel(loader: loader, theme: theme).id(HubSection.projects)
         case .commands:
-            HubCommandsPanel(theme: theme)
-                .id(HubSection.commands)
-                .transition(panelTransition)
+            HubCommandsPanel(theme: theme).id(HubSection.commands)
         case .settings:
-            HubSettingsPanel(loader: loader, theme: $theme)
-                .id(HubSection.settings)
-                .transition(panelTransition)
+            HubSettingsPanel(loader: loader, theme: $theme).id(HubSection.settings)
         }
-    }
-
-    /// Pixar-style panel entry — scales up from slightly small with a bouncy
-    /// overshoot so each section "lands" on arrival rather than slides flat.
-    private var panelTransition: AnyTransition {
-        .asymmetric(
-            insertion: .scale(scale: 0.94).combined(with: .opacity),
-            removal: .scale(scale: 1.02).combined(with: .opacity)
-        )
     }
 
     // MARK: - Backgrounds

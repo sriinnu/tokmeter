@@ -357,7 +357,7 @@ private struct TelemetryMini: View {
                         .fill(bg.secondaryTextColor.opacity(0.12))
                     Capsule()
                         .fill(color)
-                        .frame(width: max(2, geo.size.width * max(0, min(1, fill))))
+                        .frame(width: safeDim(geo.size.width * max(0, min(1, fill)), floor: 2))
                         .animation(.spring(response: 0.45, dampingFraction: 0.78), value: fill)
                 }
             }
@@ -410,7 +410,7 @@ private struct ContextDragRow: View {
                         .fill(bg.secondaryTextColor.opacity(0.12))
                     Capsule()
                         .fill(accent)
-                        .frame(width: max(2, geo.size.width * max(0, min(1, pressure.dragShare))))
+                        .frame(width: safeDim(geo.size.width * max(0, min(1, pressure.dragShare)), floor: 2))
                 }
             }
             .frame(height: 4)

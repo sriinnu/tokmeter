@@ -37,7 +37,7 @@ struct HubKpiTile: View {
                         .foregroundColor(bg.primaryTextColor)
                         .contentTransition(.numericText())
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
             }

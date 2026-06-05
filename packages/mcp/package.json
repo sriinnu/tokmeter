@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/drishti",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "\u0926\u0943\u0937\u094d\u091f\u093f \u2014 MCP server + live token observatory for AI coding agents",
   "type": "module",
   "bin": {

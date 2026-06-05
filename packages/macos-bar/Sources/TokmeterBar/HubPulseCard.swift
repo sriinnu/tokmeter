@@ -24,7 +24,12 @@ struct HubPulseCard: View {
                 Text("Today's pulse")
                     .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
-                HStack(spacing: 10) {
+                // Deterministic 5-column grid, not a flexible HStack: same fix as
+                // the overview KPI row — greedy maxWidth:.infinity tiles let the
+                // flex solver re-divide width on every poll (numericText values
+                // change), which doesn't converge at large width and trips AppKit's
+                // Update-Constraints pass budget. A grid pins the columns.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
                     // "—" for inactive numeric tiles instead of "0%" — "0%"
                     // reads as "cache failed today / reasoning crashed" when
                     // truth is "no data flowed through that path." Em-dash is
@@ -177,13 +182,16 @@ struct PulseTile: View {
                         : bg.primaryTextColor.opacity(0.55))
                     .contentTransition(.numericText())
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(sub)
                     .font(.system(size: 10, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor.opacity(active ? 1 : 0.70))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scaleEffect(hovered ? 1.015 : 1.0)
         .animation(.spring(response: 0.30, dampingFraction: 0.72), value: hovered)
@@ -225,7 +233,7 @@ struct ContextPressureStrip: View {
                         .frame(height: 5)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(accent)
-                        .frame(width: max(2, geo.size.width * pressure.dragShare), height: 5)
+                        .frame(width: safeDim(geo.size.width * pressure.dragShare, floor: 2), height: 5)
                         .animation(.spring(response: 0.6, dampingFraction: 0.85),
                                    value: pressure.dragShare)
                 }
@@ -325,7 +333,7 @@ struct BillingStrip: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(accent)
                         .frame(
-                            width: max(2, geo.size.width * window.elapsedPct / 100),
+                            width: safeDim(geo.size.width * window.elapsedPct / 100, floor: 2),
                             height: 5
                         )
                         .animation(

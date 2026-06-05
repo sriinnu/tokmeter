@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-06-05
+
+### Fixed
+
+- **macOS bar Hub no longer crashes at large/maximized window sizes.** The Hub
+  could die with an uncaught AppKit exception ("more Update Constraints passes
+  than there are views in the window") on tab navigation or an idle data refresh
+  whenever the window was maximized. Root cause was `NavigationSplitView`'s
+  internal Auto-Layout machinery re-entering the window's constraint pass at large
+  sizes without converging; replaced it with a plain HStack sidebar+detail layout.
+
+### Changed
+
+- Hardened the Hub's layout against constraint-pass re-entrancy: `cascadeIn`
+  entrances are a single in-transaction write, the loader's 30s poll applies its
+  updates in a non-animating transaction, KPI/pulse tile rows use a deterministic
+  grid, and frame dimensions are guarded against non-finite values.
+
 ## [1.6.0] - 2026-05-30
 
 Durability + survivability hardening for the relay and daemon, plus launchd

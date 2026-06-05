@@ -74,9 +74,10 @@ struct HubCommandsPanel: View {
                     isSelected: selectedGroupId == nil,
                     theme: theme,
                     onTap: {
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.60)) {
-                            selectedGroupId = nil
-                        }
+                        // Group filter rebuilds the command list (rows added/removed);
+                        // animating that structural change re-enters the constraint
+                        // pass and can crash. Instant filter.
+                        selectedGroupId = nil
                     }
                 )
                 ForEach(HubCommandCatalog.groups) { g in
@@ -86,9 +87,7 @@ struct HubCommandsPanel: View {
                         isSelected: selectedGroupId == g.id,
                         theme: theme,
                         onTap: {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.60)) {
-                                selectedGroupId = g.id
-                            }
+                            selectedGroupId = g.id
                         }
                     )
                 }
@@ -103,14 +102,17 @@ struct HubCommandsPanel: View {
         } ?? HubCommandCatalog.groups
 
         VStack(spacing: 14) {
-            ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
+            ForEach(groups) { group in
                 HubCommandGroupCard(
                     group: group,
                     theme: theme,
                     flashed: flashed,
                     onCopy: { cmd in copy(cmd) }
                 )
-                .cascadeIn(delay: 0.18 + Double(idx) * 0.04)
+                // No cascadeIn here: these cards re-mount whenever the group
+                // filter changes, and cascadeIn's deferred asyncAfter + implicit
+                // animation, firing in a burst on restructure, re-enters the
+                // window's Update-Constraints pass and crashes. Static is safe.
             }
         }
     }
