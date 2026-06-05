@@ -82,15 +82,21 @@ struct HubSidebar: View {
                 .padding(.top, 10)
                 .padding(.bottom, 12)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Cap at the pinned column width so sidebar content can never report a
+        // width wider than the fixed 232pt column (no intrinsic-width feedback
+        // into the split divider). See HubView's column pin.
+        .frame(maxWidth: 232, alignment: .leading)
         .onAppear { breathe = true }
     }
 
     private func select(_ section: HubSection) {
         guard selection != section else { return }
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.68)) {
-            selection = section
-        }
+        // Panel swap is a structural change (whole detail subtree replaced). Do NOT
+        // wrap it in withAnimation — animating a structural change re-enters the
+        // window's Update-Constraints pass and crashes ("more Update Constraints
+        // passes than there are views in the window"). This is the actual sidebar
+        // click path. Instant swap; each panel still fades in via cascadeIn.
+        selection = section
     }
 
     private func badge(for section: HubSection) -> String? {
@@ -166,8 +172,12 @@ struct HubSidebar: View {
                     .font(.system(size: 24, weight: .heavy, design: theme.fonts.labelDesign))
                     .foregroundColor(c.highlight)
                     .contentTransition(.numericText())
+                    // Single-pass text only. minimumScaleFactor is a TWO-pass
+                    // intrinsic-width measurement; on the 30s data poll it re-reports
+                    // a different width and, inside the split column, re-dirties the
+                    // window's constraint pass — a prime driver of the delayed crash.
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .truncationMode(.tail)
 
                 HStack(spacing: 6) {
                     if let burn = loader.statbarSignals?.burnRate.costPerHour, burn >= 0.01 {

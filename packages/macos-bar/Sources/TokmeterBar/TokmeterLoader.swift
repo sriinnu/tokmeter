@@ -101,6 +101,14 @@ final class TokmeterLoader: ObservableObject {
     func loadData() async {
         if fetchInFlight { return }
         fetchInFlight = true
+        // The 30s poll re-renders the whole Hub. Apply the fetched @Published
+        // values inside a non-animating transaction so the refresh is an instant
+        // state swap, never an animated layout change: an animated value (e.g.
+        // contentTransition numericText, or any implicit .animation) updating a
+        // width-greedy card mid-window-Update-Constraints-pass is what re-enters
+        // and trips "more Update Constraints passes than there are views".
+        var noAnim = Transaction()
+        noAnim.disablesAnimations = true
         isLoading = true
         defer {
             isLoading = false
@@ -116,13 +124,15 @@ final class TokmeterLoader: ObservableObject {
         // while warming, then upgrade to real numbers once ready=true.
         do {
             let quick = try await client.fetchQuick()
-            self.stats = quick.stats
-            self.totalCost = quick.stats.totalCost
-            self.totalTokens = quick.stats.totalTokens
-            self.isWarming = !quick.ready
-            self.lastError = nil
-            if quick.ready {
-                self.hasFreshData = true
+            withTransaction(noAnim) {
+                self.stats = quick.stats
+                self.totalCost = quick.stats.totalCost
+                self.totalTokens = quick.stats.totalTokens
+                self.isWarming = !quick.ready
+                self.lastError = nil
+                if quick.ready {
+                    self.hasFreshData = true
+                }
             }
         } catch DaemonError.daemonNotRunning {
             // Daemon is offline. We NEVER spawn a per-fetch CLI scan here —
@@ -173,41 +183,43 @@ final class TokmeterLoader: ObservableObject {
             cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask
         )
 
-        if let daily = dailyResult {
-            if let today = daily.last {
-                self.todayCost = today.cost
-                self.todayTokens = today.totalTokens
+        withTransaction(noAnim) {
+            if let daily = dailyResult {
+                if let today = daily.last {
+                    self.todayCost = today.cost
+                    self.todayTokens = today.totalTokens
+                }
+                let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
+                self.allDaily = mapped
+                self.recentDaily = Array(mapped.suffix(7))
             }
-            let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
-            self.allDaily = mapped
-            self.recentDaily = Array(mapped.suffix(7))
-        }
-        if let models = modelsResult {
-            self.topModels = models.prefix(5).map(Self.toUsage)
-        }
-        if let todayMs = todayModelsResult {
-            self.todayModels = todayMs.prefix(5).map(Self.toUsage)
-        }
-        if let sessionsList = sessionsResult {
-            self.sessions = sessionsList
-        }
-        if let pricing = pricingStatusResult {
-            self.pricingMtime = pricing.registryMtime
-        }
-        if let cron = cronStatusResult {
-            self.cronStatus = cron
-        }
-        if let health = healthResult {
-            self.healthStatus = health
-        }
-        if let anomalies = anomaliesResult {
-            self.pricingAnomalies = anomalies
-        }
-        if let signals = signalsResult {
-            self.statbarSignals = signals
-        }
-        if let crossTool = crossToolResult {
-            self.crossToolComparison = crossTool
+            if let models = modelsResult {
+                self.topModels = models.prefix(5).map(Self.toUsage)
+            }
+            if let todayMs = todayModelsResult {
+                self.todayModels = todayMs.prefix(5).map(Self.toUsage)
+            }
+            if let sessionsList = sessionsResult {
+                self.sessions = sessionsList
+            }
+            if let pricing = pricingStatusResult {
+                self.pricingMtime = pricing.registryMtime
+            }
+            if let cron = cronStatusResult {
+                self.cronStatus = cron
+            }
+            if let health = healthResult {
+                self.healthStatus = health
+            }
+            if let anomalies = anomaliesResult {
+                self.pricingAnomalies = anomalies
+            }
+            if let signals = signalsResult {
+                self.statbarSignals = signals
+            }
+            if let crossTool = crossToolResult {
+                self.crossToolComparison = crossTool
+            }
         }
     }
 

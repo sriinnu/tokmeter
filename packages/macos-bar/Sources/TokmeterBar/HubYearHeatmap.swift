@@ -79,7 +79,10 @@ struct YearHeatmap: View {
         GeometryReader { geo in
             let cellGap: CGFloat = 2
             let columns = max(1, grid.count)
-            let cellSize = max(6, (geo.size.width - cellGap * CGFloat(columns - 1)) / CGFloat(columns))
+            // floor() to a whole point so the cell size is STABLE across sub-pixel
+            // width re-proposals — a non-quantized cellSize makes columns*cellSize
+            // land just-off the proposed width and re-propose every constraint pass.
+            let cellSize = max(6, floor((geo.size.width - cellGap * CGFloat(columns - 1)) / CGFloat(columns)))
             VStack(alignment: .leading, spacing: 4) {
                 monthLabels(cellSize: cellSize, gap: cellGap)
                 HStack(spacing: cellGap) {

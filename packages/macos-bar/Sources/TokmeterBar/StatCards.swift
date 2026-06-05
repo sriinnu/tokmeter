@@ -202,7 +202,7 @@ struct StatCard: View {
                         .contentTransition(.numericText())
                         .animation(.spring(response: 0.55, dampingFraction: 0.70), value: value)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .truncationMode(.tail)
                 }
                 Text(label)
                     .font(theme.fonts.label(size: 9, weight: .semibold))
@@ -376,7 +376,7 @@ struct InlineSparkline: View {
                     ))
                     .mask(
                         // Animate the mask from left to right so the area appears along with the line.
-                        Rectangle().frame(width: w * progress)
+                        Rectangle().frame(width: safeDim(w * progress))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     )
                     // Line itself — trim-animated by progress.

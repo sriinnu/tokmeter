@@ -163,7 +163,7 @@ final class HubConfigStore: ObservableObject {
         let tmp = Self.filePath + ".tmp-\(getpid())"
         do {
             try data.write(to: URL(fileURLWithPath: tmp))
-            try FileManager.default.replaceItemAt(
+            _ = try FileManager.default.replaceItemAt(
                 URL(fileURLWithPath: Self.filePath),
                 withItemAt: URL(fileURLWithPath: tmp)
             )

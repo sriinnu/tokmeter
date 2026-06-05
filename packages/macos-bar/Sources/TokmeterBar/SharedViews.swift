@@ -43,12 +43,18 @@ struct CascadeIn: ViewModifier {
     @State private var appeared = false
 
     func body(content: Content) -> some View {
+        // The entrance is ONE in-transaction state write, not a deferred
+        // `asyncAfter` + implicit `.animation`. The old form scheduled N staggered
+        // POST-layout `@State` writes (one per cascaded section, every panel) that
+        // each re-ran the graph and re-dirtied the window's Update-Constraints pass
+        // AFTER layout had settled — at large width that re-entrancy never
+        // converges and AppKit throws "more Update Constraints passes than views".
+        // `withAnimation(...).delay()` keeps the staggered fade as a render-only
+        // opacity animation driven by a single write inside the layout transaction.
         content
             .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 12)
-            .animation(.spring(response: 0.55, dampingFraction: 0.82), value: appeared)
             .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.easeOut(duration: 0.3).delay(delay)) {
                     appeared = true
                 }
             }
