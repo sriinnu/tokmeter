@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-tui",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "Token usage tracking TUI \u2014 interactive terminal UI with charts",
   "type": "module",
