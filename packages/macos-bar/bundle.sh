@@ -35,14 +35,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ─── Mode selection ─────────────────────────────────────────────────────
-# Default: dev mode, ALWAYS install to /Applications. If you want to keep
-# the .app local without installing, pass --no-install.
+# Default: ALWAYS install to /Applications, in every mode. A build must never
+# be left sitting only in the repo dir (or /tmp) — the canonical home is
+# /Applications. If you explicitly want to keep the .app local without
+# installing (e.g. CI producing an upload artifact), pass --no-install.
 MODE="dev"
 INSTALL=1
 for arg in "$@"; do
     case "${arg}" in
-        --release)    MODE="release"; INSTALL=0 ;;
-        --signed)     MODE="signed";  INSTALL=0 ;;
+        --release)    MODE="release" ;;
+        --signed)     MODE="signed" ;;
         --install)    INSTALL=1 ;;          # explicit, but it's the default
         --no-install) INSTALL=0 ;;
         "")           ;;
@@ -500,6 +502,18 @@ case "${MODE}" in
             echo "Status: built ./${APP_DIR} (ad-hoc signed). Pass --install to deposit to /Applications."
         fi
         ;;
-    signed)  echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install." ;;
-    release) echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml." ;;
+    signed)
+        if [[ "${INSTALL}" == "1" ]]; then
+            echo "Status: signed + installed to /Applications/${APP_DIR} (also Gatekeeper-friendly for AirDrop)."
+        else
+            echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install."
+        fi
+        ;;
+    release)
+        if [[ "${INSTALL}" == "1" ]]; then
+            echo "Status: notarized + stapled + installed to /Applications/${APP_DIR}. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
+        else
+            echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
+        fi
+        ;;
 esac
