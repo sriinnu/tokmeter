@@ -251,29 +251,42 @@ private struct AnomalyFieldRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        // Everything numeric is lineLimit(1) + fixedSize so it never wraps
+        // per-character when the row is squeezed into the ~380pt popover width
+        // (this used to be a 560pt sheet). The field column is capped and
+        // truncates; the price/percent cluster stays intact on the right.
+        HStack(spacing: 6) {
             Text(row.field)
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
                 .foregroundColor(bg.primaryTextColor)
-                .frame(width: 100, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 66, alignment: .leading)
             Text("(\(row.side))")
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
-                .frame(width: 60, alignment: .leading)
-            Spacer()
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 4)
             Text(formatRate(row.previous))
                 .font(.system(size: 11, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.secondaryTextColor)
+                .lineLimit(1)
+                .fixedSize()
             Image(systemName: "arrow.right")
                 .font(.system(size: 9))
                 .foregroundColor(bg.secondaryTextColor.opacity(0.6))
             Text(formatRate(row.current))
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.primaryTextColor)
+                .lineLimit(1)
+                .fixedSize()
             Text("\(sign) \(String(format: "%.1f", abs(row.deltaPct * 100)))%")
                 .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(deltaColor)
-                .frame(width: 70, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 52, alignment: .trailing)
         }
     }
 
