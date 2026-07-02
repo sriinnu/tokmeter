@@ -161,22 +161,35 @@ jobs:
           fi
           rm -f /tmp/sparkle.key
 
+      # PUBLISH IS OPT-IN (vars.CI_PUBLISH == 'true'), OFF BY DEFAULT.
+      # The real release path is the local Titan-gated flow (bundle.sh --release
+      # + publish.sh), which uploads the LOCALLY-notarized zip and writes the
+      # appcast whose edSignature matches that exact zip. If CI also fired on the
+      # `release: created` event, this step's `gh release upload --clobber` would
+      # replace that zip with a CI-rebuilt one whose bytes differ — the appcast
+      # signature would no longer validate and EVERY user's auto-update would
+      # fail. Gating on CI_PUBLISH keeps the two flows from colliding; flip the
+      # repo variable on only if you make CI the sole publisher (and unify the
+      # build-number source). `--clobber` also dropped so a stray run can't
+      # silently overwrite a published asset.
       - name: Upload to Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: packages/macos-bar
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
-            "${APP_NAME}-${VERSION}.zip" \
-            --clobber
+            "${APP_NAME}-${VERSION}.zip"
 
       # Sparkle resolves new versions from packages/macos-bar/appcast.xml served
       # from raw.githubusercontent.com/main. Auto-append a new <item> on real
       # release events so existing users see the update on next poll. Skipped
       # for workflow_dispatch (manual rebuilds shouldn't bump appcast).
+      # Same opt-in gate: the local flow already writes the appcast entry whose
+      # signature matches the locally-uploaded zip. Letting CI also append one
+      # would open a duplicate/mismatched appcast PR. Off unless CI_PUBLISH.
       - name: Update appcast.xml
-        if: github.event_name == 'release' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
+        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
