@@ -159,8 +159,14 @@ final class DaemonClient {
     }
 
     func fetchProjectDetail(_ projectName: String) async throws -> ProjectDetailData {
+        // Encode as a single path SEGMENT: .urlPathAllowed leaves "/" intact, so
+        // a project name containing "/" or "../" could reshape the request path.
+        // Removing "/" from the allowed set forces %2F, keeping the name in one
+        // segment (defense-in-depth — the daemon does an in-memory lookup).
+        var segmentAllowed = CharacterSet.urlPathAllowed
+        segmentAllowed.remove("/")
         let encoded = projectName.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
+            withAllowedCharacters: segmentAllowed
         ) ?? projectName
         return try await get("/api/projects/\(encoded)", as: ProjectDetailData.self)
     }
