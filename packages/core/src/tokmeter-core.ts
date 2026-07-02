@@ -301,14 +301,23 @@ export class TokmeterCore {
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
     if (prev) {
-      // Fold any before-today stragglers belonging to the outgoing day into it
-      // BEFORE sealing, so a record written between the last pre-midnight
-      // refresh and rollover is not lost. fold() is fingerprint-deduped, so
-      // records already counted are no-ops — no double-count.
-      for (const s of stragglers) {
-        if (localDateKey(s.timestamp) === prev.date) prev.fold(s);
-      }
-      const sealed = sealRolledOverDay(this.homeDir, prev, todayKey);
+      // Re-derive the outgoing day from a DEDUPED aggregation of its records
+      // rather than folding stragglers into the accumulator. `prev` is built
+      // via hydrate(), which clears the fingerprint set — so folding a
+      // straggler that was already counted before midnight would double-count
+      // it into the immutable sealed day. Instead, aggregate the union of the
+      // last-seen recent records + freshly-scanned stragglers for that day;
+      // aggregateRecordsByDay dedups by fingerprint, so an already-counted
+      // record collapses (no double-count) while a genuinely late record is
+      // still captured (no loss). Falls back to the accumulator's own totals
+      // if no records for the day are in memory.
+      const outgoing = [...this.recentRecords, ...stragglers].filter(
+        (r) => localDateKey(r.timestamp) === prev.date
+      );
+      const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
+      const toSeal = new DailyAccumulator(prev.date);
+      toSeal.hydrate(derived ?? prev.toAggregate());
+      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey);
       if (sealed) this.aggregates.set(sealed.date, sealed);
     }
 

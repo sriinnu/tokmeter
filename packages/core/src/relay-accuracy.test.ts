@@ -99,30 +99,55 @@ describe("relay accuracy — prototype safety", () => {
   });
 });
 
-describe("relay accuracy — midnight rollover folds late stragglers into the sealed day", () => {
-  test("a yesterday record written after the last pre-midnight refresh is sealed, not lost", () => {
-    const day = "2026-06-30";
-    // Live accumulator as of the last pre-midnight refresh (23:59:48): it has
-    // the early records but NOT the 23:59:50 line written just after.
-    const prev = new DailyAccumulator(day);
-    prev.fold(r({ timestamp: Date.parse(`${day}T09:00:00Z`), cost: 1.0, inputTokens: 100 }));
-    prev.fold(r({ timestamp: Date.parse(`${day}T23:59:48Z`), cost: 0.5, inputTokens: 50 }));
+describe("relay accuracy — midnight rollover seals the outgoing day dedup-correctly", () => {
+  // Reproduces the REAL rollover path: the outgoing day is re-derived by
+  // aggregating the union of the last-seen recent records + freshly-scanned
+  // stragglers (what refreshTodayAccumulator does). This is NOT folding into
+  // the hydrated accumulator — hydrate() clears the fingerprint set, so folding
+  // an already-counted straggler would double-count it into the immutable day.
+  const day = "2026-06-30";
 
-    // At rollover the fresh scan surfaces stragglers from the active file:
-    // the two already-counted lines (must dedup) AND the late 23:59:50 line.
+  // Mirror of the tokmeter-core rollover logic under test.
+  function sealOutgoing(recentRecords: TokenRecord[], stragglers: TokenRecord[]) {
+    const prev = new DailyAccumulator(day);
+    // In production `prev` is hydrated (totals only, fingerprints CLEARED).
+    prev.hydrate(aggregateRecordsByDay(recentRecords).find((d) => d.date === day)!);
+    const outgoing = [...recentRecords, ...stragglers].filter(
+      (r0) => localDateKey(r0.timestamp) === prev.date
+    );
+    const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
+    const toSeal = new DailyAccumulator(prev.date);
+    toSeal.hydrate(derived ?? prev.toAggregate());
+    return toSeal.seal();
+  }
+
+  test("late straggler is captured AND already-counted records are not double-counted", () => {
+    // Recent records = what was counted pre-midnight (two early lines).
+    const recent: TokenRecord[] = [
+      r({ timestamp: Date.parse(`${day}T09:00:00Z`), cost: 1.0, inputTokens: 100 }),
+      r({ timestamp: Date.parse(`${day}T23:59:48Z`), cost: 0.5, inputTokens: 50 }),
+    ];
+    // Post-midnight scan re-reads the active file: the two already-counted lines
+    // (must dedup) AND the late 23:59:50 line (must be captured).
     const stragglers: TokenRecord[] = [
       r({ timestamp: Date.parse(`${day}T09:00:00Z`), cost: 1.0, inputTokens: 100 }), // dup
       r({ timestamp: Date.parse(`${day}T23:59:48Z`), cost: 0.5, inputTokens: 50 }), // dup
-      r({ timestamp: Date.parse(`${day}T23:59:50Z`), cost: 0.7, inputTokens: 70 }), // late — was lost
+      r({ timestamp: Date.parse(`${day}T23:59:50Z`), cost: 0.7, inputTokens: 70 }), // late
     ];
-    // Mirror refreshTodayAccumulator's rollover fold.
-    for (const s of stragglers) if (localDateKey(s.timestamp) === prev.date) prev.fold(s);
-    const sealed = prev.seal();
-
-    // 1.0 + 0.5 + 0.7 = 2.2, and the late record is present exactly once.
+    const sealed = sealOutgoing(recent, stragglers);
+    // 1.0 + 0.5 + 0.7 = 2.2 exactly — dups collapsed, late line kept once.
     expect(sealed.cost).toBeCloseTo(2.2, 10);
-    expect(sealed.recordCount).toBe(3); // not 5 (dups collapsed), not 2 (late kept)
+    expect(sealed.recordCount).toBe(3); // not 5 (double-count), not 2 (loss)
     expect(sealed.inputTokens).toBe(220);
+  });
+
+  test("no stragglers → sealed day equals what was already counted (no change)", () => {
+    const recent: TokenRecord[] = [
+      r({ timestamp: Date.parse(`${day}T10:00:00Z`), cost: 2.0, inputTokens: 200 }),
+    ];
+    const sealed = sealOutgoing(recent, []);
+    expect(sealed.cost).toBeCloseTo(2.0, 10);
+    expect(sealed.recordCount).toBe(1);
   });
 });
 
