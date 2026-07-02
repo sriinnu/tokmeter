@@ -18,7 +18,8 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
-    "dev": "bun src/cli.ts"
+    "dev": "bun src/cli.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "@sriinnu/tokmeter": "workspace:*",
