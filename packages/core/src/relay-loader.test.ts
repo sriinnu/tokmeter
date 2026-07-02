@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { aggregateRecordsByDay } from "./aggregates.js";
 import { listDaysOnDisk, writeDayFile } from "./aggregates-store.js";
 import { localDateKey, yesterdayDateKey } from "./date-utils.js";
-import { firstUncoveredDay, refreshFromRelay } from "./relay-loader.js";
+import { refreshFromRelay } from "./relay-loader.js";
 import type { ScanContext } from "./scan-pipeline.js";
 import type { PricingService } from "./pricing.js";
 import type { TokenRecord } from "./types.js";
@@ -105,22 +105,27 @@ describe("refreshFromRelay — cold-start / gap-fill orchestration", () => {
   });
 });
 
-describe("firstUncoveredDay — interior + trailing gap detection", () => {
-  test("null when every day through the target is on disk", () => {
-    expect(
-      firstUncoveredDay(["2026-06-01", "2026-06-02", "2026-06-03"], "2026-06-03")
-    ).toBeNull();
+describe("refreshFromRelay — bounded trailing-gap fill (no full rescan on a no-usage day)", () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-relay2-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
   });
 
-  test("trailing gap → first day after the newest on-disk day", () => {
-    expect(firstUncoveredDay(["2026-06-01", "2026-06-02"], "2026-06-04")).toBe("2026-06-03");
-  });
+  test("a no-usage day older than maxOnDisk does NOT trigger a rescan (fast snapshot path)", async () => {
+    // day-5 used, day-4..day-1 no usage, day-0 (yesterday) used → onDisk has a
+    // gap at day-4..day-2 that must be treated as covered, not re-scanned.
+    seedDay(home, REF - 5 * DAY, 1.0);
+    const yKey = seedDay(home, REF - DAY, 2.0); // yesterday is the newest
+    expect(yKey).toBe(yesterdayDateKey(REF));
 
-  test("interior hole → the missing middle day (the bug this fixes)", () => {
-    expect(firstUncoveredDay(["2026-06-01", "2026-06-03"], "2026-06-03")).toBe("2026-06-02");
-  });
-
-  test("empty on-disk → null (no history to backfill before)", () => {
-    expect(firstUncoveredDay([], "2026-06-03")).toBeNull();
+    const warnings: never[] = [];
+    const state = await refreshFromRelay(ctxFor(home), REF, warnings, false);
+    // maxOnDisk (yesterday) >= yesterday → snapshot short-circuit, no gap scan,
+    // even though the middle days are absent (no-usage days, not holes).
+    expect(state.historySource).toBe("snapshot");
+    expect(state.aggregates.has(yKey)).toBe(true);
   });
 })

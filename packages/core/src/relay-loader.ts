@@ -51,17 +51,22 @@ export async function refreshFromRelay(
 
   if (maxOnDisk === null) return rebuildHistoricalFromScratch(ctx, referenceTimestamp, warnings);
 
-  // Fill from the EARLIEST uncovered day through yesterday — not just the
-  // trailing gap after maxOnDisk. A day missing in the MIDDLE of the on-disk
-  // range (e.g. a transient writeDayFile failure that let a later day advance
-  // maxOnDisk past it) used to be a permanent hole; now it's backfilled too.
-  const earliestMissing = firstUncoveredDay(onDisk, yesterday);
-  if (earliestMissing === null) return { aggregates, historySource: "snapshot" };
+  // Fast path: the relay is current through yesterday → no scan at all. This is
+  // the bounded-cold-start guarantee the aggregate cutover exists for (months
+  // of history read as ~few MB, no lifetime rescan). MUST stay a cheap
+  // short-circuit — do NOT try to detect interior holes here: a day the user
+  // simply didn't use Claude is never written to disk and is indistinguishable
+  // from a real hole, so scanning back to it would re-parse the whole corpus on
+  // every cold start. Interior holes from a rare transient write failure are
+  // recovered by an explicit `rescanHistory`, not here.
+  if (maxOnDisk >= yesterday) return { aggregates, historySource: "snapshot" };
 
-  // Watermark at that day's LOCAL midnight (startOfLocalDay is DST-safe; a
-  // fixed +86_400_000 could land an hour late on a spring-forward day and
-  // prune an early-morning file).
-  const floorMs = startOfLocalDay(new Date(`${earliestMissing}T00:00:00`).getTime());
+  // Trailing gap only: fill from the day after the newest on-disk day. Bounded
+  // to the gap (typically 0–1 days). Watermark at that day's LOCAL midnight
+  // (startOfLocalDay is DST-safe; a fixed +86_400_000 could land an hour late
+  // on a spring-forward day and prune an early-morning file).
+  const gapStart = nextDayKey(maxOnDisk);
+  const floorMs = startOfLocalDay(new Date(`${gapStart}T00:00:00`).getTime());
   const warnBefore = warnings.length;
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
@@ -93,22 +98,6 @@ export async function refreshFromRelay(
 function nextDayKey(key: string): string {
   const midnight = new Date(`${key}T00:00:00`).getTime();
   return localDateKey(startOfLocalDay(midnight + 26 * 3_600_000));
-}
-
-/**
- * The earliest day in [earliest-on-disk .. throughKey] NOT present on disk, or
- * null when every day through throughKey is already covered. We never backfill
- * before the earliest recorded day (no data exists there to find).
- */
-export function firstUncoveredDay(onDisk: string[], throughKey: string): string | null {
-  if (onDisk.length === 0) return null;
-  const have = new Set(onDisk);
-  let cursor = onDisk[0];
-  while (cursor <= throughKey) {
-    if (!have.has(cursor)) return cursor;
-    cursor = nextDayKey(cursor);
-  }
-  return null;
 }
 
 /**
