@@ -229,6 +229,55 @@ struct TokMascot: View {
     }
 }
 
+/// Compact Tok face — head + blinking ∞ eyes + smile, no antenna/feet — sized
+/// to read as a small wordmark glyph (e.g. replacing the ♾️ in the popover).
+struct TokFace: View {
+    let theme: AppTheme
+    var size: CGFloat = 26
+    private var c: ThemeColors { theme.colors }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.34, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [c.primary, c.secondary],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: size, height: size * 0.92)
+                .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
+
+            VStack(spacing: size * 0.06) {
+                PhaseAnimator([0, 1, 2, 3], content: { phase in
+                    HStack(spacing: size * 0.14) {
+                        eye(open: phase != 3)
+                        eye(open: phase != 3)
+                    }
+                }, animation: { phase in
+                    phase == 3 ? .easeInOut(duration: 0.11) : .easeInOut(duration: 1.6)
+                })
+                Path { p in
+                    let w = size * 0.34
+                    p.move(to: CGPoint(x: 0, y: 0))
+                    p.addQuadCurve(to: CGPoint(x: w, y: 0), control: CGPoint(x: w / 2, y: size * 0.12))
+                }
+                .stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .frame(width: size * 0.34, height: size * 0.12)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private func eye(open: Bool) -> some View {
+        Circle()
+            .fill(.white)
+            .frame(width: size * 0.16, height: size * 0.16)
+            .scaleEffect(x: 1, y: open ? 1 : 0.18, anchor: .center)
+    }
+}
+
 /// Friendly "nothing happening yet" doodle: a sketched ∞ dozing while a stream
 /// of z's rises and fades. Animated — the ∞ breathes on a slow sleep rhythm and
 /// bobs gently; the z's float up staggered. All GPU-driven repeatForever

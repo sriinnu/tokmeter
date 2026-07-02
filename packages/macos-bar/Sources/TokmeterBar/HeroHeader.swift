@@ -64,9 +64,8 @@ struct HeroHeader: View {
     /// when data is fresh and the daemon is alive.
     private var topRow: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text("♾️")
-                .font(.system(size: 22))
-                .scaleEffect(breathToggle ? 1.05 : 1.0)
+            TokFace(theme: theme, size: 24)
+                .scaleEffect(breathToggle ? 1.06 : 1.0)
                 .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: breathToggle)
             Text("TOKMETER")
                 .font(.system(size: 10, weight: .heavy, design: theme.fonts.labelDesign))
