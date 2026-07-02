@@ -129,10 +129,11 @@ struct TokmeterBarView: View {
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showCachePanel)
         .animation(.easeInOut(duration: 0.2), value: showAnomalyPanel)
-        // Close the anomaly overlay if its data disappears (daemon restart /
-        // transient fetch failure) so intent matches state.
-        .onChange(of: loader.pricingAnomalies == nil) { _, isNil in
-            if isNil && showAnomalyPanel { showAnomalyPanel = false }
+        // Close the anomaly overlay if its data disappears OR ages to zero
+        // (daemon restart, transient fetch failure, or all anomalies falling out
+        // of the 24h window) so it never lingers showing "0 movements".
+        .onChange(of: (loader.pricingAnomalies?.total ?? 0) == 0) { _, isEmpty in
+            if isEmpty && showAnomalyPanel { showAnomalyPanel = false }
         }
         // If signals disappear while the drawer is open (daemon restart, brief
         // /api/statbar-signals failure), the overlay's `if let` clause silently
