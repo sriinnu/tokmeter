@@ -16,7 +16,7 @@ import {
   writeDayFile,
 } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
-import { localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanHistoricalRecords, scanRawRecords } from "./scan-pipeline.js";
 import type { ScanMeta, ScanWarning } from "./types.js";
@@ -50,24 +50,31 @@ export async function refreshFromRelay(
   const yesterday = yesterdayDateKey(referenceTimestamp);
 
   if (maxOnDisk === null) return rebuildHistoricalFromScratch(ctx, referenceTimestamp, warnings);
-  if (maxOnDisk >= yesterday) return { aggregates, historySource: "snapshot" };
 
-  // Gap fill — watermark at the start of the first uncovered day.
-  const floorMs = new Date(`${maxOnDisk}T00:00:00`).getTime() + 86_400_000;
+  // Fill from the EARLIEST uncovered day through yesterday — not just the
+  // trailing gap after maxOnDisk. A day missing in the MIDDLE of the on-disk
+  // range (e.g. a transient writeDayFile failure that let a later day advance
+  // maxOnDisk past it) used to be a permanent hole; now it's backfilled too.
+  const earliestMissing = firstUncoveredDay(onDisk, yesterday);
+  if (earliestMissing === null) return { aggregates, historySource: "snapshot" };
+
+  // Watermark at that day's LOCAL midnight (startOfLocalDay is DST-safe; a
+  // fixed +86_400_000 could land an hour late on a spring-forward day and
+  // prune an early-morning file).
+  const floorMs = startOfLocalDay(new Date(`${earliestMissing}T00:00:00`).getTime());
   const warnBefore = warnings.length;
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
-  const gap = raw.filter((r) => {
-    const k = localDateKey(r.timestamp);
-    return k > maxOnDisk && k < todayKey;
-  });
+
   // A partial gap scan (provider crash mid-fill) writes nothing — a healthy
   // re-run will fill it correctly. Better to retry than freeze a degraded day.
   const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
   if (gapDegraded) return { aggregates, historySource: "extended" };
 
-  for (const day of aggregateRecordsByDay(gap)) {
-    if (day.date <= maxOnDisk || day.date >= todayKey) continue;
+  const onDiskSet = new Set(onDisk);
+  for (const day of aggregateRecordsByDay(raw)) {
+    // Never seal today; never overwrite an already-sealed (immutable) day.
+    if (day.date >= todayKey || onDiskSet.has(day.date)) continue;
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(day.date, day);
@@ -79,6 +86,29 @@ export async function refreshFromRelay(
     }
   }
   return { aggregates, historySource: "extended" };
+}
+
+/** Next calendar day's key — DST-safe (jump past any 23h/25h day, snap back to
+ *  local midnight). */
+function nextDayKey(key: string): string {
+  const midnight = new Date(`${key}T00:00:00`).getTime();
+  return localDateKey(startOfLocalDay(midnight + 26 * 3_600_000));
+}
+
+/**
+ * The earliest day in [earliest-on-disk .. throughKey] NOT present on disk, or
+ * null when every day through throughKey is already covered. We never backfill
+ * before the earliest recorded day (no data exists there to find).
+ */
+export function firstUncoveredDay(onDisk: string[], throughKey: string): string | null {
+  if (onDisk.length === 0) return null;
+  const have = new Set(onDisk);
+  let cursor = onDisk[0];
+  while (cursor <= throughKey) {
+    if (!have.has(cursor)) return cursor;
+    cursor = nextDayKey(cursor);
+  }
+  return null;
 }
 
 /**

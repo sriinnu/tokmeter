@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { aggregateRecordsByDay } from "./aggregates.js";
 import { listDaysOnDisk, writeDayFile } from "./aggregates-store.js";
 import { localDateKey, yesterdayDateKey } from "./date-utils.js";
-import { refreshFromRelay } from "./relay-loader.js";
+import { firstUncoveredDay, refreshFromRelay } from "./relay-loader.js";
 import type { ScanContext } from "./scan-pipeline.js";
 import type { PricingService } from "./pricing.js";
 import type { TokenRecord } from "./types.js";
@@ -104,3 +104,23 @@ describe("refreshFromRelay — cold-start / gap-fill orchestration", () => {
     expect(listDaysOnDisk(home)).not.toContain(localDateKey(REF));
   });
 });
+
+describe("firstUncoveredDay — interior + trailing gap detection", () => {
+  test("null when every day through the target is on disk", () => {
+    expect(
+      firstUncoveredDay(["2026-06-01", "2026-06-02", "2026-06-03"], "2026-06-03")
+    ).toBeNull();
+  });
+
+  test("trailing gap → first day after the newest on-disk day", () => {
+    expect(firstUncoveredDay(["2026-06-01", "2026-06-02"], "2026-06-04")).toBe("2026-06-03");
+  });
+
+  test("interior hole → the missing middle day (the bug this fixes)", () => {
+    expect(firstUncoveredDay(["2026-06-01", "2026-06-03"], "2026-06-03")).toBe("2026-06-02");
+  });
+
+  test("empty on-disk → null (no history to backfill before)", () => {
+    expect(firstUncoveredDay([], "2026-06-03")).toBeNull();
+  });
+})
