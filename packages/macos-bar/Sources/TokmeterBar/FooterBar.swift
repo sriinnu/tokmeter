@@ -28,7 +28,12 @@ struct FooterBar: View {
     @State private var showAnomalySheet = false
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.1"
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.1"
+        // Include the build number so an install is verifiable at a glance —
+        // the short version alone (e.g. "1.7.0") stays fixed across dev rebuilds,
+        // making it impossible to tell whether a new build actually landed.
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
     }
 
     var body: some View {
