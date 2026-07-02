@@ -22,6 +22,23 @@ export interface ScanContext {
   skipPricing: boolean;
 }
 
+/**
+ * Which records a scan may (re)price — the frozen-cost gate. A today-scope
+ * scan prices ONLY records dated today; before-today records (e.g. a
+ * yesterday tail in a still-active file) are FROZEN and never re-priced, so a
+ * new model or a price change today can never alter yesterday's or any earlier
+ * total. History-scope (first-ever rebuild / gap-fill) prices everything,
+ * because those days are being freshly committed and have no frozen cost yet.
+ */
+export function selectRecordsToPrice(
+  records: TokenRecord[],
+  warningScope: "history" | "today",
+  referenceTimestamp: number
+): TokenRecord[] {
+  if (warningScope !== "today") return records;
+  return records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp));
+}
+
 /** Top-level parser fan-out: runs every parser, optional mtime watermark. */
 export async function scanRawRecords(
   ctx: ScanContext,
@@ -76,10 +93,7 @@ export async function scanRawRecords(
     // those records are being freshly committed to the snapshot and need
     // an initial cost.
     const referenceTimestamp = Date.now();
-    const recordsToPrice =
-      warningScope === "today"
-        ? records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp))
-        : records;
+    const recordsToPrice = selectRecordsToPrice(records, warningScope, referenceTimestamp);
     if (recordsToPrice.length > 0) {
       await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings);
     }
