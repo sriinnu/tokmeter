@@ -88,6 +88,9 @@ struct InfinityMascot: View {
 /// All composed from Paths/shapes and themed to the accent.
 struct TokMascot: View {
     let theme: AppTheme
+    /// Renders in a 120pt box; `scale` shrinks/grows it and reserves the
+    /// matching layout size so it drops into headers and sidebars cleanly.
+    var scale: CGFloat = 1
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
 
@@ -96,42 +99,78 @@ struct TokMascot: View {
 
     var body: some View {
         ZStack {
-            // ── Antenna + sparking signal dot ──
+            // ── Grounding shadow — soft ellipse under the body sells depth ──
+            Ellipse()
+                .fill(Color.black.opacity(0.14))
+                .frame(width: 68, height: 11)
+                .blur(radius: 3.5)
+                .scaleEffect(x: breathe ? 1.0 : 0.88)
+                .position(x: 60, y: 113)
+
+            // ── Antenna + glowing signal spark ──
             Path { p in
-                p.move(to: CGPoint(x: 60, y: 30))
+                p.move(to: CGPoint(x: 60, y: 28))
                 p.addLine(to: CGPoint(x: 60, y: 12))
             }
-            .stroke(c.accent.opacity(0.6), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            .stroke(c.accent.opacity(0.7), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
             Circle()
-                .fill(c.accent)
-                .frame(width: 8, height: 8)
+                .fill(RadialGradient(colors: [c.warm, c.accent], center: .center, startRadius: 0, endRadius: 6))
+                .frame(width: 9, height: 9)
                 .position(x: 60, y: 11)
-                .scaleEffect(spark ? 1.35 : 0.85)
-                .shadow(color: c.accent.opacity(spark ? 0.7 : 0.2), radius: spark ? 5 : 1)
+                .scaleEffect(spark ? 1.4 : 0.85)
+                .shadow(color: c.accent.opacity(spark ? 0.85 : 0.25), radius: spark ? 6 : 1)
 
-            // ── Head (squircle) ──
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(c.accent.opacity(bg.isLight ? 0.12 : 0.16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .stroke(c.accent.opacity(0.55), lineWidth: 2.5)
+            // ── Feet ──
+            Capsule().fill(c.secondary).frame(width: 16, height: 9).position(x: 47, y: 103)
+            Capsule().fill(c.secondary).frame(width: 16, height: 9).position(x: 73, y: 103)
+
+            // ── Body: gradient squircle with drop shadow + glossy highlight ──
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [c.primary, c.secondary],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
                 )
-                .frame(width: 84, height: 74)
-                .position(x: 60, y: 70)
+                .frame(width: 86, height: 78)
+                .shadow(color: .black.opacity(0.22), radius: 9, y: 5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [.white.opacity(0.28), .clear],
+                                startPoint: .top, endPoint: .center
+                            )
+                        )
+                        .frame(width: 86, height: 78)
+                )
+                .position(x: 60, y: 64)
 
-            // ── Blushing cheeks ──
-            Circle().fill(c.warm.opacity(0.35)).frame(width: 12, height: 12).position(x: 34, y: 82)
-            Circle().fill(c.warm.opacity(0.35)).frame(width: 12, height: 12).position(x: 86, y: 82)
+            // ── Blushing cheeks (soft radial) ──
+            cheek.position(x: 33, y: 70)
+            cheek.position(x: 87, y: 70)
 
-            // ── ∞ eyes with blinking pupils ──
-            eyes.position(x: 60, y: 62)
+            // ── ∞ eyes (white, blinking) ──
+            eyes.position(x: 60, y: 56)
 
             // ── Smile ──
             Path { p in
-                p.move(to: CGPoint(x: 48, y: 86))
-                p.addQuadCurve(to: CGPoint(x: 72, y: 86), control: CGPoint(x: 60, y: 96))
+                p.move(to: CGPoint(x: 50, y: 78))
+                p.addQuadCurve(to: CGPoint(x: 70, y: 78), control: CGPoint(x: 60, y: 87))
             }
-            .stroke(c.accent.opacity(0.7), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            .stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+
+            // ── Belly "meter" screen with a live ∞ pulse ──
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.black.opacity(0.28))
+                .frame(width: 36, height: 15)
+                .overlay(
+                    InfinityDoodle()
+                        .stroke(c.warm, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                        .frame(width: 22, height: 9)
+                        .opacity(spark ? 1 : 0.45)
+                )
+                .position(x: 60, y: 92)
         }
         .frame(width: 120, height: 120)
         .scaleEffect(breathe ? 1.03 : 0.98, anchor: .bottom)
@@ -145,13 +184,29 @@ struct TokMascot: View {
             }
         }
         .accessibilityHidden(true)
+        // Apply the caller's size scale and reserve the matching layout box.
+        .scaleEffect(scale, anchor: .center)
+        .frame(width: 120 * scale, height: 120 * scale)
+    }
+
+    /// Soft radial blush for the cheeks.
+    private var cheek: some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [c.warm.opacity(0.6), c.warm.opacity(0)],
+                    center: .center, startRadius: 0, endRadius: 8
+                )
+            )
+            .frame(width: 16, height: 16)
     }
 
     private var eyes: some View {
         ZStack {
+            // White ∞ "glasses" pop on the green gradient body.
             InfinityDoodle()
                 .stroke(
-                    c.accent.opacity(0.85),
+                    Color.white.opacity(0.95),
                     style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
                 )
                 .frame(width: 46, height: 20)
@@ -168,7 +223,7 @@ struct TokMascot: View {
 
     private func pupil(open: Bool) -> some View {
         Circle()
-            .fill(c.accent)
+            .fill(Color.white)
             .frame(width: 6, height: 6)
             .scaleEffect(x: 1, y: open ? 1 : 0.15, anchor: .center)
     }

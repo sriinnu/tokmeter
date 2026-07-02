@@ -72,13 +72,19 @@ struct HubOverviewPanel: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Overview")
-                .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
-                .foregroundColor(bg.primaryTextColor)
-            Text("Everything you've spent, everywhere — at a glance.")
-                .font(.system(size: 12, design: theme.fonts.bodyDesign))
-                .foregroundColor(bg.secondaryTextColor)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Overview")
+                    .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text("Everything you've spent, everywhere — at a glance.")
+                    .font(.system(size: 12, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+            }
+            Spacer()
+            // Tok waves hello from the header — the mascot echoed where there's
+            // real room, not crammed into a data view.
+            TokMascot(theme: theme, scale: 0.62)
         }
     }
 
