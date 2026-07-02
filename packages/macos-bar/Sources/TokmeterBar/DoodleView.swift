@@ -23,34 +23,54 @@ struct InfinityDoodle: Shape {
     }
 }
 
-/// Friendly "nothing happening yet" doodle: a sketched ∞ dozing under a little
-/// trail of z's. Used by empty states.
+/// Friendly "nothing happening yet" doodle: a sketched ∞ dozing while a stream
+/// of z's rises and fades. Animated — the ∞ breathes on a slow sleep rhythm and
+/// bobs gently; the z's float up staggered. All GPU-driven repeatForever
+/// animations (no timers), so it's cheap even while an empty state lingers.
 struct QuietDoodle: View {
     let theme: AppTheme
     private var c: ThemeColors { theme.colors }
-    private var bg: BackgroundMode { theme.backgroundMode }
+
+    // Two independent loops: a slow breath for the mark, a rising drift for z's.
+    @State private var breathe = false
+    @State private var drift = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .center) {
             InfinityDoodle()
                 .stroke(
-                    c.accent.opacity(0.75),
+                    c.accent.opacity(0.78),
                     style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
                 )
                 .frame(width: 58, height: 26)
-                // A hair of rotation reads as hand-drawn, not machined.
-                .rotationEffect(.degrees(-4))
+                // Sleeping breath: slow in-out scale + a hair of tilt/bob so it
+                // reads as alive and hand-drawn, not a static glyph.
+                .scaleEffect(breathe ? 1.06 : 0.96, anchor: .center)
+                .rotationEffect(.degrees(breathe ? -2 : -6))
+                .offset(y: breathe ? 1.5 : -1.5)
+                .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), value: breathe)
 
-            // z z z drifting up-right, shrinking — the universal "asleep" cue.
-            HStack(alignment: .bottom, spacing: 2) {
-                Text("z").font(.system(size: 9, weight: .bold, design: .rounded))
-                Text("z").font(.system(size: 12, weight: .bold, design: .rounded))
-                Text("z").font(.system(size: 15, weight: .bold, design: .rounded))
+            // Three z's rising up-right and fading, each staggered — a little
+            // stream of sleep rather than a static "zzz".
+            ForEach(0..<3, id: \.self) { i in
+                Text("z")
+                    .font(.system(size: 9 + CGFloat(i) * 3, weight: .bold, design: .rounded))
+                    .foregroundColor(c.accent.opacity(0.6))
+                    .offset(x: 26 + CGFloat(i) * 5, y: drift ? -26 : -4)
+                    .opacity(drift ? 0 : 0.7)
+                    .animation(
+                        .easeIn(duration: 2.4)
+                            .repeatForever(autoreverses: false)
+                            .delay(Double(i) * 0.7),
+                        value: drift
+                    )
             }
-            .foregroundColor(c.accent.opacity(0.55))
-            .offset(x: 30, y: -18)
         }
-        .frame(width: 96, height: 52)
+        .frame(width: 104, height: 56)
+        .onAppear {
+            breathe = true
+            drift = true
+        }
         .accessibilityHidden(true)
     }
 }
