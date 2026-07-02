@@ -9,12 +9,14 @@
 // generated from one schema.
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { DAEMON_HOST, DAEMON_PORT } from "./protocol.js";
 
-// packages/mcp/src/daemon → repo packages/
-const packagesDir = join(import.meta.dir, "..", "..", "..");
+// packages/mcp/src/daemon → repo packages/ (fileURLToPath is tsc-safe, unlike
+// the Bun-only import.meta.dir).
+const packagesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const read = (rel: string) => readFileSync(join(packagesDir, rel), "utf8");
 
 const httpBase = `http://${DAEMON_HOST}:${DAEMON_PORT + 1}`;

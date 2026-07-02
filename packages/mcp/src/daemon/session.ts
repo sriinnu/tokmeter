@@ -9,6 +9,11 @@ import type {
   TokenUsage,
 } from "./protocol.js";
 
+/** Coerce any incoming numeric to a finite, non-negative value (0 otherwise). */
+function nonNeg(n: unknown): number {
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 // ─── Session State ─────────────────────────────────────────────────────
 
 export interface Session extends SessionInfo {
@@ -27,6 +32,12 @@ export class SessionManager {
   // ─── Session Lifecycle ───────────────────────────────────────────────
 
   register(info: SessionInfo): void {
+    // Identity guard: a missing provider/sessionId would create a junk
+    // "undefined:undefined" session that pollutes the aggregate for every
+    // client. Drop it — the WS handshake is unauthenticated, so any local
+    // process can send messages.
+    if (!info || typeof info.provider !== "string" || info.provider.length === 0) return;
+    if (typeof info.sessionId !== "string" || info.sessionId.length === 0) return;
     const key = this.key(info.provider, info.sessionId);
     const existing = this.sessions.get(key);
 
@@ -60,21 +71,44 @@ export class SessionManager {
     durationMs?: number,
     contextWindow?: ContextWindowInfo
   ): Session | null {
+    // Identity + numeric hygiene: the WS transport is unauthenticated, so a
+    // malformed/hostile client could otherwise push a huge/negative/NaN cost or
+    // a partial tokens object (undefined fields → NaN) that then propagates into
+    // the aggregated totals broadcast to every OTHER client. Coerce every
+    // numeric to a finite, non-negative value and drop messages with no identity.
+    if (typeof provider !== "string" || provider.length === 0) return null;
+    if (typeof sessionId !== "string" || sessionId.length === 0) return null;
+    const safeTokens: TokenUsage = {
+      inputTokens: nonNeg(tokens?.inputTokens),
+      outputTokens: nonNeg(tokens?.outputTokens),
+      cacheReadTokens: nonNeg(tokens?.cacheReadTokens),
+      cacheWriteTokens: nonNeg(tokens?.cacheWriteTokens),
+      reasoningTokens: nonNeg(tokens?.reasoningTokens),
+    };
+    const safeCost = nonNeg(cost);
+    const safeContext =
+      contextWindow && contextWindow.maxTokens > 0
+        ? {
+            usedTokens: nonNeg(contextWindow.usedTokens),
+            maxTokens: nonNeg(contextWindow.maxTokens),
+          }
+        : undefined;
+
     const key = this.key(provider, sessionId);
     const session = this.sessions.get(key);
 
     if (!session) {
       // Auto-register if not found
       this.register({ provider, sessionId, model: "unknown" });
-      return this.update(provider, sessionId, cost, tokens, durationMs, contextWindow);
+      return this.update(provider, sessionId, safeCost, safeTokens, durationMs, safeContext);
     }
 
-    session.cost = cost;
-    session.tokens = tokens;
-    session.durationMs = durationMs ?? session.durationMs;
+    session.cost = safeCost;
+    session.tokens = safeTokens;
     // Keep the last-known context window if this update omits it (a session
     // that reported one shouldn't lose it on a later cost-only update).
-    if (contextWindow) session.contextWindow = contextWindow;
+    if (safeContext) session.contextWindow = safeContext;
+    session.durationMs = nonNeg(durationMs ?? session.durationMs);
     session.lastUpdate = Date.now();
     session.connected = true;
 

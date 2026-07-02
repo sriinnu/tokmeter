@@ -52,6 +52,45 @@ describe("SessionManager — lifecycle", () => {
   });
 });
 
+describe("SessionManager — input hygiene (unauthenticated WS transport)", () => {
+  let mgr: SessionManager;
+  beforeEach(() => {
+    mgr = new SessionManager();
+  });
+
+  test("coerces a hostile/garbage cost and partial tokens to finite non-negative", () => {
+    mgr.update("codex", "x", Number.NaN, { inputTokens: -5 } as unknown as TokenUsage);
+    const s = mgr.get("codex", "x")!;
+    expect(s.cost).toBe(0); // NaN → 0
+    expect(s.tokens.inputTokens).toBe(0); // negative → 0
+    expect(s.tokens.outputTokens).toBe(0); // undefined field → 0, not NaN
+    // The aggregate must be a clean number, never NaN.
+    expect(Number.isFinite(mgr.getAggregated().totalCost)).toBe(true);
+    expect(mgr.getAggregated().totalCost).toBe(0);
+  });
+
+  test("a huge but finite cost is kept (not silently zeroed) — only non-finite/negative are scrubbed", () => {
+    mgr.update("codex", "x", 1e6, tok({ inputTokens: 1_000_000 }));
+    expect(mgr.getAggregated().totalCost).toBe(1e6);
+  });
+
+  test("drops register/update with an empty provider or sessionId (no junk session)", () => {
+    mgr.register({ provider: "", sessionId: "a", model: "m" });
+    mgr.update("claude-code", "", 5, tok());
+    expect(mgr.getAll()).toHaveLength(0);
+    expect(mgr.getAggregated().totalCost).toBe(0);
+  });
+
+  test("a malformed context window (NaN used tokens) never yields a NaN fill", () => {
+    mgr.update("claude-code", "a", 1, tok(), 0, {
+      usedTokens: Number.NaN,
+      maxTokens: 200,
+    });
+    // usedTokens scrubbed to 0 → 0% fill, not NaN.
+    expect(mgr.getAggregated().maxContextFillPct).toBe(0);
+  });
+});
+
 describe("SessionManager — getAggregated", () => {
   let mgr: SessionManager;
   beforeEach(() => {

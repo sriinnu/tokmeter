@@ -163,8 +163,23 @@ function checkAuth(req: IncomingMessage): boolean {
   return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
 }
 
-// Client tracking: WebSocket -> { provider, sessionId }
+// Client tracking: WebSocket -> most-recent { provider, sessionId } (used to
+// exclude the asking session from its own broadcast).
 const clientSessions = new Map<WebSocket, { provider: string; sessionId: string }>();
+// EVERY session a socket has touched, so `close` can disconnect all of them.
+// Without this, a connection that reports >1 sessionId leaves all-but-the-last
+// stuck connected:true forever → never reaped by cleanupStale and counted in
+// the aggregate indefinitely (unbounded Map growth + permanent spend inflation).
+const clientTouched = new Map<WebSocket, Map<string, { provider: string; sessionId: string }>>();
+
+function trackTouched(ws: WebSocket, provider: string, sessionId: string): void {
+  let set = clientTouched.get(ws);
+  if (!set) {
+    set = new Map();
+    clientTouched.set(ws, set);
+  }
+  set.set(`${provider}:${sessionId}`, { provider, sessionId });
+}
 
 // ─── Main Server ────────────────────────────────────────────────────────
 
@@ -318,11 +333,15 @@ export function startDaemon(): void {
     });
 
     ws.on("close", () => {
-      const session = clientSessions.get(ws);
-      if (session && sessionManager) {
-        sessionManager.disconnect(session.provider, session.sessionId);
+      // Disconnect EVERY session this socket touched, not just the last one.
+      const touched = clientTouched.get(ws);
+      if (touched && sessionManager) {
+        for (const { provider, sessionId } of touched.values()) {
+          sessionManager.disconnect(provider, sessionId);
+        }
       }
       clientSessions.delete(ws);
+      clientTouched.delete(ws);
       broadcast();
     });
 
@@ -359,6 +378,7 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         provider: msg.session.provider,
         sessionId: msg.session.sessionId,
       });
+      trackTouched(ws, msg.session.provider, msg.session.sessionId);
       if (!existing) {
         console.log(
           `Session: ${msg.session.provider}/${msg.session.sessionId} (${msg.session.model})`
@@ -395,6 +415,7 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
           provider: msg.session.provider,
           sessionId: msg.session.sessionId,
         });
+        trackTouched(ws, msg.session.provider, msg.session.sessionId);
         broadcast();
       }
       break;
@@ -978,22 +999,6 @@ function startHttpApi(): void {
           // models. Surfaces "what would today have cost on model X" — the
           // kind of comparison only kosha-backed tools can ship honestly.
           json(res, await core.getCrossToolComparison());
-        } else if (pathname === "/api/update-pricing") {
-          try {
-            await refreshKoshaRegistry();
-            // Pricing changed → today must reprice. Trigger a full re-scan of
-            // the warm singleton (history stays frozen per the core's rules)
-            // instead of nulling the core and paying a cold-start on the next
-            // read. Keeps the daemon warm and bounded.
-            await rescanHttpCore();
-            json(res, { ok: true });
-          } catch (err) {
-            res.writeHead(500);
-            json(res, {
-              ok: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
         } else if (pathname === "/api/pricing-status") {
           // Reports the mtime of ~/.kosha/registry.json so the menubar can
           // surface "Pricing: 2h ago". 0 if the registry is missing.
@@ -1197,6 +1202,21 @@ function startHttpApi(): void {
           const result = service.restore(body.backup_id);
           invalidateHttpCore(); // Cache + floors must follow the mutation.
           json(res, result);
+        } else if (pathname === "/api/update-pricing") {
+          // Mutation (network fetch + full rescan), so token-gated under POST —
+          // a GET here let any visited web page force repeated multi-GB rescans
+          // cross-origin (CSRF / resource-exhaustion DoS).
+          try {
+            await refreshKoshaRegistry();
+            // Pricing changed → today must reprice. Full re-scan of the warm
+            // singleton (history stays frozen per the core's rules) keeps the
+            // daemon warm and bounded instead of paying a cold start next read.
+            await rescanHttpCore();
+            json(res, { ok: true });
+          } catch (err) {
+            res.writeHead(500);
+            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
         } else {
           res.writeHead(404);
           json(res, { error: "Not found" });
