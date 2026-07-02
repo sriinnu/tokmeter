@@ -39,15 +39,17 @@ struct HubEmptyState: View {
     let theme: AppTheme
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .light))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+        VStack(spacing: 10) {
+            // A playful ∞-dozing doodle instead of a flat SF Symbol — empty
+            // states are exactly where a little warmth helps and there's no
+            // data to compete with. (`icon` retained for call-site compat.)
+            QuietDoodle(theme: theme)
             Text(message)
                 .font(.system(size: 11, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(.vertical, 26)
     }
 }
