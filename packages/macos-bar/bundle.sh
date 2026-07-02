@@ -513,6 +513,13 @@ if [[ "${INSTALL}" == "1" ]]; then
     rm -rf "/Applications/${APP_DIR}"
     cp -R "${APP_DIR}" /Applications/
 
+    # Remove the build-dir copy once it's installed — otherwise Spotlight and
+    # Launchpad index BOTH it and the /Applications copy, so the user sees two
+    # "TokmeterBar" apps. The distributable .zip (release mode) is kept; only
+    # the loose .app is redundant after install. Skipped for --no-install so CI
+    # still has the artifact to upload.
+    rm -rf "${APP_DIR}"
+
     # Launch it. Use `open` so it's a fresh launch via LaunchServices,
     # which Sparkle's installer logic relies on.
     echo "    Launching /Applications/${APP_DIR}"
