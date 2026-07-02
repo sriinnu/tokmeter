@@ -272,8 +272,12 @@ export class CleanupService {
     const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
     const archivePath = meta.path;
 
-    // Validate archive path is within backup directory (resolve to catch symlinks / ..)
-    if (!resolve(archivePath).startsWith(resolve(dir))) {
+    // Validate archive path is within backup directory. A plain startsWith on
+    // the resolved paths is wrong — a sibling dir like `<dir>-evil` shares the
+    // prefix and would pass. Use path.relative and reject any result that
+    // escapes upward (`..`) or is absolute (different root).
+    const rel = relative(resolve(dir), resolve(archivePath));
+    if (rel === "" || rel.startsWith("..") || resolve(archivePath) === resolve(dir)) {
       return {
         restoredCount: 0,
         errors: [{ file: archivePath, error: "Archive path outside backup directory" }],

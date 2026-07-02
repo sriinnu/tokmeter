@@ -12,28 +12,33 @@ NOW=$(date +%s)
 today_ymd=$(date +%Y-%m-%d)
 timestamps=()
 
+# Day marker in the user's private cache dir, not a predictable /tmp path
+# (a pre-created /tmp symlink would misdirect touch, and a planted future
+# mtime would suppress today's scan). Ensure it exists and is dated today
+# BEFORE the -newer scan uses it.
+marker_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tokmeter"
+mkdir -p "$marker_dir" 2>/dev/null
+DAY_MARKER="${marker_dir}/statusline-day-marker"
+if [ ! -f "$DAY_MARKER" ]; then
+  touch -t "$(date +%Y%m%d)0000" "$DAY_MARKER"
+fi
+marker_date=$(stat -f %Sm -t %Y-%m-%d "$DAY_MARKER" 2>/dev/null || stat -c %y "$DAY_MARKER" 2>/dev/null | cut -d' ' -f1)
+if [ "$marker_date" != "$today_ymd" ]; then
+  touch -t "$(date +%Y%m%d)0000" "$DAY_MARKER"
+fi
+
 if [ -d "$CLAUDE_DIR" ]; then
   # Read timestamps from today's JSONL entries (fast: only grep for timestamp lines)
   while IFS= read -r ts; do
     [ -n "$ts" ] && timestamps+=("$ts")
   done < <(
-    find "$CLAUDE_DIR" -name "*.jsonl" -newer /tmp/drishti-day-marker 2>/dev/null \
+    find "$CLAUDE_DIR" -name "*.jsonl" -newer "$DAY_MARKER" 2>/dev/null \
       | head -50 \
       | xargs grep -h '"timestamp"' 2>/dev/null \
       | grep -o '"timestamp":"[^"]*"' \
       | sed 's/"timestamp":"//;s/"//' \
       | sort
   )
-
-  # Create day marker if missing (used to filter files modified today)
-  if [ ! -f /tmp/drishti-day-marker ]; then
-    touch -t "$(date +%Y%m%d)0000" /tmp/drishti-day-marker
-  fi
-  # Refresh marker at midnight
-  marker_date=$(stat -f %Sm -t %Y-%m-%d /tmp/drishti-day-marker 2>/dev/null)
-  if [ "$marker_date" != "$today_ymd" ]; then
-    touch -t "$(date +%Y%m%d)0000" /tmp/drishti-day-marker
-  fi
 fi
 
 # If no timestamps found, try a broader search

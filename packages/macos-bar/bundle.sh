@@ -131,6 +131,33 @@ PRIV_KEY_PATH="${SPARKLE_PRIVATE_KEY_PATH:-./sparkle_ed25519_priv}"
 if [[ -z "${SUPUBLIC_KEY}" && -f "${PRIV_KEY_PATH}.pub" ]]; then
     SUPUBLIC_KEY=$(cat "${PRIV_KEY_PATH}.pub")
 fi
+# Strip all surrounding whitespace/newlines: a .pub file that is just a
+# trailing newline would otherwise pass the non-empty guard below and emit a
+# blank <string> for SUPublicEDKey — a key that can never validate an update.
+SUPUBLIC_KEY="$(printf '%s' "${SUPUBLIC_KEY}" | tr -d '[:space:]')"
+
+# For any distributable build, refuse to proceed without the public key.
+# A bundle missing SUPublicEDKey can never validate a Sparkle update — it
+# ships un-updateable and strands every user on that build (this exact hole
+# shipped build 21). Dev builds may skip it; signed/release must not.
+if [[ "${MODE}" == "signed" || "${MODE}" == "release" ]] && [[ -z "${SUPUBLIC_KEY}" ]]; then
+    echo "ERROR: SUPUBLIC_KEY is empty in ${MODE} mode — refusing to build an"
+    echo "       un-updateable app with no SUPublicEDKey in Info.plist."
+    echo "       Fix: source packages/macos-bar/.env (or export SUPUBLIC_KEY),"
+    echo "       or place the public key at ${PRIV_KEY_PATH}.pub."
+    exit 4
+fi
+
+# A Sparkle EdDSA public key is 44 base64 chars (32 bytes) ending in '='.
+# A value that survives the emptiness check but is malformed (truncated env,
+# partial paste) would also ship un-updateable — fail loud in signed/release.
+if [[ "${MODE}" == "signed" || "${MODE}" == "release" ]] && \
+   [[ ! "${SUPUBLIC_KEY}" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+    echo "ERROR: SUPUBLIC_KEY does not look like a 44-char base64 Ed25519 key:"
+    echo "       '${SUPUBLIC_KEY}'"
+    echo "       Refusing to embed a malformed SUPublicEDKey. Check .env."
+    exit 4
+fi
 
 # ─── 6. Write Info.plist ────────────────────────────────────────────────
 cat > "${CONTENTS}/Info.plist" <<PLIST

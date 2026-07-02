@@ -65,8 +65,16 @@ export function* iterateAllDays(
   aggregates: Map<string, DailyAggregate>,
   todayAccumulator: DailyAccumulator | null
 ): Iterable<DailyAggregate> {
-  yield* aggregates.values();
   const today = todayAccumulator?.toAggregate();
+  // The live accumulator is the single owner of its date. If the same date is
+  // also present in the sealed map (e.g. a sealed <today>.json reloaded by a
+  // full scan, or a backward wall-clock step across midnight), skip the map
+  // copy so the day is never counted twice.
+  const todayDate = today?.date;
+  for (const day of aggregates.values()) {
+    if (todayDate !== undefined && day.date === todayDate) continue;
+    yield day;
+  }
   if (today) yield today;
 }
 

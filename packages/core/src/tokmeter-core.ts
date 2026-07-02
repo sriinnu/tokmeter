@@ -37,6 +37,7 @@ import {
   scanRawRecords,
   scanRecentRecords,
   scanTodayRecords,
+  scanTodayRecordsWithStragglers,
 } from "./scan-pipeline.js";
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
@@ -245,7 +246,12 @@ export class TokmeterCore {
       koshaChanged = mtime > 0 && mtime !== getCachedKoshaMtime();
     }
 
-    const today = await scanTodayRecords(this.ctx(), undefined, now, todayWarnings);
+    const { today, stragglers } = await scanTodayRecordsWithStragglers(
+      this.ctx(),
+      undefined,
+      now,
+      todayWarnings
+    );
 
     if (this.skipPricing) {
       markPricingSkipped(today);
@@ -261,7 +267,7 @@ export class TokmeterCore {
 
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now);
+    this.refreshTodayAccumulator(today, now, stragglers);
 
     this.scanMeta = {
       ...this.scanMeta,
@@ -282,7 +288,11 @@ export class TokmeterCore {
     return out;
   }
 
-  private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
+  private refreshTodayAccumulator(
+    todayRecords: TokenRecord[],
+    referenceTimestamp: number,
+    stragglers: TokenRecord[] = []
+  ): void {
     const todayKey = localDateKey(referenceTimestamp);
 
     // Seal-on-rollover. If the daemon ran across midnight, the outgoing
@@ -291,9 +301,24 @@ export class TokmeterCore {
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
     if (prev) {
+      // Fold any before-today stragglers belonging to the outgoing day into it
+      // BEFORE sealing, so a record written between the last pre-midnight
+      // refresh and rollover is not lost. fold() is fingerprint-deduped, so
+      // records already counted are no-ops — no double-count.
+      for (const s of stragglers) {
+        if (localDateKey(s.timestamp) === prev.date) prev.fold(s);
+      }
       const sealed = sealRolledOverDay(this.homeDir, prev, todayKey);
       if (sealed) this.aggregates.set(sealed.date, sealed);
     }
+
+    // Never let a day live in BOTH the sealed-aggregates map and the live
+    // accumulator: if the wall clock steps backward across midnight (NTP step,
+    // VM snapshot restore, suspend/resume, manual set) todayKey can equal a
+    // day already sealed into `aggregates`, and the read layer would count it
+    // twice. Evict the map entry — the live accumulator becomes the single
+    // owner of today, and it is re-hydrated from a fresh scan just below.
+    this.aggregates.delete(todayKey);
 
     const [todayAgg] = aggregateRecordsByDay(todayRecords);
     const acc = new DailyAccumulator(todayKey);

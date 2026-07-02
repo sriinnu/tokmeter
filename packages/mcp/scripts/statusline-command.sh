@@ -45,11 +45,14 @@ fi
 
 # --- Session cost ---
 session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-session_cost_fmt=$(awk "BEGIN { printf \"%.2f\", $session_cost }")
+# Pass values to awk as data (-v), never interpolated into the program source,
+# and coerce numerically with +0 so a hostile non-numeric value becomes 0
+# rather than executable awk code (guards against planted /tmp cache contents).
+session_cost_fmt=$(awk -v v="$session_cost" 'BEGIN { printf "%.2f", v+0 }')
 
 # Color cost by amount: green < $1, gold < $5, orange < $10, red >= $10
 cost_color="$GREEN"
-cost_val=$(awk "BEGIN { print int($session_cost * 100) }")
+cost_val=$(awk -v v="$session_cost" 'BEGIN { print int((v+0) * 100) }')
 [ "$cost_val" -ge 100 ] && cost_color="$GOLD"
 [ "$cost_val" -ge 500 ] && cost_color="$ORANGE"
 [ "$cost_val" -ge 1000 ] && cost_color="$RED"
@@ -64,9 +67,9 @@ current_usage=$(echo "$ctx" | jq '.current_usage')
 fmt_k() {
   local n=$1
   if [ "$n" -ge 1000000 ]; then
-    awk "BEGIN { printf \"%.1fM\", $n/1000000 }"
+    awk -v n="$n" 'BEGIN { printf "%.1fM", (n+0)/1000000 }'
   elif [ "$n" -ge 1000 ]; then
-    awk "BEGIN { printf \"%.1fK\", $n/1000 }"
+    awk -v n="$n" 'BEGIN { printf "%.1fK", (n+0)/1000 }'
   else
     echo "$n"
   fi
@@ -104,7 +107,7 @@ if [ -n "$used_pct" ]; then
   for ((i=0; i<filled; i++)); do bar="${bar}█"; done
   for ((i=0; i<empty; i++)); do bar="${bar}░"; done
 
-  ctx_size_k=$(awk "BEGIN { printf \"%.0fK\", $ctx_size/1000 }")
+  ctx_size_k=$(awk -v s="$ctx_size" 'BEGIN { printf "%.0fK", (s+0)/1000 }')
   ctx_bar="${bar_color}${bar}${RST} ${WHITE}${pct_int}%${RST} ${DIM}${GRAY}${ctx_size_k}${RST}"
 else
   ctx_bar="${DIM}░░░░░░░░░░ 0%${RST}"
@@ -117,7 +120,12 @@ today_section=""
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tokmeter_dir="$(cd "${script_dir}/../../.." && pwd)"
 if [ -d "$tokmeter_dir" ]; then
-  cache_file="/tmp/drishti-today-cost.txt"
+  # Keep the cache in the user's private cache dir, not world-writable /tmp:
+  # a predictable /tmp path lets another local user pre-plant contents that
+  # would otherwise flow into awk/printf below.
+  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tokmeter"
+  mkdir -p "$cache_dir" 2>/dev/null
+  cache_file="${cache_dir}/statusline-today-cost.txt"
   cache_age=0
   if [ -f "$cache_file" ]; then
     cache_age=$(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
@@ -129,7 +137,8 @@ if [ -d "$tokmeter_dir" ]; then
   if [ -f "$cache_file" ]; then
     day_cost=$(cat "$cache_file" 2>/dev/null)
     if [ -n "$day_cost" ] && [ "$day_cost" != "0" ] && [ "$day_cost" != "null" ]; then
-      day_fmt=$(awk "BEGIN { printf \"%.2f\", $day_cost }")
+      # -v + numeric coercion: value is data, never awk program source.
+      day_fmt=$(awk -v v="$day_cost" 'BEGIN { printf "%.2f", v+0 }')
       today_section="${DIM}today:${RST}${GOLD}\$${day_fmt}${RST}"
     fi
   fi
@@ -137,7 +146,11 @@ fi
 
 # --- 5-hour billing block ---
 block_section=""
-block_cache="/tmp/drishti-block.json"
+# Private cache dir, not world-writable /tmp: a predictable /tmp path lets
+# another local user pre-plant JSON whose fields reach the arithmetic below.
+block_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tokmeter"
+mkdir -p "$block_cache_dir" 2>/dev/null
+block_cache="${block_cache_dir}/statusline-block.json"
 block_cache_age=0
 if [ -f "$block_cache" ]; then
   block_cache_age=$(( $(date +%s) - $(stat -c %Y "$block_cache" 2>/dev/null || stat -f %m "$block_cache" 2>/dev/null || echo 0) ))
@@ -154,9 +167,17 @@ if [ -f "$block_cache" ]; then
     block_num=$(jq -r '.block_num // 1' "$block_cache" 2>/dev/null)
     block_end_t=$(jq -r '.end // "?"' "$block_cache" 2>/dev/null)
 
+    # Coerce numerics to bare integers BEFORE they reach any $(( )) arithmetic —
+    # a bash arithmetic context evaluates array subscripts, so a planted value
+    # like 'x[$(cmd)]' would otherwise execute. Non-numeric collapses to 0.
+    block_pct=${block_pct%%.*}
+    case "$block_pct" in ''|*[!0-9]*) block_pct=0 ;; esac
+
     # Color: green if >2h left, yellow if 1-2h, orange if 30m-1h, red if <30m
     block_color="$GREEN"
     block_rem_sec=$(jq -r '.remaining_sec // 0' "$block_cache" 2>/dev/null)
+    block_rem_sec=${block_rem_sec%%.*}
+    case "$block_rem_sec" in ''|*[!0-9]*) block_rem_sec=0 ;; esac
     [ "$block_rem_sec" -lt 7200 ] && block_color="$YELLOW"
     [ "$block_rem_sec" -lt 3600 ] && block_color="$ORANGE"
     [ "$block_rem_sec" -lt 1800 ] && block_color="$RED"

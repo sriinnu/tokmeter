@@ -61,6 +61,31 @@ let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 const HTTP_PORT = DAEMON_PORT + 1;
 
 /**
+ * Allow a WebSocket handshake only from a localhost origin or from a native
+ * client that sends no Origin header (the bar app, CLI). A foreign website's
+ * connect carries its own Origin and is rejected — the defense against any
+ * visited page opening ws://127.0.0.1 to read spend or inject sessions.
+ */
+function isAllowedWsOrigin(origin?: string): boolean {
+  if (!origin) return true; // native clients send no Origin header
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+}
+
+/**
+ * Validate the HTTP Host header against localhost. This is the DNS-rebinding
+ * defense that CORS response headers cannot provide: after an attacker rebinds
+ * evil.com → 127.0.0.1, the browser's request is same-origin so CORS never
+ * applies, but the Host header still carries the original `evil.com` — reject
+ * it. A missing Host (HTTP/1.0, some native clients) is allowed; browsers
+ * always send one.
+ */
+function isAllowedHttpHost(host?: string): boolean {
+  if (!host) return true;
+  const hostname = host.replace(/:\d+$/, "").toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+}
+
+/**
  * V8 old-space cap (MB) for the spawned daemon child — the guardrail against a
  * runaway scan ballooning the box back into kernel-panic territory.
  *
@@ -222,7 +247,18 @@ export function startDaemon(): void {
   sessionManager = new SessionManager();
   initAuthToken();
 
-  wss = new WebSocketServer({ port: DAEMON_PORT, host: DAEMON_HOST });
+  wss = new WebSocketServer({
+    port: DAEMON_PORT,
+    host: DAEMON_HOST,
+    // Reject cross-origin handshakes. Browsers attach an Origin header to
+    // WebSocket connects, and the same-origin policy does NOT block the
+    // connection itself — so without this any website the user visits could
+    // open ws://127.0.0.1 and read broadcast spend totals or inject/unregister
+    // sessions (which then persist via saveState). Native clients (bar, CLI)
+    // send no Origin, so allow empty; otherwise require a localhost origin,
+    // matching the HTTP API's CORS gate.
+    verifyClient: ({ origin }: { origin?: string }) => isAllowedWsOrigin(origin),
+  });
 
   wss.on("listening", () => {
     console.log(`【♾️】 Drishti Daemon listening on ${DAEMON_URL}`);
@@ -780,7 +816,7 @@ function startHttpApi(): void {
   httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS: localhost only — prevents malicious websites from hitting the API
     const origin = req.headers.origin ?? "";
-    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/.test(origin);
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
     res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -794,6 +830,15 @@ function startHttpApi(): void {
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // DNS-rebinding guard: reject any request whose Host is not localhost.
+    // Applies to GET reads too (they carry spend/history), which the CORS
+    // header alone does not protect once a rebound origin is same-origin.
+    if (!isAllowedHttpHost(req.headers.host)) {
+      res.writeHead(403);
+      res.end(JSON.stringify({ error: "Forbidden host" }));
       return;
     }
 
