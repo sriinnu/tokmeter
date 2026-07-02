@@ -477,10 +477,15 @@ function broadcast(): void {
   }
 }
 
+/// A healthy client drains a broadcast instantly, so anything past this in its
+/// send buffer means it has stalled — stop feeding it or the buffer grows
+/// unbounded until the daemon OOMs.
+const WS_MAX_BUFFERED_BYTES = 1_000_000;
+
 function send(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+  if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.bufferedAmount > WS_MAX_BUFFERED_BYTES) return; // backpressure: drop for a stalled reader
+  ws.send(JSON.stringify(msg));
 }
 
 // ─── State Persistence ──────────────────────────────────────────────────
