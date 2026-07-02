@@ -265,6 +265,10 @@ export function startDaemon(): void {
   wss = new WebSocketServer({
     port: DAEMON_PORT,
     host: DAEMON_HOST,
+    // Bound message size like the HTTP body cap — ws defaults to 100 MiB, so a
+    // client could otherwise force a 100 MB JSON.parse per frame. Session
+    // updates are tiny; 1 MB is generous.
+    maxPayload: 1_048_576,
     // Reject cross-origin handshakes. Browsers attach an Origin header to
     // WebSocket connects, and the same-origin policy does NOT block the
     // connection itself — so without this any website the user visits could

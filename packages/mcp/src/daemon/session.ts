@@ -10,8 +10,11 @@ import type {
 } from "./protocol.js";
 
 /** Coerce any incoming numeric to a finite, non-negative value (0 otherwise). */
+/** Coerce to a finite, non-negative value, clamped to a sane ceiling so a
+ *  hostile local client can't push cost/tokens to Infinity in the aggregate. */
 function nonNeg(n: unknown): number {
-  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return 0;
+  return Math.min(n, 1e12);
 }
 
 // ─── Session State ─────────────────────────────────────────────────────
