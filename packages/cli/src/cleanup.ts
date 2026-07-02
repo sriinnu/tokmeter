@@ -8,7 +8,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
+import { CleanupService, TokmeterCore, localDateKey } from "@sriinnu/tokmeter";
 import type {
   CleanupFilter,
   DailyEntry,
@@ -209,7 +209,7 @@ async function runInteractiveCleanup(
   for (let i = 0; i < projects.length; i++) {
     const p = projects[i];
     const providers = p.providers.map((pr) => pr.provider).join(", ");
-    const lastUsed = p.lastUsed ? new Date(p.lastUsed).toISOString().slice(0, 10) : "—";
+    const lastUsed = p.lastUsed ? localDateKey(p.lastUsed) : "—";
     projectTable.push([
       (i + 1).toString(),
       p.project.slice(0, 24),

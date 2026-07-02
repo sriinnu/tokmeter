@@ -22,6 +22,7 @@ import {
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
+import { localDateKey } from "./date-utils.js";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
 import {
@@ -508,8 +509,10 @@ export class CleanupService {
       const otherCount = total.count - matched;
 
       if (otherCount > 0) {
-        const minDate = new Date(total.minTs).toISOString().slice(0, 10);
-        const maxDate = new Date(total.maxTs).toISOString().slice(0, 10);
+        // Local day keys, matching the calendar every other view uses — a UTC
+        // slice would show the wrong day for evening records west of UTC.
+        const minDate = localDateKey(total.minTs);
+        const maxDate = localDateKey(total.maxTs);
 
         warnings.push({
           file,
