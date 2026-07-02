@@ -96,15 +96,10 @@ struct AnomalyDetailSheet: View {
                 ? Color(red: 0.99, green: 0.98, blue: 0.96)
                 : Color(red: 0.12, green: 0.12, blue: 0.14))
         )
-        .frame(minWidth: 560, minHeight: 380)
-        // This sheet is presented from the MenuBarExtra popover, whose window
-        // isn't "key" — so macOS eats the FIRST click on any borderless control
-        // to activate the window, and the user has to click Close repeatedly.
-        // Bring the app forward once on appear so the very first click on Close
-        // (or any row) registers.
-        .onAppear {
-            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
-        }
+        // Rendered as an in-popover overlay (not a sheet window), so it fills
+        // the popover width and caps its height rather than sizing to a 560pt
+        // sheet. Clicks work directly — no cross-window activation needed.
+        .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 560)
     }
 
     private var header: some View {

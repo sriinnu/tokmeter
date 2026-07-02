@@ -36,6 +36,9 @@ struct TokmeterBarView: View {
     /// Drives the cache "wallet" slide-out drawer. Toggled by the wallet icon
     /// in the hero header; the drawer renders as a trailing-edge overlay.
     @State private var showCachePanel = false
+    /// Drives the pricing-anomaly drill-in as a popover-wide overlay (not a
+    /// .sheet — sheets from a MenuBarExtra popover have flaky event handling).
+    @State private var showAnomalyPanel = false
     /// Top-anchored gradient ripple flashed briefly on theme change so the
     /// transition reads as deliberate, not a glitch.
     @State private var themeRipple: Bool = false
@@ -87,7 +90,8 @@ struct TokmeterBarView: View {
                 loader: loader,
                 updater: updater,
                 theme: $theme,
-                showSettings: $showSettings
+                showSettings: $showSettings,
+                showAnomalyPanel: $showAnomalyPanel
             )
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -104,7 +108,32 @@ struct TokmeterBarView: View {
                     .zIndex(10)
             }
         }
+        // Pricing-anomaly drill-in — an in-popover overlay (NOT a .sheet, whose
+        // Close needed repeated clicks from a MenuBarExtra popover). Tap the
+        // dimmed backdrop anywhere to dismiss; the card's own ✕/Esc also work
+        // because it's in the popover's own view hierarchy now.
+        .overlay {
+            if showAnomalyPanel, let anomalies = loader.pricingAnomalies {
+                ZStack {
+                    Color.black.opacity(0.38)
+                        .contentShape(Rectangle())
+                        .onTapGesture { showAnomalyPanel = false }
+                    AnomalyDetailSheet(response: anomalies, theme: theme, isPresented: $showAnomalyPanel)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+                        .padding(12)
+                }
+                .zIndex(20)
+                .transition(.opacity)
+            }
+        }
         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showCachePanel)
+        .animation(.easeInOut(duration: 0.2), value: showAnomalyPanel)
+        // Close the anomaly overlay if its data disappears (daemon restart /
+        // transient fetch failure) so intent matches state.
+        .onChange(of: loader.pricingAnomalies == nil) { _, isNil in
+            if isNil && showAnomalyPanel { showAnomalyPanel = false }
+        }
         // If signals disappear while the drawer is open (daemon restart, brief
         // /api/statbar-signals failure), the overlay's `if let` clause silently
         // unmounts the drawer but `showCachePanel` stays true. When signals
