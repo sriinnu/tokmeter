@@ -60,6 +60,13 @@ struct HubSidebar: View {
             }
             .padding(.horizontal, 10)
 
+            // A living ∞ mascot floats in the sidebar's breathing room — the
+            // one always-visible spot with real blank space, so the doodle is
+            // actually seen (unlike empty states on a data-rich account).
+            Spacer(minLength: 12)
+            InfinityMascot(theme: theme)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
             Spacer(minLength: 12)
 
             HubSidebarRow(

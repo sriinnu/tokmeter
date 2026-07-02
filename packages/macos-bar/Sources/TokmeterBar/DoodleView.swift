@@ -23,6 +23,65 @@ struct InfinityDoodle: Shape {
     }
 }
 
+/// A little ∞ mascot with eyes — the two loops read as a friendly face. It
+/// breathes, floats, and glances around, with the occasional blink, so an
+/// always-visible spot (the Hub sidebar) gains a living companion rather than a
+/// static glyph. GPU-driven loops + a blink phase; no timers.
+struct InfinityMascot: View {
+    let theme: AppTheme
+    var tint: Color?
+    private var c: ThemeColors { theme.colors }
+    private var accent: Color { tint ?? c.accent }
+
+    @State private var breathe = false
+    @State private var look = false
+
+    var body: some View {
+        ZStack {
+            InfinityDoodle()
+                .stroke(
+                    accent.opacity(0.8),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 54, height: 24)
+
+            // Pupils sit inside each loop and drift together (looking around),
+            // then blink on a slow phase cycle.
+            PhaseAnimator([0, 1, 2, 3], content: { phase in
+                HStack(spacing: 24) {
+                    pupil(blinkPhase: phase)
+                    pupil(blinkPhase: phase)
+                }
+                .offset(x: look ? 3 : -3)
+            }, animation: { phase in
+                // Long open holds, a quick blink between — phases 0→1→2 are the
+                // eyes-open drift, 3 is the blink.
+                phase == 3 ? .easeInOut(duration: 0.12) : .easeInOut(duration: 1.6)
+            })
+        }
+        .scaleEffect(breathe ? 1.05 : 0.97, anchor: .center)
+        .offset(y: breathe ? 1 : -1)
+        .frame(width: 92, height: 44)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+            withAnimation(.easeInOut(duration: 3.6).repeatForever(autoreverses: true)) {
+                look = true
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func pupil(blinkPhase: Int) -> some View {
+        Circle()
+            .fill(accent)
+            .frame(width: 5.5, height: 5.5)
+            // Squash to a slit on the blink phase.
+            .scaleEffect(x: 1, y: blinkPhase == 3 ? 0.15 : 1, anchor: .center)
+    }
+}
+
 /// Friendly "nothing happening yet" doodle: a sketched ∞ dozing while a stream
 /// of z's rises and fades. Animated — the ∞ breathes on a slow sleep rhythm and
 /// bobs gently; the z's float up staggered. All GPU-driven repeatForever
