@@ -164,13 +164,10 @@ struct HubOverviewPanel: View {
                     Spacer()
                     HeatmapLegend(theme: theme)
                 }
-                // Heatmap is geometry-driven — the cell size derives from the
-                // available width, so the height that fits 7 rows + gaps
-                // scales with it. 7 cells × cellSize + 6 gaps + label row.
-                // Hub usable width / 52 cols ≈ 12pt → 7×12 + 6×2 + 10 ≈ 106.
-                // Floor at 100 so it doesn't collapse when the Hub is narrow.
+                // Heatmap sizes its own height to whatever 7 rows need at the
+                // width-derived cell size (it reports that up via a preference),
+                // so it fills the width AND never overflows into the card below.
                 YearHeatmap(daily: loader.allDaily, theme: theme)
-                    .frame(height: 110)
             }
         }
     }

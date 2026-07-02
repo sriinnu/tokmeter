@@ -71,23 +71,36 @@ struct YearHeatmap: View {
 
     private var grid: [[Date?]] { gridCache }
 
+    private static let cellGap: CGFloat = 2
+    private static let labelRow: CGFloat = 12
+    private static let vspacing: CGFloat = 4
+
+    /// Height the card should reserve, reported up from the width-derived cell
+    /// size so the card grows to fit exactly 7 rows + labels — never a fixed
+    /// height the grid can overflow.
+    @State private var contentHeight: CGFloat = 110
+
     var body: some View {
-        // Geometry-driven cell size so the grid always fits the Hub's
-        // available width regardless of window size or sidebar state.
-        // 52 columns × (12+2)pt = 728 used to overflow the ~676pt usable
-        // hub width — last 3-4 weeks clipped. Now: cell = (width - gaps) / 52.
+        // Cell size fills the available WIDTH (responsive, month labels stay
+        // readable), and the card's HEIGHT is sized to whatever 7 rows need at
+        // that cell size — reported via a preference so the grid can never
+        // overflow the frame into the card below (the bug that fixed-height
+        // caused on wide windows).
         GeometryReader { geo in
-            let cellGap: CGFloat = 2
             let columns = max(1, grid.count)
             // floor() to a whole point so the cell size is STABLE across sub-pixel
             // width re-proposals — a non-quantized cellSize makes columns*cellSize
             // land just-off the proposed width and re-propose every constraint pass.
-            let cellSize = max(6, floor((geo.size.width - cellGap * CGFloat(columns - 1)) / CGFloat(columns)))
-            VStack(alignment: .leading, spacing: 4) {
-                monthLabels(cellSize: cellSize, gap: cellGap)
-                HStack(spacing: cellGap) {
+            let cellSize = max(
+                6,
+                floor((geo.size.width - Self.cellGap * CGFloat(columns - 1)) / CGFloat(columns))
+            )
+            let needed = Self.labelRow + Self.vspacing + cellSize * 7 + Self.cellGap * 6
+            VStack(alignment: .leading, spacing: Self.vspacing) {
+                monthLabels(cellSize: cellSize, gap: Self.cellGap)
+                HStack(spacing: Self.cellGap) {
                     ForEach(Array(grid.enumerated()), id: \.offset) { _, column in
-                        VStack(spacing: cellGap) {
+                        VStack(spacing: Self.cellGap) {
                             ForEach(Array(column.enumerated()), id: \.offset) { _, date in
                                 cell(for: date, size: cellSize)
                             }
@@ -95,6 +108,11 @@ struct YearHeatmap: View {
                     }
                 }
             }
+            .preference(key: HeatmapHeightKey.self, value: needed)
+        }
+        .frame(height: contentHeight)
+        .onPreferenceChange(HeatmapHeightKey.self) { h in
+            if abs(h - contentHeight) > 0.5 { contentHeight = h }
         }
         .onAppear(perform: rebuildGridIfStale)
         // Cheap guard against day rollover while popover is open: check on
@@ -160,7 +178,7 @@ struct YearHeatmap: View {
                     .frame(width: cellSize, alignment: .leading)
             }
         }
-        .frame(height: 10)
+        .frame(height: Self.labelRow)
     }
 
     private func dateKey(_ d: Date) -> String {
@@ -187,6 +205,15 @@ struct YearHeatmap: View {
         let dateStr = formatter.string(from: date)
         if cost <= 0 { return "\(dateStr) — no activity" }
         return String(format: "%@ — $%.2f", dateStr, cost)
+    }
+}
+
+/// Reports the width-derived content height up to the parent so the card
+/// reserves exactly the space 7 rows need — the grid can never overflow.
+private struct HeatmapHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 110
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
