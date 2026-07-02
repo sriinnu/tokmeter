@@ -423,6 +423,13 @@ A native SwiftUI menubar app that surfaces your live token spend without ever
 leaving the menubar. Reads from the daemon when it's running, falls back to
 the CLI on disk when it isn't.
 
+The menu bar icon itself is a live health gauge: it tints **green → yellow → red**
+as your most-loaded session approaches its ceiling (worst-session-wins across every
+connected provider). Pick which ceiling drives the color in settings — **context
+window** fill, the Claude **5-hour block**, or a **daily budget** — so the signal
+works whether or not a provider reports a context window. Turn it off for a plain
+monochrome icon.
+
 <p align="center">
   <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="320" />
 </p>
@@ -649,7 +656,7 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (177 passing + 11 todo across the monorepo)
+bun run test                   # Run tests (230 passing + 11 todo across the monorepo)
 bun run lint                   # Lint
 bun run format                 # Format
 ```

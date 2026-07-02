@@ -122,17 +122,20 @@ describe("relay accuracy — midnight rollover seals the outgoing day dedup-corr
   }
 
   test("late straggler is captured AND already-counted records are not double-counted", () => {
-    // Recent records = what was counted pre-midnight (two early lines).
+    // Recent records = what was counted pre-midnight (two lines). Local-time
+    // literals (no `Z`) anchored midday keep localDateKey === `day` in ANY
+    // timezone — UTC times near midnight would roll to the next local day under
+    // a nonzero offset and silently drop from the outgoing filter.
     const recent: TokenRecord[] = [
-      r({ timestamp: Date.parse(`${day}T09:00:00Z`), cost: 1.0, inputTokens: 100 }),
-      r({ timestamp: Date.parse(`${day}T23:59:48Z`), cost: 0.5, inputTokens: 50 }),
+      r({ timestamp: Date.parse(`${day}T09:00:00`), cost: 1.0, inputTokens: 100 }),
+      r({ timestamp: Date.parse(`${day}T21:00:00`), cost: 0.5, inputTokens: 50 }),
     ];
     // Post-midnight scan re-reads the active file: the two already-counted lines
-    // (must dedup) AND the late 23:59:50 line (must be captured).
+    // (must dedup) AND the late 21:05 line (must be captured).
     const stragglers: TokenRecord[] = [
-      r({ timestamp: Date.parse(`${day}T09:00:00Z`), cost: 1.0, inputTokens: 100 }), // dup
-      r({ timestamp: Date.parse(`${day}T23:59:48Z`), cost: 0.5, inputTokens: 50 }), // dup
-      r({ timestamp: Date.parse(`${day}T23:59:50Z`), cost: 0.7, inputTokens: 70 }), // late
+      r({ timestamp: Date.parse(`${day}T09:00:00`), cost: 1.0, inputTokens: 100 }), // dup
+      r({ timestamp: Date.parse(`${day}T21:00:00`), cost: 0.5, inputTokens: 50 }), // dup
+      r({ timestamp: Date.parse(`${day}T21:05:00`), cost: 0.7, inputTokens: 70 }), // late
     ];
     const sealed = sealOutgoing(recent, stragglers);
     // 1.0 + 0.5 + 0.7 = 2.2 exactly — dups collapsed, late line kept once.
@@ -143,7 +146,7 @@ describe("relay accuracy — midnight rollover seals the outgoing day dedup-corr
 
   test("no stragglers → sealed day equals what was already counted (no change)", () => {
     const recent: TokenRecord[] = [
-      r({ timestamp: Date.parse(`${day}T10:00:00Z`), cost: 2.0, inputTokens: 200 }),
+      r({ timestamp: Date.parse(`${day}T10:00:00`), cost: 2.0, inputTokens: 200 }),
     ];
     const sealed = sealOutgoing(recent, []);
     expect(sealed.cost).toBeCloseTo(2.0, 10);
