@@ -36,6 +36,11 @@ struct YearHeatmap: View {
         Dictionary(uniqueKeysWithValues: daily.map { ($0.date, $0.cost) })
     }
 
+    /// Full per-day lookup for the hover tooltip (cost + tokens).
+    private var dailyByDate: [String: DailyUsage] {
+        Dictionary(daily.map { ($0.date, $0) }, uniquingKeysWith: { _, b in b })
+    }
+
     /// 95th-percentile clip on the log scale. Picks the visual ceiling so
     /// most cells land in the readable middle of the gradient instead of
     /// the lowest bucket. Falls back to 1.0 when the data is empty.
@@ -111,6 +116,18 @@ struct YearHeatmap: View {
             .preference(key: HeatmapHeightKey.self, value: needed)
         }
         .frame(height: contentHeight)
+        // Instant floating tooltip for the hovered day — snappier than the
+        // native .help() (which we keep for accessibility). Anchored top-right
+        // of the grid, matching the 30-day chart's tooltip.
+        .overlay(alignment: .topTrailing) {
+            if let key = hovered, let d = dailyByDate[key] {
+                HeatmapCellTooltip(day: d, theme: theme)
+                    .padding(.top, 2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .topTrailing)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: hovered)
         .onPreferenceChange(HeatmapHeightKey.self) { h in
             if abs(h - contentHeight) > 0.5 { contentHeight = h }
         }
@@ -214,6 +231,70 @@ private struct HeatmapHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 110
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+/// Floating details card for the hovered heatmap day — date, cost, tokens.
+/// Matches HubChartTooltip's glass style so the Hub reads as one system.
+private struct HeatmapCellTooltip: View {
+    let day: DailyUsage
+    let theme: AppTheme
+
+    private var c: ThemeColors { theme.colors }
+    private var bg: BackgroundMode { theme.backgroundMode }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(prettyDate)
+                .font(.system(size: 10, weight: .semibold, design: theme.fonts.labelDesign))
+                .tracking(0.5)
+                .foregroundColor(bg.secondaryTextColor)
+            if day.cost <= 0 && day.tokens <= 0 {
+                Text("no activity")
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+            } else {
+                row(label: "Cost", value: Fmt.cost(day.cost))
+                row(label: "Tokens", value: Fmt.number(day.tokens))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(c.accent.opacity(0.35), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
+        )
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func row(label: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                .foregroundColor(bg.secondaryTextColor)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
+                .foregroundColor(bg.primaryTextColor)
+        }
+    }
+
+    private var prettyDate: String {
+        let s = day.date
+        guard s.count >= 10 else { return s }
+        let year = String(s.prefix(4))
+        let month = Int(s.dropFirst(5).prefix(2)) ?? 0
+        let dd = String(s.dropFirst(8).prefix(2))
+        let names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        let mn = (month >= 1 && month <= 12) ? names[month] : ""
+        return "\(mn) \(dd), \(year)"
     }
 }
 
