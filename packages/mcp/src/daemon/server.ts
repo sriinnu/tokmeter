@@ -386,7 +386,8 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         msg.session.sessionId,
         msg.cost,
         msg.tokens,
-        msg.durationMs
+        msg.durationMs,
+        msg.contextWindow
       );
 
       if (session) {
@@ -872,9 +873,14 @@ function startHttpApi(): void {
         // If the core has never been scanned, returns zeros + ready: false so
         // the UI can render a skeleton instead of timing out.
         if (pathname === "/api/quick") {
+          // Live context-window fill (worst session across all providers that
+          // report one) rides the fast endpoint so the menubar color can track
+          // it near-real-time. Undefined when no live session exposes it — the
+          // bar then colors by the universal cost/budget signal.
+          const liveContextFillPct = sessionManager?.getAggregated().maxContextFillPct;
           if (_httpCore) {
             const stats = applyStatsFloor(_httpCore.core.getStats());
-            json(res, { ready: true, stats });
+            json(res, { ready: true, stats, liveContextFillPct });
           } else {
             // Kick off the warmup but don't wait for it.
             void getHttpCore().catch(() => {});
@@ -887,6 +893,7 @@ function startHttpApi(): void {
                 projects: 0,
                 longestStreak: 0,
               },
+              liveContextFillPct,
             });
           }
           return;

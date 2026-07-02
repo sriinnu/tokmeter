@@ -69,6 +69,9 @@ struct ModelData: Codable {
 struct QuickResponse: Codable {
     let ready: Bool
     let stats: StatsData
+    /// Worst live context-window fill % across sessions that report one.
+    /// Absent when no live session exposes a context window.
+    let liveContextFillPct: Double?
 }
 
 /// /api/ready — health check.

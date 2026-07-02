@@ -7,7 +7,13 @@
  */
 
 import WebSocket from "ws";
-import type { AggregatedStats, BroadcastMessage, SessionInfo, TokenUsage } from "./protocol.js";
+import type {
+  AggregatedStats,
+  BroadcastMessage,
+  ContextWindowInfo,
+  SessionInfo,
+  TokenUsage,
+} from "./protocol.js";
 import { DAEMON_URL } from "./protocol.js";
 
 // ─── Response Types ─────────────────────────────────────────────────────
@@ -32,6 +38,7 @@ export async function syncUpdate(
   cost: number,
   tokens: TokenUsage,
   durationMs?: number,
+  contextWindow?: ContextWindowInfo,
   timeoutMs = 200
 ): Promise<DaemonResponse> {
   return new Promise<DaemonResponse>((resolve) => {
@@ -64,6 +71,8 @@ export async function syncUpdate(
             cost,
             tokens,
             durationMs,
+            // Only included when the provider actually reports a context window.
+            ...(contextWindow ? { contextWindow } : {}),
           })
         );
       });

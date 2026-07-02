@@ -30,9 +30,10 @@ struct HubSettingsPanel: View {
                 header.cascadeIn(delay: 0.04)
                 themeSection.cascadeIn(delay: 0.12)
                 refreshSection.cascadeIn(delay: 0.22)
-                pricingSection.cascadeIn(delay: 0.30)
-                cliDefaultsSection.cascadeIn(delay: 0.38)
-                alertsSection.cascadeIn(delay: 0.46)
+                menubarSection.cascadeIn(delay: 0.30)
+                pricingSection.cascadeIn(delay: 0.38)
+                cliDefaultsSection.cascadeIn(delay: 0.46)
+                alertsSection.cascadeIn(delay: 0.54)
                 footerActions.cascadeIn(delay: 0.54)
             }
             .padding(28)
@@ -107,6 +108,26 @@ struct HubSettingsPanel: View {
     }
 
     // MARK: - CLI defaults
+
+    private var menubarSection: some View {
+        HubSettingsSection(title: "Menubar", icon: "menubar.rectangle", theme: theme) {
+            VStack(alignment: .leading, spacing: 12) {
+                HubPickerRow(
+                    label: "Live color source",
+                    helpText: "Tints the menubar green→yellow→orange→red. Context = worst live "
+                        + "context-window fill (needs a provider that reports one). Block = "
+                        + "Anthropic 5-hour billing block. Budget = today's cost vs the daily "
+                        + "threshold below. Off = no coloring.",
+                    selection: Binding(
+                        get: { store.config.colorSource },
+                        set: { v in store.update { $0.bar.menubarColorSource = v } }
+                    ),
+                    options: MenubarColorSource.allCases,
+                    theme: theme
+                )
+            }
+        }
+    }
 
     private var cliDefaultsSection: some View {
         HubSettingsSection(title: "CLI defaults", icon: "terminal.fill", theme: theme) {

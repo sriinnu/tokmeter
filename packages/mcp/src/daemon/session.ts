@@ -2,7 +2,12 @@
  * Drishti Daemon — Session management
  */
 
-import type { AggregatedStats, SessionInfo, TokenUsage } from "./protocol.js";
+import type {
+  AggregatedStats,
+  ContextWindowInfo,
+  SessionInfo,
+  TokenUsage,
+} from "./protocol.js";
 
 // ─── Session State ─────────────────────────────────────────────────────
 
@@ -12,6 +17,8 @@ export interface Session extends SessionInfo {
   durationMs: number;
   lastUpdate: number;
   connected: boolean;
+  /** Live context-window occupancy, when the provider reports it. */
+  contextWindow?: ContextWindowInfo;
 }
 
 export class SessionManager {
@@ -50,7 +57,8 @@ export class SessionManager {
     sessionId: string,
     cost: number,
     tokens: TokenUsage,
-    durationMs?: number
+    durationMs?: number,
+    contextWindow?: ContextWindowInfo
   ): Session | null {
     const key = this.key(provider, sessionId);
     const session = this.sessions.get(key);
@@ -58,12 +66,15 @@ export class SessionManager {
     if (!session) {
       // Auto-register if not found
       this.register({ provider, sessionId, model: "unknown" });
-      return this.update(provider, sessionId, cost, tokens, durationMs);
+      return this.update(provider, sessionId, cost, tokens, durationMs, contextWindow);
     }
 
     session.cost = cost;
     session.tokens = tokens;
     session.durationMs = durationMs ?? session.durationMs;
+    // Keep the last-known context window if this update omits it (a session
+    // that reported one shouldn't lose it on a later cost-only update).
+    if (contextWindow) session.contextWindow = contextWindow;
     session.lastUpdate = Date.now();
     session.connected = true;
 
@@ -113,6 +124,9 @@ export class SessionManager {
     const byModel = new Map<string, { cost: number; inputTokens: number; outputTokens: number }>();
     const byProvider = new Map<string, { cost: number; sessions: number }>();
     const providers = new Set<string>();
+    // Worst-session-wins: highest live context fill across sessions that
+    // report one. Stays undefined if none do (universal cost/budget fallback).
+    let maxContextFillPct: number | undefined;
 
     for (const session of sessions) {
       // Skip excluded session (the one asking)
@@ -122,6 +136,13 @@ export class SessionManager {
         session.sessionId === excludeSession.sessionId
       ) {
         continue;
+      }
+
+      if (session.contextWindow && session.contextWindow.maxTokens > 0) {
+        const pct = (session.contextWindow.usedTokens / session.contextWindow.maxTokens) * 100;
+        if (Number.isFinite(pct) && (maxContextFillPct === undefined || pct > maxContextFillPct)) {
+          maxContextFillPct = pct;
+        }
       }
 
       totalCost += session.cost;
@@ -158,6 +179,7 @@ export class SessionManager {
       byProvider: [...byProvider.entries()]
         .map(([provider, data]) => ({ provider, ...data }))
         .sort((a, b) => b.cost - a.cost),
+      ...(maxContextFillPct !== undefined ? { maxContextFillPct } : {}),
     };
   }
 

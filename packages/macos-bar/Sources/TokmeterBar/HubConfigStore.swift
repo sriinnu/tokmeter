@@ -50,9 +50,27 @@ enum ConfigDefaultSort: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Which live signal tints the menubar. Mirrors MenubarColorSource in
+/// packages/core/src/config-service.ts — keep the raw values identical.
+enum MenubarColorSource: String, Codable, CaseIterable, Identifiable {
+    case off, context, block, budget
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .off:     return "Off"
+        case .context: return "Context window fill"
+        case .block:   return "5-hour billing block"
+        case .budget:  return "Cost vs daily budget"
+        }
+    }
+}
+
 struct HubUserConfig: Codable {
     struct BarConfig: Codable {
         var refreshSeconds: Int
+        /// Optional so a config.json written before this field existed still
+        /// decodes; nil means the default (context). Use `colorSource` to read.
+        var menubarColorSource: MenubarColorSource?
     }
     struct DaemonConfig: Codable {
         var scanIntervalSeconds: Int
@@ -73,9 +91,12 @@ struct HubUserConfig: Codable {
     var modifiedBy: ConfigModifiedBy
     var modifiedAt: String
 
+    /// Menubar color source with the nil-safe default applied.
+    var colorSource: MenubarColorSource { bar.menubarColorSource ?? .context }
+
     static let defaults = HubUserConfig(
         version: 1,
-        bar: .init(refreshSeconds: 30),
+        bar: .init(refreshSeconds: 30, menubarColorSource: .context),
         daemon: .init(scanIntervalSeconds: 60),
         cli: .init(defaultRange: .all, defaultSort: .cost),
         alerts: .init(dailyCostThreshold: nil),

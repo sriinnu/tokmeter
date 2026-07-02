@@ -38,12 +38,23 @@ import { dirname, join } from "node:path";
 
 export type DefaultRange = "all" | "today" | "week" | "month" | "year";
 export type DefaultSort = "cost" | "tokens" | "activeDays";
+export type MenubarColorSource = "off" | "context" | "block" | "budget";
+const MENUBAR_COLOR_SOURCES: readonly MenubarColorSource[] = ["off", "context", "block", "budget"];
 
 export interface UserConfig {
   version: 1;
   bar: {
     /** Seconds between bar fetches from the daemon. */
     refreshSeconds: number;
+    /**
+     * Which live signal tints the menubar (green→yellow→orange→red):
+     *   - "context": worst live context-window fill across sessions (needs a
+     *     provider that reports one; falls back to neutral when none do).
+     *   - "block": Anthropic 5-hour billing-block usage.
+     *   - "budget": today's cost vs `alerts.dailyCostThreshold` (universal).
+     *   - "off": no coloring.
+     */
+    menubarColorSource: MenubarColorSource;
   };
   daemon: {
     /** Advisory: seconds between full rescans inside the daemon. */
@@ -71,7 +82,7 @@ export interface UserConfig {
  */
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
-  bar: { refreshSeconds: 30 },
+  bar: { refreshSeconds: 30, menubarColorSource: "context" },
   daemon: { scanIntervalSeconds: 60 },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
@@ -146,6 +157,11 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
     version: 1,
     bar: {
       refreshSeconds: clampPositiveInt(raw.bar?.refreshSeconds, d.bar.refreshSeconds, 5, 3600),
+      menubarColorSource: MENUBAR_COLOR_SOURCES.includes(
+        raw.bar?.menubarColorSource as MenubarColorSource
+      )
+        ? (raw.bar?.menubarColorSource as MenubarColorSource)
+        : d.bar.menubarColorSource,
     },
     daemon: {
       scanIntervalSeconds: clampPositiveInt(
