@@ -17,7 +17,7 @@
     "build:web": "cd packages/web && bun run build",
     "build:mcp": "cd packages/mcp && bun run build",
     "build:tokmeter": "cd packages/tokmeter && bun run build",
-    "ensure:tokmeter": "test -f packages/tokmeter/dist/core/index.js || (bun run build:core && bun run build:cli && bun run build:tui && bun run build:tokmeter)",
+    "ensure:tokmeter": "bash scripts/ensure-tokmeter.sh",
 
     "cli": "cd packages/cli && bun src/cli.ts",
     "cli:models": "cd packages/cli && bun src/cli.ts models",
