@@ -159,8 +159,14 @@ final class DaemonClient {
     }
 
     func fetchProjectDetail(_ projectName: String) async throws -> ProjectDetailData {
+        // Encode as a single path SEGMENT: .urlPathAllowed leaves "/" intact, so
+        // a project name containing "/" or "../" could reshape the request path.
+        // Removing "/" from the allowed set forces %2F, keeping the name in one
+        // segment (defense-in-depth — the daemon does an in-memory lookup).
+        var segmentAllowed = CharacterSet.urlPathAllowed
+        segmentAllowed.remove("/")
         let encoded = projectName.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
+            withAllowedCharacters: segmentAllowed
         ) ?? projectName
         return try await get("/api/projects/\(encoded)", as: ProjectDetailData.self)
     }
@@ -206,7 +212,10 @@ final class DaemonClient {
             let ok: Bool
             let error: String?
         }
-        let result = try await get("/api/update-pricing", as: UpdatePricingResponse.self)
+        // POST (token-gated): update-pricing is a mutation (network fetch +
+        // full rescan), so the daemon requires the bearer token — a GET here
+        // was CSRF-able by any visited web page.
+        let result = try await post("/api/update-pricing", body: [:], as: UpdatePricingResponse.self)
         if !result.ok {
             throw DaemonError.networkError(result.error ?? "update-pricing returned ok=false")
         }

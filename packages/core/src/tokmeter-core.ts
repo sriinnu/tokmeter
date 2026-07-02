@@ -34,9 +34,11 @@ import { refreshFromRelay } from "./relay-loader.js";
 import {
   type ScanContext,
   resolveTodayState,
+  scanHistoricalRecords,
   scanRawRecords,
   scanRecentRecords,
   scanTodayRecords,
+  scanTodayRecordsWithStragglers,
 } from "./scan-pipeline.js";
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
@@ -245,7 +247,12 @@ export class TokmeterCore {
       koshaChanged = mtime > 0 && mtime !== getCachedKoshaMtime();
     }
 
-    const today = await scanTodayRecords(this.ctx(), undefined, now, todayWarnings);
+    const { today, stragglers } = await scanTodayRecordsWithStragglers(
+      this.ctx(),
+      undefined,
+      now,
+      todayWarnings
+    );
 
     if (this.skipPricing) {
       markPricingSkipped(today);
@@ -261,7 +268,7 @@ export class TokmeterCore {
 
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now);
+    this.refreshTodayAccumulator(today, now, stragglers);
 
     this.scanMeta = {
       ...this.scanMeta,
@@ -282,7 +289,11 @@ export class TokmeterCore {
     return out;
   }
 
-  private refreshTodayAccumulator(todayRecords: TokenRecord[], referenceTimestamp: number): void {
+  private refreshTodayAccumulator(
+    todayRecords: TokenRecord[],
+    referenceTimestamp: number,
+    stragglers: TokenRecord[] = []
+  ): void {
     const todayKey = localDateKey(referenceTimestamp);
 
     // Seal-on-rollover. If the daemon ran across midnight, the outgoing
@@ -291,9 +302,33 @@ export class TokmeterCore {
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
     if (prev) {
-      const sealed = sealRolledOverDay(this.homeDir, prev, todayKey);
+      // Re-derive the outgoing day from a DEDUPED aggregation of its records
+      // rather than folding stragglers into the accumulator. `prev` is built
+      // via hydrate(), which clears the fingerprint set — so folding a
+      // straggler that was already counted before midnight would double-count
+      // it into the immutable sealed day. Instead, aggregate the union of the
+      // last-seen recent records + freshly-scanned stragglers for that day;
+      // aggregateRecordsByDay dedups by fingerprint, so an already-counted
+      // record collapses (no double-count) while a genuinely late record is
+      // still captured (no loss). Falls back to the accumulator's own totals
+      // if no records for the day are in memory.
+      const outgoing = [...this.recentRecords, ...stragglers].filter(
+        (r) => localDateKey(r.timestamp) === prev.date
+      );
+      const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
+      const toSeal = new DailyAccumulator(prev.date);
+      toSeal.hydrate(derived ?? prev.toAggregate());
+      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey);
       if (sealed) this.aggregates.set(sealed.date, sealed);
     }
+
+    // Never let a day live in BOTH the sealed-aggregates map and the live
+    // accumulator: if the wall clock steps backward across midnight (NTP step,
+    // VM snapshot restore, suspend/resume, manual set) todayKey can equal a
+    // day already sealed into `aggregates`, and the read layer would count it
+    // twice. Evict the map entry — the live accumulator becomes the single
+    // owner of today, and it is re-hydrated from a fresh scan just below.
+    this.aggregates.delete(todayKey);
 
     const [todayAgg] = aggregateRecordsByDay(todayRecords);
     const acc = new DailyAccumulator(todayKey);
@@ -316,6 +351,25 @@ export class TokmeterCore {
   /** Rolling 14-day window; lifetime callers should use the aggregate getters. */
   getRecords(): TokenRecord[] {
     return this.recentRecords;
+  }
+
+  /**
+   * Unbounded raw scan of the ENTIRE corpus (all providers, all time), each
+   * record carrying its `sourceFile`. This is the RAM-heavy full-corpus path
+   * the relay exists to avoid on hot reads — use it ONLY for operations that
+   * genuinely need per-record file identity across all history (cleanup), never
+   * for the poll loop. `scan()`/`getRecords()` return only the rolling 14-day
+   * window, so a caller that used them for cleanup silently ignored everything
+   * older than 14 days (and under-detected partial-file collateral). No relay
+   * mutation — read-only.
+   */
+  async scanLifetimeRaw(providers?: ProviderId[]): Promise<TokenRecord[]> {
+    const ref = Date.now();
+    const warnings: ScanWarning[] = [];
+    const history = await scanHistoricalRecords(this.ctx(), providers, ref, warnings);
+    const today = await scanTodayRecords(this.ctx(), providers, ref, warnings);
+    if (this.skipPricing) markPricingSkipped([...history, ...today]);
+    return [...history, ...today];
   }
 
   getScanMeta(): ScanMeta {

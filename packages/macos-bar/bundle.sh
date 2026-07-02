@@ -35,14 +35,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ─── Mode selection ─────────────────────────────────────────────────────
-# Default: dev mode, ALWAYS install to /Applications. If you want to keep
-# the .app local without installing, pass --no-install.
+# Default: ALWAYS install to /Applications, in every mode. A build must never
+# be left sitting only in the repo dir (or /tmp) — the canonical home is
+# /Applications. If you explicitly want to keep the .app local without
+# installing (e.g. CI producing an upload artifact), pass --no-install.
 MODE="dev"
 INSTALL=1
 for arg in "$@"; do
     case "${arg}" in
-        --release)    MODE="release"; INSTALL=0 ;;
-        --signed)     MODE="signed";  INSTALL=0 ;;
+        --release)    MODE="release" ;;
+        --signed)     MODE="signed" ;;
         --install)    INSTALL=1 ;;          # explicit, but it's the default
         --no-install) INSTALL=0 ;;
         "")           ;;
@@ -58,8 +60,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-1.6.1}"
-BUILD_VERSION="${CFBundleVersion:-22}"
+SHORT_VERSION="${CFBundleShortVersionString:-1.7.0}"
+BUILD_VERSION="${CFBundleVersion:-33}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
@@ -128,6 +130,33 @@ fi
 PRIV_KEY_PATH="${SPARKLE_PRIVATE_KEY_PATH:-./sparkle_ed25519_priv}"
 if [[ -z "${SUPUBLIC_KEY}" && -f "${PRIV_KEY_PATH}.pub" ]]; then
     SUPUBLIC_KEY=$(cat "${PRIV_KEY_PATH}.pub")
+fi
+# Strip all surrounding whitespace/newlines: a .pub file that is just a
+# trailing newline would otherwise pass the non-empty guard below and emit a
+# blank <string> for SUPublicEDKey — a key that can never validate an update.
+SUPUBLIC_KEY="$(printf '%s' "${SUPUBLIC_KEY}" | tr -d '[:space:]')"
+
+# For any distributable build, refuse to proceed without the public key.
+# A bundle missing SUPublicEDKey can never validate a Sparkle update — it
+# ships un-updateable and strands every user on that build (this exact hole
+# shipped build 21). Dev builds may skip it; signed/release must not.
+if [[ "${MODE}" == "signed" || "${MODE}" == "release" ]] && [[ -z "${SUPUBLIC_KEY}" ]]; then
+    echo "ERROR: SUPUBLIC_KEY is empty in ${MODE} mode — refusing to build an"
+    echo "       un-updateable app with no SUPublicEDKey in Info.plist."
+    echo "       Fix: source packages/macos-bar/.env (or export SUPUBLIC_KEY),"
+    echo "       or place the public key at ${PRIV_KEY_PATH}.pub."
+    exit 4
+fi
+
+# A Sparkle EdDSA public key is 44 base64 chars (32 bytes) ending in '='.
+# A value that survives the emptiness check but is malformed (truncated env,
+# partial paste) would also ship un-updateable — fail loud in signed/release.
+if [[ "${MODE}" == "signed" || "${MODE}" == "release" ]] && \
+   [[ ! "${SUPUBLIC_KEY}" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+    echo "ERROR: SUPUBLIC_KEY does not look like a 44-char base64 Ed25519 key:"
+    echo "       '${SUPUBLIC_KEY}'"
+    echo "       Refusing to embed a malformed SUPublicEDKey. Check .env."
+    exit 4
 fi
 
 # ─── 6. Write Info.plist ────────────────────────────────────────────────
@@ -484,6 +513,13 @@ if [[ "${INSTALL}" == "1" ]]; then
     rm -rf "/Applications/${APP_DIR}"
     cp -R "${APP_DIR}" /Applications/
 
+    # Remove the build-dir copy once it's installed — otherwise Spotlight and
+    # Launchpad index BOTH it and the /Applications copy, so the user sees two
+    # "TokmeterBar" apps. The distributable .zip (release mode) is kept; only
+    # the loose .app is redundant after install. Skipped for --no-install so CI
+    # still has the artifact to upload.
+    rm -rf "${APP_DIR}"
+
     # Launch it. Use `open` so it's a fresh launch via LaunchServices,
     # which Sparkle's installer logic relies on.
     echo "    Launching /Applications/${APP_DIR}"
@@ -500,6 +536,18 @@ case "${MODE}" in
             echo "Status: built ./${APP_DIR} (ad-hoc signed). Pass --install to deposit to /Applications."
         fi
         ;;
-    signed)  echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install." ;;
-    release) echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml." ;;
+    signed)
+        if [[ "${INSTALL}" == "1" ]]; then
+            echo "Status: signed + installed to /Applications/${APP_DIR} (also Gatekeeper-friendly for AirDrop)."
+        else
+            echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install."
+        fi
+        ;;
+    release)
+        if [[ "${INSTALL}" == "1" ]]; then
+            echo "Status: notarized + stapled + installed to /Applications/${APP_DIR}. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
+        else
+            echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
+        fi
+        ;;
 esac

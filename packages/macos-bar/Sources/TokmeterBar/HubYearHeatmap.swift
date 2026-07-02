@@ -36,6 +36,11 @@ struct YearHeatmap: View {
         Dictionary(uniqueKeysWithValues: daily.map { ($0.date, $0.cost) })
     }
 
+    /// Full per-day lookup for the hover tooltip (cost + tokens).
+    private var dailyByDate: [String: DailyUsage] {
+        Dictionary(daily.map { ($0.date, $0) }, uniquingKeysWith: { _, b in b })
+    }
+
     /// 95th-percentile clip on the log scale. Picks the visual ceiling so
     /// most cells land in the readable middle of the gradient instead of
     /// the lowest bucket. Falls back to 1.0 when the data is empty.
@@ -71,31 +76,47 @@ struct YearHeatmap: View {
 
     private var grid: [[Date?]] { gridCache }
 
+    private static let cellGap: CGFloat = 2
+    private static let labelRow: CGFloat = 12
+    private static let vspacing: CGFloat = 4
+    /// Ceiling on cell size so an ultra-wide/fullscreen window doesn't blow the
+    /// squares up huge (and make the whole grid absurdly tall). Above this the
+    /// grid stops growing and centers, keeping it tidy.
+    private static let maxCell: CGFloat = 22
+
     var body: some View {
-        // Geometry-driven cell size so the grid always fits the Hub's
-        // available width regardless of window size or sidebar state.
-        // 52 columns × (12+2)pt = 728 used to overflow the ~676pt usable
-        // hub width — last 3-4 weeks clipped. Now: cell = (width - gaps) / 52.
-        GeometryReader { geo in
-            let cellGap: CGFloat = 2
-            let columns = max(1, grid.count)
-            // floor() to a whole point so the cell size is STABLE across sub-pixel
-            // width re-proposals — a non-quantized cellSize makes columns*cellSize
-            // land just-off the proposed width and re-propose every constraint pass.
-            let cellSize = max(6, floor((geo.size.width - cellGap * CGFloat(columns - 1)) / CGFloat(columns)))
-            VStack(alignment: .leading, spacing: 4) {
-                monthLabels(cellSize: cellSize, gap: cellGap)
-                HStack(spacing: cellGap) {
-                    ForEach(Array(grid.enumerated()), id: \.offset) { _, column in
-                        VStack(spacing: cellGap) {
-                            ForEach(Array(column.enumerated()), id: \.offset) { _, date in
-                                cell(for: date, size: cellSize)
-                            }
+        // SELF-SIZING grid: each of the 7-tall columns is an equal-width slot
+        // (maxWidth: .infinity) and each cell is square via aspectRatio, so the
+        // grid reports its true height to the parent with NO GeometryReader and
+        // NO height feedback loop — it can never overflow into the card below
+        // (the bug the fixed-height and preference approaches both hit). The
+        // grid fills the width up to maxCell, then centers.
+        VStack(alignment: .center, spacing: Self.vspacing) {
+            monthLabels(gap: Self.cellGap)
+            HStack(spacing: Self.cellGap) {
+                ForEach(Array(grid.enumerated()), id: \.offset) { _, column in
+                    VStack(spacing: Self.cellGap) {
+                        ForEach(Array(column.enumerated()), id: \.offset) { _, date in
+                            cell(for: date)
                         }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
+        .frame(maxWidth: Self.maxCell * 53 + Self.cellGap * 52)  // cap + center on ultra-wide
+        .frame(maxWidth: .infinity, alignment: .center)
+        // Instant floating tooltip for the hovered day — snappier than the
+        // native .help() (kept for accessibility). Anchored top-right.
+        .overlay(alignment: .topTrailing) {
+            if let key = hovered, let d = dailyByDate[key] {
+                HeatmapCellTooltip(day: d, theme: theme)
+                    .padding(.top, 2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .topTrailing)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: hovered)
         .onAppear(perform: rebuildGridIfStale)
         // Cheap guard against day rollover while popover is open: check on
         // every redraw whether today changed, only rebuild if so.
@@ -112,18 +133,18 @@ struct YearHeatmap: View {
     }
 
     @ViewBuilder
-    private func cell(for date: Date?, size: CGFloat) -> some View {
+    private func cell(for date: Date?) -> some View {
         if let date = date {
             let key = dateKey(date)
             let cost = costByDate[key] ?? 0
             let intensity = colorIntensity(cost)
             let isHovered = hovered == key
-            // Hover scale dropped 1.25 → 1.15 — at 12pt cells the bigger
-            // scale shoves neighbors visually since the 2pt gap is only 13%
-            // of cell width. 1.15 reads as a clear lift without disturbing.
-            RoundedRectangle(cornerRadius: size * 0.2)
+            // aspectRatio(1) makes the cell square at whatever width the equal
+            // column slot gives it — so the grid self-sizes its height. A fixed
+            // corner radius reads fine across the cell-size range.
+            RoundedRectangle(cornerRadius: 3)
                 .fill(intensity > 0 ? c.accent.opacity(intensity) : bg.secondaryTextColor.opacity(0.08))
-                .frame(width: size, height: size)
+                .aspectRatio(1, contentMode: .fit)
                 .scaleEffect(isHovered ? 1.15 : 1.0)
                 .animation(.spring(response: 0.28, dampingFraction: 0.65), value: isHovered)
                 .onHover { entered in
@@ -131,11 +152,11 @@ struct YearHeatmap: View {
                 }
                 .help(tooltipText(date: date, cost: cost))
         } else {
-            Color.clear.frame(width: size, height: size)
+            Color.clear.aspectRatio(1, contentMode: .fit)
         }
     }
 
-    private func monthLabels(cellSize: CGFloat, gap: CGFloat) -> some View {
+    private func monthLabels(gap: CGFloat) -> some View {
         let calendar = Calendar(identifier: .gregorian)
         let formatter: DateFormatter = {
             let f = DateFormatter()
@@ -157,10 +178,12 @@ struct YearHeatmap: View {
                 Text(labels.first(where: { $0.col == i })?.text ?? "")
                     .font(.system(size: 8, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.secondaryTextColor)
-                    .frame(width: cellSize, alignment: .leading)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(height: 10)
+        .frame(height: Self.labelRow)
     }
 
     private func dateKey(_ d: Date) -> String {
@@ -187,6 +210,70 @@ struct YearHeatmap: View {
         let dateStr = formatter.string(from: date)
         if cost <= 0 { return "\(dateStr) — no activity" }
         return String(format: "%@ — $%.2f", dateStr, cost)
+    }
+}
+
+/// Floating details card for the hovered heatmap day — date, cost, tokens.
+/// Matches HubChartTooltip's glass style so the Hub reads as one system.
+private struct HeatmapCellTooltip: View {
+    let day: DailyUsage
+    let theme: AppTheme
+
+    private var c: ThemeColors { theme.colors }
+    private var bg: BackgroundMode { theme.backgroundMode }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(prettyDate)
+                .font(.system(size: 10, weight: .semibold, design: theme.fonts.labelDesign))
+                .tracking(0.5)
+                .foregroundColor(bg.secondaryTextColor)
+            if day.cost <= 0 && day.tokens <= 0 {
+                Text("no activity")
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+            } else {
+                row(label: "Cost", value: Fmt.cost(day.cost))
+                row(label: "Tokens", value: Fmt.number(day.tokens))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(c.accent.opacity(0.35), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
+        )
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func row(label: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                .foregroundColor(bg.secondaryTextColor)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
+                .foregroundColor(bg.primaryTextColor)
+        }
+    }
+
+    private var prettyDate: String {
+        let s = day.date
+        guard s.count >= 10 else { return s }
+        let year = String(s.prefix(4))
+        let month = Int(s.dropFirst(5).prefix(2)) ?? 0
+        let dd = String(s.dropFirst(8).prefix(2))
+        let names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        let mn = (month >= 1 && month <= 12) ? names[month] : ""
+        return "\(mn) \(dd), \(year)"
     }
 }
 

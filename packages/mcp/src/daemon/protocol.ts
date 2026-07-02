@@ -20,12 +20,25 @@ export interface TokenUsage {
   reasoningTokens?: number;
 }
 
+/**
+ * Live context-window occupancy for a session, when the provider exposes it
+ * (Claude Code via the statusline JSON; Codex via model_context_window; others
+ * only if their logs carry a context size). Optional end-to-end: a provider
+ * that can't report it simply omits it, and the health color falls back to the
+ * universal cost/budget signal rather than fabricating a fill.
+ */
+export interface ContextWindowInfo {
+  usedTokens: number;
+  maxTokens: number;
+}
+
 export interface SessionUpdate {
   type: "update";
   session: SessionInfo;
   cost: number;
   tokens: TokenUsage;
   durationMs?: number;
+  contextWindow?: ContextWindowInfo;
 }
 
 export interface SessionRegister {
@@ -57,6 +70,13 @@ export interface AggregatedStats {
   providers: string[];
   byModel: ModelBreakdown[];
   byProvider: ProviderBreakdown[];
+  /**
+   * Highest live context-window fill percent across all sessions that report
+   * one ("worst session wins"). Undefined when no live session exposes a
+   * context window — consumers then color by the universal cost/budget signal
+   * instead of showing a fabricated fill.
+   */
+  maxContextFillPct?: number;
 }
 
 export interface ModelBreakdown {

@@ -28,6 +28,13 @@ final class TokmeterLoader: ObservableObject {
     /// compaction tax, live session. nil until the first phase-2 fetch.
     @Published var statbarSignals: StatbarSignals?
 
+    /// Worst live context-window fill % across sessions (from /api/quick).
+    /// nil when no live session reports a context window.
+    @Published var liveContextFillPct: Double?
+    /// Current 5-hour billing-block usage %, read from the statusline's block
+    /// cache when present (Anthropic-specific). nil when unavailable.
+    @Published var blockPct: Double?
+
     // State flags
     @Published var lastError: String?
     @Published var isLoading: Bool = false
@@ -63,6 +70,13 @@ final class TokmeterLoader: ObservableObject {
 
     private let client = DaemonClient.shared
     private var timer: Timer?
+    /// Fast, lightweight poll for JUST the menubar color signal. The full
+    /// refresh can be minutes (user-configurable, e.g. 300s) which is far too
+    /// slow for a "live" context-fill color, so this ticks every few seconds
+    /// and updates only the cheap color inputs (a warm /api/quick read + the
+    /// local block cache). Runs only while a fast-changing source is selected.
+    private var colorTimer: Timer?
+    private static let colorPollSeconds: TimeInterval = 5
     private var fetchInFlight: Bool = false
     private var cancellables: Set<AnyCancellable> = []
     /// Debounce flag for the singleton daemon auto-start. Set true while a
@@ -82,6 +96,38 @@ final class TokmeterLoader: ObservableObject {
                 self?.restartTimer(interval: TimeInterval(interval))
             }
             .store(in: &cancellables)
+        startColorTimer()
+    }
+
+    private func startColorTimer() {
+        colorTimer?.invalidate()
+        colorTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.colorPollSeconds, repeats: true
+        ) { [weak self] _ in
+            guard let loader = self else { return }
+            Task { @MainActor in await loader.refreshColorSignals() }
+        }
+    }
+
+    /// Cheap poll of only the live color inputs. Skips the network entirely
+    /// unless a fast-changing source (context/block) is selected.
+    @MainActor
+    func refreshColorSignals() async {
+        switch HubConfigStore.shared.config.colorSource {
+        case .context:
+            // On a failed fetch, clear rather than keep a stale reading — a
+            // wrong-but-confident color is worse than a brief neutral tint. A
+            // successful fetch with no live session also (correctly) clears it.
+            if let quick = try? await client.fetchQuick() {
+                self.liveContextFillPct = quick.liveContextFillPct
+            } else {
+                self.liveContextFillPct = nil
+            }
+        case .block:
+            self.blockPct = Self.readBlockPct()
+        case .budget, .off:
+            break  // budget uses today's cost (full-refresh cadence); off = no poll
+        }
     }
 
     private func restartTimer(interval: TimeInterval) {
@@ -94,8 +140,28 @@ final class TokmeterLoader: ObservableObject {
         }
     }
 
+    /// The statusline writes the 5-hour block calc to this cache; the bar reads
+    /// its `elapsed_pct` when the block is active. Anthropic-specific — nil when
+    /// the file is absent or the block isn't active.
+    private struct BlockCache: Decodable {
+        let active: Bool
+        let elapsed_pct: Double?
+    }
+
+    static func readBlockPct() -> Double? {
+        let base = ProcessInfo.processInfo.environment["XDG_CACHE_HOME"]
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".cache")
+        let path = (base as NSString).appendingPathComponent("tokmeter/statusline-block.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let cache = try? JSONDecoder().decode(BlockCache.self, from: data),
+              cache.active, let pct = cache.elapsed_pct, pct.isFinite
+        else { return nil }
+        return pct
+    }
+
     deinit {
         timer?.invalidate()
+        colorTimer?.invalidate()
     }
 
     func loadData() async {
@@ -128,6 +194,8 @@ final class TokmeterLoader: ObservableObject {
                 self.stats = quick.stats
                 self.totalCost = quick.stats.totalCost
                 self.totalTokens = quick.stats.totalTokens
+                self.liveContextFillPct = quick.liveContextFillPct
+                self.blockPct = Self.readBlockPct()
                 self.isWarming = !quick.ready
                 self.lastError = nil
                 if quick.ready {

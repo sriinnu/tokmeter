@@ -22,6 +22,7 @@ import {
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
+import { localDateKey } from "./date-utils.js";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
 import {
@@ -65,8 +66,11 @@ export class CleanupService {
    * resolves filesystem targets, and detects partial file collateral.
    */
   async preview(filter: CleanupFilter): Promise<CleanupPreview> {
-    // 1. Scan ALL records (no filters) to detect partial files
-    const allRecords = await this.core.scan();
+    // 1. Scan ALL records across ALL history (not the 14-day rolling window
+    //    that core.scan() returns) — cleanup needs per-record sourceFile over
+    //    the whole corpus, both to match old data and to detect partial-file
+    //    collateral correctly.
+    const allRecords = await this.core.scanLifetimeRaw();
 
     // 2. Apply cleanup filter to get matched records
     const matchedRecords = this.applyFilter(allRecords, filter);
@@ -272,8 +276,12 @@ export class CleanupService {
     const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
     const archivePath = meta.path;
 
-    // Validate archive path is within backup directory (resolve to catch symlinks / ..)
-    if (!resolve(archivePath).startsWith(resolve(dir))) {
+    // Validate archive path is within backup directory. A plain startsWith on
+    // the resolved paths is wrong — a sibling dir like `<dir>-evil` shares the
+    // prefix and would pass. Use path.relative and reject any result that
+    // escapes upward (`..`) or is absolute (different root).
+    const rel = relative(resolve(dir), resolve(archivePath));
+    if (rel === "" || rel.startsWith("..") || resolve(archivePath) === resolve(dir)) {
       return {
         restoredCount: 0,
         errors: [{ file: archivePath, error: "Archive path outside backup directory" }],
@@ -501,8 +509,10 @@ export class CleanupService {
       const otherCount = total.count - matched;
 
       if (otherCount > 0) {
-        const minDate = new Date(total.minTs).toISOString().slice(0, 10);
-        const maxDate = new Date(total.maxTs).toISOString().slice(0, 10);
+        // Local day keys, matching the calendar every other view uses — a UTC
+        // slice would show the wrong day for evening records west of UTC.
+        const minDate = localDateKey(total.minTs);
+        const maxDate = localDateKey(total.maxTs);
 
         warnings.push({
           file,

@@ -17,6 +17,7 @@ process.on("uncaughtException", (error) => {
 import { TokmeterCore } from "@sriinnu/tokmeter";
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
+import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
 
 // ---- Arg parser (lightweight, no deps) ----
 
@@ -787,39 +788,11 @@ async function tryServeFromDaemon(
     year?: number;
   }
 ): Promise<boolean> {
-  const endpoints: Record<string, string> = {
-    stats: "/api/stats",
-    daily: "/api/daily",
-    models: "/api/models",
-    projects: "/api/projects",
-  };
-  const path = endpoints[command];
-  if (!path) return false; // overview / unknown shape → scan
-  // The daemon read path only expresses a provider filter; anything narrower
-  // must scan so results stay exact. `today` is in this list because the
-  // daemon endpoints return LIFETIME data — silently returning lifetime
-  // when the caller asked for today would be a correctness bug
-  // (`tokmeter stats --json --today --codex` getting all-time numbers).
-  if (
-    args.project ||
-    args.since ||
-    args.until ||
-    args.today ||
-    args.week ||
-    args.month ||
-    args.year
-  ) {
-    return false;
-  }
-  // Endpoint capability guard: /api/projects on the daemon ignores the
-  // ?providers= filter (it serves the cross-provider per-project breakdown
-  // verbatim from the warm core). Letting `projects --json --codex` hit the
-  // fast path would silently return all-provider projects — a correctness
-  // bug. Force a local scan instead so `--codex` actually narrows. The other
-  // three endpoints (stats/daily/models) honor ?providers= correctly.
-  if (command === "projects" && args.providers && args.providers.length > 0) {
-    return false;
-  }
+  // Correctness guard (extracted + unit-tested in daemon-read.ts): only serve
+  // from the daemon when its LIFETIME, cross-provider endpoints can answer the
+  // exact query without silently broadening it.
+  if (!daemonReadEligible(command, args)) return false;
+  const path = DAEMON_READ_ENDPOINTS[command];
 
   const base = DAEMON_HTTP_BASE;
   const state = await daemonReady(base, 1500);

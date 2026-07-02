@@ -43,6 +43,10 @@ import {
   type ProviderDayBucket,
   type TokenBuckets,
   aggregateRecordsByDay,
+  isValidRecord,
+  nullMap,
+  recordFingerprint,
+  toNullMap,
 } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import type { TokenRecord } from "./types.js";
@@ -129,10 +133,18 @@ export function readDayFile(homeDir: string, date: string): DailyAggregate | nul
  * that pre-dates the schema enrichment. New writes always populate both.
  */
 function forwardMigrateAggregate(day: DailyAggregate): DailyAggregate {
+  // Rehydrate every untrusted-keyed map as null-proto. A day file JSON.parsed
+  // back from disk has ordinary-prototype maps, so folding a *new* record whose
+  // model/project/provider is "__proto__"/"constructor" would hit Object.proto
+  // (pollution + crash). Rehydrating on load makes the fold path as safe as the
+  // write path. Runs once per file load — off the per-record hot path.
+  day.models = toNullMap(day.models);
+  day.providers = toNullMap(day.providers);
+  day.projects = toNullMap(day.projects);
   for (const p of Object.values(day.projects)) {
     if (typeof p.firstUsed !== "number") p.firstUsed = 0;
     if (typeof p.lastUsed !== "number") p.lastUsed = 0;
-    if (!p.modelBuckets) p.modelBuckets = {};
+    p.modelBuckets = p.modelBuckets ? toNullMap(p.modelBuckets) : nullMap();
   }
   for (const pr of Object.values(day.providers)) {
     if (typeof pr.firstUsed !== "number") pr.firstUsed = 0;
@@ -402,9 +414,12 @@ function makeEmptyDay(date: string): DailyAggregate {
     recordCount: 0,
     firstUsed: Number.POSITIVE_INFINITY,
     lastUsed: Number.NEGATIVE_INFINITY,
-    models: {},
-    projects: {},
-    providers: {},
+    // Null-proto maps: the live fold path keys these by untrusted model /
+    // project / provider names, so a "__proto__"/"constructor" key must be an
+    // ordinary data key, not a walk into Object.prototype. Mirrors newDay().
+    models: nullMap(),
+    projects: nullMap(),
+    providers: nullMap(),
   };
 }
 
@@ -442,7 +457,7 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
       firstUsed: Number.POSITIVE_INFINITY,
       lastUsed: Number.NEGATIVE_INFINITY,
       models: [],
-      modelBuckets: {},
+      modelBuckets: nullMap(),
       ...emptyBuckets(),
     };
     day.projects[r.project] = project;
@@ -514,19 +529,6 @@ function finalizeDay(day: DailyAggregate): DailyAggregate {
 }
 
 /**
- * Stable per-record fingerprint for accumulator-level dedup. Same record
- * arriving twice (e.g. codex parser dedup swapped a sibling and re-emitted
- * the same content from a different file) → same fingerprint → folded once.
- *
- * Uses timestamp + model + token counts + cost; `sourceFile` deliberately
- * excluded so the fingerprint is content-stable across the fork-dedup
- * winner-swap that would otherwise produce phantom duplicates.
- */
-function recordFingerprint(r: TokenRecord): string {
-  return `${r.timestamp}|${r.provider}|${r.model}|${r.inputTokens}|${r.outputTokens}|${r.cacheReadTokens}|${r.cacheWriteTokens}|${r.reasoningTokens}|${r.cost}`;
-}
-
-/**
  * Guard against a malformed record poisoning the running aggregate. Every
  * numeric must be a finite, non-negative number; the model identity must be a
  * non-empty string (an empty model key would create a junk bucket). A record
@@ -535,20 +537,10 @@ function recordFingerprint(r: TokenRecord): string {
  * parser bugs or hand-edited JSONL.
  */
 function isFoldableRecord(r: TokenRecord): boolean {
-  const nums = [
-    r.timestamp,
-    r.inputTokens,
-    r.outputTokens,
-    r.cacheReadTokens,
-    r.cacheWriteTokens,
-    r.reasoningTokens,
-    r.cost,
-  ];
-  for (const n of nums) {
-    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return false;
-  }
-  if (typeof r.model !== "string" || r.model.length === 0) return false;
-  return true;
+  // Delegates to the shared validator so the live fold path and the cold-scan
+  // rebuild path (aggregateRecordsByDay) apply one identical definition — a
+  // rebuilt day can never disagree with the day accumulated live.
+  return isValidRecord(r);
 }
 
 // ─── Migration helper (one-shot v2/v3-monolith → per-day directory) ────────

@@ -130,3 +130,5 @@ export type {
   RestoreResult,
   PartialFileWarning,
 } from "./types.js";
+
+export * from "./session-health.js";

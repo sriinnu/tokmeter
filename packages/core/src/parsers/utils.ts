@@ -447,7 +447,8 @@ export async function findFiles(
   dir: string,
   predicate: (name: string) => boolean,
   maxDepth = 5,
-  maxFiles = DEFAULT_MAX_FILES
+  maxFiles = DEFAULT_MAX_FILES,
+  isRoot = true
 ): Promise<string[]> {
   const results: string[] = [];
   if (maxDepth <= 0 || results.length >= maxFiles) return results;
@@ -455,7 +456,18 @@ export async function findFiles(
   let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    // Distinguish "not there" from "there but unreadable". A missing root dir
+    // means the provider simply isn't installed → no data, not an error. But a
+    // root that EXISTS yet fails to read (permissions, I/O, an unmounted
+    // volume surfacing as EACCES/EIO) must NOT be silently treated as empty:
+    // that would seal a day omitting real usage and freeze a wrong low number.
+    // Propagate so the parser turns it into a provider warning, which makes
+    // gap-fill refuse to seal that day (fail-closed) instead of losing data.
+    // Nested subdir failures stay swallowed — one odd-permission subdir should
+    // not fail the whole provider scan.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (isRoot && code && code !== "ENOENT") throw error;
     return results;
   }
 
@@ -468,7 +480,8 @@ export async function findFiles(
         join(dir, entry.name),
         predicate,
         maxDepth - 1,
-        maxFiles - results.length
+        maxFiles - results.length,
+        false
       );
       results.push(...sub);
     } else if (entry.isFile() && !entry.isSymbolicLink() && predicate(entry.name)) {

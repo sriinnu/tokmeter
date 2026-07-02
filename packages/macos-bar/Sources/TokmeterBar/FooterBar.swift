@@ -16,34 +16,29 @@ struct FooterBar: View {
     /// Bound theme — mutable so the gear-popover can switch it via SettingsPopover.
     @Binding var theme: AppTheme
     @Binding var showSettings: Bool
+    /// Drives the anomaly drill-in. Owned by TokmeterBarView so it renders as a
+    /// popover-wide overlay (a .sheet from a MenuBarExtra popover has unreliable
+    /// event handling — the Close button needed repeated clicks).
+    @Binding var showAnomalyPanel: Bool
 
     @Environment(\.openWindow) private var openWindow
 
     /// Refresh icon rotation — spins while `loader.isLoading` is true.
     @State private var refreshAngle: Double = 0
 
-    /// Drives the anomaly drill-in sheet. The pill is the glance; the sheet
-    /// is the full per-field breakdown — sortable, copyable, no tooltip-
-    /// chasing.
-    @State private var showAnomalySheet = false
-
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.1"
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.1"
+        // Include the build number so an install is verifiable at a glance —
+        // the short version alone (e.g. "1.7.0") stays fixed across dev rebuilds,
+        // making it impossible to tell whether a new build actually landed.
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
     }
 
     var body: some View {
         VStack(spacing: 6) {
             attributionRow
             controlsRow
-        }
-        .sheet(isPresented: $showAnomalySheet) {
-            if let anomalies = loader.pricingAnomalies {
-                AnomalyDetailSheet(
-                    response: anomalies,
-                    theme: theme,
-                    isPresented: $showAnomalySheet
-                )
-            }
         }
     }
 
@@ -91,7 +86,7 @@ struct FooterBar: View {
                     detailCount: anomalies.total,
                     modelCount: collapsed.count,
                     theme: theme,
-                    onTap: { showAnomalySheet = true }
+                    onTap: { showAnomalyPanel = true }
                 )
             }
             if loader.pricingMtime > 0 {

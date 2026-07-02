@@ -76,6 +76,18 @@ struct HubTopProjectRow: View {
         .scaleEffect(hovered ? 1.005 : 1.0)
         .animation(.spring(response: 0.30, dampingFraction: 0.72), value: hovered)
         .onHover { hovered = $0 }
+        .help(tooltip)
+    }
+
+    /// Hover summary: total cost, active days, and average $/active-day.
+    private var tooltip: String {
+        let days = max(1, project.activeDays)
+        let perDay = project.totalCost / Double(days)
+        return String(
+            format: "%@ — %@ across %d active day%@ (avg %@/day)",
+            project.project, Fmt.cost(project.totalCost), project.activeDays,
+            project.activeDays == 1 ? "" : "s", Fmt.cost(perDay)
+        )
     }
 }
 

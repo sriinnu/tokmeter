@@ -22,6 +22,23 @@ export interface ScanContext {
   skipPricing: boolean;
 }
 
+/**
+ * Which records a scan may (re)price — the frozen-cost gate. A today-scope
+ * scan prices ONLY records dated today; before-today records (e.g. a
+ * yesterday tail in a still-active file) are FROZEN and never re-priced, so a
+ * new model or a price change today can never alter yesterday's or any earlier
+ * total. History-scope (first-ever rebuild / gap-fill) prices everything,
+ * because those days are being freshly committed and have no frozen cost yet.
+ */
+export function selectRecordsToPrice(
+  records: TokenRecord[],
+  warningScope: "history" | "today",
+  referenceTimestamp: number
+): TokenRecord[] {
+  if (warningScope !== "today") return records;
+  return records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp));
+}
+
 /** Top-level parser fan-out: runs every parser, optional mtime watermark. */
 export async function scanRawRecords(
   ctx: ScanContext,
@@ -76,10 +93,7 @@ export async function scanRawRecords(
     // those records are being freshly committed to the snapshot and need
     // an initial cost.
     const referenceTimestamp = Date.now();
-    const recordsToPrice =
-      warningScope === "today"
-        ? records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp))
-        : records;
+    const recordsToPrice = selectRecordsToPrice(records, warningScope, referenceTimestamp);
     if (recordsToPrice.length > 0) {
       await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings);
     }
@@ -96,6 +110,33 @@ export async function scanTodayRecords(
   referenceTimestamp: number,
   warnings: ScanWarning[]
 ): Promise<TokenRecord[]> {
+  const { today } = await scanTodayRecordsWithStragglers(
+    ctx,
+    providers,
+    referenceTimestamp,
+    warnings
+  );
+  return today;
+}
+
+/**
+ * Today's active-file scan, partitioned into today's records and any
+ * before-today "straggler" records physically present in the freshly-read
+ * files. A session running nonstop across midnight appends a line dated
+ * yesterday (e.g. 23:59:50) that the next post-midnight scan reads because the
+ * same file also got a today write — without capturing these, the rollover
+ * seal (which freezes yesterday from the stale in-memory accumulator) would
+ * lose them permanently. The rollover folds stragglers into yesterday before
+ * sealing; the accumulator's fingerprint dedup makes an already-counted
+ * record a no-op, so this never double-counts. Stragglers are returned
+ * as-parsed and NOT re-priced here, preserving the frozen-cost invariant.
+ */
+export async function scanTodayRecordsWithStragglers(
+  ctx: ScanContext,
+  providers: ProviderId[] | undefined,
+  referenceTimestamp: number,
+  warnings: ScanWarning[]
+): Promise<{ today: TokenRecord[]; stragglers: TokenRecord[] }> {
   const rawRecords = await scanRawRecords(
     ctx,
     providers,
@@ -103,7 +144,13 @@ export async function scanTodayRecords(
     warnings,
     startOfLocalDay(referenceTimestamp)
   );
-  return rawRecords.filter((record) => !isBeforeToday(record.timestamp, referenceTimestamp));
+  const today: TokenRecord[] = [];
+  const stragglers: TokenRecord[] = [];
+  for (const record of rawRecords) {
+    if (isBeforeToday(record.timestamp, referenceTimestamp)) stragglers.push(record);
+    else today.push(record);
+  }
+  return { today, stragglers };
 }
 
 /** Unbounded historical scan — used only for first-ever cold start / explicit rescan. */

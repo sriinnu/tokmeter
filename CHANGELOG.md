@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-07-02
+
+### Added
+
+- Live menubar health color: the bar tints green→yellow→orange→red from a live
+  signal (worst session across providers), switchable between context-window
+  fill, the 5-hour billing block, and cost-vs-budget. Universal-first — cost
+  works for every provider; context-fill lights up where the agent exposes it.
+  A dedicated ~5s poll keeps the tint live regardless of the full-refresh
+  cadence. The percentage stays visible so color is never the only signal.
+
+### Changed
+
+- `bundle.sh` installs to /Applications in every mode and hard-fails a
+  signed/release build when `SUPUBLIC_KEY` is empty, whitespace-only, or not a
+  valid Ed25519 key — closing the un-updateable-build hole.
+
+### Fixed
+
+- Relay accuracy: cold-scan rebuild now shares the live fold's validity gate
+  and per-day fingerprint dedup, so a month-of-dormancy gap-fill is
+  byte-identical to live (no over-count); late records at a midnight rollover
+  are folded into the sealed day instead of lost; a day present in both the
+  sealed map and the live accumulator is counted once (backward-clock guard);
+  an unreadable provider dir is surfaced rather than sealed as a lower number.
+- Prototype-pollution / crash hardening in aggregation for hostile
+  `__proto__`/`constructor` model/project/provider names (null-proto maps).
+- Security: statusline local-RCE via a world-writable `/tmp` cache closed
+  (private cache dir + integer coercion); daemon WebSocket origin allowlist and
+  HTTP Host allowlist (DNS-rebinding); backup-path containment.
+
 ## [1.6.1] - 2026-06-05
 
 ### Fixed

@@ -16,7 +16,7 @@ import {
   writeDayFile,
 } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
-import { localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanHistoricalRecords, scanRawRecords } from "./scan-pipeline.js";
 import type { ScanMeta, ScanWarning } from "./types.js";
@@ -50,24 +50,36 @@ export async function refreshFromRelay(
   const yesterday = yesterdayDateKey(referenceTimestamp);
 
   if (maxOnDisk === null) return rebuildHistoricalFromScratch(ctx, referenceTimestamp, warnings);
+
+  // Fast path: the relay is current through yesterday → no scan at all. This is
+  // the bounded-cold-start guarantee the aggregate cutover exists for (months
+  // of history read as ~few MB, no lifetime rescan). MUST stay a cheap
+  // short-circuit — do NOT try to detect interior holes here: a day the user
+  // simply didn't use Claude is never written to disk and is indistinguishable
+  // from a real hole, so scanning back to it would re-parse the whole corpus on
+  // every cold start. Interior holes from a rare transient write failure are
+  // recovered by an explicit `rescanHistory`, not here.
   if (maxOnDisk >= yesterday) return { aggregates, historySource: "snapshot" };
 
-  // Gap fill — watermark at the start of the first uncovered day.
-  const floorMs = new Date(`${maxOnDisk}T00:00:00`).getTime() + 86_400_000;
+  // Trailing gap only: fill from the day after the newest on-disk day. Bounded
+  // to the gap (typically 0–1 days). Watermark at that day's LOCAL midnight
+  // (startOfLocalDay is DST-safe; a fixed +86_400_000 could land an hour late
+  // on a spring-forward day and prune an early-morning file).
+  const gapStart = nextDayKey(maxOnDisk);
+  const floorMs = startOfLocalDay(new Date(`${gapStart}T00:00:00`).getTime());
   const warnBefore = warnings.length;
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
-  const gap = raw.filter((r) => {
-    const k = localDateKey(r.timestamp);
-    return k > maxOnDisk && k < todayKey;
-  });
+
   // A partial gap scan (provider crash mid-fill) writes nothing — a healthy
   // re-run will fill it correctly. Better to retry than freeze a degraded day.
   const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
   if (gapDegraded) return { aggregates, historySource: "extended" };
 
-  for (const day of aggregateRecordsByDay(gap)) {
-    if (day.date <= maxOnDisk || day.date >= todayKey) continue;
+  const onDiskSet = new Set(onDisk);
+  for (const day of aggregateRecordsByDay(raw)) {
+    // Never seal today; never overwrite an already-sealed (immutable) day.
+    if (day.date >= todayKey || onDiskSet.has(day.date)) continue;
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(day.date, day);
@@ -79,6 +91,13 @@ export async function refreshFromRelay(
     }
   }
   return { aggregates, historySource: "extended" };
+}
+
+/** Next calendar day's key — DST-safe (jump past any 23h/25h day, snap back to
+ *  local midnight). */
+function nextDayKey(key: string): string {
+  const midnight = new Date(`${key}T00:00:00`).getTime();
+  return localDateKey(startOfLocalDay(midnight + 26 * 3_600_000));
 }
 
 /**

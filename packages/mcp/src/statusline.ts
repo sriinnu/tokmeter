@@ -450,7 +450,11 @@ export async function runStatusline(): Promise<void> {
         },
         sessionCost,
         tokens,
-        durationMs
+        durationMs,
+        // Live context-window occupancy — only when Claude Code reports both a
+        // used-token count and a window size, so the daemon never derives a
+        // fill % from partial data.
+        ctxUsed > 0 && ctxMax > 0 ? { usedTokens: ctxUsed, maxTokens: ctxMax } : undefined
       );
     } catch {}
 

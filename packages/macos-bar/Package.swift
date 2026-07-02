@@ -38,5 +38,10 @@ let package = Package(
             ],
             path: "Sources/TokmeterBar"
         ),
+        .testTarget(
+            name: "TokmeterBarTests",
+            dependencies: ["TokmeterBar"],
+            path: "Tests/TokmeterBarTests"
+        ),
     ]
 )

@@ -96,7 +96,10 @@ struct AnomalyDetailSheet: View {
                 ? Color(red: 0.99, green: 0.98, blue: 0.96)
                 : Color(red: 0.12, green: 0.12, blue: 0.14))
         )
-        .frame(minWidth: 560, minHeight: 380)
+        // Rendered as an in-popover overlay (not a sheet window), so it fills
+        // the popover width and caps its height rather than sizing to a 560pt
+        // sheet. Clicks work directly — no cross-window activation needed.
+        .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 560)
     }
 
     private var header: some View {
@@ -127,9 +130,14 @@ struct AnomalyDetailSheet: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16))
                     .foregroundColor(bg.secondaryTextColor)
+                    // Bigger, explicit hit area — the bare 16pt glyph was an
+                    // easy miss next to the copy button.
+                    .padding(6)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(.escape, modifiers: [])
+            .help("Close (Esc)")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -243,29 +251,42 @@ private struct AnomalyFieldRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        // Everything numeric is lineLimit(1) + fixedSize so it never wraps
+        // per-character when the row is squeezed into the ~380pt popover width
+        // (this used to be a 560pt sheet). The field column is capped and
+        // truncates; the price/percent cluster stays intact on the right.
+        HStack(spacing: 6) {
             Text(row.field)
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
                 .foregroundColor(bg.primaryTextColor)
-                .frame(width: 100, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 66, alignment: .leading)
             Text("(\(row.side))")
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
-                .frame(width: 60, alignment: .leading)
-            Spacer()
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 4)
             Text(formatRate(row.previous))
                 .font(.system(size: 11, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.secondaryTextColor)
+                .lineLimit(1)
+                .fixedSize()
             Image(systemName: "arrow.right")
                 .font(.system(size: 9))
                 .foregroundColor(bg.secondaryTextColor.opacity(0.6))
             Text(formatRate(row.current))
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.primaryTextColor)
+                .lineLimit(1)
+                .fixedSize()
             Text("\(sign) \(String(format: "%.1f", abs(row.deltaPct * 100)))%")
                 .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(deltaColor)
-                .frame(width: 70, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 52, alignment: .trailing)
         }
     }
 
