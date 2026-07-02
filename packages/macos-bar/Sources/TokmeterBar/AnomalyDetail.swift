@@ -97,6 +97,14 @@ struct AnomalyDetailSheet: View {
                 : Color(red: 0.12, green: 0.12, blue: 0.14))
         )
         .frame(minWidth: 560, minHeight: 380)
+        // This sheet is presented from the MenuBarExtra popover, whose window
+        // isn't "key" — so macOS eats the FIRST click on any borderless control
+        // to activate the window, and the user has to click Close repeatedly.
+        // Bring the app forward once on appear so the very first click on Close
+        // (or any row) registers.
+        .onAppear {
+            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
+        }
     }
 
     private var header: some View {
@@ -127,9 +135,14 @@ struct AnomalyDetailSheet: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16))
                     .foregroundColor(bg.secondaryTextColor)
+                    // Bigger, explicit hit area — the bare 16pt glyph was an
+                    // easy miss next to the copy button.
+                    .padding(6)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(.escape, modifiers: [])
+            .help("Close (Esc)")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
