@@ -65,8 +65,11 @@ export class CleanupService {
    * resolves filesystem targets, and detects partial file collateral.
    */
   async preview(filter: CleanupFilter): Promise<CleanupPreview> {
-    // 1. Scan ALL records (no filters) to detect partial files
-    const allRecords = await this.core.scan();
+    // 1. Scan ALL records across ALL history (not the 14-day rolling window
+    //    that core.scan() returns) — cleanup needs per-record sourceFile over
+    //    the whole corpus, both to match old data and to detect partial-file
+    //    collateral correctly.
+    const allRecords = await this.core.scanLifetimeRaw();
 
     // 2. Apply cleanup filter to get matched records
     const matchedRecords = this.applyFilter(allRecords, filter);

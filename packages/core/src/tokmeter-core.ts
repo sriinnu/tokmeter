@@ -34,6 +34,7 @@ import { refreshFromRelay } from "./relay-loader.js";
 import {
   type ScanContext,
   resolveTodayState,
+  scanHistoricalRecords,
   scanRawRecords,
   scanRecentRecords,
   scanTodayRecords,
@@ -350,6 +351,25 @@ export class TokmeterCore {
   /** Rolling 14-day window; lifetime callers should use the aggregate getters. */
   getRecords(): TokenRecord[] {
     return this.recentRecords;
+  }
+
+  /**
+   * Unbounded raw scan of the ENTIRE corpus (all providers, all time), each
+   * record carrying its `sourceFile`. This is the RAM-heavy full-corpus path
+   * the relay exists to avoid on hot reads — use it ONLY for operations that
+   * genuinely need per-record file identity across all history (cleanup), never
+   * for the poll loop. `scan()`/`getRecords()` return only the rolling 14-day
+   * window, so a caller that used them for cleanup silently ignored everything
+   * older than 14 days (and under-detected partial-file collateral). No relay
+   * mutation — read-only.
+   */
+  async scanLifetimeRaw(providers?: ProviderId[]): Promise<TokenRecord[]> {
+    const ref = Date.now();
+    const warnings: ScanWarning[] = [];
+    const history = await scanHistoricalRecords(this.ctx(), providers, ref, warnings);
+    const today = await scanTodayRecords(this.ctx(), providers, ref, warnings);
+    if (this.skipPricing) markPricingSkipped([...history, ...today]);
+    return [...history, ...today];
   }
 
   getScanMeta(): ScanMeta {
