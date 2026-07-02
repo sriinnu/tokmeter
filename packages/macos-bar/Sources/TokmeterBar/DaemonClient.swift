@@ -212,7 +212,10 @@ final class DaemonClient {
             let ok: Bool
             let error: String?
         }
-        let result = try await get("/api/update-pricing", as: UpdatePricingResponse.self)
+        // POST (token-gated): update-pricing is a mutation (network fetch +
+        // full rescan), so the daemon requires the bearer token — a GET here
+        // was CSRF-able by any visited web page.
+        let result = try await post("/api/update-pricing", body: [:], as: UpdatePricingResponse.self)
         if !result.ok {
             throw DaemonError.networkError(result.error ?? "update-pricing returned ok=false")
         }

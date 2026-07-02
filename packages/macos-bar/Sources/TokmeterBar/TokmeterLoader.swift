@@ -115,8 +115,13 @@ final class TokmeterLoader: ObservableObject {
     func refreshColorSignals() async {
         switch HubConfigStore.shared.config.colorSource {
         case .context:
+            // On a failed fetch, clear rather than keep a stale reading — a
+            // wrong-but-confident color is worse than a brief neutral tint. A
+            // successful fetch with no live session also (correctly) clears it.
             if let quick = try? await client.fetchQuick() {
                 self.liveContextFillPct = quick.liveContextFillPct
+            } else {
+                self.liveContextFillPct = nil
             }
         case .block:
             self.blockPct = Self.readBlockPct()
@@ -143,7 +148,7 @@ final class TokmeterLoader: ObservableObject {
         let elapsed_pct: Double?
     }
 
-    private static func readBlockPct() -> Double? {
+    static func readBlockPct() -> Double? {
         let base = ProcessInfo.processInfo.environment["XDG_CACHE_HOME"]
             ?? (NSHomeDirectory() as NSString).appendingPathComponent(".cache")
         let path = (base as NSString).appendingPathComponent("tokmeter/statusline-block.json")
