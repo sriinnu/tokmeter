@@ -1,7 +1,7 @@
 {
   "name": "@sriinnu/tokmeter",
   "version": "1.7.0",
-  "description": "Token usage tracking for AI coding agents \u2014 parsers, CLI, and TUI",
+  "description": "Token usage tracking for AI coding agents — parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",
   "types": "dist/core/index.d.ts",
@@ -43,7 +43,7 @@
   "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sriinnu/tokmeter.git",
+    "url": "git+https://github.com/sriinnu/tokmeter.git",
     "directory": "packages/tokmeter"
   },
   "keywords": [
