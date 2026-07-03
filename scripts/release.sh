@@ -120,6 +120,13 @@ if [[ $SKIP_BAR -eq 0 ]]; then
   if confirm "Build + notarize + release the macOS bar (needs .env)?"; then
     run "bun run bar:ship"
     run "bash scripts/check-no-secrets.sh"   # re-gate: the built zip must be clean
+    # bar:ship's `bun run clean` wipes packages/*/dist for every JS package, not
+    # just the Swift build artifacts — npm already published the correct dist
+    # in stage 8, so the RELEASE isn't affected, but the local repo is left
+    # unbuildable (any `bun run test`/`build` right after fails on a missing
+    # @sriinnu/tokmeter meta-bundle). Rebuild so the working tree matches what
+    # was just shipped.
+    run "bun run build"
   else echo "  bar ship skipped."; fi
 else say "9/10 macOS bar — skipped (--skip-bar)"; fi
 

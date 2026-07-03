@@ -9,15 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- _TODO_
-
-### Changed
-
-- _TODO_
+- Test coverage for the daemon's HTTP security boundary: WS origin allowlist,
+  HTTP Host-header DNS-rebinding guard, bearer-token comparison, and today/
+  lifetime floor monotonicity (`server.test.ts`, 19 cases).
+- Field-level contract checks between the daemon's TS response shapes
+  (`TokmeterStats`/`DailyEntry`/`ModelSummary`) and the Swift Codable structs
+  that decode them — a renamed/removed field now fails CI instead of silently
+  breaking the bar's decode path at runtime.
 
 ### Fixed
 
-- _TODO_
+- The `.block` menubar color source (5-hour billing-block tint) never
+  actually worked: it read a statusline cache file that nothing wrote, always
+  silently falling back to neutral. It now rides the live daemon `/api/quick`
+  endpoint, same round-trip and same clear-on-offline behavior as the context
+  source.
+- Relay dedup fingerprinting omitted `project` — two different projects
+  hitting the same provider/model at the exact same millisecond with
+  identical tokens/cost could silently collapse into one record. Fixed and
+  locked in with a regression test.
 
 ## [1.7.0] - 2026-07-02
 
