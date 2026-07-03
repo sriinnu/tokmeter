@@ -31,8 +31,8 @@ final class TokmeterLoader: ObservableObject {
     /// Worst live context-window fill % across sessions (from /api/quick).
     /// nil when no live session reports a context window.
     @Published var liveContextFillPct: Double?
-    /// Current 5-hour billing-block usage %, read from the statusline's block
-    /// cache when present (Anthropic-specific). nil when unavailable.
+    /// Current Claude 5-hour billing-block elapsed % (from /api/quick).
+    /// nil when there's no active block or the daemon is unreachable.
     @Published var blockPct: Double?
 
     // State flags
@@ -124,7 +124,13 @@ final class TokmeterLoader: ObservableObject {
                 self.liveContextFillPct = nil
             }
         case .block:
-            self.blockPct = Self.readBlockPct()
+            // Same live daemon round-trip as .context, same clear-on-failure
+            // rule — a stale % surviving a daemon restart would be a "live" lie.
+            if let quick = try? await client.fetchQuick() {
+                self.blockPct = quick.blockElapsedPct
+            } else {
+                self.blockPct = nil
+            }
         case .budget, .off:
             break  // budget uses today's cost (full-refresh cadence); off = no poll
         }
@@ -138,25 +144,6 @@ final class TokmeterLoader: ObservableObject {
                 await loader.loadData()
             }
         }
-    }
-
-    /// The statusline writes the 5-hour block calc to this cache; the bar reads
-    /// its `elapsed_pct` when the block is active. Anthropic-specific — nil when
-    /// the file is absent or the block isn't active.
-    private struct BlockCache: Decodable {
-        let active: Bool
-        let elapsed_pct: Double?
-    }
-
-    static func readBlockPct() -> Double? {
-        let base = ProcessInfo.processInfo.environment["XDG_CACHE_HOME"]
-            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".cache")
-        let path = (base as NSString).appendingPathComponent("tokmeter/statusline-block.json")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let cache = try? JSONDecoder().decode(BlockCache.self, from: data),
-              cache.active, let pct = cache.elapsed_pct, pct.isFinite
-        else { return nil }
-        return pct
     }
 
     deinit {
@@ -195,7 +182,7 @@ final class TokmeterLoader: ObservableObject {
                 self.totalCost = quick.stats.totalCost
                 self.totalTokens = quick.stats.totalTokens
                 self.liveContextFillPct = quick.liveContextFillPct
-                self.blockPct = Self.readBlockPct()
+                self.blockPct = quick.blockElapsedPct
                 self.isWarming = !quick.ready
                 self.lastError = nil
                 if quick.ready {

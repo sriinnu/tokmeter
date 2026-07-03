@@ -59,12 +59,11 @@ extension TokmeterLoader {
         self.isWarming = true
         self.lastError = nil
         // Clear the live menubar-color inputs: with the daemon down we have no
-        // fresh reading, and these are only ever WRITTEN on success — leaving
-        // them would keep the menubar showing a stale color/% (a "live" lie)
-        // until the daemon comes back. Cleared → menubarBand falls back to the
-        // neutral tint. blockPct is disk-derived, so re-read it if present.
+        // fresh reading, and both ride the daemon's /api/quick — leaving them
+        // would keep the menubar showing a stale color/% (a "live" lie) until
+        // the daemon comes back. Cleared → menubarBand falls back to neutral.
         self.liveContextFillPct = nil
-        self.blockPct = Self.readBlockPct()
+        self.blockPct = nil
         applyOfflinePricingAndCronStatus()
         ensureDaemonStarted()
     }
