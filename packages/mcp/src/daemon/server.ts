@@ -66,7 +66,7 @@ const HTTP_PORT = DAEMON_PORT + 1;
  * connect carries its own Origin and is rejected — the defense against any
  * visited page opening ws://127.0.0.1 to read spend or inject sessions.
  */
-function isAllowedWsOrigin(origin?: string): boolean {
+export function isAllowedWsOrigin(origin?: string): boolean {
   if (!origin) return true; // native clients send no Origin header
   return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
 }
@@ -79,7 +79,7 @@ function isAllowedWsOrigin(origin?: string): boolean {
  * it. A missing Host (HTTP/1.0, some native clients) is allowed; browsers
  * always send one.
  */
-function isAllowedHttpHost(host?: string): boolean {
+export function isAllowedHttpHost(host?: string): boolean {
   if (!host) return true;
   const hostname = host.replace(/:\d+$/, "").toLowerCase();
   return (
@@ -156,16 +156,27 @@ function initAuthToken(): void {
   }
 }
 
-function checkAuth(req: IncomingMessage): boolean {
-  if (!_authToken) return true; // no token = dev mode
-  const header = req.headers.authorization ?? "";
-  const expected = `Bearer ${_authToken}`;
+/**
+ * Pure bearer-token check, split out from {@link checkAuth} so it's testable
+ * without spinning up the real daemon (which owns the module-level
+ * `_authToken` set once at startup). `token === null` is dev mode (no auth
+ * configured) and always passes — matches the daemon's actual first-run
+ * behavior before `initAuthToken()` has run.
+ */
+export function isValidAuthHeader(header: string | undefined, token: string | null): boolean {
+  if (!token) return true; // no token = dev mode
+  const value = header ?? "";
+  const expected = `Bearer ${token}`;
   // Constant-time compare so an attacker can't probe the token via timing.
   // Lengths must match for timingSafeEqual; bail early when they don't, since
   // a length mismatch is itself a public fact (it's the request the attacker
   // sent vs. a fixed-length expected string).
-  if (header.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
+  if (value.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+}
+
+function checkAuth(req: IncomingMessage): boolean {
+  return isValidAuthHeader(req.headers.authorization, _authToken);
 }
 
 // Client tracking: WebSocket -> most-recent { provider, sessionId } (used to
@@ -915,7 +926,15 @@ function startHttpApi(): void {
           const liveContextFillPct = sessionManager?.getAggregated().maxContextFillPct;
           if (_httpCore) {
             const stats = applyStatsFloor(_httpCore.core.getStats());
-            json(res, { ready: true, stats, liveContextFillPct });
+            // getStatbarSignals() is cheap here — it walks only the bounded
+            // in-memory recentRecords window, not the corpus — so the 5-hour
+            // billing-block % can ride this same fast endpoint, same as
+            // liveContextFillPct above. This is also what makes the ".block"
+            // menubar color source a live daemon round-trip instead of a
+            // static value: a failed/offline fetch clears it to undefined
+            // rather than showing a stale reading.
+            const blockElapsedPct = _httpCore.core.getStatbarSignals().billingWindow?.elapsedPct;
+            json(res, { ready: true, stats, liveContextFillPct, blockElapsedPct });
           } else {
             // Kick off the warmup but don't wait for it.
             void getHttpCore().catch(() => {});
@@ -1277,7 +1296,7 @@ function json(res: ServerResponse, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-interface TodayTotals {
+export interface TodayTotals {
   cost: number;
   in: number;
   out: number;
@@ -1357,47 +1376,50 @@ let _todayHighWater: TodayTotals | null = null;
  * a parser swap that nudges today by $0.10 nudges lifetime by the same
  * $0.10 — both displays would flicker if we only floored one.
  */
-interface StatsFloor {
+export interface StatsFloor {
   day: string;
   totalCost: number;
   totalTokens: number;
 }
 let _statsHighWater: StatsFloor | null = null;
 
-function applyTodayFloor(computed: TodayTotals): TodayTotals {
+/**
+ * Pure high-water merge, split out from {@link applyTodayFloor} so the
+ * monotonicity math is testable without the module-level `_todayHighWater`
+ * singleton. `prior === null` (or a stale day) resets the floor to `computed`
+ * as-is; otherwise every field — including each project's own cost/in/out —
+ * is pinned to its own running max.
+ */
+export function computeTodayFloor(computed: TodayTotals, prior: TodayTotals | null): TodayTotals {
   // Day rollover (or first call) — reset the floor and accept what we see.
-  if (!_todayHighWater || _todayHighWater.day !== computed.day) {
-    _todayHighWater = {
+  if (!prior || prior.day !== computed.day) {
+    return {
       cost: computed.cost,
       in: computed.in,
       out: computed.out,
       day: computed.day,
       projects: { ...computed.projects },
     };
-    return _todayHighWater;
   }
 
-  const dropped = computed.cost + 0.005 < _todayHighWater.cost;
+  const dropped = computed.cost + 0.005 < prior.cost;
   if (dropped) {
     // Surface the suppression so it's not invisible — small per-scan dips are
     // usually codex fork-dedup winner swaps and we DELIBERATELY keep the
     // high-water. Logged at console.warn for daemon stderr only.
     console.warn(
-      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water $${_todayHighWater.cost.toFixed(2)} — keeping high-water (likely codex fork-dedup winner swap; data not lost, just a parser-side reweighting).`
+      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water $${prior.cost.toFixed(2)} — keeping high-water (likely codex fork-dedup winner swap; data not lost, just a parser-side reweighting).`
     );
   }
 
   // Take per-field max (cost/in/out and per-project) so each number is
   // pinned to its own monotone-upward floor. Build a NEW snapshot rather
   // than mutating either side so callers can't see partial state.
-  const allKeys = new Set([
-    ...Object.keys(computed.projects),
-    ...Object.keys(_todayHighWater.projects),
-  ]);
+  const allKeys = new Set([...Object.keys(computed.projects), ...Object.keys(prior.projects)]);
   const projects: Record<string, { cost: number; in: number; out: number }> = {};
   for (const k of allKeys) {
     const a = computed.projects[k] ?? { cost: 0, in: 0, out: 0 };
-    const b = _todayHighWater.projects[k] ?? { cost: 0, in: 0, out: 0 };
+    const b = prior.projects[k] ?? { cost: 0, in: 0, out: 0 };
     projects[k] = {
       cost: Math.max(a.cost, b.cost),
       in: Math.max(a.in, b.in),
@@ -1405,15 +1427,18 @@ function applyTodayFloor(computed: TodayTotals): TodayTotals {
     };
   }
 
-  const merged: TodayTotals = {
-    cost: Math.max(computed.cost, _todayHighWater.cost),
-    in: Math.max(computed.in, _todayHighWater.in),
-    out: Math.max(computed.out, _todayHighWater.out),
+  return {
+    cost: Math.max(computed.cost, prior.cost),
+    in: Math.max(computed.in, prior.in),
+    out: Math.max(computed.out, prior.out),
     day: computed.day,
     projects,
   };
-  _todayHighWater = merged;
-  return merged;
+}
+
+function applyTodayFloor(computed: TodayTotals): TodayTotals {
+  _todayHighWater = computeTodayFloor(computed, _todayHighWater);
+  return _todayHighWater;
 }
 
 /**
@@ -1423,32 +1448,43 @@ function applyTodayFloor(computed: TodayTotals): TodayTotals {
  * today-floor. If the input shape doesn't look like the stats object we expect
  * (e.g. a future signature change), we pass through unmodified.
  */
-function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(stats: T): T {
+/**
+ * Pure high-water merge, split out from {@link applyStatsFloor} so it's
+ * testable without the module-level `_statsHighWater` singleton or the real
+ * current date — `day` is an explicit parameter instead of `localDateKey()`.
+ * `prior === null` means "no data at all yet" (not a code path {@link
+ * applyStatsFloor} can hit, since it always seeds a floor on first call, but
+ * kept for a clean pure-function signature) and passes `stats` through
+ * unfloored with no floor recorded.
+ */
+export function computeStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(
+  stats: T,
+  prior: StatsFloor | null,
+  day: string
+): { result: T; floor: StatsFloor | null } {
   if (!stats || typeof stats.totalCost !== "number" || typeof stats.totalTokens !== "number") {
-    return stats;
+    return { result: stats, floor: prior };
   }
-  const day = localDateKey();
-  if (!_statsHighWater || _statsHighWater.day !== day) {
-    _statsHighWater = {
-      day,
-      totalCost: stats.totalCost,
-      totalTokens: stats.totalTokens,
+  if (!prior || prior.day !== day) {
+    return {
+      result: stats,
+      floor: { day, totalCost: stats.totalCost, totalTokens: stats.totalTokens },
     };
-    return stats;
   }
-  if (stats.totalCost + 0.005 < _statsHighWater.totalCost) {
+  if (stats.totalCost + 0.005 < prior.totalCost) {
     console.warn(
-      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water $${_statsHighWater.totalCost.toFixed(2)} — keeping high-water (matches today-floor; almost certainly a codex fork-dedup winner swap).`
+      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water $${prior.totalCost.toFixed(2)} — keeping high-water (matches today-floor; almost certainly a codex fork-dedup winner swap).`
     );
   }
-  const floored = {
-    ...stats,
-    totalCost: Math.max(stats.totalCost, _statsHighWater.totalCost),
-    totalTokens: Math.max(stats.totalTokens, _statsHighWater.totalTokens),
-  };
-  _statsHighWater.totalCost = floored.totalCost;
-  _statsHighWater.totalTokens = floored.totalTokens;
-  return floored;
+  const totalCost = Math.max(stats.totalCost, prior.totalCost);
+  const totalTokens = Math.max(stats.totalTokens, prior.totalTokens);
+  return { result: { ...stats, totalCost, totalTokens }, floor: { day, totalCost, totalTokens } };
+}
+
+function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(stats: T): T {
+  const { result, floor } = computeStatsFloor(stats, _statsHighWater, localDateKey());
+  _statsHighWater = floor;
+  return result;
 }
 
 function computeTodayTotals(core: any): TodayTotals {

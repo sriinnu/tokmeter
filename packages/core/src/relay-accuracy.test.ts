@@ -61,6 +61,31 @@ describe("relay accuracy — cold-scan/live-fold parity", () => {
     expect(cold.inputTokens).toBe(live.inputTokens);
     expect(cold.outputTokens).toBe(live.outputTokens);
   });
+
+  test("distinct projects at the same instant with identical tokens/cost do NOT collapse", () => {
+    // Two different projects hitting the same provider/model at the exact
+    // same millisecond, with identical token counts and cost — a real (if
+    // rare) coincidence, not a duplicate. `project` must be part of the
+    // fingerprint or these silently merge into one record and one project
+    // loses its usage entirely.
+    const same = { timestamp: ts("2026-05-20"), cost: 0.5, inputTokens: 100, outputTokens: 40 };
+    const records: TokenRecord[] = [
+      r({ ...same, project: "alpha" }),
+      r({ ...same, project: "beta" }),
+    ];
+
+    const acc = new DailyAccumulator("2026-05-20");
+    const added = acc.foldAll(records);
+    const live = acc.seal();
+    const [cold] = aggregateRecordsByDay(records);
+
+    expect(added).toBe(2); // both kept — not a duplicate
+    expect(cold.recordCount).toBe(2);
+    expect(cold.cost).toBeCloseTo(1.0, 10); // 0.5 + 0.5, NOT collapsed to 0.5
+    expect(Object.keys(cold.projects).sort()).toEqual(["alpha", "beta"]);
+    expect(cold.cost).toBeCloseTo(live.cost, 10);
+    expect(cold.recordCount).toBe(live.recordCount);
+  });
 });
 
 describe("relay accuracy — prototype safety", () => {

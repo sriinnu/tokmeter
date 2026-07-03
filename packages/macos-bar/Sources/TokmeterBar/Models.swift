@@ -72,6 +72,9 @@ struct QuickResponse: Codable {
     /// Worst live context-window fill % across sessions that report one.
     /// Absent when no live session exposes a context window.
     let liveContextFillPct: Double?
+    /// Current Claude 5-hour billing-block elapsed %, 0...100. Absent when
+    /// there's no active block or the core hasn't warmed up yet.
+    let blockElapsedPct: Double?
 }
 
 /// /api/ready — health check.
