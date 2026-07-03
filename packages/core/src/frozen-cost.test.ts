@@ -5,8 +5,8 @@
 // round-trip/snapshot coverage in aggregates-store.test.ts + relay-loader.test.ts.)
 
 import { describe, expect, test } from "vitest";
-import { selectRecordsToPrice } from "./scan-pipeline.js";
 import { localDateKey } from "./date-utils.js";
+import { selectRecordsToPrice } from "./scan-pipeline.js";
 import type { TokenRecord } from "./types.js";
 
 const DAY = 86_400_000;

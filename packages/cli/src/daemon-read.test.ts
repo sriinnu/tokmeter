@@ -1,6 +1,6 @@
+import type { ProviderId } from "@sriinnu/tokmeter";
 import { describe, expect, test } from "vitest";
 import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
-import type { ProviderId } from "@sriinnu/tokmeter";
 
 describe("daemonReadEligible — the 'silently wrong numbers' guard", () => {
   test("unfiltered supported commands are daemon-eligible", () => {

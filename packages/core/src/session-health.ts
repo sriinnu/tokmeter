@@ -43,7 +43,10 @@ export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
  * A non-finite or negative reading is treated as `ok` — an unknown signal is
  * never alarming.
  */
-export function bandForPct(pct: number, t: HealthThresholds = DEFAULT_HEALTH_THRESHOLDS): HealthBand {
+export function bandForPct(
+  pct: number,
+  t: HealthThresholds = DEFAULT_HEALTH_THRESHOLDS
+): HealthBand {
   if (!Number.isFinite(pct) || pct < 0) return "ok";
   if (pct >= t.critical) return "critical";
   if (pct >= t.high) return "high";

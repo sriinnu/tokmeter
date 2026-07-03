@@ -2,12 +2,7 @@
  * Drishti Daemon — Session management
  */
 
-import type {
-  AggregatedStats,
-  ContextWindowInfo,
-  SessionInfo,
-  TokenUsage,
-} from "./protocol.js";
+import type { AggregatedStats, ContextWindowInfo, SessionInfo, TokenUsage } from "./protocol.js";
 
 /** Coerce any incoming numeric to a finite, non-negative value (0 otherwise). */
 /** Coerce to a finite, non-negative value, clamped to a sane ceiling so a
