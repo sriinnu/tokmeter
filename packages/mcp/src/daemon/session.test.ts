@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
-import { SessionManager } from "./session.js";
 import type { TokenUsage } from "./protocol.js";
+import { SessionManager } from "./session.js";
 
 const tok = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   inputTokens: 0,
@@ -98,7 +98,12 @@ describe("SessionManager — getAggregated", () => {
   });
 
   test("sums cost/tokens and groups by model + provider (short model names)", () => {
-    mgr.update("claude-code", "a", 2, tok({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 }));
+    mgr.update(
+      "claude-code",
+      "a",
+      2,
+      tok({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 })
+    );
     mgr.get("claude-code", "a")!.model = "claude-sonnet-4-5";
     mgr.update("codex", "b", 3, tok({ inputTokens: 200, outputTokens: 20 }));
     mgr.get("codex", "b")!.model = "gpt-5.5";

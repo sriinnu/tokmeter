@@ -9,12 +9,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { aggregateRecordsByDay } from "./aggregates.js";
 import { listDaysOnDisk, writeDayFile } from "./aggregates-store.js";
+import { aggregateRecordsByDay } from "./aggregates.js";
 import { localDateKey, yesterdayDateKey } from "./date-utils.js";
+import type { PricingService } from "./pricing.js";
 import { refreshFromRelay } from "./relay-loader.js";
 import type { ScanContext } from "./scan-pipeline.js";
-import type { PricingService } from "./pricing.js";
 import type { TokenRecord } from "./types.js";
 
 // skipPricing:true means none of these are called — a stub satisfies the type.
@@ -128,4 +128,4 @@ describe("refreshFromRelay — bounded trailing-gap fill (no full rescan on a no
     expect(state.historySource).toBe("snapshot");
     expect(state.aggregates.has(yKey)).toBe(true);
   });
-})
+});

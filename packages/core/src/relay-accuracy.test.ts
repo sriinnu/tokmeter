@@ -91,7 +91,9 @@ describe("relay accuracy — prototype safety", () => {
   test("live fold (DailyAccumulator.fold): __proto__/constructor keys are safe", () => {
     const acc = new DailyAccumulator("2026-05-20");
     acc.fold(r({ timestamp: ts("2026-05-20"), model: "__proto__", cost: 0.1, inputTokens: 10 }));
-    acc.fold(r({ timestamp: ts("2026-05-20"), project: "constructor", cost: 0.2, inputTokens: 20 }));
+    acc.fold(
+      r({ timestamp: ts("2026-05-20"), project: "constructor", cost: 0.2, inputTokens: 20 })
+    );
     const day = acc.seal();
     expect(day.cost).toBeCloseTo(0.3, 10);
     expect("__proto__" in day.models).toBe(true);
