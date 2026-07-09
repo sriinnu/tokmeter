@@ -6,6 +6,15 @@
         <description>Auto-update feed for TokmeterBar.app</description>
         <language>en</language>
         <item>
+            <title>TokmeterBar 1.8.0</title>
+            <pubDate>Thu, 09 Jul 2026 11:52:11 +0000</pubDate>
+            <sparkle:version>35</sparkle:version>
+            <sparkle:shortVersionString>1.8.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;p&gt;See release notes on GitHub.&lt;/p&gt;</description>
+            <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.8.0/TokmeterBar-1.8.0.zip" length="3459731" type="application/octet-stream" sparkle:edSignature="1Oem6Db5R6PD76hSqxzIn6xDFLh4TTKP/vFCBIUdJXqu0O807qwfOH3mgaiLil4C7mzHZ5U5nQz3jCvm7ScrDg==" />
+        </item>
+        <item>
             <title>TokmeterBar 1.7.1</title>
             <pubDate>Fri, 03 Jul 2026 10:02:09 +0000</pubDate>
             <sparkle:version>34</sparkle:version>
