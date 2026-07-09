@@ -309,7 +309,7 @@ Features:
 - Cache hit rate indicator (green >80%, yellow 50-80%, red <50%)
 - Today's total across all providers
 - Cross-provider aggregation when daemon is running
-- Bulletproof -- 4 concentric safety layers guarantee output even if dependencies fail
+- Four fallback layers, so it still prints a valid line if pricing or the daemon is unavailable
 
 ### Cross-Provider Aggregation Daemon
 
@@ -509,25 +509,25 @@ The daemon scans your sessions once, persists them as per-day immutable aggregat
 
 | | before (v2 monolith) | after (v3 relay) | delta |
 |---|---|---|---|
-| History store on disk | 1 file × 187 MB | 152 files × ~6 KB each (~892 KB total) | **220× smaller** |
+| History store on disk | 1 file × 187 MB | ~190 files × ~6 KB each (~1.1 MB total) | **~170× smaller** |
 | Lifetime `TokenRecord[]` in heap | held warm | structurally eliminated | gone |
-| Cold-start I/O | parse 187 MB JSON + dispatch | load ~892 KB + bounded 14-day mtime-pruned scan | bounded by gap, not corpus |
+| Cold-start I/O | parse 187 MB JSON + dispatch | load the sealed day files + a today-only scan | bounded to today, not the corpus |
 
 **Hot-path query latency** (measured against a 77 GB / 319k-record corpus, daemon HTTP port):
 
 | endpoint | cache hit (within 12s TTL) | cache miss (TTL refresh) | response size |
 |---|---|---|---|
-| `/api/stats` | ~1–6 ms | ~5 s (today scan) | 341 B |
+| `/api/stats` | ~1 - 6 ms | ~5 s (today scan) | 341 B |
 | `/api/today` | ~1 ms | - | ~700 B |
-| `/api/projects` | ~2–4 ms | - | 170 KB |
+| `/api/projects` | ~2 - 4 ms | - | 170 KB |
 | `/api/models` | ~1 ms | - | 7.5 KB |
 | `/api/daily` | ~1 ms | - | 30 KB |
-| `/api/statbar-signals` | ~38–58 ms | - | 4.6 KB |
+| `/api/statbar-signals` | ~38 - 58 ms | - | 4.6 KB |
 | `/api/cross-tool` | ~2 ms | - | 600 B |
 
-The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan is mtime-pruned, so it only touches files modified today (typically a handful of active session files).
+The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan reads only today's files - mtime-pruned, then confirmed by each file's newest event timestamp so a touched-but-old file can't masquerade as today (typically a handful of active session files).
 
-**Memory - the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB – 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ - not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (bounded 14-day window instead), and the on-disk store is 220× smaller. The remaining heap bulk is the scan cache; bounding it to the same 14-day watermark is the next memory fight.
+**Memory - the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB - 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ - not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (it holds today plus the sealed day aggregates instead - past days are never re-parsed), and the on-disk store is ~170× smaller. The remaining heap bulk is the parser scan cache (Claude Code's per-file record cache); bounding it is the next memory fight.
 
 **Reproduce locally:**
 
@@ -559,7 +559,7 @@ Session Files (local disk)
 @sriinnu/tokmeter-core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
     |
     +-- per-day relay store (~/.cache/tokmeter/aggregates/YYYY-MM-DD.json, immutable)
-    +-- rolling 14-day record window (signals lookback)
+    +-- today's records + per-day costByHour curves (signals + pace)
     +-- live today accumulator (DailyAccumulator, sealed at midnight)
     +-- StatbarSignals (burn/cache/pace/compaction/live)
     |
