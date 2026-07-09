@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-core",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
   "description": "Token usage tracking core \u2014 session parsers, aggregation, and pricing",
   "type": "module",
