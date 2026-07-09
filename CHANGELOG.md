@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex mtime-masquerade melt.** Editing or blanking old Codex rollouts bumps
   their filesystem mtime, so a today/recent scan's mtime prefilter matched
   hundreds of months-old files and re-parsed gigabytes through an unbounded
-  fan-out — pinning the daemon in V8 GC (148% CPU, indefinitely) so it stopped
+  fan-out - pinning the daemon in V8 GC (148% CPU, indefinitely) so it stopped
   answering the bar ("STALE"/offline). Fix: mtime is now only a cheap prefilter
   that can *over*-keep but never drop; the real drop authority is each file's
   actual newest **event** timestamp, read from a 64 KB tail before any full
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The scan invariant: today + relay, nothing else.** A normal scan now reads
   only today's live files plus the sealed per-day relay aggregates. The 14-day
-  raw re-scan is gone from the default path — it re-derived already-sealed days
+  raw re-scan is gone from the default path - it re-derived already-sealed days
   and, on a large corpus, blocked the daemon ~90 s on every cold boot. Cold boot
   is now ~250 ms.
 - **Pace baseline moved into the relay.** The "typical spend by this time of
@@ -39,12 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Deep Rescan** (Hub → Data, confirm-gated): the one explicit path that
-  re-reads raw history. It is **windowed** — re-derives and overwrites only the
+  re-reads raw history. It is **windowed** - re-derives and overwrites only the
   last 30 sealed days (backfilling `costByHour` and correcting any recently
   mis-sealed day), leaving older history untouched. Streamed file-by-file (large
   rollouts read line-by-line, one at a time), memory-guarded (refuses below
   ~6 GB free), and fire-and-forget. The main panel's Refresh stays a quick,
-  today-only read — reads are reflexes, writes are deliberate.
+  today-only read - reads are reflexes, writes are deliberate.
 
 ## [1.7.1] - 2026-07-03
 
