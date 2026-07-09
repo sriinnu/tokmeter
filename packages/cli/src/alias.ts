@@ -287,9 +287,14 @@ function cmdHide(map: AliasMap, rest: string[], hidden: boolean): void {
 async function cmdSuggest(initialMap: AliasMap): Promise<void> {
   console.log(chalk.dim("\nScanning current project names...\n"));
   const core = new TokmeterCore({ skipPricing: true });
-  await core.scan();
+  // Use scan()'s returned records over getRecords(): the daemon's default scan
+  // now keeps only today in recentRecords, so ask for an explicit recent window
+  // and read the returned raw records for per-project metadata. getRawProjectNames
+  // still enumerates every project from the sealed aggregates.
+  const records = await core.scan({
+    since: new Date(Date.now() - 14 * 86_400_000).toISOString(),
+  });
   const rawNames = core.getRawProjectNames();
-  const records = core.getRecords();
   const suggestions = suggestAliases(rawNames, initialMap);
 
   // ─ Build per-project metadata so each prompt can show context ─────────

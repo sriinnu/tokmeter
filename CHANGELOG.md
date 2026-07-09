@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-07-09
+
+### Fixed
+
+- **Codex mtime-masquerade melt.** Editing or blanking old Codex rollouts bumps
+  their filesystem mtime, so a today/recent scan's mtime prefilter matched
+  hundreds of months-old files and re-parsed gigabytes through an unbounded
+  fan-out - pinning the daemon in V8 GC (148% CPU, indefinitely) so it stopped
+  answering the bar ("STALE"/offline). Fix: mtime is now only a cheap prefilter
+  that can *over*-keep but never drop; the real drop authority is each file's
+  actual newest **event** timestamp, read from a 64 KB tail before any full
+  parse. The fork-dedup fan-out is concurrency-capped so a scan always completes
+  instead of thrashing. A long-running session whose rollout lives under an old
+  date directory but is still active today is no longer silently dropped.
+
+### Changed
+
+- **The scan invariant: today + relay, nothing else.** A normal scan now reads
+  only today's live files plus the sealed per-day relay aggregates. The 14-day
+  raw re-scan is gone from the default path - it re-derived already-sealed days
+  and, on a large corpus, blocked the daemon ~90 s on every cold boot. Cold boot
+  is now ~250 ms.
+- **Pace baseline moved into the relay.** The "typical spend by this time of
+  day" signal reads a new per-day intraday cost curve (`costByHour`, 24 slots)
+  sealed with each day's aggregate, instead of re-parsing raw history. Days
+  sealed before the field existed are skipped (never counted as `$0`); pace
+  fills in as new days seal, or via a Deep Rescan.
+- Record-consuming MCP tools (`search`, `heatmap`, `export`, `anomaly`) and
+  `alias suggest` now request their multi-day window explicitly, since the
+  default scan no longer seeds a 14-day record set.
+
+### Added
+
+- **Deep Rescan** (Hub → Data, confirm-gated): the one explicit path that
+  re-reads raw history. It is **windowed** - re-derives and overwrites only the
+  last 30 sealed days (backfilling `costByHour` and correcting any recently
+  mis-sealed day), leaving older history untouched. Streamed file-by-file (large
+  rollouts read line-by-line, one at a time), memory-guarded (refuses below
+  ~6 GB free), and fire-and-forget. The main panel's Refresh stays a quick,
+  today-only read - reads are reflexes, writes are deliberate.
+
 ## [1.7.1] - 2026-07-03
 
 ### Added

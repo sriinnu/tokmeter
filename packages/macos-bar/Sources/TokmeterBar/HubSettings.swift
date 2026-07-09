@@ -21,6 +21,10 @@ struct HubSettingsPanel: View {
 
     @StateObject private var store = HubConfigStore.shared
 
+    // Deep rescan is a mutation (rewrites sealed relay days), so it's gated
+    // behind an explicit confirm — never a one-tap surprise.
+    @State private var showRescanConfirm = false
+
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
 
@@ -32,6 +36,7 @@ struct HubSettingsPanel: View {
                 refreshSection.cascadeIn(delay: 0.22)
                 menubarSection.cascadeIn(delay: 0.30)
                 pricingSection.cascadeIn(delay: 0.38)
+                dataSection.cascadeIn(delay: 0.42)
                 cliDefaultsSection.cascadeIn(delay: 0.46)
                 alertsSection.cascadeIn(delay: 0.54)
                 footerActions.cascadeIn(delay: 0.54)
@@ -162,6 +167,73 @@ struct HubSettingsPanel: View {
     // TokmeterLoader (which mirrors /api/pricing-status + /api/cron-status,
     // or computes them from disk when the daemon is offline). The popover's
     // SettingsPopover renders the same data in compact form.
+
+    // MARK: - Data (deep rescan)
+
+    private var dataSection: some View {
+        HubSettingsSection(
+            title: "Data",
+            icon: "arrow.triangle.2.circlepath",
+            theme: theme
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Deep rescan")
+                            .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                        Text(
+                            "Rebuild the last 30 days from raw logs and backfill pace history. Rewrites those sealed days, runs in the background, and leaves older history untouched. The main panel's Refresh stays a quick, today-only read."
+                        )
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button(action: { showRescanConfirm = true }) {
+                        HStack(spacing: 4) {
+                            if loader.isRescanning {
+                                ProgressView().scaleEffect(0.6).frame(width: 12, height: 12)
+                            }
+                            Text(loader.isRescanning ? "Starting…" : "Deep rescan")
+                        }
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(loader.isRescanning)
+                    .confirmationDialog(
+                        "Rebuild the last 30 days from raw logs?",
+                        isPresented: $showRescanConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Rebuild 30 days") { Task { await loader.deepRescan() } }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text(
+                            "This re-derives and overwrites the last 30 sealed days (backfilling pace). Older history is left as-is. Runs in the background."
+                        )
+                    }
+                }
+                if loader.rescanStartedNotice {
+                    Text(
+                        "Rescan started — history is rebuilding in the background. Pace history fills in shortly."
+                    )
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .foregroundColor(.green)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                if let err = loader.rescanError {
+                    Text(err)
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .foregroundColor(.red)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
 
     private var pricingSection: some View {
         HubSettingsSection(

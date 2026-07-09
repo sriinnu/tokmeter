@@ -25,7 +25,24 @@ import { stat } from "node:fs/promises";
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  filterFilesByMtime,
+  findFiles,
+  mapWithConcurrency,
+  readJsonlFile,
+} from "./utils.js";
+
+/**
+ * Bound on how many rollout files we read headers/tails for at once. mtime is
+ * a LIE about a file's data date — any tool that rewrites a rollout (even
+ * blanking a field) bumps mtime to "now", so a today-scan's mtime prefilter
+ * can match hundreds of months-old files at once. Reading all of them with an
+ * unbounded Promise.all pins the event loop in GC and the daemon stops
+ * answering the bar (STALE). A small pool keeps the scan responsive.
+ */
+const CODEX_SCAN_CONCURRENCY = 8;
 
 // ─── Codex JSONL Event Types ──────────────────────────────────────────────
 
@@ -174,6 +191,51 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
 }
 
 /**
+ * Read a rollout's NEWEST event timestamp cheaply by tailing the last chunk of
+ * the file. Codex rollouts are append-only JSONL, so the newest event is the
+ * last complete line — we never have to read the whole (possibly 190 MB) file.
+ *
+ * Returns the newest event time in ms, or null when we can't determine one
+ * (empty file, no parseable timestamp in the tail, read error). Callers must
+ * treat null as "unknown → don't skip" so we never silently drop real data.
+ */
+async function newestEventMs(file: string, sizeBytes: number): Promise<number | null> {
+  if (sizeBytes === 0) return null;
+  const { open } = await import("node:fs/promises");
+  try {
+    const fd = await open(file, "r");
+    try {
+      // 64 KB tail comfortably holds the last few JSONL lines even for very
+      // long single events. Back up from EOF so we read a clean-ish boundary.
+      const tail = Math.min(65_536, sizeBytes);
+      const readFrom = sizeBytes - tail;
+      const buf = Buffer.alloc(tail);
+      await fd.read(buf, 0, tail, readFrom);
+      const text = buf.toString("utf-8");
+      // Drop the leading fragment (partial line from mid-record read) and scan
+      // upward from the end for the newest event carrying a timestamp.
+      const lines = text.split("\n").filter((l) => l.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const evt = JSON.parse(lines[i]!) as CodexEvent;
+          if (evt.timestamp) {
+            const t = new Date(evt.timestamp).getTime();
+            if (!Number.isNaN(t)) return t;
+          }
+        } catch {
+          // partial / non-JSON line — keep scanning upward
+        }
+      }
+      return null;
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Walk the fork chain back to the root ancestor. If a file's forked_from_id
  * points to a session we have on disk, keep climbing. Otherwise the current
  * session is its own root.
@@ -203,9 +265,9 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
  * Tiebreaker: latest mtime, then path order. Both are deterministic.
  */
 async function dedupForkedFiles(files: string[]): Promise<string[]> {
-  const metas = (await Promise.all(files.map((f) => readSessionMeta(f)))).filter(
-    (m): m is CodexFileMeta => m !== null
-  );
+  const metas = (
+    await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, (f) => readSessionMeta(f))
+  ).filter((m): m is CodexFileMeta => m !== null);
 
   const bySessionId = new Map<string, CodexFileMeta>();
   for (const m of metas) bySessionId.set(m.sessionId, m);
@@ -227,10 +289,149 @@ async function dedupForkedFiles(files: string[]): Promise<string[]> {
   return [...winnerByRoot.values()].map((m) => m.file);
 }
 
+/**
+ * Files at/above this size are parsed ALONE and streamed line-by-line, so a
+ * single fork-replay monster (rollouts hit 200 MB+) can never balloon memory
+ * during a full-history rebuild. Smaller files are cheap and get batched.
+ */
+const CODEX_LARGE_FILE_BYTES = 8_000_000;
+
+/**
+ * Apply one codex event to the running per-file parse state, pushing a record
+ * when a token_count event yields non-zero delta usage. Extracted so the
+ * whole-read path (small files) and the streamed path (large files) share ONE
+ * implementation — the parse semantics must not drift between them.
+ */
+function foldCodexEvent(
+  evt: CodexEvent,
+  state: CodexParseState,
+  file: string,
+  out: TokenRecord[]
+): void {
+  if (!evt.type) return;
+  if (evt.type === "session_meta" && evt.payload?.cwd) {
+    state.project = projectFromCwd(evt.payload.cwd);
+    state.cwd = evt.payload.cwd;
+  }
+  if (evt.type === "turn_context" && evt.payload?.model) {
+    state.currentModel = evt.payload.model;
+  }
+  if (evt.type !== "event_msg") return;
+  const payload = evt.payload;
+  if (!payload || payload.type !== "token_count") return;
+  const info = payload.info;
+  if (!info) return;
+
+  let usage: CodexTokenUsage;
+  if (info.total_token_usage) {
+    usage = computeDelta(info.total_token_usage, state.prevTotal);
+    state.prevTotal = { ...info.total_token_usage };
+    const deltaSum =
+      (usage.input_tokens ?? 0) +
+      (usage.output_tokens ?? 0) +
+      (usage.cached_input_tokens ?? 0) +
+      (usage.reasoning_output_tokens ?? 0);
+    if (deltaSum === 0) return;
+  } else if (info.last_token_usage) {
+    usage = info.last_token_usage;
+  } else {
+    return;
+  }
+
+  const totalInput = usage.input_tokens ?? 0;
+  const cached = usage.cached_input_tokens ?? 0;
+  const inputTokens = Math.max(0, totalInput - cached);
+  const outputTokens = usage.output_tokens ?? 0;
+  if (inputTokens === 0 && outputTokens === 0 && cached === 0) return;
+
+  out.push(
+    createRecord({
+      timestamp: evt.timestamp ? new Date(evt.timestamp).getTime() : Date.now(),
+      provider: "codex",
+      model: state.currentModel,
+      project: state.project,
+      cwd: state.cwd || undefined,
+      sourceFile: file,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens: cached,
+      reasoningTokens: usage.reasoning_output_tokens ?? 0,
+    })
+  );
+}
+
+/**
+ * Parse ONE rollout into its records. Large files stream line-by-line via
+ * readline (never buffering the whole file); small files use the plain whole
+ * read. Either way the caller gets just this file's records — to fold and drop
+ * — so peak memory is bounded to a single file, not the whole corpus.
+ */
+export async function parseCodexFile(file: string, sizeBytes: number): Promise<TokenRecord[]> {
+  const out: TokenRecord[] = [];
+  const state = defaultState();
+  if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
+    const { createReadStream } = await import("node:fs");
+    const { createInterface } = await import("node:readline");
+    const stream = createReadStream(file, { encoding: "utf-8" });
+    const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+    try {
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let evt: CodexEvent;
+        try {
+          evt = JSON.parse(trimmed) as CodexEvent;
+        } catch {
+          continue; // skip malformed line
+        }
+        foldCodexEvent(evt, state, file, out);
+      }
+    } catch {
+      // FAIL SOFT, per file — mirror readJsonlFile's contract. A mid-stream read
+      // error (the file rotated/deleted by an active session between stat() and
+      // read, EACCES/EIO, an evicted iCloud file) must NOT propagate: without
+      // this catch it aborts the ENTIRE codex provider, and a windowed rescan
+      // would then overwrite good sealed days with an empty result. Return what
+      // we parsed before the fault instead — one bad file costs only that file.
+    } finally {
+      rl.close();
+      stream.destroy(); // rl.close() alone doesn't release the underlying fd
+    }
+  } else {
+    const events = await readJsonlFile<CodexEvent>(file);
+    for (const evt of events) foldCodexEvent(evt, state, file, out);
+  }
+  return out;
+}
+
 export class CodexParser implements SessionParser {
   readonly providerId = "codex" as const;
 
+  /**
+   * Collect every record. Thin wrapper over {@link scanStreaming} — for bounded
+   * scopes (today, a date range) the set is small, so accumulating is fine. The
+   * memory-sensitive full/window rebuild uses scanStreaming directly to fold and
+   * release per file.
+   */
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+    const all: TokenRecord[] = [];
+    await this.scanStreaming(homeDir, opts, (records) => {
+      for (const r of records) all.push(r);
+    });
+    return all;
+  }
+
+  /**
+   * Stream the scan file-by-file, handing each rollout's records to `onFile` so
+   * the caller can fold + release them. Peak memory is one large file (or a
+   * batch of small ones), never the whole corpus. Same file resolution +
+   * fork-dedup as scan(); only the parse is chunked.
+   */
+  async scanStreaming(
+    homeDir: string,
+    opts: ScanFilterOptions | undefined,
+    onFile: (records: TokenRecord[]) => void | Promise<void>
+  ): Promise<void> {
     // Respect CODEX_HOME env var, fall back to ~/.codex
     const codexHome = process.env.CODEX_HOME
       ? process.env.CODEX_HOME
@@ -244,88 +445,70 @@ export class CodexParser implements SessionParser {
     // this is the single biggest win: a today refresh stops cold-reading
     // months of rollout-*.jsonl and reads only today's couple of files.
     if (opts?.modifiedSinceMs !== undefined) {
-      allFiles = await filterFilesByMtime(allFiles, opts.modifiedSinceMs);
+      const watermark = opts.modifiedSinceMs;
+      // Two filters, in order of cost. The rule that keeps this correct:
+      // a file may only be DROPPED by its real newest EVENT time — never by
+      // mtime, and never by its path/start date.
+      //
+      // Why not path/filename date: codex writes ONE append-only rollout per
+      // session under sessions/YYYY/MM/DD of the day the session STARTED, and
+      // keeps appending to it for the life of the session. A session begun on
+      // Jun 14 but still active today lives at 2026/06/14/rollout-…jsonl — its
+      // path says Jun 14, its newest events are today. Dropping by path date
+      // silently zeroes today's biggest active session (a permanent undercount
+      // once the day seals). Path date is the session START, not its data date.
+      //
+      // (1) mtime prefilter — CHEAP, and only ever OVER-keeps. An appended event
+      // IS a write, so any file carrying events >= the watermark has mtime >=
+      // the watermark: mtime can never drop a file that has real recent data. It
+      // over-keeps rewritten-but-stale files (a blanked/backed-up old rollout) —
+      // that's fine, (2) prunes those precisely and cheaply.
+      allFiles = await filterFilesByMtime(allFiles, watermark);
+      // (2) newest-EVENT-time — the real drop authority. A 64 KB tail read gives
+      // the file's newest event timestamp (append-only ⇒ newest is last). Drop
+      // only when we positively know the newest event predates the watermark;
+      // null (no parseable timestamp / read error) fails OPEN so we never lose
+      // real data. Concurrency-capped so hundreds of masquerade files can't jam
+      // the event loop the way the old unbounded Promise.all did.
+      const newest = await mapWithConcurrency(allFiles, CODEX_SCAN_CONCURRENCY, async (f) => {
+        try {
+          const st = await stat(f);
+          return await newestEventMs(f, st.size);
+        } catch {
+          return null;
+        }
+      });
+      allFiles = allFiles.filter((_, i) => {
+        const t = newest[i];
+        return t === null || t >= watermark;
+      });
     }
     const files = await dedupForkedFiles(allFiles);
-    const records: TokenRecord[] = [];
 
-    for (const file of files) {
-      const lines = await readJsonlFile<CodexEvent>(file);
-      const state = defaultState();
-
-      for (const evt of lines) {
-        if (!evt.type) continue;
-
-        // Track session metadata for project identification
-        if (evt.type === "session_meta" && evt.payload) {
-          if (evt.payload.cwd) {
-            state.project = projectFromCwd(evt.payload.cwd);
-            state.cwd = evt.payload.cwd;
-          }
-        }
-
-        // Track model changes from turn_context
-        if (evt.type === "turn_context" && evt.payload?.model) {
-          state.currentModel = evt.payload.model;
-        }
-
-        // Extract token usage from token_count events
-        if (evt.type !== "event_msg") continue;
-        const payload = evt.payload;
-        if (!payload || payload.type !== "token_count") continue;
-        const info = payload.info;
-        if (!info) continue;
-
-        // Prefer delta from total_token_usage for accuracy.
-        let usage: CodexTokenUsage;
-        if (info.total_token_usage) {
-          usage = computeDelta(info.total_token_usage, state.prevTotal);
-          state.prevTotal = { ...info.total_token_usage };
-
-          // If delta is all zeros, skip this event — no new tokens were consumed.
-          // The old code fell back to last_token_usage here, but last_token_usage
-          // is per-turn CUMULATIVE (not a delta), so using it when the total hasn't
-          // changed creates exact duplicates (~7% of Codex records were duped).
-          const deltaSum =
-            (usage.input_tokens ?? 0) +
-            (usage.output_tokens ?? 0) +
-            (usage.cached_input_tokens ?? 0) +
-            (usage.reasoning_output_tokens ?? 0);
-          if (deltaSum === 0) continue;
-        } else if (info.last_token_usage) {
-          // Fallback: some events only have last_token_usage (no cumulative).
-          // This path fires for events where total_token_usage is absent.
-          usage = info.last_token_usage;
-        } else {
-          continue;
-        }
-
-        // OpenAI reports input_tokens as TOTAL (including cached). Subtract the
-        // cached portion so we match Anthropic semantics: inputTokens = uncached,
-        // cacheReadTokens = cached. This prevents the cost calculator from double-
-        // charging cached tokens (once at full rate, once at cache rate).
-        const totalInput = usage.input_tokens ?? 0;
-        const cached = usage.cached_input_tokens ?? 0;
-        const inputTokens = Math.max(0, totalInput - cached);
-        const outputTokens = usage.output_tokens ?? 0;
-        if (inputTokens === 0 && outputTokens === 0 && cached === 0) continue;
-
-        records.push(
-          createRecord({
-            timestamp: evt.timestamp ? new Date(evt.timestamp).getTime() : Date.now(),
-            provider: "codex",
-            model: state.currentModel,
-            project: state.project,
-            cwd: state.cwd || undefined,
-            sourceFile: file,
-            inputTokens,
-            outputTokens,
-            cacheReadTokens: cached,
-            reasoningTokens: usage.reasoning_output_tokens ?? 0,
-          })
-        );
+    // Stat the winners once, then split by size. Large files are parsed ALONE
+    // and streamed line-by-line (a 200 MB fork-replay rollout never overlaps
+    // another); small files batch concurrently — they're cheap. Each file's
+    // records go to `onFile` and are then released, so peak memory is bounded
+    // to a single large file, not the whole history (which OOM'd the box).
+    const sized = await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, async (f) => {
+      try {
+        const st = await stat(f);
+        return { file: f, size: st.size };
+      } catch {
+        return { file: f, size: 0 };
       }
+    });
+    const large = sized.filter((f) => f.size >= CODEX_LARGE_FILE_BYTES);
+    const small = sized.filter((f) => f.size < CODEX_LARGE_FILE_BYTES);
+
+    // Big ones: strictly one at a time.
+    for (const f of large) {
+      await onFile(await parseCodexFile(f.file, f.size));
     }
-    return records;
+    // Small ones: a bounded concurrent batch. onFile's fold is synchronous, so
+    // interleaved awaits here can't corrupt the caller's accumulators.
+    await mapWithConcurrency(small, CODEX_SCAN_CONCURRENCY, async (f) => {
+      await onFile(await parseCodexFile(f.file, f.size));
+    });
   }
 }

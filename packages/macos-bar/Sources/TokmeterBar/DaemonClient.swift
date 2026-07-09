@@ -221,6 +221,24 @@ final class DaemonClient {
         }
     }
 
+    /// Trigger a DEEP rescan: re-read raw history and rebuild every sealed relay
+    /// day from scratch (also backfills pace's costByHour on older days). This is
+    /// the one explicit heavy path — it runs for minutes on a large tree. The
+    /// daemon returns immediately (fire-and-forget) and rebuilds in the
+    /// background, so this call resolves fast; the fresh data lands on a later
+    /// refresh. POST + token-gated for the same CSRF/DoS reason as pricing.
+    func deepRescan() async throws {
+        struct RescanResponse: Decodable {
+            let ok: Bool
+            let error: String?
+            let started: Bool?
+        }
+        let result = try await post("/api/rescan", body: [:], as: RescanResponse.self)
+        if !result.ok {
+            throw DaemonError.networkError(result.error ?? "rescan returned ok=false")
+        }
+    }
+
     // MARK: - Internal
 
     private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {

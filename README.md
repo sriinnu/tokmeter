@@ -15,50 +15,48 @@
 
 ---
 
-Tokmeter tracks token consumption across **16+ AI coding agents**, breaks it down by **project, model, provider, and day**, and gives you **five surfaces** to explore your data: CLI, TUI, web dashboard, MCP server, and macOS menu bar.
+Tokmeter parses local session logs from 16+ AI coding agents into per-project / model / provider / day token-and-cost aggregates, and exposes them through five surfaces: CLI, TUI, web dashboard, MCP server, and a macOS menu-bar daemon.
 
-Powered by [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery) for real-time model pricing across 20+ providers including 300+ OpenRouter models.
+Pricing is resolved locally via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery) (20+ providers, 300+ OpenRouter models); nothing leaves the machine.
+
+How it stores history, keeps "today" live, and stays memory-bounded - the daemon + relay model - is in [`docs/architecture.md`](docs/architecture.md). Package layout is under [Packages](#packages); programmatic use is under [Consume Tokmeter From Other Apps](#consume-tokmeter-from-other-apps).
 
 ## What it looks like
 
-Below is exactly what tokmeter prints on a real machine — same code you'd `npm install`. Project names are swapped to generic ones for privacy; spend numbers, cache rates, optimization scores, model breakdowns, and everything else are unedited.
+Below is exactly what tokmeter prints on a real machine - same code you'd `npm install`. Project names are swapped to generic ones for privacy; spend numbers, cache rates, optimization scores, model breakdowns, and everything else are unedited.
 
 <table>
   <tr>
     <td align="center" width="50%">
       <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="280" />
-      <br/><em>macOS menu bar — live signals at a glance.</em>
+      <br/><em>macOS menu bar - live signals at a glance.</em>
     </td>
     <td align="center" width="50%">
       <img src="docs/assets/screenshots/cli-digest.png" alt="tokmeter digest --period week" width="380" />
-      <br/><em><code>tokmeter digest</code> — weekly cost report card with optimization grade.</em>
+      <br/><em><code>tokmeter digest</code> - weekly cost report card with optimization grade.</em>
     </td>
   </tr>
 </table>
 
 <p align="center">
   <img src="docs/assets/screenshots/cli-overview.png" alt="tokmeter overview" width="560" />
-  <br/><em><code>tokmeter</code> — per-project breakdown across all parsed agents.</em>
+  <br/><em><code>tokmeter</code> - per-project breakdown across all parsed agents.</em>
 </p>
 
-No mocked data, no "before / after" stagings, no third-party comparison shots. If the screenshots above feel underwhelming, that's the surface — there's no better-looking demo hiding somewhere. What you see is what you get.
+Try it on your own data: `npx @sriinnu/tokmeter` (add `--light` to skip pricing on the first scan). More surface shots (TUI, web, Hub, statusline) are tracked in [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md).
 
-Want to know what *your* data looks like before committing to anything? `npx @sriinnu/tokmeter` and `tokmeter --light` (skip pricing for the first scan). Nothing leaves your machine. TUI, web dashboard, Hub window, and statusline shots landing in the next pass — see [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md) for the capture checklist.
+## What it computes
 
-## Why
+From parsed session logs, per project / model / provider / day:
 
-AI coding agents burn tokens. Lots of them. Tokmeter answers:
+- Cost and token totals (input / output / cache-read / cache-write / reasoning).
+- Cache hit rate and cache savings.
+- Daily spend trend and active-day streaks.
+- Compaction overhead - the share of today's spend that went to `/compact`.
+- Live burn rate and pace vs. your typical spend at this hour (from the relay's `costByHour`).
+- Cheaper-model suggestions from the live kosha price registry.
 
-- How much did **this project** cost?
-- Which **model** consumed the most tokens?
-- What's my **daily spend** trend?
-- How do costs break down across **providers**?
-- What's my **cache hit rate** and how much is caching saving me?
-- What **% of today's spend** went to `/compact` overhead vs. actual work?
-- How **fast am I burning right now** — and how does that compare to a typical day?
-- Which **cheaper model** could I be using instead?
-
-No social features. No leaderboard. Just your data, locally.
+All local; no network calls except the kosha pricing fetch.
 
 ## Quick Start
 
@@ -66,7 +64,7 @@ No social features. No leaderboard. Just your data, locally.
 # Run directly
 npx @sriinnu/tokmeter
 
-# Or install globally — gives you both `tokmeter` and `tokmeter-tui`
+# Or install globally - gives you both `tokmeter` and `tokmeter-tui`
 npm install -g @sriinnu/tokmeter
 tokmeter
 tokmeter-tui
@@ -78,16 +76,16 @@ Two packages ship to npm; everything else is bundled inside `@sriinnu/tokmeter`.
 
 | Package | What | Install |
 |---------|------|---------|
-| [`@sriinnu/tokmeter`](packages/tokmeter/) | Umbrella distribution — bundles CLI + TUI + core + parsers | `npx @sriinnu/tokmeter` |
+| [`@sriinnu/tokmeter`](packages/tokmeter/) | Umbrella distribution - bundles CLI + TUI + core + parsers | `npx @sriinnu/tokmeter` |
 | [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + cross-provider daemon | `npx @sriinnu/drishti` |
 
-The following packages are workspace-internal — they're built and bundled into
+The following packages are workspace-internal - they're built and bundled into
 the umbrella above, not published as standalone npm packages:
 
-- `@sriinnu/tokmeter-core` — session parsers, aggregator, pricing, public API
-- `@sriinnu/tokmeter-cli` — CLI entry point (table + JSON output + cost digest)
-- `@sriinnu/tokmeter-tui` — interactive terminal UI with charts
-- `@sriinnu/tokmeter-web` — React + Plotly web dashboard with live mode (run locally; see [Web App](#web-app))
+- `@sriinnu/tokmeter-core` - session parsers, aggregator, pricing, public API
+- `@sriinnu/tokmeter-cli` - CLI entry point (table + JSON output + cost digest)
+- `@sriinnu/tokmeter-tui` - interactive terminal UI with charts
+- `@sriinnu/tokmeter-web` - React + Plotly web dashboard with live mode (run locally; see [Web App](#web-app))
 
 ## Consume Tokmeter From Other Apps
 
@@ -332,7 +330,7 @@ When multiple Claude Code, Codex, or OpenCode instances are running, the statusl
 
 The daemon is the **single source of truth**: it holds usage warm in memory and
 every consumer (macOS bar, statusline, MCP) is a thin **reader** of it. Opening
-the macOS bar starts the daemon if it's down (singleton — only one ever runs),
+the macOS bar starts the daemon if it's down (singleton - only one ever runs),
 and nothing else scans the corpus on a hot path. This keeps reads fast and
 memory bounded. See [docs/architecture.md](docs/architecture.md) for the data
 freshness, immutability, and memory model.
@@ -425,8 +423,8 @@ the CLI on disk when it isn't.
 
 The menu bar icon itself is a live health gauge: it tints **green → yellow → red**
 as your most-loaded session approaches its ceiling (worst-session-wins across every
-connected provider). Pick which ceiling drives the color in settings — **context
-window** fill, the Claude **5-hour block**, or a **daily budget** — so the signal
+connected provider). Pick which ceiling drives the color in settings - **context
+window** fill, the Claude **5-hour block**, or a **daily budget** - so the signal
 works whether or not a provider reports a context window. Turn it off for a plain
 monochrome icon.
 
@@ -447,16 +445,16 @@ in [`packages/core/src/signals.ts`](packages/core/src/signals.ts):
 
 | Signal | What it tells you |
 |--------|-------------------|
-| **Burn rate** | $/hr over the last 60 min — color ramps green → amber → red as you heat up. |
+| **Burn rate** | $/hr over the last 60 min - color ramps green → amber → red as you heat up. |
 | **Cache hit %** today | Read tokens served from cache. Two denominators are tracked: the *canonical* rate `cacheRead / (input + cacheRead + cacheWrite)` (counts cache writes as a cost, the honest number) and a *legacy read-share* `cacheRead / (input + cacheRead)` for back-compat. The bar shows the read-share; `missRate + cacheWriteShare + canonicalRate` always sums to exactly 1. |
 | **Pace** | Today's cost-by-this-hour vs. the median of your last 7 active days. Tortoise / hare / equal icon. |
 | **Compaction tax** | % of today's spend going to `/compact` overhead (Claude Code-specific signal). |
-| **Context pressure** | How much the latest request's input has grown over the session's early baseline (the "drag" cache reads add) — the lever behind when to `/compact`. |
+| **Context pressure** | How much the latest request's input has grown over the session's early baseline (the "drag" cache reads add) - the lever behind when to `/compact`. |
 | **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
 
 Seven themes (Terminal / Paper / Nebula / Aurora / Noise / Nocturne / Glass) and
 a companion "Hub" full-window with project drilldown, command palette, and
-settings. Aurora uses a slow-drifting gradient — motion as identity. Noise is
+settings. Aurora uses a slow-drifting gradient - motion as identity. Noise is
 neobrutalist (canary yellow + sticky-note cards with hard offset shadows).
 
 ## Supported Providers
@@ -485,23 +483,23 @@ OpenRouter models (free and paid) are automatically detected via model ID format
 ## Pricing
 
 Pricing is resolved entirely through [`@sriinnu/kosha-discovery`](https://github.com/sriinnu/kosha-discovery)
-— one source of truth, refreshed daily, no stale hardcoded fallback.
+ - one source of truth, refreshed daily, no stale hardcoded fallback.
 
 Resolution chain (see `packages/core/src/pricing.ts`):
 
-1. **In-memory cache** — per-process, invalidated on kosha registry mtime change.
-2. **User overrides** — `~/.tokmeter/pricing-overrides.json` for negotiated rates, free internal deployments, or per-model corrections. Keyed by exact model id; partial `ModelPricing` shapes accepted.
-3. **kosha direct** — `registry.model(id)` for canonical model IDs. Prefers `originPricing` (direct-provider rate) over `pricing` (proxy/gateway rate) when both are usable.
-4. **kosha fuzzy** — searches the full discovered catalog with an exact-first scorer; covers the long tail (including 300+ OpenRouter models).
-5. **Manifest fallback** — direct read of `~/.kosha/registry.json` when the runtime state is missing models the manifest knows about.
+1. **In-memory cache** - per-process, invalidated on kosha registry mtime change.
+2. **User overrides** - `~/.tokmeter/pricing-overrides.json` for negotiated rates, free internal deployments, or per-model corrections. Keyed by exact model id; partial `ModelPricing` shapes accepted.
+3. **kosha direct** - `registry.model(id)` for canonical model IDs. Prefers `originPricing` (direct-provider rate) over `pricing` (proxy/gateway rate) when both are usable.
+4. **kosha fuzzy** - searches the full discovered catalog with an exact-first scorer; covers the long tail (including 300+ OpenRouter models).
+5. **Manifest fallback** - direct read of `~/.kosha/registry.json` when the runtime state is missing models the manifest knows about.
 
 Reasoning tokens get their own rate when kosha publishes one (o1/o3/gemini-thinking/deepseek-r1 and equivalents); otherwise they fall back to the output rate with the cell flagged.
 
-Covers Anthropic, OpenAI, Google, DeepSeek, xAI, Mistral, Meta, Moonshot, Cohere, Perplexity, Qwen, and 10+ more — whatever kosha is currently tracking.
+Covers Anthropic, OpenAI, Google, DeepSeek, xAI, Mistral, Meta, Moonshot, Cohere, Perplexity, Qwen, and 10+ more - whatever kosha is currently tracking.
 
-Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. The `tokmeter routes` CLI extends this into a cost-surface explorer — projects today's exact token shape against every model in your lifetime lineup using kosha's live registry, with Δ-vs-actual and honest exclusion of unpriced models. Run `tokmeter routes` for a table or `tokmeter routes --json` for piping. Layer 1 (pure pricing translation) ships in v1.3.0; the full multi-layer design is in [`docs/designs/routes.md`](docs/designs/routes.md).
+Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. The `tokmeter routes` CLI extends this into a cost-surface explorer - projects today's exact token shape against every model in your lifetime lineup using kosha's live registry, with Δ-vs-actual and honest exclusion of unpriced models. Run `tokmeter routes` for a table or `tokmeter routes --json` for piping. Layer 1 (pure pricing translation) ships in v1.3.0; the full multi-layer design is in [`docs/designs/routes.md`](docs/designs/routes.md).
 
-All formatters are NaN/Infinity-safe — malformed data never leaks into output.
+All formatters are NaN/Infinity-safe - malformed data never leaks into output.
 
 ## Performance
 
@@ -520,16 +518,16 @@ The daemon scans your sessions once, persists them as per-day immutable aggregat
 | endpoint | cache hit (within 12s TTL) | cache miss (TTL refresh) | response size |
 |---|---|---|---|
 | `/api/stats` | ~1–6 ms | ~5 s (today scan) | 341 B |
-| `/api/today` | ~1 ms | — | ~700 B |
-| `/api/projects` | ~2–4 ms | — | 170 KB |
-| `/api/models` | ~1 ms | — | 7.5 KB |
-| `/api/daily` | ~1 ms | — | 30 KB |
-| `/api/statbar-signals` | ~38–58 ms | — | 4.6 KB |
-| `/api/cross-tool` | ~2 ms | — | 600 B |
+| `/api/today` | ~1 ms | - | ~700 B |
+| `/api/projects` | ~2–4 ms | - | 170 KB |
+| `/api/models` | ~1 ms | - | 7.5 KB |
+| `/api/daily` | ~1 ms | - | 30 KB |
+| `/api/statbar-signals` | ~38–58 ms | - | 4.6 KB |
+| `/api/cross-tool` | ~2 ms | - | 600 B |
 
 The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan is mtime-pruned, so it only touches files modified today (typically a handful of active session files).
 
-**Memory — the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB – 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ — not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (bounded 14-day window instead), and the on-disk store is 220× smaller. The remaining heap bulk is the scan cache; bounding it to the same 14-day watermark is the next memory fight.
+**Memory - the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB – 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ - not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (bounded 14-day window instead), and the on-disk store is 220× smaller. The remaining heap bulk is the scan cache; bounding it to the same 14-day watermark is the next memory fight.
 
 **Reproduce locally:**
 
@@ -576,10 +574,10 @@ Session Files (local disk)
 
 History is a relay race of **per-day immutable aggregate files** at
 `~/.cache/tokmeter/aggregates/YYYY-MM-DD.json` (~6 KB each). Each sealed day is
-write-once-ever — no code path rewrites an existing day file. "Today" lives only
+write-once-ever - no code path rewrites an existing day file. "Today" lives only
 in an in-memory `DailyAccumulator`; at the midnight rollover (or the first scan
 after it) the accumulator seals to its own day file and a fresh one starts. The
-raw session JSONL is just the *source* today is re-derived from — once a day is
+raw session JSONL is just the *source* today is re-derived from - once a day is
 sealed, **deleting the underlying JSONL loses nothing**, because the sealed
 aggregate already holds that day's counts. Cross-machine sync is plain `rsync`:
 each day file is a self-contained unit, so union-merging two machines'
@@ -587,19 +585,19 @@ each day file is a self-contained unit, so union-merging two machines'
 
 ### Daemon lifecycle (and why the bar reads `/tmp`)
 
-The daemon binds two localhost ports — `9876` (WebSocket, live registration) and
+The daemon binds two localhost ports - `9876` (WebSocket, live registration) and
 `9877` (HTTP REST, every reader's query path). On a successful bind it writes its
 PID and an auth token to **two** locations:
 
-- **Canonical** — `~/.tokmeter/daemon/daemon.{pid,token}` (the source of truth;
+- **Canonical** - `~/.tokmeter/daemon/daemon.{pid,token}` (the source of truth;
   the daemon's own singleton guard reads this).
-- **Legacy shim** — `/tmp/drishti-daemon.{pid,token}` (what the macOS bar reads).
+- **Legacy shim** - `/tmp/drishti-daemon.{pid,token}` (what the macOS bar reads).
 
 The bar treats "is the daemon up?" as `fileExists(/tmp/drishti-daemon.pid)` +
-`kill(pid, 0)` + a `proc_name` check, *before* it ever hits HTTP — this avoids a
+`kill(pid, 0)` + a `proc_name` check, *before* it ever hits HTTP - this avoids a
 60 s URLSession hang when the daemon is genuinely down. The catch: macOS reaps
 `/tmp` files untouched for ~3 days. A daemon that stays up for days writes the
-shim once at startup and never again, so the reaper eventually deletes it — after
+shim once at startup and never again, so the reaper eventually deletes it - after
 which the bar reports **"offline" against a perfectly healthy daemon**, and a
 naive restart can't recover (the live daemon still owns the *canonical* pidfile,
 so the singleton guard makes the new start bow out). The fix: the daemon
@@ -641,8 +639,8 @@ bun run list:editors           # List supported editors
 
 # macOS menu bar (Swift app)
 bun run bar                    # Build + install to /Applications + launch (ad-hoc signed)
-bun run bar:build              # Build only — produces ./packages/macos-bar/TokmeterBar.app
-bun run bar:signed             # Developer ID signed — Gatekeeper-friendly for AirDrop
+bun run bar:build              # Build only - produces ./packages/macos-bar/TokmeterBar.app
+bun run bar:signed             # Developer ID signed - Gatekeeper-friendly for AirDrop
 bun run bar:release            # Signed + notarized + stapled + appcast.xml updated
                                # Requires packages/macos-bar/.env with Apple credentials.
                                # See packages/macos-bar/RELEASE.md for the full pipeline.
@@ -663,7 +661,7 @@ bun run format                 # Format
 
 ## License
 
-- Application — AGPL-3.0-only: [LICENSE](./LICENSE)
-- Core library `@sriinnu/tokmeter-core` — MPL-2.0: [packages/core/LICENSE](./packages/core/LICENSE)
+- Application - AGPL-3.0-only: [LICENSE](./LICENSE)
+- Core library `@sriinnu/tokmeter-core` - MPL-2.0: [packages/core/LICENSE](./packages/core/LICENSE)
 
 Copyright (c) 2026 Srinivas Pendela.

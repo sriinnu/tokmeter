@@ -30,13 +30,12 @@ import {
 } from "./parsers/utils.js";
 import { enrichCosts, markPricingSkipped } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
-import { refreshFromRelay } from "./relay-loader.js";
+import { rebuildRecentWindow, refreshFromRelay } from "./relay-loader.js";
 import {
   type ScanContext,
   resolveTodayState,
   scanHistoricalRecords,
   scanRawRecords,
-  scanRecentRecords,
   scanTodayRecords,
   scanTodayRecordsWithStragglers,
 } from "./scan-pipeline.js";
@@ -168,16 +167,19 @@ export class TokmeterCore {
       }
     }
 
-    const recentHistory = isTodayOnlyScan
-      ? []
-      : await scanRecentRecords(
-          this.ctx(),
-          options?.providers,
-          referenceTimestamp,
-          historyWarnings,
-          RECENT_RECORDS_WINDOW_DAYS
-        );
-    this.recentRecords = this.sliceRecent([...recentHistory, ...todayRecords], referenceTimestamp);
+    // recentRecords accumulates FORWARD — it is never re-derived from a raw
+    // history scan. The invariant: a scan reads today's live files + the sealed
+    // relay, nothing else. Past days for the bar's totals/chart come from the
+    // relay aggregates; pace's intraday baseline comes from their costByHour.
+    // The only thing recentRecords still feeds is today's burn/cache signals and
+    // the rollover seal's straggler dedup — both satisfied by carrying the prior
+    // window's before-today records + today. On cold start this.recentRecords is
+    // empty, so it's today-only (and no seal runs — refreshTodayAccumulator only
+    // seals when a prior accumulator exists, i.e. the daemon crossed midnight).
+    const carriedRecent = this.recentRecords.filter((r) =>
+      isBeforeToday(r.timestamp, referenceTimestamp)
+    );
+    this.recentRecords = this.sliceRecent([...carriedRecent, ...todayRecords], referenceTimestamp);
     this.refreshTodayAccumulator(todayRecords, referenceTimestamp);
 
     const hasExplicitRange = Boolean(
@@ -344,6 +346,24 @@ export class TokmeterCore {
     );
   }
 
+  /**
+   * Deep rescan, bounded. Re-derives the last `windowDays` sealed days from raw
+   * and overwrites just those relay files — backfilling pace's costByHour and
+   * correcting any recently mis-sealed day — WITHOUT the full-history parse that
+   * can exhaust memory. Older days (which pace never reads) are left as-is.
+   * Streaming + windowed, so peak memory stays bounded. Today is untouched.
+   */
+  async rebuildRecentDays(windowDays: number, now: number = Date.now()): Promise<void> {
+    const warnings: ScanWarning[] = [];
+    const relay = await rebuildRecentWindow(this.ctx(), now, warnings, windowDays);
+    this.aggregates = relay.aggregates;
+    this.scanMeta = {
+      ...this.scanMeta,
+      lastScanAt: Date.now(),
+      warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "history"), ...warnings],
+    };
+  }
+
   getTodayAggregate(): DailyAggregate | null {
     return this.todayAccumulator?.toAggregate() ?? null;
   }
@@ -436,7 +456,18 @@ export class TokmeterCore {
   }
 
   getStatbarSignals(now: number = Date.now()): StatbarSignals {
-    return computeStatbarSignals(this.recentRecords, now);
+    // Pace reads its baseline from the sealed relay curves (getDailyAggregates),
+    // not from raw history — so recentRecords only needs to carry TODAY.
+    //
+    // The raw-record-backed signals (burnRate 60m, billingWindow ~10h,
+    // cross-midnight contextPressure) read recentRecords. A long-running daemon
+    // accumulates yesterday's tail forward (see scan()/refreshToday), so these
+    // are exact in normal operation. The only degraded case is a FRESH cold
+    // start in the first hours after midnight (recentRecords is today-only): a
+    // just-past-midnight billing block or burn window may under-report until
+    // the window fills. This is a deliberate trade — seeding a raw recent scan
+    // on cold start would reintroduce the multi-day parse that melts the daemon.
+    return computeStatbarSignals(this.recentRecords, now, this.getDailyAggregates());
   }
 
   getSummary(): TokmeterSummary {

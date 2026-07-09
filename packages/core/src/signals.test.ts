@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { aggregateRecordsByDay } from "./aggregates.js";
 import { computeStatbarSignals } from "./signals.js";
 import type { TokenRecord } from "./types.js";
 
@@ -158,22 +159,60 @@ describe("computeStatbarSignals", () => {
     expect(grown.contextPressure.provenance).toBe("estimated");
   });
 
-  test("pace multiple compares today vs typical cost by this hour", () => {
-    // Build 3 past days where by 14:30 the user had spent $4 each.
-    // Today they've spent $6 by 14:30 → pace should be 1.5×.
-    const records: TokenRecord[] = [];
+  test("pace multiple compares today vs typical cost-by-this-hour from relay curves", () => {
+    // 3 past days each booked $4 at hour 10 (before now=14:30). Their intraday
+    // curves come from the sealed relay aggregates — pace reads costByHour, NOT
+    // raw records. Build them through the real aggregator so this pins the whole
+    // fold→curve→pace pipeline. Today they've spent $6 by now → pace = 1.5×.
+    const pastRecords: TokenRecord[] = [];
     for (let dayOffset = 1; dayOffset <= 3; dayOffset++) {
       const dayBase = new Date(2026, 3, 15 - dayOffset, 10, 0, 0).getTime();
-      records.push(r({ timestamp: dayBase, cost: 4 }));
+      pastRecords.push(r({ timestamp: dayBase, cost: 4 }));
     }
-    // Today's spend before `now`
-    records.push(r({ timestamp: new Date(2026, 3, 15, 9, 0, 0).getTime(), cost: 6 }));
+    const recentAggregates = aggregateRecordsByDay(pastRecords);
+    expect(recentAggregates.every((d) => d.costByHour?.[10] === 4)).toBe(true);
 
-    const s = computeStatbarSignals(records, now);
+    // recentRecords now carries only TODAY.
+    const todayRecords = [r({ timestamp: new Date(2026, 3, 15, 9, 0, 0).getTime(), cost: 6 })];
+
+    const s = computeStatbarSignals(todayRecords, now, recentAggregates);
     expect(s.pace.typicalCostByNow).toBeCloseTo(4);
     expect(s.pace.actualCostByNow).toBeCloseTo(6);
     expect(s.pace.multiple).toBeCloseTo(1.5, 2);
     expect(s.pace.daysOfHistory).toBe(3);
+  });
+
+  test("pace prorates the CURRENT hour from the relay curve", () => {
+    // now = 14:30. A past day with $2 booked during hour 14 contributes exactly
+    // the prorated half ($1) to cost-by-now — the current-hour proration path
+    // the earlier tests (cost strictly before now) never exercised.
+    const curved = aggregateRecordsByDay([
+      r({ timestamp: new Date(2026, 3, 14, 14, 0, 0).getTime(), cost: 2 }),
+    ]);
+    expect(curved[0].costByHour?.[14]).toBe(2);
+    const todayRecords = [r({ timestamp: new Date(2026, 3, 15, 9, 0, 0).getTime(), cost: 3 })];
+    const s = computeStatbarSignals(todayRecords, now, curved);
+    expect(s.pace.typicalCostByNow).toBeCloseTo(1); // 2 * (30/60)
+    expect(s.pace.daysOfHistory).toBe(1);
+  });
+
+  test("pace skips relay days without a costByHour curve (never a $0 baseline)", () => {
+    // A pre-upgrade sealed day (no costByHour) must be ignored, not treated as a
+    // $0 day that drags the median down. One curved day at $4, one legacy day
+    // with no curve → baseline is $4 (the curved day only), daysOfHistory = 1.
+    const curved = aggregateRecordsByDay([
+      r({ timestamp: new Date(2026, 3, 14, 10, 0, 0).getTime(), cost: 4 }),
+    ]);
+    const legacy = aggregateRecordsByDay([
+      r({ timestamp: new Date(2026, 3, 13, 10, 0, 0).getTime(), cost: 99 }),
+    ]);
+    for (const d of legacy) {
+      d.costByHour = undefined; // simulate an old sealed file
+    }
+    const todayRecords = [r({ timestamp: new Date(2026, 3, 15, 9, 0, 0).getTime(), cost: 6 })];
+    const s = computeStatbarSignals(todayRecords, now, [...curved, ...legacy]);
+    expect(s.pace.typicalCostByNow).toBeCloseTo(4);
+    expect(s.pace.daysOfHistory).toBe(1);
   });
 
   test("subagent share is the slice of today's spend tagged isSubagent", () => {

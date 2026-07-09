@@ -1,6 +1,52 @@
 import { describe, expect, test } from "vitest";
 import { ALL_PROVIDER_IDS } from "./index.js";
-import { createRecord } from "./utils.js";
+import { createRecord, mapWithConcurrency } from "./utils.js";
+
+describe("mapWithConcurrency", () => {
+  test("preserves input order regardless of completion order", async () => {
+    // The codex scan zips newest[i] back to allFiles[i], so out-of-order results
+    // would drop/keep the WRONG files. Make later items resolve first.
+    const items = [0, 1, 2, 3, 4, 5];
+    const out = await mapWithConcurrency(items, 3, async (n) => {
+      await new Promise((r) => setTimeout(r, (items.length - n) * 3));
+      return n * 10;
+    });
+    expect(out).toEqual([0, 10, 20, 30, 40, 50]);
+  });
+
+  test("empty input returns empty, fn never called", async () => {
+    let calls = 0;
+    const out = await mapWithConcurrency([], 4, async (x) => {
+      calls++;
+      return x;
+    });
+    expect(out).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  test("limit larger than length still maps every item", async () => {
+    const out = await mapWithConcurrency([1, 2, 3], 100, async (n) => n + 1);
+    expect(out).toEqual([2, 3, 4]);
+  });
+
+  test("never exceeds the concurrency limit in flight", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    await mapWithConcurrency(
+      Array.from({ length: 20 }, (_, i) => i),
+      4,
+      async (n) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        inFlight--;
+        return n;
+      }
+    );
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1); // actually ran concurrently
+  });
+});
 
 describe("createRecord usage provenance", () => {
   test("attaches provenance metadata for every registered provider", () => {
