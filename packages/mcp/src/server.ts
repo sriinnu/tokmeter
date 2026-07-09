@@ -106,6 +106,13 @@ function scanFooter(): string {
   return `\n${separator()}\n${parts.join("\n")}`;
 }
 
+/**
+ * Default lookback for record-consuming tools at "all"/undefined scope. Matches
+ * the core's old RECENT_RECORDS_WINDOW_DAYS so these tools see the same multi-
+ * day window they did before the daemon's default scan became today-only.
+ */
+const RECENT_TOOL_WINDOW_DAYS = 14;
+
 /** Build ScanOptions from the common scope/filter params many tools accept. */
 function buildScanOptions(params: {
   scope?: string;
@@ -118,7 +125,15 @@ function buildScanOptions(params: {
   if (params.scope === "today") opts.today = true;
   else if (params.scope === "week") opts.week = true;
   else if (params.scope === "month") opts.month = true;
-  // "all" or undefined means no date filter
+  else if (!params.since && !params.until) {
+    // "all"/undefined. The daemon's default scan() is now today + relay only
+    // (past days are never re-parsed on the hot path). But record-consuming
+    // tools here (search / heatmap / export / anomaly) run in a fresh, always-
+    // cold core and need the multi-day raw records they historically got from
+    // recentRecords' 14-day seed. Request that window explicitly so this
+    // on-demand path restores their contract without slowing the bar.
+    opts.since = new Date(Date.now() - RECENT_TOOL_WINDOW_DAYS * 86_400_000).toISOString();
+  }
   if (params.since) opts.since = params.since;
   if (params.until) opts.until = params.until;
   if (params.project) opts.project = params.project;
