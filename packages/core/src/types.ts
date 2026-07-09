@@ -510,6 +510,18 @@ export interface SessionParser {
   readonly providerId: ProviderId;
   /** Scan local session files and return token records. */
   scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]>;
+  /**
+   * Optional memory-bounded variant: parse file-by-file, handing each file's
+   * records to `onFile` so a caller (the relay rebuild) can fold + release them
+   * instead of holding the whole corpus. Parsers that omit this fall back to
+   * accumulating scan(); implement it for providers whose history is large
+   * enough to matter (codex's fork-replay rollouts).
+   */
+  scanStreaming?(
+    homeDir: string,
+    opts: ScanFilterOptions | undefined,
+    onFile: (records: TokenRecord[]) => void | Promise<void>
+  ): Promise<void>;
 }
 
 // ─── Cleanup Types ──────────────────────────────────────────────────────────

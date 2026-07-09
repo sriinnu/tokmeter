@@ -86,6 +86,30 @@ describe("relay accuracy — cold-scan/live-fold parity", () => {
     expect(cold.cost).toBeCloseTo(live.cost, 10);
     expect(cold.recordCount).toBe(live.recordCount);
   });
+
+  test("costByHour curve is byte-identical between live fold and cold rebuild", () => {
+    // The pace signal reads costByHour off sealed days, so the live accumulator
+    // and the cold rebuild MUST produce the same curve or pace diverges after a
+    // daemon restart. Hours are 9:30 / 14:30 / 20:30 local so both paths bucket
+    // by the same local getHours() and the day key is unambiguous.
+    const at = (h: number, cost: number) =>
+      r({ timestamp: new Date(2026, 4, 20, h, 30, 0).getTime(), cost });
+    const records = [at(9, 1), at(9, 2), at(14, 4), at(20, 0.5)];
+
+    const acc = new DailyAccumulator("2026-05-20");
+    acc.foldAll(records);
+    const live = acc.seal();
+    const [cold] = aggregateRecordsByDay(records);
+
+    expect(cold.costByHour).toEqual(live.costByHour); // identical arrays
+    expect(cold.costByHour?.length).toBe(24);
+    expect(cold.costByHour?.[9]).toBeCloseTo(3, 10); // 1 + 2 same hour
+    expect(cold.costByHour?.[14]).toBeCloseTo(4, 10);
+    expect(cold.costByHour?.[20]).toBeCloseTo(0.5, 10);
+    // Curve sums to the day's total cost — no record lands outside a slot.
+    const sum = (cold.costByHour ?? []).reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(cold.cost, 10);
+  });
 });
 
 describe("relay accuracy — prototype safety", () => {

@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexParser } from "./codex.js";
+import { CodexParser, parseCodexFile } from "./codex.js";
 
 let tmpDir: string;
 
@@ -27,39 +27,50 @@ afterEach(() => {
   } catch {}
 });
 
-/** Build a fake Codex JSONL file with controlled token_count events. */
+/**
+ * Build a fake Codex JSONL file with controlled token_count events.
+ *
+ * `opts.dirDate` places the file under an arbitrary sessions/YYYY/MM/DD dir
+ * (the session START day) independently of `opts.eventDate` (the day the events
+ * are timestamped). Codex appends to the start-day file for the life of a
+ * session, so a long-running session legitimately has an OLD dir but RECENT
+ * events — the exact shape that must NOT be dropped by anything but event time.
+ * `opts.omitTimestamps` strips every line's timestamp to exercise the fail-open
+ * path (newestEventMs returns null → keep).
+ */
 function writeFakeSession(
-  events: Array<{ totalIn: number; totalOut: number; cached: number; reasoning?: number }>
+  events: Array<{ totalIn: number; totalOut: number; cached: number; reasoning?: number }>,
+  opts?: { dirDate?: [string, string, string]; eventDate?: string; omitTimestamps?: boolean }
 ): string {
-  // Place file in YYYY/MM/DD-style nested dir to match Codex's layout.
-  const sessionsDir = join(tmpDir, ".codex", "sessions", "2026", "04", "09");
+  const [y, mo, d] = opts?.dirDate ?? ["2026", "04", "09"];
+  const eventDate = opts?.eventDate ?? "2026-04-09";
+  const ts = (iso: string) => (opts?.omitTimestamps ? {} : { timestamp: iso });
+
+  const sessionsDir = join(tmpDir, ".codex", "sessions", y, mo, d);
   const fs = require("node:fs");
   fs.mkdirSync(sessionsDir, { recursive: true });
-  const filePath = join(sessionsDir, "rollout-2026-04-09T12-00-00-test.jsonl");
+  const filePath = join(sessionsDir, `rollout-${y}-${mo}-${d}T12-00-00-test.jsonl`);
 
   const lines: string[] = [];
-  // Session meta
   lines.push(
     JSON.stringify({
-      timestamp: "2026-04-09T12:00:00.000Z",
+      ...ts(`${eventDate}T12:00:00.000Z`),
       type: "session_meta",
       payload: { id: "test-session", cwd: "/tmp/test-project", model_provider: "openai" },
     })
   );
-  // Turn context with model
   lines.push(
     JSON.stringify({
-      timestamp: "2026-04-09T12:00:01.000Z",
+      ...ts(`${eventDate}T12:00:01.000Z`),
       type: "turn_context",
       payload: { model: "gpt-5.4" },
     })
   );
-  // Token count events
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     lines.push(
       JSON.stringify({
-        timestamp: `2026-04-09T12:00:${String(10 + i).padStart(2, "0")}.000Z`,
+        ...ts(`${eventDate}T12:00:${String(10 + i).padStart(2, "0")}.000Z`),
         type: "event_msg",
         payload: {
           type: "token_count",
@@ -148,6 +159,141 @@ describe("CodexParser", () => {
     const records = await parser.scan(tmpDir);
     expect(records[0].inputTokens).toBe(0); // Math.max(0, 50k - 80k)
     expect(records[0].cacheReadTokens).toBe(80_000);
+  });
+
+  it("today-scan skips a freshly-touched file whose newest event predates the watermark", async () => {
+    // The daemon-melt regression: blanking/rewriting an old rollout bumps its
+    // mtime to "now", so a today-scan's mtime prefilter matches it — but its
+    // events are from 2026-04-09 and belong to an already-sealed day. The
+    // newest-event guard must drop it BEFORE the expensive full parse.
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }]);
+
+    const parser = new CodexParser();
+    // Watermark AFTER the file's newest event; mtime (just written = now) still
+    // passes the mtime filter, so only the event-date guard can skip it.
+    const watermark = new Date("2026-04-10T00:00:00.000Z").getTime();
+    const records = await parser.scan(tmpDir, { modifiedSinceMs: watermark });
+    expect(records.length).toBe(0);
+  });
+
+  it("today-scan KEEPS a file whose newest event is at/after the watermark", async () => {
+    // Guard must not over-skip genuine today data.
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }]);
+
+    const parser = new CodexParser();
+    const watermark = new Date("2026-04-09T00:00:00.000Z").getTime();
+    const records = await parser.scan(tmpDir, { modifiedSinceMs: watermark });
+    expect(records.length).toBe(1);
+  });
+
+  it("KEEPS an OLD-dir file whose newest event is recent (long-running session)", async () => {
+    // THE regression the 4-agent review caught: codex appends to the session-
+    // START-day file for the life of the session, so a session begun 2026-04-09
+    // but still active in June lives under 2026/04/09 with June events. A filter
+    // that drops by path/start date would silently ZERO the user's biggest
+    // active session. Only the newest EVENT time may drop a file — and here it's
+    // June, well after the watermark, so the file must be KEPT and parsed.
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }], {
+      dirDate: ["2026", "04", "09"],
+      eventDate: "2026-06-15",
+    });
+
+    const parser = new CodexParser();
+    const watermark = new Date("2026-06-01T00:00:00.000Z").getTime();
+    const records = await parser.scan(tmpDir, { modifiedSinceMs: watermark });
+    expect(records.length).toBe(1); // kept despite the April dir/path
+  });
+
+  it("fail-open: KEEPS a file whose tail carries no parseable timestamp", async () => {
+    // newestEventMs returns null when it can't read a timestamp. Null must fail
+    // OPEN (keep + parse) so we never silently drop real data on a malformed or
+    // mid-append tail — never fail closed.
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000 }], {
+      omitTimestamps: true,
+    });
+
+    const parser = new CodexParser();
+    // Watermark is AFTER the (omitted) 2026-04-09 events but BEFORE the file's
+    // mtime (= test run time), so mtime keeps it and only newestEventMs decides.
+    // A timestamped twin would be DROPPED here (04-09 < 05-01); the null tail
+    // must instead fail OPEN and keep it — that's the distinction under test.
+    const watermark = new Date("2026-05-01T00:00:00.000Z").getTime();
+    const records = await parser.scan(tmpDir, { modifiedSinceMs: watermark });
+    expect(records.length).toBe(1); // fail-open kept it
+  });
+
+  it("streams a large (>8MB) rollout line-by-line and parses it identically", async () => {
+    // Files at/above CODEX_LARGE_FILE_BYTES take the readline STREAM path (never
+    // buffering the whole file) — the fix that keeps a 200MB fork-replay rollout
+    // from ballooning memory. Pad events so we cross 8MB with a manageable count,
+    // and give each a monotonically rising total so every delta yields a record.
+    const fs = require("node:fs");
+    const dir = join(tmpDir, ".codex", "sessions", "2026", "05", "01");
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, "rollout-2026-05-01T12-00-00-big.jsonl");
+    const filler = "x".repeat(1800); // inflate each line so ~5k events > 8MB
+    const N = 5000;
+    const lines: string[] = [
+      JSON.stringify({
+        timestamp: "2026-05-01T12:00:00.000Z",
+        type: "session_meta",
+        payload: { id: "big", cwd: "/tmp/big-project", model_provider: "openai" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-01T12:00:01.000Z",
+        type: "turn_context",
+        payload: { model: "gpt-5.4" },
+      }),
+    ];
+    for (let i = 0; i < N; i++) {
+      lines.push(
+        JSON.stringify({
+          timestamp: "2026-05-01T12:01:00.000Z",
+          type: "event_msg",
+          _pad: filler,
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: (i + 1) * 100,
+                cached_input_tokens: 0,
+                output_tokens: (i + 1) * 10,
+                reasoning_output_tokens: 0,
+              },
+            },
+          },
+        })
+      );
+    }
+    fs.writeFileSync(filePath, `${lines.join("\n")}\n`);
+    expect(fs.statSync(filePath).size).toBeGreaterThan(8_000_000); // forces the stream branch
+
+    const records = await new CodexParser().scan(tmpDir);
+    // Monotone totals → every delta is +100 in / +10 out → one record per event.
+    expect(records.length).toBe(N);
+    expect(records[0].inputTokens).toBe(100);
+    expect(records[0].outputTokens).toBe(10);
+    expect(records[N - 1].inputTokens).toBe(100); // steady delta, not cumulative
+  });
+
+  it("parseCodexFile fails SOFT on an unreadable large file (no throw, returns what it had)", async () => {
+    // Regression for the review's HIGH finding: the streamed large-file path must
+    // not let one unreadable rollout (deleted mid-scan, EACCES, evicted iCloud)
+    // abort the whole codex provider — and, worse, let a windowed rescan
+    // overwrite good sealed days with an empty result. A >8MB file with no read
+    // permission drives createReadStream to EACCES, which must be swallowed.
+    const fs = require("node:fs");
+    const dir = join(tmpDir, ".codex", "sessions", "2026", "05", "03");
+    fs.mkdirSync(dir, { recursive: true });
+    const bad = join(dir, "rollout-2026-05-03T13-00-00-bad.jsonl");
+    fs.writeFileSync(bad, "x".repeat(8_500_000)); // > CODEX_LARGE_FILE_BYTES → stream path
+    fs.chmodSync(bad, 0o000); // unreadable → createReadStream errors
+    try {
+      const records = await parseCodexFile(bad, 8_500_000);
+      expect(records).toEqual([]); // failed soft, did not throw
+    } finally {
+      fs.chmodSync(bad, 0o644); // restore so afterEach can clean up
+    }
   });
 
   it("skips events where every token bucket is zero", async () => {

@@ -43,6 +43,8 @@ import {
   type ProviderDayBucket,
   type TokenBuckets,
   aggregateRecordsByDay,
+  emptyCostByHour,
+  foldCostByHour,
   isValidRecord,
   nullMap,
   recordFingerprint,
@@ -420,12 +422,14 @@ function makeEmptyDay(date: string): DailyAggregate {
     models: nullMap(),
     projects: nullMap(),
     providers: nullMap(),
+    costByHour: emptyCostByHour(),
   };
 }
 
 function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
   day.cost += r.cost;
   addBuckets(day, r);
+  foldCostByHour(day, r);
   day.recordCount++;
   if (r.timestamp < day.firstUsed) day.firstUsed = r.timestamp;
   if (r.timestamp > day.lastUsed) day.lastUsed = r.timestamp;

@@ -7,6 +7,7 @@
  * against an explicit `now` so tests can pin time.
  */
 
+import type { DailyAggregate } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import type { StatbarSignals, TokenRecord } from "./types.js";
 import { deriveUsage, sumUsage } from "./usage.js";
@@ -198,7 +199,11 @@ function median(values: number[]): number {
  * Build the full StatbarSignals payload from a record set. The `records`
  * array can be in any order — we don't mutate it. `now` is in epoch ms.
  */
-export function computeStatbarSignals(records: TokenRecord[], now: number): StatbarSignals {
+export function computeStatbarSignals(
+  records: TokenRecord[],
+  now: number,
+  recentAggregates: DailyAggregate[] = []
+): StatbarSignals {
   // ── Burn rate ──────────────────────────────────────────────────────────
   const burnWindowMs = BURN_WINDOW_MINUTES * 60_000;
   const burnSince = now - burnWindowMs;
@@ -265,37 +270,33 @@ export function computeStatbarSignals(records: TokenRecord[], now: number): Stat
   };
 
   // ── Pace vs. typical ───────────────────────────────────────────────────
-  // For each past day with any records, sum cost from midnight to the same
-  // wall-clock hour:minute as `now`. Median those — that's "typical by this
-  // hour." Compare to today's actual.
+  // "Typical spend by this time of day" over the last N past days, compared to
+  // today's actual. The per-day intraday curve comes straight from the sealed
+  // relay aggregates (costByHour) — NO raw history is re-read. Days sealed
+  // before costByHour existed are skipped (never counted as $0, which would
+  // drag the median down); pace fills in as fresh days seal with a curve.
   const nowDate = new Date(now);
-  const minutesIntoToday = nowDate.getHours() * 60 + nowDate.getMinutes();
-
-  // Bound the pace scan to 2× the baseline window. Older records can't
-  // contribute (the sort+slice keeps only the most recent N days anyway), so
-  // walking them was pure waste — at 100k records spanning a year, ~95% of
-  // entries were touched here for nothing. Numeric epoch-ms bound avoids the
-  // per-record `Date` allocation that used to dominate the function's cost.
-  const paceLookbackMs = PACE_BASELINE_DAYS * 2 * 86_400_000;
-  const paceOldestMs = now - paceLookbackMs;
-  // Group past records by day, but only those that fall within the same
-  // minute-of-day window. Skip today.
-  const pastByDay = new Map<string, number>();
-  for (const r of records) {
-    if (r.timestamp < paceOldestMs) continue;
-    if (r.timestamp >= todayStartMs) continue; // skip today and future
-    const d = new Date(r.timestamp);
-    const minute = d.getHours() * 60 + d.getMinutes();
-    if (minute > minutesIntoToday) continue;
-    const key = localDateKey(r.timestamp);
-    pastByDay.set(key, (pastByDay.get(key) ?? 0) + r.cost);
-  }
-  // Use the most recent N active days only — older data drifts away from
-  // current workflow patterns and stops being predictive.
-  const recentDayCosts = [...pastByDay.entries()]
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, PACE_BASELINE_DAYS)
-    .map(([, v]) => v);
+  const currentHour = nowDate.getHours();
+  const minuteFractionOfHour = nowDate.getMinutes() / 60;
+  const todayKey = localDateKey(now);
+  // Cost accrued on a day up to the same wall-clock moment as `now`: whole
+  // hours before the current hour, plus a prorated slice of the current hour.
+  const costByNow = (curve: number[]): number => {
+    let c = 0;
+    for (let h = 0; h < currentHour; h++) c += curve[h] ?? 0;
+    c += (curve[currentHour] ?? 0) * minuteFractionOfHour;
+    return c;
+  };
+  const recentDayCosts = recentAggregates
+    .filter((d) => d.date < todayKey && Array.isArray(d.costByHour))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) // newest first
+    .map((d) => costByNow(d.costByHour as number[]))
+    // A day with zero spend BEFORE this wall-clock time isn't a baseline
+    // sample (the user simply hadn't started yet) — counting it as $0 would
+    // drag the median down. Mirror the old "exclude days with no pre-now
+    // activity" behavior. Take the N most recent days that DID have activity.
+    .filter((c) => c > 0)
+    .slice(0, PACE_BASELINE_DAYS);
   const typicalByNow = median(recentDayCosts);
   let actualByNow = 0;
   for (const r of todayRecords) actualByNow += r.cost;

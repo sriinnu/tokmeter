@@ -164,19 +164,6 @@ export async function scanHistoricalRecords(
   return rawRecords.filter((record) => isBeforeToday(record.timestamp, referenceTimestamp));
 }
 
-/** Bounded N-day raw scan that feeds the signals layer's rolling window. */
-export async function scanRecentRecords(
-  ctx: ScanContext,
-  providers: ProviderId[] | undefined,
-  referenceTimestamp: number,
-  warnings: ScanWarning[],
-  daysBack: number
-): Promise<TokenRecord[]> {
-  const floor = referenceTimestamp - daysBack * 86_400_000;
-  const raw = await scanRawRecords(ctx, providers, "history", warnings, floor);
-  return raw.filter((r) => r.timestamp >= floor && isBeforeToday(r.timestamp, referenceTimestamp));
-}
-
 export function resolveTodayState(
   records: TokenRecord[],
   todayWarnings: ScanWarning[],

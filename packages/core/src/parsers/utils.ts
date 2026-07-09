@@ -415,6 +415,35 @@ export async function filterFilesByMtime(paths: string[], minMtimeMs: number): P
   return kept.filter((p): p is string => p !== null);
 }
 
+/**
+ * Map `items` through `fn` with a bounded number of in-flight promises.
+ *
+ * Plain `Promise.all(items.map(fn))` fans out with NO ceiling: hand it a few
+ * hundred files and every read/parse is scheduled at once, so V8 spends the
+ * whole scan thrashing GC to resolve one giant promise-array while the event
+ * loop starves (the daemon then can't answer the bar → it goes STALE). A small
+ * worker pool keeps memory flat and the loop responsive; results stay in input
+ * order so callers can zip them back to `items`.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]!, i);
+    }
+  };
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 /** Default maximum number of files returned by findFiles. */
 const DEFAULT_MAX_FILES = 10_000;
 

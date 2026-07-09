@@ -10,16 +10,18 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DailyAccumulator,
   listDaysOnDisk,
   loadAggregates,
   migrateMonolithSnapshotIfNeeded,
   writeDayFile,
 } from "./aggregates-store.js";
 import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
-import { localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
-import { toErrorMessage } from "./pricing-enrichment.js";
-import { type ScanContext, scanHistoricalRecords, scanRawRecords } from "./scan-pipeline.js";
-import type { ScanMeta, ScanWarning } from "./types.js";
+import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
+import { getParsers } from "./parsers/index.js";
+import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
+import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
+import type { ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface RelayState {
   aggregates: Map<string, DailyAggregate>;
@@ -101,33 +103,131 @@ function nextDayKey(key: string): string {
 }
 
 /**
- * Full historical rebuild — first-ever cold start, explicit `rescanHistory`,
- * or empty relay. Scans every historical file, splatters into per-day relay
- * files. One-time cost (and the only path that touches lifetime raw records
- * — caller-scoped and immediately released).
+ * Shared streaming fold: re-derive per-day aggregates from RAW files, folding
+ * each file's records into shared day accumulators and releasing them, so peak
+ * memory is a single file — never the whole corpus (the old "load everything"
+ * path peaked multi-GB and drove the machine into a Jetsam/OOM reboot).
+ *
+ * `floorMs` bounds the work: with it set, only records on/after that instant
+ * are folded (a windowed rebuild). Providers that expose `scanStreaming` are
+ * driven file-by-file; the rest fall back to scan(). DailyAccumulator.fold
+ * applies the exact same dedup + costByHour fold as aggregateRecordsByDay, so
+ * the output is byte-identical (relay-accuracy tests guard this).
+ */
+async function foldRawIntoDays(
+  ctx: ScanContext,
+  referenceTimestamp: number,
+  warnings: ScanWarning[],
+  floorMs?: number
+): Promise<Map<string, DailyAggregate>> {
+  const todayKey = localDateKey(referenceTimestamp);
+  const scanOpts = floorMs !== undefined ? { modifiedSinceMs: floorMs } : undefined;
+  const dayAccs = new Map<string, DailyAccumulator>();
+
+  const foldFile = async (records: TokenRecord[]): Promise<void> => {
+    if (records.length === 0) return;
+    if (!ctx.skipPricing) {
+      try {
+        await enrichCosts(records, ctx.pricing, "history", warnings);
+      } catch (error) {
+        warnings.push({ scope: "history", message: `Pricing failed: ${toErrorMessage(error)}` });
+      }
+    }
+    for (const r of records) {
+      if (floorMs !== undefined && r.timestamp < floorMs) continue; // outside the window
+      if (!isBeforeToday(r.timestamp, referenceTimestamp)) continue; // never seal today
+      const key = localDateKey(r.timestamp);
+      let acc = dayAccs.get(key);
+      if (!acc) {
+        acc = new DailyAccumulator(key);
+        dayAccs.set(key, acc);
+      }
+      acc.fold(r);
+    }
+  };
+
+  for (const parser of getParsers(undefined)) {
+    try {
+      if (parser.scanStreaming) {
+        await parser.scanStreaming(ctx.homeDir, scanOpts, foldFile);
+      } else {
+        await foldFile(await parser.scan(ctx.homeDir, scanOpts));
+      }
+    } catch (error) {
+      warnings.push({
+        scope: "provider",
+        provider: parser.providerId,
+        message: `${parser.providerId} rebuild failed — skipped (${toErrorMessage(error)}).`,
+      });
+    }
+  }
+
+  const days = new Map<string, DailyAggregate>();
+  for (const [date, acc] of dayAccs) {
+    if (date >= todayKey) continue;
+    days.set(date, acc.seal());
+  }
+  return days;
+}
+
+/**
+ * Full historical rebuild — first-ever cold start, empty relay, or an explicit
+ * full rebuild. Re-derives EVERY sealed day from raw and replaces the on-disk
+ * relay. Memory-bounded by the streaming fold, but still the heaviest path.
  */
 async function rebuildHistoricalFromScratch(
   ctx: ScanContext,
   referenceTimestamp: number,
   warnings: ScanWarning[]
 ): Promise<RelayState> {
-  const raw = await scanHistoricalRecords(ctx, undefined, referenceTimestamp, warnings);
-  const todayKey = localDateKey(referenceTimestamp);
-  const days = aggregateRecordsByDay(raw);
+  const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings);
   const aggregates = new Map<string, DailyAggregate>();
-  for (const day of days) {
-    if (day.date >= todayKey) continue;
+  for (const [date, day] of days) {
     try {
       writeDayFile(ctx.homeDir, day);
-      aggregates.set(day.date, day);
+      aggregates.set(date, day);
     } catch (error) {
       warnings.push({
         scope: "cache",
-        message: `Failed to persist day ${day.date} to relay: ${toErrorMessage(error)}`,
+        message: `Failed to persist day ${date} to relay: ${toErrorMessage(error)}`,
       });
     }
   }
-  return { aggregates, historySource: raw.length > 0 ? "rebuilt" : "none" };
+  return { aggregates, historySource: days.size > 0 ? "rebuilt" : "none" };
+}
+
+/**
+ * Bounded window rebuild — what the Hub's "Deep Rescan" runs. Re-derives ONLY
+ * the last `windowDays` of sealed days from raw and overwrites just those files,
+ * leaving older days untouched. This is the right-sized operation: it backfills
+ * pace's costByHour (which only reads the last few days) and corrects any recent
+ * day sealed by buggy code, WITHOUT the multi-GB full-history parse that OOM'd
+ * the box. Older days' curves are never read by pace, so re-deriving them is
+ * pure waste — we skip it.
+ */
+export async function rebuildRecentWindow(
+  ctx: ScanContext,
+  referenceTimestamp: number,
+  warnings: ScanWarning[],
+  windowDays: number
+): Promise<RelayState> {
+  migrateV2IfNeeded(ctx.homeDir);
+  const floorMs = startOfLocalDay(referenceTimestamp - windowDays * 86_400_000);
+  const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs);
+  // Start from what's already sealed, overwrite ONLY the window's days.
+  const aggregates = loadAggregates(ctx.homeDir);
+  for (const [date, day] of rebuilt) {
+    try {
+      writeDayFile(ctx.homeDir, day);
+      aggregates.set(date, day);
+    } catch (error) {
+      warnings.push({
+        scope: "cache",
+        message: `Failed to persist day ${date} to relay: ${toErrorMessage(error)}`,
+      });
+    }
+  }
+  return { aggregates, historySource: "rebuilt" };
 }
 
 /**
