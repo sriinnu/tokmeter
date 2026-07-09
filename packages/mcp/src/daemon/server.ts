@@ -731,6 +731,15 @@ const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
  */
 let _pendingFullRescan = false;
 
+// Guards /api/rescan: the deep rebuild runs in the background, so concurrent
+// triggers (impatient double-click) must coalesce, not stack.
+let _rescanInFlight = false;
+
+// How many recent days a Deep Rescan re-derives from raw. Covers pace's 7-day
+// baseline plus slack, and any day a recent bug could have mis-sealed — while
+// staying far below the full-history parse that exhausts memory.
+const DEEP_RESCAN_WINDOW_DAYS = 30;
+
 /**
  * Single mediator for ALL core work — warm reads, today refreshes, and full
  * rescans — through ONE single-flight promise. Without this, a concurrent
@@ -1246,6 +1255,55 @@ function startHttpApi(): void {
             // daemon warm and bounded instead of paying a cold start next read.
             await rescanHttpCore();
             json(res, { ok: true });
+          } catch (err) {
+            res.writeHead(500);
+            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
+        } else if (pathname === "/api/rescan") {
+          // DEEP rescan — the ONE explicit path that re-reads RAW history. It is
+          // WINDOWED, not full-history: it re-derives only the last
+          // DEEP_RESCAN_WINDOW_DAYS sealed days and overwrites just those files.
+          // That's exactly what's needed — backfill pace's costByHour (which only
+          // reads the last few days) and correct any recently mis-sealed day —
+          // without the multi-GB full-corpus parse that once drove the machine to
+          // an OOM reboot. Older days' curves are never read, so re-deriving them
+          // is pure waste. Token-gated POST (CSRF/DoS, like update-pricing) and
+          // FIRE-AND-FORGET: returns immediately, rebuilds in the background.
+          try {
+            // Memory guard: even windowed + streamed, the rebuild is the heaviest
+            // thing the daemon does. Refuse unless there's real headroom — the
+            // fast path keeps serving; the user frees RAM and retries. This is
+            // the guard that was missing when a rescan stacked on a 16 GB local
+            // LLM and Jetsam-rebooted the box.
+            const os = await import("node:os");
+            const freeGb = os.freemem() / 1_073_741_824;
+            const NEED_FREE_GB = 6;
+            if (freeGb < NEED_FREE_GB) {
+              res.writeHead(503);
+              json(res, {
+                ok: false,
+                error: `Low memory: ${freeGb.toFixed(1)} GB free, need ~${NEED_FREE_GB} GB to rebuild safely. Close memory-heavy apps (e.g. a local LLM) and retry.`,
+              });
+              return;
+            }
+            const core = await getHttpCore();
+            if (_rescanInFlight) {
+              json(res, { ok: true, started: false, alreadyRunning: true });
+            } else {
+              _rescanInFlight = true;
+              void core
+                .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS)
+                .then(() => {
+                  _httpCore = { core, ts: Date.now() };
+                })
+                .catch((e: unknown) => {
+                  console.error(`deep rescan failed: ${e instanceof Error ? e.message : e}`);
+                })
+                .finally(() => {
+                  _rescanInFlight = false;
+                });
+              json(res, { ok: true, started: true });
+            }
           } catch (err) {
             res.writeHead(500);
             json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
