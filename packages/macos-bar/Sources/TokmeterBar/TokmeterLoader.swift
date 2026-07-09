@@ -40,6 +40,10 @@ final class TokmeterLoader: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isRefreshingPricing: Bool = false
     @Published var pricingRefreshError: String?
+    /// True while a Hub-triggered deep rescan is rebuilding the relay from raw.
+    @Published var isRescanning: Bool = false
+    @Published var rescanError: String?
+    @Published var rescanStartedNotice: Bool = false
     /// Epoch ms of the last kosha registry write, 0 if unknown. Drives the
     /// "Pricing fetched 2h ago" footer badge.
     @Published var pricingMtime: Double = 0
@@ -338,6 +342,29 @@ final class TokmeterLoader: ObservableObject {
             }
         } else {
             await refreshPricingViaCLI()
+        }
+    }
+
+    /// Trigger a deep rescan (Hub → Deep Rescan). The daemon rebuilds the relay
+    /// from raw history in the BACKGROUND and returns immediately, so this
+    /// resolves fast; the rebuilt data (and full pace history) lands on a later
+    /// refresh. We flag `rescanStartedNotice` so the Hub can confirm it kicked
+    /// off — there's no live progress bar because the daemon owns the work.
+    func deepRescan() async {
+        guard !isRescanning else { return }
+        guard client.isDaemonRunning else {
+            rescanError = "Daemon offline — start it first, then Deep Rescan."
+            return
+        }
+        isRescanning = true
+        rescanError = nil
+        rescanStartedNotice = false
+        defer { isRescanning = false }
+        do {
+            try await client.deepRescan()
+            rescanStartedNotice = true
+        } catch {
+            rescanError = error.localizedDescription
         }
     }
 
