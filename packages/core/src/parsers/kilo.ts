@@ -7,7 +7,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, vscodeFamilyUserDirs } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  findFiles,
+  getConfiguredProviderPaths,
+  vscodeFamilyUserDirs,
+} from "./utils.js";
 
 interface KiloUiMessage {
   type?: string;
@@ -24,6 +30,7 @@ export class KiloParser implements SessionParser {
     const userDirs = [
       ...vscodeFamilyUserDirs(["Code", "Code - Insiders"], homeDir),
       expandHome("~/.vscode-server/data/User", homeDir),
+      ...getConfiguredProviderPaths("kilo", homeDir).map((p) => expandHome(p, homeDir)),
     ];
 
     for (const userDir of userDirs) {

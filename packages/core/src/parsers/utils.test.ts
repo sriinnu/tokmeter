@@ -1,6 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { configFilePath } from "../config-service.js";
 import { ALL_PROVIDER_IDS } from "./index.js";
-import { createRecord, mapWithConcurrency } from "./utils.js";
+import { createRecord, getConfiguredProviderPaths, mapWithConcurrency } from "./utils.js";
 
 describe("mapWithConcurrency", () => {
   test("preserves input order regardless of completion order", async () => {
@@ -111,5 +115,48 @@ describe("createRecord usage provenance", () => {
 
     expect(record.usage?.source).toBe("tool_json");
     expect(record.usage?.inputTokens).toBe("direct");
+  });
+});
+
+describe("getConfiguredProviderPaths", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "get-configured-provider-paths-test-"));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  test("returns [] when no config file exists", () => {
+    expect(getConfiguredProviderPaths("antigravity", tmpDir)).toEqual([]);
+  });
+
+  test("returns the configured paths for a provider that has them", () => {
+    mkdirSync(join(tmpDir, ".tokmeter"), { recursive: true });
+    writeFileSync(
+      configFilePath(tmpDir),
+      JSON.stringify({
+        version: 1,
+        providerPaths: { antigravity: ["~/custom/antigravity-ide", "/opt/other-install"] },
+      })
+    );
+
+    expect(getConfiguredProviderPaths("antigravity", tmpDir)).toEqual([
+      "~/custom/antigravity-ide",
+      "/opt/other-install",
+    ]);
+    // A provider with no entry gets [], not the antigravity list or an error.
+    expect(getConfiguredProviderPaths("cursor", tmpDir)).toEqual([]);
+  });
+
+  test("returns [] rather than throwing when config.json is malformed", () => {
+    mkdirSync(join(tmpDir, ".tokmeter"), { recursive: true });
+    writeFileSync(configFilePath(tmpDir), "{not valid json");
+
+    expect(getConfiguredProviderPaths("antigravity", tmpDir)).toEqual([]);
   });
 });

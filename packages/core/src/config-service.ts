@@ -70,6 +70,19 @@ export interface UserConfig {
     /** USD/day that triggers an alert. `null` disables alerting. */
     dailyCostThreshold: number | null;
   };
+  /**
+   * Extra search roots per provider, keyed by ProviderId (e.g. "cursor",
+   * "antigravity"). Most parsers already probe several likely locations on
+   * their own (platform variants, app-name variants like "Code" vs "Code -
+   * Insiders") — this is the escape hatch for the rest: a non-standard
+   * install, an unreleased app rename, a portable/XDG-override install.
+   * Not every parser reads this yet; only ones built around
+   * vscodeFamilyUserDirs do. Not a fix for a provider storing data in a
+   * structurally different location than what that parser expects — that
+   * needs new parsing logic, not a new search path. Edit config.json by
+   * hand to set this; no CLI verb for it yet.
+   */
+  providerPaths: Record<string, string[]>;
   /** Who last wrote the file. Restore merges prefer user-flagged sides. */
   modifiedBy: "user" | "tokmeter";
   /** ISO timestamp of the last write. */
@@ -86,6 +99,7 @@ export const DEFAULT_CONFIG: UserConfig = {
   daemon: { scanIntervalSeconds: 60 },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
+  providerPaths: {},
   modifiedBy: "tokmeter",
   modifiedAt: new Date(0).toISOString(),
 };
@@ -183,9 +197,26 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
           ? raw.alerts.dailyCostThreshold
           : d.alerts.dailyCostThreshold,
     },
+    providerPaths: normalizeProviderPaths(raw.providerPaths),
     modifiedBy: raw.modifiedBy === "user" ? "user" : "tokmeter",
     modifiedAt: typeof raw.modifiedAt === "string" ? raw.modifiedAt : new Date().toISOString(),
   };
+}
+
+/**
+ * Drops malformed entries instead of rejecting the whole config — a typo'd
+ * provider id or a non-string path shouldn't fall back to defaults for
+ * every other knob in the file.
+ */
+function normalizeProviderPaths(raw: unknown): Record<string, string[]> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [providerId, paths] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(paths)) continue;
+    const clean = paths.filter((p): p is string => typeof p === "string" && p.length > 0);
+    if (clean.length > 0) out[providerId] = clean;
+  }
+  return out;
 }
 
 function clampPositiveInt(value: unknown, fallback: number, min: number, max: number): number {

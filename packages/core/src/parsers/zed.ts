@@ -26,7 +26,13 @@ import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, fileExists, openReadonlySqlite } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  fileExists,
+  getConfiguredProviderPaths,
+  openReadonlySqlite,
+} from "./utils.js";
 
 const APP_DIR_CANDIDATES = [
   "Library/Application Support/Zed",
@@ -109,9 +115,13 @@ export class ZedParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
+    const appDirs = [
+      ...APP_DIR_CANDIDATES.map((d) => expandHome(`~/${d}`, homeDir)),
+      ...getConfiguredProviderPaths("zed", homeDir).map((p) => expandHome(p, homeDir)),
+    ];
 
-    for (const appDir of APP_DIR_CANDIDATES) {
-      const dbPath = join(expandHome(`~/${appDir}`, homeDir), "threads", "threads.db");
+    for (const appDir of appDirs) {
+      const dbPath = join(appDir, "threads", "threads.db");
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);

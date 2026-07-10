@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { loadConfig } from "../config-service.js";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, TokenRecord, UsageProvenance, UsageTelemetrySource } from "../types.js";
@@ -474,6 +475,26 @@ export function vscodeFamilyUserDirs(appNames: string[], homeDir: string): strin
     dirs.push(expandHome(`~/AppData/Roaming/${app}/User`, homeDir));
   }
   return dirs;
+}
+
+/**
+ * Extra search roots a user configured for this provider in
+ * ~/.tokmeter/config.json (`providerPaths.<providerId>`) — the escape hatch
+ * for installs this parser's own auto-detected candidates don't cover (a
+ * non-standard location, an app rename this codebase hasn't caught up with
+ * yet). Returns [] on any read/parse failure so a broken config file never
+ * takes a provider's normal auto-detected paths down with it.
+ *
+ * Only useful for a provider whose *storage shape* still matches what the
+ * parser expects, just at a different location — it can't make a parser
+ * understand a genuinely different format.
+ */
+export function getConfiguredProviderPaths(providerId: ProviderId, homeDir: string): string[] {
+  try {
+    return loadConfig(homeDir).providerPaths[providerId] ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** Extract the last path segment from either POSIX or Windows-style paths. */

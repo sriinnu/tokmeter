@@ -30,7 +30,14 @@
 import { join } from "node:path";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, fileExists, openReadonlySqlite, vscodeFamilyUserDirs } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  fileExists,
+  getConfiguredProviderPaths,
+  openReadonlySqlite,
+  vscodeFamilyUserDirs,
+} from "./utils.js";
 
 const APP_NAMES = ["Antigravity", "Antigravity IDE"];
 const TRAJECTORY_SUMMARIES_KEY = "antigravityUnifiedStateSync.trajectorySummaries";
@@ -156,7 +163,10 @@ export class AntigravityParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const userDirs = vscodeFamilyUserDirs(APP_NAMES, homeDir);
+    const userDirs = [
+      ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
+      ...getConfiguredProviderPaths("antigravity", homeDir).map((p) => expandHome(p, homeDir)),
+    ];
 
     for (const userDir of userDirs) {
       const dbPath = join(userDir, "globalStorage", "state.vscdb");

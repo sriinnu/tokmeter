@@ -27,6 +27,7 @@ import {
   createRecord,
   expandHome,
   findFiles,
+  getConfiguredProviderPaths,
   openReadonlySqlite,
   vscodeFamilyUserDirs,
 } from "./utils.js";
@@ -111,8 +112,12 @@ export class CursorParser implements SessionParser {
 
   private async scanLocalDatabase(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
+    const userDirs = [
+      ...vscodeFamilyUserDirs(["Cursor"], homeDir),
+      ...getConfiguredProviderPaths("cursor", homeDir).map((p) => expandHome(p, homeDir)),
+    ];
 
-    for (const userDir of vscodeFamilyUserDirs(["Cursor"], homeDir)) {
+    for (const userDir of userDirs) {
       const dbPath = join(userDir, "globalStorage", "state.vscdb");
 
       let mtimeMs: number;

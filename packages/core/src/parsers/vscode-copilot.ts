@@ -16,7 +16,14 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, findFiles, readJsonFile, vscodeFamilyUserDirs } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  findFiles,
+  getConfiguredProviderPaths,
+  readJsonFile,
+  vscodeFamilyUserDirs,
+} from "./utils.js";
 
 const APP_NAMES = ["Code", "Code - Insiders"];
 
@@ -106,7 +113,10 @@ export class VSCodeCopilotParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const userDirs = vscodeFamilyUserDirs(APP_NAMES, homeDir);
+    const userDirs = [
+      ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
+      ...getConfiguredProviderPaths("vscode-copilot", homeDir).map((p) => expandHome(p, homeDir)),
+    ];
 
     for (const userDir of userDirs) {
       const workspaceStorageDir = join(userDir, "workspaceStorage");
