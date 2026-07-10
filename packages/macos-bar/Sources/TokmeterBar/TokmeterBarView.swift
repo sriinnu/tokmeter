@@ -179,8 +179,27 @@ struct TokmeterBarView: View {
         // Force the color scheme to match the theme's surface so built-in
         // SwiftUI chrome (Divider, .secondary, system sheets) reads correctly.
         .preferredColorScheme(bg.isLight ? .light : .dark)
+        // NOT just `breathToggle = visible` — every `.animation(curve.repeatForever(...),
+        // value: breathToggle)` site (hero pulse, shimmer bars, glow scale effects,
+        // ~a dozen call sites across HeroHeader/HeroBackground/SharedViews) restarts
+        // its OWN infinite Core Animation loop on ANY change to breathToggle, not just
+        // the first. A plain assignment on hide would kick off a brand-new repeatForever
+        // loop breathing toward the "off" resting values — reproducing this exact CPU
+        // bug one open/close cycle after "fixing" it. Wrapping the hide transition in a
+        // disablesAnimations transaction makes every one of those .animation modifiers
+        // skip its curve for this specific change: the value snaps to false with no
+        // animation ever entered, so no loop starts. The show transition uses the
+        // ambient (animated) transaction as normal, so breathing resumes on reopen.
         .onChange(of: panelVisibility.isVisible, initial: true) { _, visible in
-            breathToggle = visible
+            if visible {
+                breathToggle = true
+            } else {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    breathToggle = false
+                }
+            }
         }
         .onChange(of: theme) { _, _ in
             // Briefly flash the ripple, then fade it out smoothly.

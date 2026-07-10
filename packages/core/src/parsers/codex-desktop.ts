@@ -36,8 +36,9 @@
  */
 
 import { open, stat } from "node:fs/promises";
+import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
-import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import type { SessionParser, TokenRecord } from "../types.js";
 import { readCheckpoints, writeCheckpoints } from "./codex-sqlite-checkpoint.js";
 import { codexHomeDir } from "./codex.js";
 import {
@@ -84,12 +85,25 @@ async function openStateDb(homeDir: string): Promise<ReadonlySqlite | null> {
   return null;
 }
 
+interface CodexEventShape {
+  type?: string;
+  payload?: { type?: string };
+}
+
 /**
  * True if this rollout file already carries at least one real token_count
  * event — meaning CodexParser already covers it with granular data and this
  * fallback must stay out of the way. A tail read is enough: an actively
  * logging CLI session writes token_count events steadily, so one appears in
  * the last 64 KB whenever the file genuinely has them.
+ *
+ * Parses each tail line as JSON and checks the STRUCTURED
+ * `payload.type === "token_count"` field, not a raw substring match — a
+ * Codex Desktop session (which, unlike the CLI, is routinely used to read
+ * or write source that legitimately contains the literal text
+ * "token_count", e.g. this very file) would otherwise false-positive on
+ * that substring and get permanently, silently excluded from this
+ * fallback with no other source ever covering it.
  */
 async function hasJsonlTokenCoverage(rolloutPath: string): Promise<boolean> {
   try {
@@ -100,7 +114,17 @@ async function hasJsonlTokenCoverage(rolloutPath: string): Promise<boolean> {
       const tail = Math.min(TAIL_CHECK_BYTES, st.size);
       const buf = Buffer.alloc(tail);
       await fd.read(buf, 0, tail, st.size - tail);
-      return buf.toString("utf-8").includes('"token_count"');
+      const lines = buf.toString("utf-8").split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line) as CodexEventShape;
+          if (evt.type === "event_msg" && evt.payload?.type === "token_count") return true;
+        } catch {
+          // partial line (tail read can start mid-record) — skip
+        }
+      }
+      return false;
     } finally {
       await fd.close();
     }
@@ -114,42 +138,62 @@ async function hasJsonlTokenCoverage(rolloutPath: string): Promise<boolean> {
 export class CodexDesktopParser implements SessionParser {
   readonly providerId = "codex-desktop" as const;
 
-  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+  // opts.modifiedSinceMs is deliberately NOT used to filter the SQL query.
+  // TokmeterCore's refreshTodayAccumulator() REPLACES its whole "today"
+  // state from whatever a scan returns — it never folds across calls (see
+  // codex-sqlite-checkpoint.ts's header comment). Every call here must
+  // therefore re-derive the FULL, idempotent "today" picture from scratch;
+  // filtering rows by a recency watermark would silently drop threads whose
+  // delta is real but that simply weren't touched again since the last poll.
+  async scan(homeDir: string): Promise<TokenRecord[]> {
     const db = await openStateDb(homeDir);
     if (!db) return [];
 
     try {
-      const watermark = opts?.modifiedSinceMs;
       const rows = db.all<ThreadRow>(
-        watermark !== undefined
-          ? "SELECT id, tokens_used, model, cwd, rollout_path, updated_at FROM threads WHERE updated_at * 1000 >= ?"
-          : "SELECT id, tokens_used, model, cwd, rollout_path, updated_at FROM threads",
-        ...(watermark !== undefined ? [watermark] : [])
+        "SELECT id, tokens_used, model, cwd, rollout_path, updated_at FROM threads"
       );
 
+      const today = localDateKey();
       const checkpoints = readCheckpoints(homeDir);
       const records: TokenRecord[] = [];
       let checkpointsChanged = false;
 
       for (const row of rows) {
+        // Only threads genuinely touched today can contribute to today's
+        // total — prunes the (large, mostly historical) thread table down
+        // to today's handful before the pricier per-file coverage check runs.
+        if (localDateKey(row.updated_at * 1000) !== today) continue;
         if (!row.rollout_path || (await hasJsonlTokenCoverage(row.rollout_path))) continue;
 
-        // First time this thread is ever seen: establish tokens_used as the
-        // baseline WITHOUT emitting a record. tokens_used is a lifetime
-        // cumulative total, not a per-day figure — a thread active since
-        // February, first observed today, has no per-day breakdown anywhere
-        // to reconstruct, so treating its entire history as "today's delta"
-        // would dump months of backlog into one day (a live install showed
-        // this concretely: 2,423 threads, 1.09 TRILLION tokens on a
-        // first run with no checkpoint). Same tradeoff antigravity-live.ts
-        // already makes: this can say "used since we started watching,"
-        // never "what you did before that."
         const existing = checkpoints[row.id];
-        checkpoints[row.id] = { lastTokensUsed: row.tokens_used, lastSeenAt: Date.now() };
-        checkpointsChanged = true;
-        if (!existing) continue;
+        if (!existing || existing.baselineDate !== today) {
+          // First sight of this thread ever, OR first sight since a new
+          // local day started: (re)establish today's baseline WITHOUT
+          // emitting a record. tokens_used is a lifetime cumulative total —
+          // a thread active since February, first observed today, has no
+          // per-day breakdown anywhere to reconstruct, so treating its
+          // entire history as "today's delta" would dump months of backlog
+          // into one day. A live install showed exactly this: 2,423
+          // threads, 1.09 TRILLION tokens counted as "today" on a first run
+          // with no baseline. Same tradeoff antigravity-live.ts's credit
+          // deltas already accept: this can say "used since we started
+          // watching today," never "what happened before that."
+          checkpoints[row.id] = { baselineTokens: row.tokens_used, baselineDate: today };
+          checkpointsChanged = true;
+          continue;
+        }
 
-        const delta = Math.max(0, row.tokens_used - existing.lastTokensUsed);
+        // Baseline is STABLE for the whole day (not advanced here) — the
+        // same delta is recomputed on every scan until real growth happens,
+        // which is what makes this idempotent across repeated same-day
+        // calls instead of a consumed-on-read value. Math.max(0, …) floors a
+        // legitimate decrease (thread ID reuse, an internal Codex reset) at
+        // zero rather than going negative — any usage between the last
+        // high-water mark and a reset is unrecoverable (indistinguishable
+        // from "this ID now belongs to a smaller, different conversation"),
+        // same floor-guard shape as this project's other monotonic counters.
+        const delta = Math.max(0, row.tokens_used - existing.baselineTokens);
         if (delta === 0) continue;
 
         records.push(

@@ -8,6 +8,17 @@
  *
  * Universal-first: no hardcoded model list; the projection uses the user's
  * actual top lineup, so the alternatives reflect what they'd realistically pick.
+ *
+ * Known gap: this reads `today.outputTokens` from `DailyAggregate`, which
+ * sums every record's outputTokens unconditionally — including records
+ * marked `costEligible: false` (e.g. codex-desktop's SQLite-sourced lump
+ * total, which isn't real output tokens at all, just the only bucket that
+ * total could honestly go in). A proper fix needs a separate "cost-eligible
+ * tokens" sub-total threaded through DailyAggregate, with backward-
+ * compatibility handling for already-sealed days that predate the field —
+ * out of scope for now. Today's PRIMARY cost/token totals are unaffected
+ * (costEligible already keeps this class of record out of enrichCosts
+ * entirely); only this secondary "what-if" projection can be nudged by it.
  */
 
 import type { DailyAggregate } from "./aggregates.js";
