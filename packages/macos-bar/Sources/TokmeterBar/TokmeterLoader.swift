@@ -279,7 +279,22 @@ final class TokmeterLoader: ObservableObject {
                 self.topModels = models.prefix(5).map(Self.toUsage)
             }
             if let todayMs = todayModelsResult {
-                self.todayModels = todayMs.prefix(5).map(Self.toUsage)
+                // Quota-billed/activity-only clients (VS Code Copilot,
+                // Antigravity) and real-but-unpriced totals (Codex Desktop's
+                // SQLite fallback — genuine non-zero tokens, cost honestly
+                // left unexposed) both report cost == 0 — a pure cost
+                // ranking always buries them under same-day providers that
+                // DO report dollars, so "I used X today" silently never
+                // shows up. Top 5 by cost stays the primary ranking; up to 3
+                // cost==0 entries are appended so today's real usage is
+                // never invisible just because it isn't priced.
+                let all = todayMs.map(Self.toUsage)
+                let ranked = Array(all.prefix(5))
+                let rankedKeys = Set(ranked.map { "\($0.provider)/\($0.model)" })
+                let activityOnly = all
+                    .filter { $0.cost == 0 && !rankedKeys.contains("\($0.provider)/\($0.model)") }
+                    .prefix(3)
+                self.todayModels = ranked + activityOnly
             }
             if let sessionsList = sessionsResult {
                 self.sessions = sessionsList
@@ -496,6 +511,7 @@ final class TokmeterLoader: ObservableObject {
     static func toUsage(_ d: ModelData) -> ModelUsage {
         ModelUsage(
             model: d.model,
+            provider: d.provider ?? "unknown",
             cost: d.cost,
             tokens: d.totalTokens,
             inputTokens: d.inputTokens ?? 0,

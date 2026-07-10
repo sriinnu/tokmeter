@@ -6,6 +6,7 @@ import type { ProviderId, SessionParser } from "../types.js";
 import { AmpParser } from "./amp.js";
 import { AntigravityParser } from "./antigravity.js";
 import { ClaudeCodeParser } from "./claude-code.js";
+import { CodexDesktopParser } from "./codex-desktop.js";
 import { CodexParser } from "./codex.js";
 import { CursorParser } from "./cursor.js";
 import { DroidParser } from "./droid.js";
@@ -28,6 +29,7 @@ export const ALL_PARSERS: SessionParser[] = [
   new ClaudeCodeParser(),
   new OpenCodeParser(),
   new CodexParser(),
+  new CodexDesktopParser(),
   new GeminiParser(),
   new CursorParser(),
   new AmpParser(),

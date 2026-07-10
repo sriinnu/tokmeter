@@ -22,6 +22,7 @@ struct ModelUsage: Identifiable, Equatable {
     // are added/removed or reorder, rather than rebuilding them all.
     var id: String { model }
     let model: String
+    let provider: String
     let cost: Double
     let tokens: Int
     /// Per-tier token counts. Optional so legacy wire shapes (CLI offline
@@ -52,6 +53,9 @@ struct DailyData: Codable {
 
 struct ModelData: Codable {
     let model: String
+    /// Missing on older/cached daemon responses that predate this field —
+    /// falls back to "unknown" in the loader rather than failing to decode.
+    let provider: String?
     let cost: Double
     let totalTokens: Int
     let percentageOfTotal: Double

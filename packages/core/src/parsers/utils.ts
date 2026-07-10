@@ -754,6 +754,17 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
           "Built from Zed's public open-source schema but not validated against a live Zed install — flag any discrepancy if Zed's format has moved.",
         ],
       });
+    case "codex-desktop":
+      return withMetrics(baseProvenance("tool_sqlite"), {
+        inputTokens: notExposedMetric,
+        cacheReadTokens: notExposedMetric,
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: notExposedMetric,
+        cost: notExposedMetric,
+        notes: [
+          "Sourced from Codex's local SQLite state (threads.tokens_used) as a fallback for threads whose rollout JSONL has no token_count events — Codex Desktop / VS Code-extension sessions confirmed to never emit them locally. tokens_used is one cumulative lump total with no input/output/cache split, so the full delta is placed in outputTokens as a TOTAL, not a real output count; cost is left unexposed rather than guessing an input/output ratio to price it.",
+        ],
+      });
     case "synthetic":
       return withMetrics(baseProvenance("synthetic"), {
         inputTokens: calculatedMetric,

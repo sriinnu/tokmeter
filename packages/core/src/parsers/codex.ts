@@ -24,12 +24,13 @@
 import { stat } from "node:fs/promises";
 
 import { canonicalizeProjectName } from "../project-name.js";
-import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   createRecord,
   expandHome,
   filterFilesByMtime,
   findFiles,
+  getConfiguredProviderPaths,
   mapWithConcurrency,
   readJsonlFile,
 } from "./utils.js";
@@ -43,6 +44,29 @@ import {
  * answering the bar (STALE). A small pool keeps the scan responsive.
  */
 const CODEX_SCAN_CONCURRENCY = 8;
+
+/**
+ * Search roots for a codex-family session store: the auto-detected
+ * $CODEX_HOME/sessions (falling back to ~/.codex/sessions) plus anything the
+ * user added under providerPaths.<providerId> in ~/.tokmeter/config.json.
+ * The config escape hatch exists because these locations DO move — Antigravity
+ * migrated to a differently-named app dir mid-2026 with no warning, which is
+ * exactly the class of drift a hardcoded path can't recover from without a
+ * code change. Both CodexParser and CodexDesktopParser share this, since they
+ * currently read the same on-disk store, just filtering different files out
+ * of it.
+ */
+export function codexHomeDir(homeDir: string): string {
+  return process.env.CODEX_HOME ? process.env.CODEX_HOME : expandHome("~/.codex", homeDir);
+}
+
+export function codexSessionDirs(providerId: ProviderId, homeDir: string): string[] {
+  const codexHome = codexHomeDir(homeDir);
+  return [
+    `${codexHome}/sessions`,
+    ...getConfiguredProviderPaths(providerId, homeDir).map((p) => expandHome(p, homeDir)),
+  ];
+}
 
 // ─── Codex JSONL Event Types ──────────────────────────────────────────────
 
@@ -432,14 +456,16 @@ export class CodexParser implements SessionParser {
     opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
-    // Respect CODEX_HOME env var, fall back to ~/.codex
-    const codexHome = process.env.CODEX_HOME
-      ? process.env.CODEX_HOME
-      : expandHome("~/.codex", homeDir);
-    const sessionsDir = `${codexHome}/sessions`;
-
     // Sessions are in YYYY/MM/DD/ subdirectories — need depth 5
-    let allFiles = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 5);
+    const seenFiles = new Set<string>();
+    let allFiles: string[] = [];
+    for (const dir of codexSessionDirs("codex", homeDir)) {
+      for (const f of await findFiles(dir, (f) => f.endsWith(".jsonl"), 5)) {
+        if (seenFiles.has(f)) continue;
+        seenFiles.add(f);
+        allFiles.push(f);
+      }
+    }
     // Today-only scans skip files untouched since the watermark BEFORE the
     // (expensive) fork-dedup + full re-parse. Codex keeps no record cache, so
     // this is the single biggest win: a today refresh stops cold-reading

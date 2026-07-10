@@ -20,6 +20,10 @@ struct FooterBar: View {
     /// popover-wide overlay (a .sheet from a MenuBarExtra popover has unreliable
     /// event handling — the Close button needed repeated clicks).
     @Binding var showAnomalyPanel: Bool
+    /// Whether the popover is actually on screen — see PanelVisibility.swift.
+    /// Passed to LiveHeartbeat so its TimelineView stops ticking while
+    /// nobody can see it.
+    var isVisible: Bool = true
 
     @Environment(\.openWindow) private var openWindow
 
@@ -118,7 +122,7 @@ struct FooterBar: View {
 
     private var controlsRow: some View {
         HStack(spacing: 10) {
-            LiveHeartbeat(isAlive: loader.isDaemonAlive, theme: theme)
+            LiveHeartbeat(isAlive: loader.isDaemonAlive, theme: theme, isVisible: isVisible)
 
             Button(action: { Task { await loader.loadData() } }) {
                 HStack(spacing: 4) {
@@ -202,36 +206,52 @@ func collapseAnomalies(_ anomalies: [PricingAnomaly]) -> [AnomalyGroup] {
 /// Self-contained heartbeat indicator. Drives its own animation loop via
 /// TimelineView so phase changes don't bubble up to FooterBar / TokmeterBarView,
 /// which used to rebuild on every frame of the breath animation.
+///
+/// This is one of the two always-mounted TimelineViews (the other is the
+/// hero's EcgView) that kept ticking at 30fps in the background even with
+/// the popover closed — MenuBarExtra(.window) doesn't unmount its content,
+/// confirmed via `sample`. `isVisible` (from PanelVisibility.swift) gates
+/// the TimelineView itself so a closed panel means genuinely zero ticks.
 struct LiveHeartbeat: View {
     let isAlive: Bool
     let theme: AppTheme
+    var isVisible: Bool = true
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            // 2-second-period sine wave normalized to [0, 1]. We sample analytically
-            // every frame instead of holding @State that triggers re-renders.
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let phase = CGFloat(sin(t * .pi)) * 0.5 + 0.5
-            HStack(spacing: 4) {
-                ZStack {
-                    if isAlive {
-                        // Expanding ring — fades as it scales outward
-                        Circle()
-                            .stroke(Color.green.opacity(0.8 - 0.8 * Double(phase)), lineWidth: 1)
-                            .frame(width: 7, height: 7)
-                            .scaleEffect(1.0 + phase * 2.4)
-                    }
-                    Circle()
-                        .fill(isAlive ? Color.green : Color.red)
-                        .frame(width: 7, height: 7)
-                        .shadow(color: isAlive ? .green.opacity(0.6) : .clear, radius: 4)
-                        .scaleEffect(isAlive ? (1.0 + phase * 0.3) : 1.0)
-                }
-                .frame(width: 24, height: 24)
-                Text(isAlive ? "Live" : "Offline")
-                    .font(.system(size: 9, weight: .semibold, design: theme.fonts.bodyDesign))
-                    .foregroundColor(isAlive ? .green : .red.opacity(0.8))
+        if isVisible {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                dot(at: timeline.date)
             }
+        } else {
+            dot(at: Date())
+        }
+    }
+
+    @ViewBuilder
+    private func dot(at date: Date) -> some View {
+        // 2-second-period sine wave normalized to [0, 1]. We sample analytically
+        // every frame instead of holding @State that triggers re-renders.
+        let t = date.timeIntervalSinceReferenceDate
+        let phase = CGFloat(sin(t * .pi)) * 0.5 + 0.5
+        HStack(spacing: 4) {
+            ZStack {
+                if isAlive {
+                    // Expanding ring — fades as it scales outward
+                    Circle()
+                        .stroke(Color.green.opacity(0.8 - 0.8 * Double(phase)), lineWidth: 1)
+                        .frame(width: 7, height: 7)
+                        .scaleEffect(1.0 + phase * 2.4)
+                }
+                Circle()
+                    .fill(isAlive ? Color.green : Color.red)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: isAlive ? .green.opacity(0.6) : .clear, radius: 4)
+                    .scaleEffect(isAlive ? (1.0 + phase * 0.3) : 1.0)
+            }
+            .frame(width: 24, height: 24)
+            Text(isAlive ? "Live" : "Offline")
+                .font(.system(size: 9, weight: .semibold, design: theme.fonts.bodyDesign))
+                .foregroundColor(isAlive ? .green : .red.opacity(0.8))
         }
         .accessibilityLabel(isAlive ? "Daemon running" : "Daemon offline")
     }
