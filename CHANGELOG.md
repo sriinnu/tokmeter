@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-07-10
+
+### Added
+
+- Nothing new; this is a correctness patch release.
+
+### Changed
+
+- Normalized Codex usage provenance so output totals are explicitly treated as a derived bucket when reasoning tokens are present.
+- Cleaned up Codex Desktop parser/test formatting so the release lint gate stays green.
+
+### Fixed
+
+- Fixed Codex CLI aggregate totals for newer models that report `reasoning_output_tokens` inside `output_tokens`, preventing reasoning tokens from being counted twice.
+
 ## [1.9.0] - 2026-07-10
 
 ### Added

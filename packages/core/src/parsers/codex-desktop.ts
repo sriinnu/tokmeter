@@ -42,12 +42,12 @@ import type { SessionParser, TokenRecord } from "../types.js";
 import { readCheckpoints, writeCheckpoints } from "./codex-sqlite-checkpoint.js";
 import { codexHomeDir } from "./codex.js";
 import {
+  type ReadonlySqlite,
   createRecord,
   expandHome,
   fileExists,
   getConfiguredProviderPaths,
   openReadonlySqlite,
-  type ReadonlySqlite,
 } from "./utils.js";
 
 const DEFAULT_MODEL = "unknown";
