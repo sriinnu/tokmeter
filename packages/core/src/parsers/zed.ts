@@ -9,7 +9,9 @@
  *   crates/agent/src/db.rs        — `threads` table + `DbThread`/`DataType`
  *   crates/language_model_core/…  — `TokenUsage` field names
  *   crates/agent/src/legacy_thread.rs — `SerializedLanguageModel {provider, model}`
- *   crates/util/src/path_list.rs  — `PathList::serialize()` ("\n"-joined paths)
+ *   crates/util/src/path_list.rs  — `PathList::serialize()` (lexicographic
+ *     "\n"-joined paths + a separate comma-joined `order` column giving each
+ *     path's original, pre-sort position)
  *
  * Each row's `data` column is a `data_type`-tagged blob: 'zstd' (zstd-
  * compressed JSON, the current format) or 'json' (legacy, uncompressed).
@@ -40,6 +42,7 @@ interface ThreadRow {
   data_type: "json" | "zstd";
   data: Uint8Array;
   folder_paths?: string | null;
+  folder_paths_order?: string | null;
 }
 
 interface TokenUsage {
@@ -71,12 +74,33 @@ function decodeThreadData(row: ThreadRow): DbThreadJson | null {
   }
 }
 
-function resolveProject(folderPaths: string | null | undefined): string {
+/**
+ * folder_paths is stored lexicographically sorted, NOT in the order the
+ * user opened them — the original order lives in the separate
+ * folder_paths_order column (comma-joined indices into the lexicographic
+ * list). Picking folder_paths[0] directly would silently bucket usage
+ * under an arbitrary alphabetically-first root in a multi-root workspace
+ * (e.g. "docs/" ahead of the actual project). Reconstruct the originally-
+ * first path when the order column is present; fall back to the
+ * lexicographic first for single-root workspaces or malformed order data.
+ */
+function resolveProject(
+  folderPaths: string | null | undefined,
+  folderPathsOrder: string | null | undefined
+): string {
   if (!folderPaths) return "zed";
-  // folder_paths is PathList::serialize().paths: a "\n"-joined list of
-  // absolute workspace root paths, lexicographically sorted. Any one of
-  // them identifies the project.
-  const first = folderPaths.split("\n")[0]?.trim();
+  const paths = folderPaths.split("\n");
+
+  if (folderPathsOrder) {
+    const order = folderPathsOrder.split(",").map(Number);
+    if (order.length === paths.length && order.every((n) => Number.isInteger(n))) {
+      const firstIndex = order.indexOf(Math.min(...order));
+      const originalFirst = paths[firstIndex]?.trim();
+      if (originalFirst) return canonicalizeProjectName(originalFirst, "zed");
+    }
+  }
+
+  const first = paths[0]?.trim();
   return first ? canonicalizeProjectName(first, "zed") : "zed";
 }
 
@@ -95,7 +119,7 @@ export class ZedParser implements SessionParser {
 
       try {
         const rows = db.all<ThreadRow>(
-          "SELECT id, summary, updated_at, created_at, data_type, data, folder_paths FROM threads"
+          "SELECT id, summary, updated_at, created_at, data_type, data, folder_paths, folder_paths_order FROM threads"
         );
 
         for (const row of rows) {
@@ -114,10 +138,17 @@ export class ZedParser implements SessionParser {
 
           records.push(
             createRecord({
-              timestamp: new Date(row.created_at || row.updated_at).getTime() || Date.now(),
+              // cumulative_token_usage is the thread's running total "as of
+              // its latest save" — updated_at, not created_at (which Zed
+              // preserves unchanged across every subsequent save of a
+              // reused thread). Using created_at would dump a long-lived
+              // thread's entire current total onto the day it was first
+              // opened, and show $0 on every day it was actually used again.
+              timestamp:
+                new Date(row.updated_at || row.created_at || Date.now()).getTime() || Date.now(),
               provider: "zed",
               model: thread.model?.model || "unknown",
-              project: resolveProject(row.folder_paths),
+              project: resolveProject(row.folder_paths, row.folder_paths_order),
               sourceFile: dbPath,
               inputTokens,
               outputTokens,

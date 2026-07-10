@@ -36,6 +36,8 @@ interface ThreadFixture {
   updatedAt: string;
   createdAt?: string;
   folderPaths?: string[];
+  /** Original (pre-lexicographic-sort) index of each entry in folderPaths. */
+  folderPathsOrder?: number[];
   model?: { provider: string; model: string };
   cumulativeTokenUsage?: {
     input_tokens?: number;
@@ -58,7 +60,7 @@ function seedThreadsDb(threads: ThreadFixture[]): void {
 
   execFileSync("sqlite3", [dbPath], {
     input: [
-      "CREATE TABLE threads (id TEXT PRIMARY KEY, summary TEXT, updated_at TEXT, data_type TEXT, data BLOB, folder_paths TEXT, created_at TEXT);",
+      "CREATE TABLE threads (id TEXT PRIMARY KEY, summary TEXT, updated_at TEXT, data_type TEXT, data BLOB, folder_paths TEXT, folder_paths_order TEXT, created_at TEXT);",
     ].join("\n"),
   });
 
@@ -78,9 +80,10 @@ function seedThreadsDb(threads: ThreadFixture[]): void {
     writeFileSync(dataBlobPath, dataBuf);
 
     const folderPathsSql = t.folderPaths ? `'${t.folderPaths.join("\n")}'` : "NULL";
+    const folderPathsOrderSql = t.folderPathsOrder ? `'${t.folderPathsOrder.join(",")}'` : "NULL";
     const createdAtSql = t.createdAt ? `'${t.createdAt}'` : "NULL";
     execFileSync("sqlite3", [dbPath], {
-      input: `INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths, created_at) VALUES ('${t.id}', '${t.summary.replace(/'/g, "''")}', '${t.updatedAt}', '${dataType}', readfile('${dataBlobPath}'), ${folderPathsSql}, ${createdAtSql});`,
+      input: `INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths, folder_paths_order, created_at) VALUES ('${t.id}', '${t.summary.replace(/'/g, "''")}', '${t.updatedAt}', '${dataType}', readfile('${dataBlobPath}'), ${folderPathsSql}, ${folderPathsOrderSql}, ${createdAtSql});`,
     });
   }
 }
@@ -114,7 +117,47 @@ describe("ZedParser", () => {
     expect(r.cacheReadTokens).toBe(500);
     expect(r.cacheWriteTokens).toBe(100);
     expect(r.project).toContain("tokmeter");
-    expect(r.timestamp).toBe(new Date("2026-06-01T11:00:00Z").getTime());
+    // Timestamp comes from updated_at, not created_at — cumulative_token_usage
+    // is the running total "as of the latest save," and created_at is fixed
+    // at thread creation and never changes on reuse (see the next test).
+    expect(r.timestamp).toBe(new Date("2026-06-01T12:00:00Z").getTime());
+  });
+
+  it("attributes usage to updated_at, not created_at, for a thread reused across days", async () => {
+    // Zed preserves created_at unchanged across every save of a reused
+    // thread. Using it for the timestamp would dump the thread's entire
+    // current cumulative total onto the day it was first opened, and show
+    // $0 on every day it was actually used again.
+    seedThreadsDb([
+      {
+        id: "reused-thread",
+        summary: "Long-running refactor",
+        createdAt: "2026-01-01T09:00:00Z",
+        updatedAt: "2026-06-15T17:30:00Z",
+        cumulativeTokenUsage: { input_tokens: 500, output_tokens: 100 },
+      },
+    ]);
+
+    const records = await new ZedParser().scan(tmpDir);
+    expect(records[0].timestamp).toBe(new Date("2026-06-15T17:30:00Z").getTime());
+  });
+
+  it("resolves the originally-first folder, not the lexicographically-first one, for a multi-root workspace", async () => {
+    seedThreadsDb([
+      {
+        id: "multi-root",
+        summary: "Multi-root workspace",
+        updatedAt: "2026-06-01T12:00:00Z",
+        cumulativeTokenUsage: { input_tokens: 10, output_tokens: 5 },
+        // "docs" sorts before "zeta-project" lexicographically, but the user
+        // opened zeta-project first (order index 0).
+        folderPaths: ["/Users/sriinnu/docs", "/Users/sriinnu/zeta-project"],
+        folderPathsOrder: [1, 0],
+      },
+    ]);
+
+    const records = await new ZedParser().scan(tmpDir);
+    expect(records[0].project).toContain("zeta-project");
   });
 
   it("decodes the legacy uncompressed 'json' data_type", async () => {

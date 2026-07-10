@@ -728,7 +728,11 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
         ],
       });
     case "zed":
-      return baseProvenance("tool_sqlite");
+      return withMetrics(baseProvenance("tool_sqlite"), {
+        notes: [
+          "Built from Zed's public open-source schema but not validated against a live Zed install — flag any discrepancy if Zed's format has moved.",
+        ],
+      });
     case "synthetic":
       return withMetrics(baseProvenance("synthetic"), {
         inputTokens: calculatedMetric,

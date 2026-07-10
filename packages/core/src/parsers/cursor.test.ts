@@ -138,6 +138,33 @@ describe("CursorParser — local SQLite (cursorDiskKV)", () => {
     const records = await new CursorParser().scan(tmpDir);
     expect(records.length).toBe(0);
   });
+
+  it("returns independent record objects across repeated scans (cache must not share mutable state)", async () => {
+    // state.vscdb is a large, actively-written app database — re-querying
+    // it on every scan tick is the repeated-full-scan pattern that already
+    // caused a real memory-pressure incident in this project, so the local
+    // read is mtime-cached per dbPath. That cache must never hand back the
+    // same object across calls: pricing enrichment mutates
+    // record.cost/record.usage.cost in place downstream, and a shared
+    // reference would let one scan's enrichment bleed into another's.
+    seedLocalDb([
+      { composerId: "c1", bubbleId: "b1", modelName: "m", inputTokens: 10, outputTokens: 5 },
+    ]);
+
+    const parser = new CursorParser();
+    const first = await parser.scan(tmpDir);
+    const second = await parser.scan(tmpDir);
+
+    expect(first.length).toBe(1);
+    expect(second.length).toBe(1);
+    expect(first[0]).not.toBe(second[0]);
+    expect(first[0].usage).not.toBe(second[0].usage);
+
+    first[0].cost = 999;
+    if (first[0].usage) first[0].usage.cost = "not_exposed";
+    expect(second[0].cost).toBe(0);
+    expect(second[0].usage?.cost).not.toBe("not_exposed");
+  });
 });
 
 describe("CursorParser — CSV cache takes priority over local SQLite", () => {

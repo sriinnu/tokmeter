@@ -152,6 +152,33 @@ describe("AntigravityParser", () => {
     expect(records[0].project).toBe("antigravity");
   });
 
+  it("keeps other sessions when one has a malformed %-escape in its file reference (regression)", async () => {
+    // decodeURIComponent throws on a lone "%" not followed by two hex
+    // digits — plausible in a real path like "100%done". Uncaught, this
+    // propagated out of the per-entry loop and silently dropped every
+    // remaining trajectory in the database, not just the bad one.
+    const malformed = buildTrajectory({
+      uuid: "55555555-5555-5555-5555-555555555555",
+      title: "Bad path",
+      epochSeconds: 1766162509,
+      fileUri: "file:///Users/sriinnu/Projects/100%done",
+    });
+    const clean = buildTrajectory({
+      uuid: "66666666-6666-6666-6666-666666666666",
+      title: "Good session",
+      epochSeconds: 1766162600,
+      fileUri: "file:///Users/sriinnu/Projects/astral",
+    });
+    seedDb(buildBlob([malformed, clean]));
+
+    const records = await new AntigravityParser().scan(tmpDir);
+    expect(records.length).toBe(2);
+    const cleanRecord = records.find((r) => r.timestamp === 1766162600 * 1000);
+    expect(cleanRecord?.project).toContain("astral");
+    const malformedRecord = records.find((r) => r.timestamp === 1766162509 * 1000);
+    expect(malformedRecord?.project).toBe("antigravity");
+  });
+
   it("decodes every entry in a multi-session blob (regression: wrapper unwrap)", async () => {
     const trajectories = Array.from({ length: 10 }, (_, i) =>
       buildTrajectory({

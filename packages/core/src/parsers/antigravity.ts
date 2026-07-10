@@ -132,7 +132,20 @@ function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
   const refs = field(inner, 9)?.bytes;
   if (refs) {
     const match = FILE_URI_RE.exec(Buffer.from(refs).toString("utf-8"));
-    if (match) project = canonicalizeProjectName(decodeURIComponent(match[1]), "antigravity");
+    if (match) {
+      // decodeURIComponent throws on a lone "%" not followed by two hex
+      // digits — plausible in a real path (e.g. "100%done") and certain in
+      // whatever garbage the regex occasionally captures from adjacent
+      // protobuf bytes. Uncaught, this was propagating out of the per-entry
+      // loop in scan() and silently dropping every remaining trajectory in
+      // the database, not just the one with the bad path.
+      try {
+        project = canonicalizeProjectName(decodeURIComponent(match[1]), "antigravity");
+      } catch {
+        // keep the "antigravity" fallback; a bad path is not a reason to
+        // lose the timestamp we already have
+      }
+    }
   }
 
   return { timestamp, project };
