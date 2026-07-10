@@ -20,6 +20,11 @@ struct HeroHeader: View {
     /// Shared slow breathing flag driven by the parent — syncs the ♾️ scale
     /// with the hero glow and any shimmer placeholders.
     let breathToggle: Bool
+    /// Whether the popover is actually on screen right now — see
+    /// PanelVisibility.swift. Passed down to the always-on ECG trace so it
+    /// stops ticking (and the surrounding window stops committing 30
+    /// Core Animation frames a second) while nobody can see it.
+    let isVisible: Bool
     /// Drives the cache "wallet" slide-out drawer owned by the parent popover.
     /// The header only renders the toggle; the drawer itself lives as an
     /// overlay on the top-level VStack so it floats above the scroll content.
@@ -48,7 +53,7 @@ struct HeroHeader: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background(
-            HeroBackground(theme: theme, breathToggle: breathToggle)
+            HeroBackground(theme: theme, breathToggle: breathToggle, isVisible: isVisible)
                 .clipShape(notchShape)
                 .overlay(innerHighlight)
                 .overlay(borderOverlay)
@@ -181,7 +186,7 @@ struct HeroHeader: View {
         } else if loader.isDaemonAlive {
             // No live session right now, but the daemon is alive — show the
             // scrolling ECG as a passive "data is fresh" heartbeat.
-            EcgView(color: ecgColor)
+            EcgView(color: ecgColor, isVisible: isVisible)
                 .frame(width: 78, height: 14)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }

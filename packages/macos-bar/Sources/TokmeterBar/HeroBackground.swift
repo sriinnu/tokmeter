@@ -17,6 +17,11 @@ import SwiftUI
 struct HeroBackground: View {
     let theme: AppTheme
     let breathToggle: Bool
+    /// Whether the popover is actually on screen — see PanelVisibility.swift.
+    /// Only `aurora` needs this directly (its own TimelineView); every other
+    /// theme's ambient motion already rides on `breathToggle`, which the
+    /// parent already gates on visibility.
+    var isVisible: Bool = true
 
     private var c: ThemeColors { theme.colors }
 
@@ -58,41 +63,55 @@ struct HeroBackground: View {
     /// "Sky" wallpapers are the lineage. Performance: the only animated
     /// view in the entire bar; runs on Core Animation off the main thread.
     private var aurora: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            // 45/60/75s phased periods — faster than the initial pass so the
-            // motion is actually visible without being distracting. Each
-            // stop drifts on its own phase to keep the pattern non-looping.
-            let p1 = sin(t * 2 * .pi / 45)
-            let p2 = cos(t * 2 * .pi / 75)
-            let p3 = sin(t * 2 * .pi / 60)
-            ZStack {
-                // Solid base anchor.
-                Color(red: 0.02, green: 0.03, blue: 0.08)
-                // Three radial gradients drift independently with stronger
-                // peak intensities than v1 — "curtain of light" should land
-                // as luminous, not subliminal.
-                RadialGradient(
-                    colors: [c.secondary.opacity(0.78), c.secondary.opacity(0.10), Color.clear],
-                    center: UnitPoint(x: 0.25 + p1 * 0.22, y: 0.30 + p2 * 0.16),
-                    startRadius: 15, endRadius: 320
-                )
-                RadialGradient(
-                    colors: [c.accent.opacity(0.65), c.accent.opacity(0.08), Color.clear],
-                    center: UnitPoint(x: 0.72 + p3 * 0.20, y: 0.55 + p1 * 0.14),
-                    startRadius: 20, endRadius: 360
-                )
-                RadialGradient(
-                    colors: [c.tertiary.opacity(0.45), Color.clear],
-                    center: UnitPoint(x: 0.50 + p2 * 0.25, y: 0.20 + p3 * 0.12),
-                    startRadius: 30, endRadius: 280
-                )
-                // Faint star-like specular over the top.
-                RadialGradient(
-                    colors: [Color.white.opacity(0.08), Color.clear],
-                    center: .top, startRadius: 0, endRadius: 220
-                )
+        Group {
+            if isVisible {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                    auroraContent(at: timeline.date)
+                }
+            } else {
+                // Frozen — no TimelineView means no ticking while the panel
+                // is closed. Whatever phase it's at when hidden is fine;
+                // nobody can see it, and it resumes instantly when reopened.
+                auroraContent(at: Date())
             }
+        }
+    }
+
+    @ViewBuilder
+    private func auroraContent(at date: Date) -> some View {
+        let t = date.timeIntervalSinceReferenceDate
+        // 45/60/75s phased periods — faster than the initial pass so the
+        // motion is actually visible without being distracting. Each
+        // stop drifts on its own phase to keep the pattern non-looping.
+        let p1 = sin(t * 2 * .pi / 45)
+        let p2 = cos(t * 2 * .pi / 75)
+        let p3 = sin(t * 2 * .pi / 60)
+        ZStack {
+            // Solid base anchor.
+            Color(red: 0.02, green: 0.03, blue: 0.08)
+            // Three radial gradients drift independently with stronger
+            // peak intensities than v1 — "curtain of light" should land
+            // as luminous, not subliminal.
+            RadialGradient(
+                colors: [c.secondary.opacity(0.78), c.secondary.opacity(0.10), Color.clear],
+                center: UnitPoint(x: 0.25 + p1 * 0.22, y: 0.30 + p2 * 0.16),
+                startRadius: 15, endRadius: 320
+            )
+            RadialGradient(
+                colors: [c.accent.opacity(0.65), c.accent.opacity(0.08), Color.clear],
+                center: UnitPoint(x: 0.72 + p3 * 0.20, y: 0.55 + p1 * 0.14),
+                startRadius: 20, endRadius: 360
+            )
+            RadialGradient(
+                colors: [c.tertiary.opacity(0.45), Color.clear],
+                center: UnitPoint(x: 0.50 + p2 * 0.25, y: 0.20 + p3 * 0.12),
+                startRadius: 30, endRadius: 280
+            )
+            // Faint star-like specular over the top.
+            RadialGradient(
+                colors: [Color.white.opacity(0.08), Color.clear],
+                center: .top, startRadius: 0, endRadius: 220
+            )
         }
     }
 

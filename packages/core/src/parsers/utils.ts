@@ -755,15 +755,14 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
         ],
       });
     case "codex-desktop":
-      return withMetrics(baseProvenance("tool_jsonl"), {
+      return withMetrics(baseProvenance("tool_sqlite"), {
         inputTokens: notExposedMetric,
-        outputTokens: notExposedMetric,
         cacheReadTokens: notExposedMetric,
         cacheWriteTokens: notExposedMetric,
         reasoningTokens: notExposedMetric,
         cost: notExposedMetric,
         notes: [
-          "The Codex Desktop app (bundled in ChatGPT.app) writes rollouts to the same ~/.codex/sessions store as the codex CLI but never emits a token_count event — only model + project + timestamp are available.",
+          "Sourced from Codex's local SQLite state (threads.tokens_used) as a fallback for threads whose rollout JSONL has no token_count events — Codex Desktop / VS Code-extension sessions confirmed to never emit them locally. tokens_used is one cumulative lump total with no input/output/cache split, so the full delta is placed in outputTokens as a TOTAL, not a real output count; cost is left unexposed rather than guessing an input/output ratio to price it.",
         ],
       });
     case "synthetic":

@@ -75,8 +75,20 @@ struct ModelsSection: View {
         .buttonStyle(.borderless)
     }
 
+    /// True whenever cost is honestly $0 rather than guessed — covers both
+    /// quota-billed/activity-only clients (VS Code Copilot, Antigravity —
+    /// zero tokens AND zero cost, nothing local to measure) and a real-but-
+    /// unpriced total (Codex Desktop's SQLite fallback — a genuine non-zero
+    /// token count with cost intentionally left unexposed rather than
+    /// guessing an input/output split to price it from). Drawn distinctly so
+    /// neither case reads as "$0.00 = confirmed free."
+    private func isActivityOnly(_ model: ModelUsage) -> Bool {
+        model.cost == 0
+    }
+
     private func modelRow(_ model: ModelUsage, maxCost: Double) -> some View {
-        HStack(spacing: 8) {
+        let activityOnly = isActivityOnly(model)
+        return HStack(spacing: 8) {
             HStack(spacing: 3) {
                 Image(systemName: providerGlyph(for: model.model))
                     .font(.system(size: 10))
@@ -94,19 +106,23 @@ struct ModelsSection: View {
                     .overlay(
                         HStack {
                             Capsule()
-                                .fill(compositionFill(
-                                    output: model.outputTokens,
-                                    cacheRead: model.cacheReadTokens,
-                                    cacheWrite: model.cacheWriteTokens,
-                                    input: model.inputTokens,
-                                    reasoning: model.reasoningTokens,
-                                    theme: theme,
-                                    fallback: LinearGradient(
-                                        colors: [c.secondary, c.warm],
-                                        startPoint: .leading, endPoint: .trailing
-                                    )
-                                ))
-                                .frame(width: safeDim(geo.size.width * pct, floor: 4))
+                                .fill(
+                                    activityOnly
+                                        ? AnyShapeStyle(Color.gray.opacity(0.35))
+                                        : AnyShapeStyle(compositionFill(
+                                            output: model.outputTokens,
+                                            cacheRead: model.cacheReadTokens,
+                                            cacheWrite: model.cacheWriteTokens,
+                                            input: model.inputTokens,
+                                            reasoning: model.reasoningTokens,
+                                            theme: theme,
+                                            fallback: LinearGradient(
+                                                colors: [c.secondary, c.warm],
+                                                startPoint: .leading, endPoint: .trailing
+                                            )
+                                        ))
+                                )
+                                .frame(width: safeDim(geo.size.width * (activityOnly ? 0.12 : pct), floor: 4))
                             Spacer(minLength: 0)
                         }
                     )
@@ -114,17 +130,34 @@ struct ModelsSection: View {
                     .animation(.spring(response: 0.6, dampingFraction: 0.75), value: model.cost)
             }
             .frame(height: 6)
-            .help(compositionTooltip(
-                output: model.outputTokens,
-                cacheRead: model.cacheReadTokens,
-                cacheWrite: model.cacheWriteTokens,
-                input: model.inputTokens,
-                reasoning: model.reasoningTokens
-            ))
-            Text(Fmt.cost(model.cost))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(costTint(for: model))
-                .frame(width: 56, alignment: .trailing)
+            .help(
+                activityOnly
+                    ? (model.tokens > 0
+                        ? "Real token count from this provider's local state — cost isn't shown because there's no reliable input/output split to price it from."
+                        : "This provider doesn't expose token counts or cost locally — only that you used it.")
+                    : compositionTooltip(
+                        output: model.outputTokens,
+                        cacheRead: model.cacheReadTokens,
+                        cacheWrite: model.cacheWriteTokens,
+                        input: model.inputTokens,
+                        reasoning: model.reasoningTokens
+                    )
+            )
+            if activityOnly {
+                // A known-zero-cost row can still carry a real, honest token
+                // count (e.g. Codex Desktop's SQLite-sourced total) — show
+                // that number rather than an unhelpful "no cost data" when we
+                // actually have real data, just not a priceable one.
+                Text(model.tokens > 0 ? "\(Fmt.number(model.tokens)) tok" : "no cost data")
+                    .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
+                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                    .frame(width: 56, alignment: .trailing)
+            } else {
+                Text(Fmt.cost(model.cost))
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(costTint(for: model))
+                    .frame(width: 56, alignment: .trailing)
+            }
         }
     }
 

@@ -62,6 +62,15 @@ export async function enrichCosts(
 ): Promise<void> {
   const costPromises = records.map(async (r) => {
     if (r.cost > 0) return;
+    if (r.costEligible === false) {
+      // Not a missing-pricing-data case (kosha may well have real rates for
+      // this model) — an explicit per-record decision not to guess a cost
+      // from token counts we don't trust the tier split of. Leave cost at 0
+      // without touching the unpricedTracker, which exists for the DIFFERENT
+      // problem of "kosha doesn't have this model yet."
+      if (r.usage) r.usage.cost = "not_exposed";
+      return;
+    }
     try {
       r.cost = await pricing.calculateCost(
         r.model,

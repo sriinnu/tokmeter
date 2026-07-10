@@ -1,15 +1,17 @@
 /**
- * Codex Desktop parser regression tests.
+ * Codex SQLite-state fallback parser regression tests.
  *
- * Codex Desktop (the ChatGPT app) writes to the same ~/.codex/sessions store
- * as the codex CLI but never emits a token_count event, so it was previously
- * invisible in tokmeter entirely. These tests pin the discriminator
- * (session_meta.originator === "Codex Desktop") and confirm real CLI
- * sessions are never picked up here — only CodexParser should ever produce
- * records for those, so a session can't be double-counted under two
- * provider ids.
+ * Codex Desktop / VS Code-extension sessions never emit token_count events
+ * in their rollout JSONL, but every Codex thread (CLI included) gets a row
+ * in local state_5.sqlite with a real cumulative tokens_used total — this
+ * parser fills exactly the gap CodexParser's JSONL-only reading leaves.
+ * These tests pin: the JSONL-coverage skip (never double-count a thread
+ * CodexParser already handles), checkpoint-based delta tracking (a
+ * cumulative total must not be recounted on every scan), and honest
+ * cost non-exposure (no input/output split exists to price from).
  */
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +22,7 @@ import { CodexParser } from "./codex.js";
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "codex-desktop-parser-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "codex-sqlite-fallback-test-"));
 });
 
 afterEach(() => {
@@ -29,11 +31,40 @@ afterEach(() => {
   } catch {}
 });
 
-function writeRollout(
-  fileName: string,
-  originator: string,
-  opts?: { cwd?: string; model?: string; withTokenCount?: boolean }
-): string {
+interface ThreadFixture {
+  id: string;
+  tokensUsed: number;
+  model: string;
+  cwd: string;
+  rolloutPath: string;
+  updatedAtSec: number;
+}
+
+function stateDbPath(): string {
+  return join(tmpDir, ".codex", "state_5.sqlite");
+}
+
+function seedStateDb(threads: ThreadFixture[]): void {
+  mkdirSync(join(tmpDir, ".codex"), { recursive: true });
+  const dbPath = stateDbPath();
+  execFileSync("sqlite3", [dbPath], {
+    input:
+      "CREATE TABLE threads (id TEXT PRIMARY KEY, tokens_used INTEGER NOT NULL DEFAULT 0, " +
+      "model TEXT, cwd TEXT, rollout_path TEXT, updated_at INTEGER NOT NULL);",
+  });
+  for (const t of threads) {
+    execFileSync("sqlite3", [dbPath], {
+      input:
+        `INSERT INTO threads (id, tokens_used, model, cwd, rollout_path, updated_at) VALUES (` +
+        `'${t.id}', ${t.tokensUsed}, '${t.model}', '${t.cwd.replace(/'/g, "''")}', ` +
+        `'${t.rolloutPath.replace(/'/g, "''")}', ${t.updatedAtSec});`,
+    });
+  }
+}
+
+/** Writes a rollout JSONL. `withTokenCount` simulates a real CLI session
+ * CodexParser already covers — the SQLite fallback must skip those. */
+function writeRollout(fileName: string, opts?: { withTokenCount?: boolean }): string {
   const sessionsDir = join(tmpDir, ".codex", "sessions", "2026", "07", "10");
   mkdirSync(sessionsDir, { recursive: true });
   const filePath = join(sessionsDir, fileName);
@@ -42,20 +73,9 @@ function writeRollout(
     JSON.stringify({
       timestamp: "2026-07-10T13:18:49.000Z",
       type: "session_meta",
-      payload: {
-        id: "test-session",
-        originator,
-        cwd: opts?.cwd ?? "/Users/test/AUriva",
-        model_provider: "openai",
-      },
-    }),
-    JSON.stringify({
-      timestamp: "2026-07-10T13:18:50.000Z",
-      type: "turn_context",
-      payload: { model: opts?.model ?? "gpt-5.6-sol" },
+      payload: { id: "test-session", cwd: "/Users/test/AUriva" },
     }),
   ];
-
   if (opts?.withTokenCount) {
     lines.push(
       JSON.stringify({
@@ -63,85 +83,73 @@ function writeRollout(
         type: "event_msg",
         payload: {
           type: "token_count",
-          info: {
-            total_token_usage: { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 200 },
-          },
+          info: { total_token_usage: { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 200 } },
         },
       })
     );
   }
-
   writeFileSync(filePath, `${lines.join("\n")}\n`);
   return filePath;
 }
 
-describe("CodexDesktopParser", () => {
-  it("surfaces an activity-only record for a Codex Desktop session", async () => {
-    writeRollout("rollout-desktop.jsonl", "Codex Desktop");
+describe("CodexDesktopParser (SQLite state fallback)", () => {
+  it("never emits a thread's full historical total on first sight (baseline-only)", async () => {
+    // Regression for a real bug found on a live install: with no prior
+    // checkpoint, a thread's entire lifetime tokens_used (a February-to-July
+    // thread, first observed today) was being emitted as a single "today"
+    // record — 2,423 threads, 1.09 TRILLION tokens, on one first run.
+    // First sight must establish a baseline silently; only growth AFTER
+    // that baseline counts as real, dateable usage.
+    const rolloutPath = writeRollout("rollout-desktop.jsonl");
+    seedStateDb([
+      {
+        id: "thread-1",
+        tokensUsed: 133_172_272,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: Math.floor(new Date("2026-07-10T13:59:42.000Z").getTime() / 1000),
+      },
+    ]);
 
-    const records = await new CodexDesktopParser().scan(tmpDir);
-    expect(records.length).toBe(1);
+    const first = await new CodexDesktopParser().scan(tmpDir);
+    expect(first.length).toBe(0);
 
-    const r = records[0];
+    // New growth after the baseline is real, dateable usage — this is what
+    // should show up, and only this.
+    execFileSync("sqlite3", [stateDbPath()], {
+      input: "UPDATE threads SET tokens_used = 133182272 WHERE id = 'thread-1';",
+    });
+    const second = await new CodexDesktopParser().scan(tmpDir);
+    expect(second.length).toBe(1);
+
+    const r = second[0];
     expect(r.provider).toBe("codex-desktop");
     expect(r.model).toBe("gpt-5.6-sol");
     expect(r.project).toBe("AUriva");
-    expect(r.timestamp).toBe(new Date("2026-07-10T13:18:49.000Z").getTime());
+    expect(r.outputTokens).toBe(10_000);
     expect(r.inputTokens).toBe(0);
-    expect(r.outputTokens).toBe(0);
+    expect(r.cost).toBe(0);
     expect(r.usage).toMatchObject({
-      inputTokens: "not_exposed",
-      outputTokens: "not_exposed",
       cost: "not_exposed",
+      inputTokens: "not_exposed",
     });
   });
 
-  it("finds the model past a 64 KB discriminator read when early events are large", async () => {
-    // Real Desktop rollouts pack large response_item events (system prompt,
-    // early tool output) between session_meta and the first turn_context —
-    // one observed real file put turn_context past the 100 KB mark, which a
-    // naive fixed 64 KB read missed entirely (model fell back to "unknown").
-    const sessionsDir = join(tmpDir, ".codex", "sessions", "2026", "07", "10");
-    mkdirSync(sessionsDir, { recursive: true });
-    const filePath = join(sessionsDir, "rollout-padded.jsonl");
-
-    const padding = "x".repeat(80_000);
-    const lines = [
-      JSON.stringify({
-        timestamp: "2026-07-10T13:18:49.000Z",
-        type: "session_meta",
-        payload: { id: "padded-session", originator: "Codex Desktop", cwd: "/Users/test/AUriva" },
-      }),
-      JSON.stringify({
-        timestamp: "2026-07-10T13:18:50.000Z",
-        type: "response_item",
-        payload: { text: padding },
-      }),
-      JSON.stringify({
-        timestamp: "2026-07-10T13:18:51.000Z",
-        type: "turn_context",
-        payload: { model: "gpt-5.6-sol" },
-      }),
-    ];
-    writeFileSync(filePath, `${lines.join("\n")}\n`);
-
-    const records = await new CodexDesktopParser().scan(tmpDir);
-    expect(records.length).toBe(1);
-    expect(records[0].model).toBe("gpt-5.6-sol");
-  });
-
-  it("skips codex_cli_rs / codex-tui originators entirely", async () => {
-    writeRollout("rollout-cli.jsonl", "codex_cli_rs");
-    writeRollout("rollout-tui.jsonl", "codex-tui");
-
-    const records = await new CodexDesktopParser().scan(tmpDir);
-    expect(records.length).toBe(0);
-  });
-
-  it("never double-counts a session CodexParser already tracks via token_count", async () => {
-    // A real CLI session (has token_count events) must be picked up ONLY by
-    // CodexParser, never by CodexDesktopParser, even if it sat in the same dir.
-    writeRollout("rollout-cli.jsonl", "codex_cli_rs", { withTokenCount: true });
+  it("skips a thread whose rollout JSONL already has token_count events", async () => {
+    // A real CLI session must be picked up ONLY by CodexParser, never by the
+    // SQLite fallback, even though it also has a threads row.
+    const rolloutPath = writeRollout("rollout-cli.jsonl", { withTokenCount: true });
+    seedStateDb([
+      {
+        id: "thread-cli",
+        tokensUsed: 19_841_596,
+        model: "gpt-5.3-codex-spark",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: Math.floor(Date.now() / 1000),
+      },
+    ]);
 
     const desktopRecords = await new CodexDesktopParser().scan(tmpDir);
     const cliRecords = await new CodexParser().scan(tmpDir);
@@ -151,13 +159,42 @@ describe("CodexDesktopParser", () => {
     expect(cliRecords[0].provider).toBe("codex");
   });
 
-  it("does not pick up a Desktop session under CodexParser", async () => {
-    // Confirms the reverse direction: a Desktop file (no token_count) yields
-    // zero CodexParser records, so CodexDesktopParser's activity record is
-    // the only signal for it anywhere in the system.
-    writeRollout("rollout-desktop.jsonl", "Codex Desktop");
+  it("never recounts the same tokens_used on a re-scan with no new growth", async () => {
+    const rolloutPath = writeRollout("rollout-desktop.jsonl");
+    seedStateDb([
+      {
+        id: "thread-1",
+        tokensUsed: 100_000,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: Math.floor(Date.now() / 1000),
+      },
+    ]);
 
-    const cliRecords = await new CodexParser().scan(tmpDir);
-    expect(cliRecords.length).toBe(0);
+    // First sight: establishes the 100_000 baseline, emits nothing.
+    const first = await new CodexDesktopParser().scan(tmpDir);
+    expect(first.length).toBe(0);
+
+    // Unchanged tokens_used — a re-scan must not recount anything either.
+    const second = await new CodexDesktopParser().scan(tmpDir);
+    expect(second.length).toBe(0);
+
+    // Genuine new growth — only the delta since the baseline shows up.
+    execFileSync("sqlite3", [stateDbPath()], {
+      input: "UPDATE threads SET tokens_used = 145000 WHERE id = 'thread-1';",
+    });
+    const third = await new CodexDesktopParser().scan(tmpDir);
+    expect(third.length).toBe(1);
+    expect(third[0].outputTokens).toBe(45_000);
+
+    // Unchanged again after that — must not recount the 145_000 either.
+    const fourth = await new CodexDesktopParser().scan(tmpDir);
+    expect(fourth.length).toBe(0);
+  });
+
+  it("returns nothing when there's no state_5.sqlite at all", async () => {
+    const records = await new CodexDesktopParser().scan(tmpDir);
+    expect(records).toEqual([]);
   });
 });

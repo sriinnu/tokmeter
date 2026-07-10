@@ -32,6 +32,10 @@ struct TokmeterBarView: View {
     /// Local UI state — never persisted.
     @State private var showAllSessions = false
     @State private var breathToggle = false
+    /// Tracks whether this popover's window is actually on screen — see
+    /// PanelVisibility.swift. Every ambient animation in the hero/footer is
+    /// gated on this so they stop burning CPU while the panel is closed.
+    @StateObject private var panelVisibility = PanelVisibility()
     @State private var showSettings = false
     /// Drives the cache "wallet" slide-out drawer. Toggled by the wallet icon
     /// in the hero header; the drawer renders as a trailing-edge overlay.
@@ -48,8 +52,14 @@ struct TokmeterBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HeroHeader(loader: loader, theme: theme, breathToggle: breathToggle, showCachePanel: $showCachePanel)
-                .cascadeIn(delay: 0.02)
+            HeroHeader(
+                loader: loader,
+                theme: theme,
+                breathToggle: breathToggle,
+                isVisible: panelVisibility.isVisible,
+                showCachePanel: $showCachePanel
+            )
+            .cascadeIn(delay: 0.02)
 
             errorBanner
                 .padding(.horizontal, 16)
@@ -91,7 +101,8 @@ struct TokmeterBarView: View {
                 updater: updater,
                 theme: $theme,
                 showSettings: $showSettings,
-                showAnomalyPanel: $showAnomalyPanel
+                showAnomalyPanel: $showAnomalyPanel,
+                isVisible: panelVisibility.isVisible
             )
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -100,6 +111,7 @@ struct TokmeterBarView: View {
         .frame(width: 400)
         .frame(minHeight: 620, maxHeight: 820)
         .background(popoverBackground)
+        .trackPanelVisibility(panelVisibility)
         // Cache "wallet" drawer — slides in from the trailing edge over the
         // whole popover when the hero header's wallet icon is tapped.
         .overlay {
@@ -167,7 +179,9 @@ struct TokmeterBarView: View {
         // Force the color scheme to match the theme's surface so built-in
         // SwiftUI chrome (Divider, .secondary, system sheets) reads correctly.
         .preferredColorScheme(bg.isLight ? .light : .dark)
-        .onAppear(perform: startAmbientAnimations)
+        .onChange(of: panelVisibility.isVisible, initial: true) { _, visible in
+            breathToggle = visible
+        }
         .onChange(of: theme) { _, _ in
             // Briefly flash the ripple, then fade it out smoothly.
             themeRipple = true
@@ -233,13 +247,4 @@ struct TokmeterBarView: View {
         }
     }
 
-    // MARK: - Animations
-
-    /// Kick off the slow breath cycle that hero ambient motion (gradient
-    /// breathing, sun pulse, glass shimmer, etc.) reads from. The footer's
-    /// LiveHeartbeat now drives its own TimelineView so we don't need a
-    /// repeatForever timer on parent state anymore.
-    private func startAmbientAnimations() {
-        breathToggle = true
-    }
 }

@@ -10,8 +10,11 @@
 //     surrounding SwiftUI views. The parent tree does NOT re-render per frame.
 //   - Canvas drawing uses GPU-accelerated CoreGraphics via SwiftUI. We only
 //     build a lightweight `Path` each tick — no allocations beyond that.
-//   - When the popover closes, SwiftUI unmounts this view and the timeline
-//     stops, so there's zero CPU cost while the menu bar is idle.
+//   - MenuBarExtra(.window) does NOT unmount this view when the popover
+//     closes (confirmed with `sample` — a freshly launched, never-clicked
+//     app still burned 20-55% CPU from this ticking in the background), so
+//     the `isVisible` flag from PanelVisibility.swift gates the TimelineView
+//     itself: closed means genuinely zero ticks, not just an invisible one.
 //
 // The waveform is synthesized analytically from a phase-within-cycle value —
 // no array of samples, no state growth over time. O(width/step) per tick.
@@ -27,47 +30,61 @@ struct EcgView: View {
     var beatInterval: Double = 1.8
     /// Horizontal scroll speed in points/sec. 40 is brisk without blurring the pulse.
     var scrollSpeed: Double = 40.0
+    /// Whether the popover is actually on screen — see PanelVisibility.swift.
+    /// Defaults true so any other call site keeps animating as before.
+    var isVisible: Bool = true
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            Canvas { ctx, size in
-                // Time since a stable epoch — used both for scroll offset and
-                // to sample the waveform. Stable across redraws of this view.
-                let t = timeline.date.timeIntervalSinceReferenceDate
-
-                // Build the visible slice of the waveform. Step of 1.5pt keeps
-                // the line smooth enough at 30 fps without busy-looping the CPU.
-                var path = Path()
-                let midY = size.height * 0.5
-                let amp = size.height * 0.42
-
-                var started = false
-                for xInt in stride(from: 0.0, through: size.width, by: 1.5) {
-                    // Convert the pixel's x into the virtual time it represents,
-                    // so the same phase-point "slides" leftward across frames.
-                    let timeAtX = t - (size.width - xInt) / scrollSpeed
-                    let y = midY - ecgSample(atTime: timeAtX, cycle: beatInterval) * amp
-                    let p = CGPoint(x: xInt, y: y)
-                    if !started { path.move(to: p); started = true }
-                    else        { path.addLine(to: p) }
-                }
-
-                // Main stroke — crisp, consistent line weight.
-                ctx.stroke(
-                    path,
-                    with: .color(color),
-                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-                )
-
-                // Soft afterglow layer — adds a subtle "phosphor" trail without
-                // needing a separate blur pass. Two-stroke composite costs nothing
-                // extra given Canvas batches draw calls.
-                ctx.stroke(
-                    path,
-                    with: .color(color.opacity(0.35)),
-                    style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round)
-                )
+        if isVisible {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                trace(at: timeline.date)
             }
+        } else {
+            // Frozen, single render — no TimelineView means no ticking while
+            // hidden. Resumes instantly (mid-waveform) once visible again.
+            trace(at: Date())
+        }
+    }
+
+    @ViewBuilder
+    private func trace(at date: Date) -> some View {
+        Canvas { ctx, size in
+            // Time since a stable epoch — used both for scroll offset and
+            // to sample the waveform. Stable across redraws of this view.
+            let t = date.timeIntervalSinceReferenceDate
+
+            // Build the visible slice of the waveform. Step of 1.5pt keeps
+            // the line smooth enough at 30 fps without busy-looping the CPU.
+            var path = Path()
+            let midY = size.height * 0.5
+            let amp = size.height * 0.42
+
+            var started = false
+            for xInt in stride(from: 0.0, through: size.width, by: 1.5) {
+                // Convert the pixel's x into the virtual time it represents,
+                // so the same phase-point "slides" leftward across frames.
+                let timeAtX = t - (size.width - xInt) / scrollSpeed
+                let y = midY - ecgSample(atTime: timeAtX, cycle: beatInterval) * amp
+                let p = CGPoint(x: xInt, y: y)
+                if !started { path.move(to: p); started = true }
+                else        { path.addLine(to: p) }
+            }
+
+            // Main stroke — crisp, consistent line weight.
+            ctx.stroke(
+                path,
+                with: .color(color),
+                style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+            )
+
+            // Soft afterglow layer — adds a subtle "phosphor" trail without
+            // needing a separate blur pass. Two-stroke composite costs nothing
+            // extra given Canvas batches draw calls.
+            ctx.stroke(
+                path,
+                with: .color(color.opacity(0.35)),
+                style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round)
+            )
         }
     }
 

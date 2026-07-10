@@ -56,8 +56,12 @@ const CODEX_SCAN_CONCURRENCY = 8;
  * currently read the same on-disk store, just filtering different files out
  * of it.
  */
+export function codexHomeDir(homeDir: string): string {
+  return process.env.CODEX_HOME ? process.env.CODEX_HOME : expandHome("~/.codex", homeDir);
+}
+
 export function codexSessionDirs(providerId: ProviderId, homeDir: string): string[] {
-  const codexHome = process.env.CODEX_HOME ? process.env.CODEX_HOME : expandHome("~/.codex", homeDir);
+  const codexHome = codexHomeDir(homeDir);
   return [
     `${codexHome}/sessions`,
     ...getConfiguredProviderPaths(providerId, homeDir).map((p) => expandHome(p, homeDir)),

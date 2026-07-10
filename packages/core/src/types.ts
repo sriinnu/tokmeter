@@ -103,6 +103,20 @@ export interface TokenRecord {
   reasoningTokens: number;
   /** Calculated cost in USD (via kosha-discovery pricing). */
   cost: number;
+  /**
+   * Whether pricing-enrichment is allowed to compute a dollar cost for this
+   * record at all. Defaults to true. Set false when a record's token counts
+   * are real but not trustworthy enough to price — e.g. a lump total with no
+   * input/output split, where kosha DOES have real pricing for the model (so
+   * the normal "no pricing available" not_exposed path never fires) but
+   * pricing it anyway would mean guessing which per-tier rate applies. Scoped
+   * per-record rather than per-model (see OPAQUE_MODELS in
+   * pricing-enrichment.ts) because the same model can appear in both a
+   * trustworthy, granular record (real CLI token_count events) and an
+   * untrustworthy lump one (SQLite fallback) — blocking the model globally
+   * would silently zero out the trustworthy record too.
+   */
+  costEligible?: boolean;
   /** Per-bucket source/trust metadata. */
   usage?: UsageProvenance;
   /** Compaction metadata for records tagged kind:"compaction", when exposed. */
