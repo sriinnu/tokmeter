@@ -4,7 +4,8 @@
  * The Codex parser had a 24x cost overcharge bug because OpenAI reports
  * input_tokens as TOTAL (including cached) while the cost calculator
  * assumed Anthropic semantics (input_tokens = uncached only). The fix
- * subtracts cached_input_tokens from input_tokens before creating records.
+ * subtracts cached_input_tokens from input_tokens and separates reasoning from
+ * output_tokens before creating records.
  *
  * These tests pin that contract to a fixture so we never regress.
  */
@@ -140,6 +141,28 @@ describe("CodexParser", () => {
     expect(records[1].inputTokens).toBe(10_000);
     expect(records[1].cacheReadTokens).toBe(40_000);
     expect(records[1].outputTokens).toBe(3_000);
+  });
+
+  it("separates reasoning from output because Codex includes it in output_tokens", async () => {
+    // Codex's total_tokens is input_tokens + output_tokens. The reported
+    // reasoning bucket is a portion of that output, so putting it in both
+    // canonical buckets makes every aggregate total too high.
+    writeFakeSession([{ totalIn: 100_000, totalOut: 5_000, cached: 80_000, reasoning: 4_000 }]);
+
+    const records = await new CodexParser().scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      inputTokens: 20_000,
+      cacheReadTokens: 80_000,
+      outputTokens: 1_000,
+      reasoningTokens: 4_000,
+    });
+    expect(
+      records[0].inputTokens +
+        records[0].cacheReadTokens +
+        records[0].outputTokens +
+        records[0].reasoningTokens
+    ).toBe(105_000);
   });
 
   it("preserves the original timestamp from the JSONL", async () => {

@@ -111,8 +111,11 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      caches lack the new files + flag — force a re-parse.
  *  9 — TokenRecord now carries usage provenance and optional compaction
  *      metadata. Old caches lack per-bucket trust markers, so rebuild once.
+ * 10 — Codex output_tokens includes reasoning_output_tokens. Normalize the
+ *      output bucket to visible output so aggregate totals and pricing do not
+ *      count the same generated tokens twice.
  */
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 10;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -687,9 +690,12 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
       return {
         ...baseProvenance("tool_jsonl"),
         inputTokens: normalizedMetric,
+        outputTokens: normalizedMetric,
         cacheWriteTokens: notExposedMetric,
         reasoningTokens: directMetric,
-        notes: ["OpenAI-style total input is normalized to uncached input + cache read."],
+        notes: [
+          "OpenAI-style total input is normalized to uncached input + cache read; output is normalized to visible output + reasoning.",
+        ],
       };
     case "gemini":
     case "qwen":

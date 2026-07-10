@@ -365,8 +365,15 @@ function foldCodexEvent(
   const totalInput = usage.input_tokens ?? 0;
   const cached = usage.cached_input_tokens ?? 0;
   const inputTokens = Math.max(0, totalInput - cached);
-  const outputTokens = usage.output_tokens ?? 0;
-  if (inputTokens === 0 && outputTokens === 0 && cached === 0) return;
+  // Codex reports reasoning_output_tokens as a sub-bucket of output_tokens:
+  // its own total_tokens is input_tokens + output_tokens, not input + output
+  // + reasoning. Keep Tokmeter's buckets mutually exclusive so every surface
+  // (model table, provider total, daily chart, and pricing) reaches Codex's
+  // reported total instead of counting thought tokens a second time.
+  const rawOutputTokens = usage.output_tokens ?? 0;
+  const reasoningTokens = Math.min(usage.reasoning_output_tokens ?? 0, rawOutputTokens);
+  const outputTokens = rawOutputTokens - reasoningTokens;
+  if (inputTokens === 0 && outputTokens === 0 && cached === 0 && reasoningTokens === 0) return;
 
   out.push(
     createRecord({
@@ -379,7 +386,7 @@ function foldCodexEvent(
       inputTokens,
       outputTokens,
       cacheReadTokens: cached,
-      reasoningTokens: usage.reasoning_output_tokens ?? 0,
+      reasoningTokens,
     })
   );
 }
