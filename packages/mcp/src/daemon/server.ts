@@ -1353,6 +1353,22 @@ function startHttpApi(): void {
             res.writeHead(500);
             json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
           }
+        } else if (pathname === "/api/antigravity-live/fetch") {
+          // The one-shot manual counterpart to the (opt-in, default-off)
+          // background poll interval: fetches once, right now, and returns
+          // the result inline instead of waiting for the next tick. Still
+          // does the same credential-read + undocumented-RPC call the
+          // background job does, just for a single explicit invocation
+          // instead of running unsupervised forever — but a website could
+          // CSRF a GET here just as easily as it could CSRF /api/rescan, so
+          // this is POST + token-gated for the same reason those are.
+          try {
+            const snapshot = await pollAntigravityLiveStatus();
+            json(res, { ok: true, snapshot });
+          } catch (err) {
+            res.writeHead(500);
+            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
         } else {
           res.writeHead(404);
           json(res, { error: "Not found" });

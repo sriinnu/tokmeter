@@ -59,6 +59,14 @@ final class TokmeterLoader: ObservableObject {
     /// Projection of today's tokens against the user's top lifetime models.
     /// Drives the Hub's "If today ran on..." card.
     @Published var crossToolComparison: CrossToolComparison?
+    /// Antigravity's live credit/model status — whatever the background poll
+    /// (if the user turned it on) or a manual "Fetch now" last captured.
+    /// Refreshed on every regular loadData() tick since the read itself is
+    /// cache-only and cheap; nil until something has actually fetched once.
+    @Published var antigravityLive: AntigravityLiveResponse?
+    /// True while a manual "Fetch now" request is in flight.
+    @Published var isFetchingAntigravityLiveNow: Bool = false
+    @Published var antigravityLiveFetchError: String?
     /// True while `tokmeter install-cron` is running. Drives the install
     /// button's spinner.
     @Published var isInstallingCron: Bool = false
@@ -225,6 +233,7 @@ final class TokmeterLoader: ObservableObject {
         async let anomaliesTask = fetchAnomaliesSafe()
         async let signalsTask = fetchStatbarSignalsSafe()
         async let crossToolTask = fetchCrossToolSafe()
+        async let antigravityLiveTask = fetchAntigravityLiveSafe()
 
         let (
             dailyResult,
@@ -236,10 +245,12 @@ final class TokmeterLoader: ObservableObject {
             healthResult,
             anomaliesResult,
             signalsResult,
-            crossToolResult
+            crossToolResult,
+            antigravityLiveResult
         ) = await (
             dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
-            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask
+            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask,
+            antigravityLiveTask
         )
 
         withTransaction(noAnim) {
@@ -279,6 +290,9 @@ final class TokmeterLoader: ObservableObject {
             if let crossTool = crossToolResult {
                 self.crossToolComparison = crossTool
             }
+            if let antigravityLive = antigravityLiveResult {
+                self.antigravityLive = antigravityLive
+            }
         }
     }
 
@@ -304,6 +318,10 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchAnomaliesSafe() async -> AnomaliesResponse? {
         try? await client.fetchAnomalies()
+    }
+
+    private func fetchAntigravityLiveSafe() async -> AntigravityLiveResponse? {
+        try? await client.fetchAntigravityLive()
     }
 
     private func fetchStatbarSignalsSafe() async -> StatbarSignals? {
@@ -365,6 +383,40 @@ final class TokmeterLoader: ObservableObject {
             rescanStartedNotice = true
         } catch {
             rescanError = error.localizedDescription
+        }
+    }
+
+    /// One-shot manual fetch of Antigravity's live status — independent of
+    /// whether the background polling toggle is on. Updates `antigravityLive`
+    /// directly from the fetch response rather than waiting for the next
+    /// regular loadData() tick, so the result is visible the moment it lands.
+    /// A nil snapshot in an `ok` response isn't an error — it means
+    /// Antigravity's language_server wasn't found running.
+    func fetchAntigravityLiveNow() async {
+        guard !isFetchingAntigravityLiveNow else { return }
+        guard client.isDaemonRunning else {
+            antigravityLiveFetchError = "Daemon offline — start it first."
+            return
+        }
+        isFetchingAntigravityLiveNow = true
+        antigravityLiveFetchError = nil
+        defer { isFetchingAntigravityLiveNow = false }
+        do {
+            let result = try await client.fetchAntigravityLiveNow()
+            if !result.ok {
+                antigravityLiveFetchError = result.error ?? "Fetch failed"
+                return
+            }
+            if result.snapshot == nil {
+                antigravityLiveFetchError = "Antigravity isn't running (or its language_server couldn't be reached)."
+            }
+            // Re-read the cache-only endpoint rather than hand-assembling
+            // AntigravityLiveResponse from the fetch result — it also
+            // recomputes creditsUsedToday against the now-updated snapshot
+            // history, which the fetch endpoint doesn't return.
+            antigravityLive = try? await client.fetchAntigravityLive()
+        } catch {
+            antigravityLiveFetchError = error.localizedDescription
         }
     }
 

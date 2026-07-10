@@ -150,6 +150,37 @@ where Option.RawValue == String, Option.AllCases: RandomAccessCollection {
     }
 }
 
+// ─── Toggle row ──────────────────────────────────────────────────────────
+
+struct HubToggleRow: View {
+    let label: String
+    let helpText: String
+    @Binding var isOn: Bool
+    let theme: AppTheme
+
+    private var c: ThemeColors { theme.colors }
+    private var bg: BackgroundMode { theme.backgroundMode }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text(helpText)
+                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(c.accent)
+        }
+    }
+}
+
 // ─── Threshold row ───────────────────────────────────────────────────────
 
 struct HubThresholdRow: View {

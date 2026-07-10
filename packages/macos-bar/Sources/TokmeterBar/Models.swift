@@ -128,6 +128,45 @@ struct AnomaliesResponse: Codable {
     let cappedAt: Int
 }
 
+// ─── Antigravity live status ────────────────────────────────────────────
+// Mirrors AntigravitySnapshot / AntigravityCreditsUsedToday in
+// packages/core/src/antigravity-live.ts. Account-level live state
+// (current model list + remaining credits), not a historical per-session
+// ledger — see that file's header comment for the full rationale.
+
+struct AntigravityModelQuota: Codable, Identifiable {
+    let label: String
+    let resetTime: String?
+    let remainingFraction: Double?
+    var id: String { label }
+}
+
+struct AntigravitySnapshotWire: Codable {
+    let timestamp: Double
+    let availablePromptCredits: Int
+    let availableFlowCredits: Int
+    let models: [AntigravityModelQuota]
+}
+
+struct AntigravityCreditsUsedTodayWire: Codable {
+    let promptCreditsUsed: Int
+    let flowCreditsUsed: Int
+    let sinceSnapshotAt: Double
+}
+
+/// GET /api/antigravity-live — cache-only read, never triggers a fetch.
+struct AntigravityLiveResponse: Codable {
+    let latestSnapshot: AntigravitySnapshotWire?
+    let creditsUsedToday: AntigravityCreditsUsedTodayWire?
+}
+
+/// POST /api/antigravity-live/fetch — the one-shot manual fetch.
+struct AntigravityLiveFetchResponse: Codable {
+    let ok: Bool
+    let snapshot: AntigravitySnapshotWire?
+    let error: String?
+}
+
 /// /api/sessions — per-project session aggregate.
 /// Mirrors the TS ProjectSummary type from @sriinnu/tokmeter-core.
 struct ProjectData: Codable, Identifiable {
