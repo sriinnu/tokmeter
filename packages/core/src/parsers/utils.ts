@@ -754,6 +754,18 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
           "Built from Zed's public open-source schema but not validated against a live Zed install — flag any discrepancy if Zed's format has moved.",
         ],
       });
+    case "codex-desktop":
+      return withMetrics(baseProvenance("tool_jsonl"), {
+        inputTokens: notExposedMetric,
+        outputTokens: notExposedMetric,
+        cacheReadTokens: notExposedMetric,
+        cacheWriteTokens: notExposedMetric,
+        reasoningTokens: notExposedMetric,
+        cost: notExposedMetric,
+        notes: [
+          "The Codex Desktop app (bundled in ChatGPT.app) writes rollouts to the same ~/.codex/sessions store as the codex CLI but never emits a token_count event — only model + project + timestamp are available.",
+        ],
+      });
     case "synthetic":
       return withMetrics(baseProvenance("synthetic"), {
         inputTokens: calculatedMetric,

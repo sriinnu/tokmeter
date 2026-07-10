@@ -7,6 +7,7 @@ export type ProviderId =
   | "claude-code"
   | "opencode"
   | "codex"
+  | "codex-desktop"
   | "gemini"
   | "cursor"
   | "amp"
