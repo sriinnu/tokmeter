@@ -75,6 +75,7 @@ describe("createRecord usage provenance", () => {
     expect(createRecord({ timestamp: 0, provider: "codex", model: "gpt" }).usage).toMatchObject({
       source: "tool_jsonl",
       inputTokens: "normalized",
+      outputTokens: "normalized",
       cacheWriteTokens: "not_exposed",
       reasoningTokens: "direct",
       cost: "calculated",
