@@ -4,6 +4,7 @@
 
 import type { ProviderId, SessionParser } from "../types.js";
 import { AmpParser } from "./amp.js";
+import { AntigravityParser } from "./antigravity.js";
 import { ClaudeCodeParser } from "./claude-code.js";
 import { CodexParser } from "./codex.js";
 import { CursorParser } from "./cursor.js";
@@ -19,6 +20,8 @@ import { PiParser } from "./pi.js";
 import { QwenParser } from "./qwen.js";
 import { RooCodeParser } from "./roo-code.js";
 import { SyntheticParser } from "./synthetic.js";
+import { VSCodeCopilotParser } from "./vscode-copilot.js";
+import { ZedParser } from "./zed.js";
 
 /** All available parsers. */
 export const ALL_PARSERS: SessionParser[] = [
@@ -37,6 +40,9 @@ export const ALL_PARSERS: SessionParser[] = [
   new KiloParser(),
   new KiloCliParser(),
   new MuxParser(),
+  new VSCodeCopilotParser(),
+  new AntigravityParser(),
+  new ZedParser(),
   new SyntheticParser(),
 ];
 

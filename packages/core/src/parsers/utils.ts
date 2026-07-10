@@ -455,6 +455,27 @@ export function expandHome(path: string, homeDir: string): string {
   return path;
 }
 
+/**
+ * VS Code-family "User" data root candidates for a given set of app folder
+ * names (e.g. ["Code", "Code - Insiders"]), across macOS, Linux, and Windows.
+ *
+ * Every Electron/VS Code fork (Code, Cursor, Windsurf, Antigravity, …) keeps
+ * its per-user state under an app-named folder whose location is platform-
+ * specific: `~/Library/Application Support/<App>` on macOS, `~/.config/<App>`
+ * on Linux, `%APPDATA%/<App>` on Windows. Callers pass whichever of these
+ * come back through `findFiles`, which fails soft on missing roots — so
+ * candidates for platforms/apps that aren't installed are simply empty.
+ */
+export function vscodeFamilyUserDirs(appNames: string[], homeDir: string): string[] {
+  const dirs: string[] = [];
+  for (const app of appNames) {
+    dirs.push(expandHome(`~/Library/Application Support/${app}/User`, homeDir));
+    dirs.push(expandHome(`~/.config/${app}/User`, homeDir));
+    dirs.push(expandHome(`~/AppData/Roaming/${app}/User`, homeDir));
+  }
+  return dirs;
+}
+
 /** Extract the last path segment from either POSIX or Windows-style paths. */
 export function lastPathSegment(path: string, fallback = "unknown"): string {
   const normalizedPath = path.replace(/[\\/]+$/g, "");
@@ -550,6 +571,54 @@ export async function readJsonlFile<T>(path: string): Promise<T[]> {
   }
 }
 
+/** Minimal read-only SQLite handle shared by the two available drivers. */
+export interface ReadonlySqlite {
+  get<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T | undefined;
+  all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[];
+  close(): void;
+}
+
+/**
+ * Opens a SQLite database read-only, picking the right driver for the
+ * runtime: `bun:sqlite` under Bun, `better-sqlite3` under Node.
+ *
+ * better-sqlite3's native N-API bindings are not supported under Bun
+ * (https://github.com/oven-sh/bun/issues/4290 — `dlopen` refuses to load
+ * them, Bun's own error message points at `bun:sqlite` instead), so a
+ * parser that only tries `better-sqlite3` silently returns zero records on
+ * every Bun install, including this project's own dev/CLI runtime. Both
+ * drivers are optional — a published npm consumer running under Node with
+ * neither installed gets `null` back, not a crash.
+ */
+export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite | null> {
+  if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
+    try {
+      // @ts-ignore — bun:sqlite only resolves under the Bun runtime
+      const { Database } = await import("bun:sqlite");
+      const db = new Database(path, { readonly: true });
+      return {
+        get: (sql, ...params) => db.query(sql).get(...params) as never,
+        all: (sql, ...params) => db.query(sql).all(...params) as never,
+        close: () => db.close(),
+      };
+    } catch {
+      return null;
+    }
+  }
+  try {
+    // @ts-ignore — better-sqlite3 is an optional dependency
+    const { default: Database } = await import("better-sqlite3");
+    const db = new Database(path, { readonly: true });
+    return {
+      get: (sql, ...params) => db.prepare(sql).get(...params),
+      all: (sql, ...params) => db.prepare(sql).all(...params),
+      close: () => db.close(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Extract project name from a Claude Code session path. */
 export function extractProjectFromPath(filePath: string): string {
   // ~/.claude/projects/-Users-me-myapp/session.jsonl → -Users-me-myapp
@@ -636,6 +705,30 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
         cacheWriteTokens: notExposedMetric,
         reasoningTokens: notExposedMetric,
       });
+    case "vscode-copilot":
+      return withMetrics(baseProvenance("tool_json"), {
+        inputTokens: notExposedMetric,
+        outputTokens: notExposedMetric,
+        cacheReadTokens: notExposedMetric,
+        cacheWriteTokens: notExposedMetric,
+        cost: notExposedMetric,
+        notes: [
+          "GitHub Copilot bills via quota'd premium requests, not tokens — VS Code's local chat session store has no token/cost data, only model + request timestamps.",
+        ],
+      });
+    case "antigravity":
+      return withMetrics(baseProvenance("tool_sqlite"), {
+        inputTokens: notExposedMetric,
+        outputTokens: notExposedMetric,
+        cacheReadTokens: notExposedMetric,
+        cacheWriteTokens: notExposedMetric,
+        cost: notExposedMetric,
+        notes: [
+          "Antigravity's local trajectory store has no public schema and, after manual decoding, exposes no model id, token count, or cost anywhere — only session timestamps and touched-file paths.",
+        ],
+      });
+    case "zed":
+      return baseProvenance("tool_sqlite");
     case "synthetic":
       return withMetrics(baseProvenance("synthetic"), {
         inputTokens: calculatedMetric,

@@ -6,13 +6,20 @@
  * with per-message token breakdowns and an optional `sessions` table for
  * project/path context.
  *
- * Requires `better-sqlite3` as an optional peer dependency. If the dep
- * isn't installed, we gracefully return an empty array.
+ * Reads the SQLite file via bun:sqlite (Bun) or better-sqlite3 (Node),
+ * whichever is available — see openReadonlySqlite in utils.ts. Gracefully
+ * returns an empty array if neither driver is available.
  */
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, fileExists } from "./utils.js";
+import {
+  type ReadonlySqlite,
+  createRecord,
+  expandHome,
+  fileExists,
+  openReadonlySqlite,
+} from "./utils.js";
 
 /** Shape of a row from the `messages` table (assistant responses only). */
 interface KiloMessageRow {
@@ -43,20 +50,15 @@ export class KiloCliParser implements SessionParser {
 
     if (!(await fileExists(dbPath))) return [];
 
-    try {
-      // better-sqlite3 is an optional dependency — bail gracefully if missing
-      // @ts-ignore — optional import
-      const { default: Database } = await import("better-sqlite3");
-      const db = new Database(dbPath, { readonly: true });
+    const db = await openReadonlySqlite(dbPath);
+    if (!db) return [];
 
-      try {
-        return this.readMessages(db, dbPath);
-      } finally {
-        db.close();
-      }
+    try {
+      return this.readMessages(db, dbPath);
     } catch {
-      // better-sqlite3 not installed or DB read failed
       return [];
+    } finally {
+      db.close();
     }
   }
 
@@ -65,22 +67,19 @@ export class KiloCliParser implements SessionParser {
    * to a TokenRecord. If a `sessions` table exists, we join on session_id
    * to extract project paths.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readMessages(db: any, dbPath: string): TokenRecord[] {
+  private readMessages(db: ReadonlySqlite, dbPath: string): TokenRecord[] {
     const records: TokenRecord[] = [];
 
     // Build a session-id -> project-path lookup if the sessions table exists
     const sessionProjects = this.loadSessionProjects(db);
 
-    const rows = db
-      .prepare(
-        `SELECT model_id, provider_id, input_tokens, output_tokens,
-                reasoning_tokens, cache_read, cache_write, created_at,
-                session_id
-         FROM messages
-         WHERE role = 'assistant'`
-      )
-      .all() as KiloMessageRow[];
+    const rows = db.all<KiloMessageRow>(
+      `SELECT model_id, provider_id, input_tokens, output_tokens,
+              reasoning_tokens, cache_read, cache_write, created_at,
+              session_id
+       FROM messages
+       WHERE role = 'assistant'`
+    );
 
     for (const row of rows) {
       // Resolve project from session path, falling back to "kilo-cli"
@@ -110,22 +109,19 @@ export class KiloCliParser implements SessionParser {
    * Returns a Map<session_id, project_name>. If the table doesn't exist
    * (schema variation), returns an empty map — no error.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private loadSessionProjects(db: any): Map<string, string> {
+  private loadSessionProjects(db: ReadonlySqlite): Map<string, string> {
     const map = new Map<string, string>();
 
     try {
       // Check if the sessions table exists before querying
-      const tableCheck = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-        .get() as { name: string } | undefined;
+      const tableCheck = db.get<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+      );
 
       if (!tableCheck) return map;
 
       // Try path first, then cwd, then title — different forks may use different columns
-      const rows = db
-        .prepare("SELECT id, title, path, cwd FROM sessions")
-        .all() as KiloSessionRow[];
+      const rows = db.all<KiloSessionRow>("SELECT id, title, path, cwd FROM sessions");
 
       for (const row of rows) {
         const project = row.path || row.cwd || row.title || undefined;
