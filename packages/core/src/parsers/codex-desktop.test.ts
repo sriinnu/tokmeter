@@ -72,10 +72,7 @@ function seedStateDb(threads: ThreadFixture[]): void {
   });
   for (const t of threads) {
     execFileSync("sqlite3", [dbPath], {
-      input:
-        `INSERT INTO threads (id, tokens_used, model, cwd, rollout_path, updated_at) VALUES (` +
-        `'${t.id}', ${t.tokensUsed}, '${t.model}', '${t.cwd.replace(/'/g, "''")}', ` +
-        `'${t.rolloutPath.replace(/'/g, "''")}', ${t.updatedAtSec});`,
+      input: `INSERT INTO threads (id, tokens_used, model, cwd, rollout_path, updated_at) VALUES ('${t.id}', ${t.tokensUsed}, '${t.model}', '${t.cwd.replace(/'/g, "''")}', '${t.rolloutPath.replace(/'/g, "''")}', ${t.updatedAtSec});`,
     });
   }
 }
@@ -93,7 +90,10 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  * CodexParser already covers — the SQLite fallback must skip those.
  * `extraText` lets a test inject a literal payload string (e.g. the text
  * "token_count") that must NOT be mistaken for a real event. */
-function writeRollout(fileName: string, opts?: { withTokenCount?: boolean; extraText?: string }): string {
+function writeRollout(
+  fileName: string,
+  opts?: { withTokenCount?: boolean; extraText?: string }
+): string {
   const sessionsDir = join(tmpDir, ".codex", "sessions", "2026", "07", "10");
   mkdirSync(sessionsDir, { recursive: true });
   const filePath = join(sessionsDir, fileName);
@@ -121,7 +121,9 @@ function writeRollout(fileName: string, opts?: { withTokenCount?: boolean; extra
         type: "event_msg",
         payload: {
           type: "token_count",
-          info: { total_token_usage: { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 200 } },
+          info: {
+            total_token_usage: { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 200 },
+          },
         },
       })
     );
@@ -134,7 +136,14 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
   it("establishes a baseline on first sight, then returns the SAME idempotent delta on repeated scans until real growth changes it", async () => {
     const rolloutPath = writeRollout("rollout-desktop.jsonl");
     seedStateDb([
-      { id: "thread-1", tokensUsed: 133_172_272, model: "gpt-5.6-sol", cwd: "/Users/test/AUriva", rolloutPath, updatedAtSec: nowSec() },
+      {
+        id: "thread-1",
+        tokensUsed: 133_172_272,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: nowSec(),
+      },
     ]);
 
     // First sight: establishes the baseline, emits nothing — NOT the full
@@ -175,7 +184,14 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
   it("resets to a fresh baseline when a new local day starts, without flooding the new day with the prior day's total", async () => {
     const rolloutPath = writeRollout("rollout-desktop.jsonl");
     seedStateDb([
-      { id: "thread-1", tokensUsed: 100_000, model: "gpt-5.6-sol", cwd: "/Users/test/AUriva", rolloutPath, updatedAtSec: nowSec() },
+      {
+        id: "thread-1",
+        tokensUsed: 100_000,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: nowSec(),
+      },
     ]);
 
     await new CodexDesktopParser().scan(tmpDir); // baseline = 100_000, today
@@ -206,7 +222,14 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
     // SQLite fallback, even though it also has a threads row.
     const rolloutPath = writeRollout("rollout-cli.jsonl", { withTokenCount: true });
     seedStateDb([
-      { id: "thread-cli", tokensUsed: 19_841_596, model: "gpt-5.3-codex-spark", cwd: "/Users/test/AUriva", rolloutPath, updatedAtSec: nowSec() },
+      {
+        id: "thread-cli",
+        tokensUsed: 19_841_596,
+        model: "gpt-5.3-codex-spark",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: nowSec(),
+      },
     ]);
 
     const desktopRecords = await new CodexDesktopParser().scan(tmpDir);
@@ -227,7 +250,14 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
       extraText: 'grep -n "token_count" packages/core/src/parsers/codex.ts',
     });
     seedStateDb([
-      { id: "thread-1", tokensUsed: 100_000, model: "gpt-5.6-sol", cwd: "/Users/test/AUriva", rolloutPath, updatedAtSec: nowSec() },
+      {
+        id: "thread-1",
+        tokensUsed: 100_000,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: nowSec(),
+      },
     ]);
 
     await new CodexDesktopParser().scan(tmpDir);
@@ -247,7 +277,14 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
     const rolloutPath = writeRollout("rollout-old.jsonl");
     const staleSec = Math.floor(new Date("2020-01-01T00:00:00.000Z").getTime() / 1000);
     seedStateDb([
-      { id: "thread-old", tokensUsed: 5_000_000, model: "gpt-5.6-sol", cwd: "/Users/test/AUriva", rolloutPath, updatedAtSec: staleSec },
+      {
+        id: "thread-old",
+        tokensUsed: 5_000_000,
+        model: "gpt-5.6-sol",
+        cwd: "/Users/test/AUriva",
+        rolloutPath,
+        updatedAtSec: staleSec,
+      },
     ]);
 
     const records = await new CodexDesktopParser().scan(tmpDir);

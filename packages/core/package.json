@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-core",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "private": true,
   "description": "Token usage tracking core — session parsers, aggregation, and pricing",
   "type": "module",

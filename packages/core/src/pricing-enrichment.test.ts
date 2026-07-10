@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { enrichCosts, type UnpricedTracker } from "./pricing-enrichment.js";
+import { type UnpricedTracker, enrichCosts } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
