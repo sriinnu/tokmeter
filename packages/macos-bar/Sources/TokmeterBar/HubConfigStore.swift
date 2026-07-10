@@ -232,11 +232,19 @@ final class HubConfigStore: ObservableObject {
             if let scan = daemon["scanIntervalSeconds"] as? Int {
                 out.daemon.scanIntervalSeconds = clamp(scan, min: 10, max: 3600, def: d.daemon.scanIntervalSeconds)
             }
-            // Strict bool check, no truthy coercion — mirrors the TS side's
-            // `=== true` — a malformed value must never accidentally turn
-            // this on.
-            if let live = daemon["antigravityLivePolling"] as? Bool {
-                out.daemon.antigravityLivePolling = live
+            // `as? Bool` alone is NOT strict here: on Darwin, JSONSerialization
+            // bridges JSON booleans AND JSON numbers to NSNumber (they share
+            // the same ObjC type encoding), so `(1 as Any) as? Bool` silently
+            // succeeds as `true`. A config.json with `"antigravityLivePolling":
+            // 1` would pass this cast and silently enable the exact
+            // unsupervised background job this field exists to gate — the
+            // opposite of "mirrors the TS side's === true". Guard on the
+            // underlying CFTypeID instead: only a real JSON boolean (encoded
+            // as __NSCFBoolean) has CFBooleanGetTypeID(); a JSON number does
+            // not, even when it happens to be 0 or 1.
+            if let num = daemon["antigravityLivePolling"] as? NSNumber,
+               CFGetTypeID(num) == CFBooleanGetTypeID() {
+                out.daemon.antigravityLivePolling = num.boolValue
             }
         }
         if let cli = raw["cli"] as? [String: Any] {
@@ -256,8 +264,20 @@ final class HubConfigStore: ObservableObject {
                 out.alerts.dailyCostThreshold = nil
             }
         }
-        if let pp = raw["providerPaths"] as? [String: [Any]] {
-            out.providerPaths = pp.mapValues { $0.compactMap { $0 as? String } }
+        if let pp = raw["providerPaths"] as? [String: Any] {
+            // Per-key tolerance, matching normalizeProviderPaths in
+            // config-service.ts: one provider's malformed value (not an
+            // array, or an array of non-strings) must not wipe every OTHER
+            // provider's valid entries. `pp as? [String: [Any]]` would have
+            // been an all-or-nothing cast — a single bad entry anywhere in
+            // the map fails the whole cast and silently drops the rest.
+            var merged: [String: [String]] = [:]
+            for (providerId, value) in pp {
+                guard let rawPaths = value as? [Any] else { continue }
+                let cleanPaths = rawPaths.compactMap { $0 as? String }.filter { !$0.isEmpty }
+                if !cleanPaths.isEmpty { merged[providerId] = cleanPaths }
+            }
+            out.providerPaths = merged
         }
         if let mb = raw["modifiedBy"] as? String,
            let flag = ConfigModifiedBy(rawValue: mb) {

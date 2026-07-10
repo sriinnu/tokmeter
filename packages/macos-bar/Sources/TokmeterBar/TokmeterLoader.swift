@@ -67,6 +67,16 @@ final class TokmeterLoader: ObservableObject {
     /// True while a manual "Fetch now" request is in flight.
     @Published var isFetchingAntigravityLiveNow: Bool = false
     @Published var antigravityLiveFetchError: String?
+    /// Incremented each time a fetch of `antigravityLive` is *issued* — by
+    /// the regular loadData() 30s poll OR by fetchAntigravityLiveNow().
+    /// Two independent network requests can resolve out of order: the
+    /// routine poll can be issued first but its response can land AFTER a
+    /// user-triggered manual fetch's response, silently overwriting the
+    /// fresher result the user just asked for and watched land. Each
+    /// completing request only applies its result if it's still the most
+    /// recently ISSUED one — whichever request was issued last always wins,
+    /// regardless of which one's network round-trip finishes last.
+    private var antigravityLiveGeneration = 0
     /// True while `tokmeter install-cron` is running. Drives the install
     /// button's spinner.
     @Published var isInstallingCron: Bool = false
@@ -233,6 +243,8 @@ final class TokmeterLoader: ObservableObject {
         async let anomaliesTask = fetchAnomaliesSafe()
         async let signalsTask = fetchStatbarSignalsSafe()
         async let crossToolTask = fetchCrossToolSafe()
+        antigravityLiveGeneration += 1
+        let antigravityLiveIssuedAsGeneration = antigravityLiveGeneration
         async let antigravityLiveTask = fetchAntigravityLiveSafe()
 
         let (
@@ -290,7 +302,11 @@ final class TokmeterLoader: ObservableObject {
             if let crossTool = crossToolResult {
                 self.crossToolComparison = crossTool
             }
-            if let antigravityLive = antigravityLiveResult {
+            // Only apply if nothing newer (a manual Fetch now, or another
+            // loadData tick) was issued while this request was in flight —
+            // see antigravityLiveGeneration's doc comment.
+            if let antigravityLive = antigravityLiveResult,
+               antigravityLiveIssuedAsGeneration == antigravityLiveGeneration {
                 self.antigravityLive = antigravityLive
             }
         }
@@ -410,11 +426,25 @@ final class TokmeterLoader: ObservableObject {
             if result.snapshot == nil {
                 antigravityLiveFetchError = "Antigravity isn't running (or its language_server couldn't be reached)."
             }
+            // The generation is captured HERE, immediately before the final
+            // read, not at the top of this method — the POST above (the
+            // actual scrape) can take a second or two, during which a
+            // routine loadData() tick can legitimately issue and resolve its
+            // own antigravityLive read first. That's fine; it's not stale
+            // relative to OUR result because our fresher data didn't exist
+            // yet. What must not happen is THIS read losing to one issued
+            // and resolved while it was in flight — narrowing the generation
+            // window to just this call is what makes that comparison correct.
+            antigravityLiveGeneration += 1
+            let myGeneration = antigravityLiveGeneration
             // Re-read the cache-only endpoint rather than hand-assembling
             // AntigravityLiveResponse from the fetch result — it also
             // recomputes creditsUsedToday against the now-updated snapshot
             // history, which the fetch endpoint doesn't return.
-            antigravityLive = try? await client.fetchAntigravityLive()
+            let fresh = try? await client.fetchAntigravityLive()
+            if myGeneration == antigravityLiveGeneration {
+                antigravityLive = fresh
+            }
         } catch {
             antigravityLiveFetchError = error.localizedDescription
         }
