@@ -221,6 +221,23 @@ final class DaemonClient {
         }
     }
 
+    /// Cache-only read of Antigravity's live credit/model status — never
+    /// triggers a fetch itself. Reflects whatever the background poll
+    /// interval (if the user turned it on) or a manual "Fetch now" last
+    /// captured; nil fields mean nothing has been captured yet.
+    func fetchAntigravityLive() async throws -> AntigravityLiveResponse {
+        try await get("/api/antigravity-live", as: AntigravityLiveResponse.self)
+    }
+
+    /// One-shot manual fetch: asks the daemon to poll Antigravity's
+    /// language_server right now and return the result inline, independent
+    /// of whether the background polling toggle is on. POST + token-gated
+    /// for the same CSRF reason as rescan/update-pricing — a GET here would
+    /// let any visited webpage trigger it silently.
+    func fetchAntigravityLiveNow() async throws -> AntigravityLiveFetchResponse {
+        try await post("/api/antigravity-live/fetch", body: [:], as: AntigravityLiveFetchResponse.self)
+    }
+
     /// Trigger a DEEP rescan: re-read raw history and rebuild every sealed relay
     /// day from scratch (also backfills pace's costByHour on older days). This is
     /// the one explicit heavy path — it runs for minutes on a large tree. The

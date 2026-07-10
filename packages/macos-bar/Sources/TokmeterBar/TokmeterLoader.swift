@@ -59,6 +59,24 @@ final class TokmeterLoader: ObservableObject {
     /// Projection of today's tokens against the user's top lifetime models.
     /// Drives the Hub's "If today ran on..." card.
     @Published var crossToolComparison: CrossToolComparison?
+    /// Antigravity's live credit/model status — whatever the background poll
+    /// (if the user turned it on) or a manual "Fetch now" last captured.
+    /// Refreshed on every regular loadData() tick since the read itself is
+    /// cache-only and cheap; nil until something has actually fetched once.
+    @Published var antigravityLive: AntigravityLiveResponse?
+    /// True while a manual "Fetch now" request is in flight.
+    @Published var isFetchingAntigravityLiveNow: Bool = false
+    @Published var antigravityLiveFetchError: String?
+    /// Incremented each time a fetch of `antigravityLive` is *issued* — by
+    /// the regular loadData() 30s poll OR by fetchAntigravityLiveNow().
+    /// Two independent network requests can resolve out of order: the
+    /// routine poll can be issued first but its response can land AFTER a
+    /// user-triggered manual fetch's response, silently overwriting the
+    /// fresher result the user just asked for and watched land. Each
+    /// completing request only applies its result if it's still the most
+    /// recently ISSUED one — whichever request was issued last always wins,
+    /// regardless of which one's network round-trip finishes last.
+    private var antigravityLiveGeneration = 0
     /// True while `tokmeter install-cron` is running. Drives the install
     /// button's spinner.
     @Published var isInstallingCron: Bool = false
@@ -225,6 +243,9 @@ final class TokmeterLoader: ObservableObject {
         async let anomaliesTask = fetchAnomaliesSafe()
         async let signalsTask = fetchStatbarSignalsSafe()
         async let crossToolTask = fetchCrossToolSafe()
+        antigravityLiveGeneration += 1
+        let antigravityLiveIssuedAsGeneration = antigravityLiveGeneration
+        async let antigravityLiveTask = fetchAntigravityLiveSafe()
 
         let (
             dailyResult,
@@ -236,10 +257,12 @@ final class TokmeterLoader: ObservableObject {
             healthResult,
             anomaliesResult,
             signalsResult,
-            crossToolResult
+            crossToolResult,
+            antigravityLiveResult
         ) = await (
             dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
-            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask
+            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask,
+            antigravityLiveTask
         )
 
         withTransaction(noAnim) {
@@ -279,6 +302,13 @@ final class TokmeterLoader: ObservableObject {
             if let crossTool = crossToolResult {
                 self.crossToolComparison = crossTool
             }
+            // Only apply if nothing newer (a manual Fetch now, or another
+            // loadData tick) was issued while this request was in flight —
+            // see antigravityLiveGeneration's doc comment.
+            if let antigravityLive = antigravityLiveResult,
+               antigravityLiveIssuedAsGeneration == antigravityLiveGeneration {
+                self.antigravityLive = antigravityLive
+            }
         }
     }
 
@@ -304,6 +334,10 @@ final class TokmeterLoader: ObservableObject {
 
     private func fetchAnomaliesSafe() async -> AnomaliesResponse? {
         try? await client.fetchAnomalies()
+    }
+
+    private func fetchAntigravityLiveSafe() async -> AntigravityLiveResponse? {
+        try? await client.fetchAntigravityLive()
     }
 
     private func fetchStatbarSignalsSafe() async -> StatbarSignals? {
@@ -365,6 +399,54 @@ final class TokmeterLoader: ObservableObject {
             rescanStartedNotice = true
         } catch {
             rescanError = error.localizedDescription
+        }
+    }
+
+    /// One-shot manual fetch of Antigravity's live status — independent of
+    /// whether the background polling toggle is on. Updates `antigravityLive`
+    /// directly from the fetch response rather than waiting for the next
+    /// regular loadData() tick, so the result is visible the moment it lands.
+    /// A nil snapshot in an `ok` response isn't an error — it means
+    /// Antigravity's language_server wasn't found running.
+    func fetchAntigravityLiveNow() async {
+        guard !isFetchingAntigravityLiveNow else { return }
+        guard client.isDaemonRunning else {
+            antigravityLiveFetchError = "Daemon offline — start it first."
+            return
+        }
+        isFetchingAntigravityLiveNow = true
+        antigravityLiveFetchError = nil
+        defer { isFetchingAntigravityLiveNow = false }
+        do {
+            let result = try await client.fetchAntigravityLiveNow()
+            if !result.ok {
+                antigravityLiveFetchError = result.error ?? "Fetch failed"
+                return
+            }
+            if result.snapshot == nil {
+                antigravityLiveFetchError = "Antigravity isn't running (or its language_server couldn't be reached)."
+            }
+            // The generation is captured HERE, immediately before the final
+            // read, not at the top of this method — the POST above (the
+            // actual scrape) can take a second or two, during which a
+            // routine loadData() tick can legitimately issue and resolve its
+            // own antigravityLive read first. That's fine; it's not stale
+            // relative to OUR result because our fresher data didn't exist
+            // yet. What must not happen is THIS read losing to one issued
+            // and resolved while it was in flight — narrowing the generation
+            // window to just this call is what makes that comparison correct.
+            antigravityLiveGeneration += 1
+            let myGeneration = antigravityLiveGeneration
+            // Re-read the cache-only endpoint rather than hand-assembling
+            // AntigravityLiveResponse from the fetch result — it also
+            // recomputes creditsUsedToday against the now-updated snapshot
+            // history, which the fetch endpoint doesn't return.
+            let fresh = try? await client.fetchAntigravityLive()
+            if myGeneration == antigravityLiveGeneration {
+                antigravityLive = fresh
+            }
+        } catch {
+            antigravityLiveFetchError = error.localizedDescription
         }
     }
 

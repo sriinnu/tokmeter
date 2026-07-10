@@ -10,6 +10,7 @@
 //   - Refresh cadence section (bar + daemon steppers, live preview of seconds)
 //   - CLI defaults section (range + sort pickers)
 //   - Alerts section (daily cost threshold)
+//   - Integrations section (Antigravity live polling, off by default)
 //   - Footer actions: Reset to defaults · Open config.json
 
 import AppKit
@@ -39,7 +40,8 @@ struct HubSettingsPanel: View {
                 dataSection.cascadeIn(delay: 0.42)
                 cliDefaultsSection.cascadeIn(delay: 0.46)
                 alertsSection.cascadeIn(delay: 0.54)
-                footerActions.cascadeIn(delay: 0.54)
+                integrationsSection.cascadeIn(delay: 0.58)
+                footerActions.cascadeIn(delay: 0.62)
             }
             .padding(28)
         }
@@ -386,6 +388,118 @@ struct HubSettingsPanel: View {
                 theme: theme
             )
         }
+    }
+
+    // MARK: - Integrations
+
+    private var integrationsSection: some View {
+        HubSettingsSection(title: "Integrations", icon: "bolt.horizontal.circle.fill", theme: theme) {
+            VStack(alignment: .leading, spacing: 14) {
+                HubToggleRow(
+                    label: "Antigravity live credit polling",
+                    helpText: "Off by default. When on, the daemon periodically reads a CSRF token "
+                        + "out of Antigravity's own running process and calls its undocumented "
+                        + "internal status endpoint for live model + credit usage. Same technique "
+                        + "the community antigravity-panel extension uses, but an internal channel "
+                        + "Antigravity didn't publish for this — an unsupervised, indefinite "
+                        + "background job, so it's opt-in only.",
+                    isOn: Binding(
+                        get: { store.config.daemon.antigravityLivePolling },
+                        set: { v in store.update { $0.daemon.antigravityLivePolling = v } }
+                    ),
+                    theme: theme
+                )
+
+                Divider().opacity(0.3)
+
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Fetch now")
+                            .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                        Text(
+                            "One-shot manual read — works whether or not the polling toggle above is on. Same underlying call, but a single explicit request instead of a standing background job."
+                        )
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button(action: { Task { await loader.fetchAntigravityLiveNow() } }) {
+                        HStack(spacing: 4) {
+                            if loader.isFetchingAntigravityLiveNow {
+                                ProgressView().scaleEffect(0.6).frame(width: 12, height: 12)
+                            }
+                            Text(loader.isFetchingAntigravityLiveNow ? "Fetching…" : "Fetch now")
+                        }
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(loader.isFetchingAntigravityLiveNow)
+                }
+
+                if let err = loader.antigravityLiveFetchError {
+                    Text(err)
+                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .foregroundColor(.red)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                antigravityLiveSummary
+            }
+        }
+    }
+
+    /// Reflects whatever the last fetch (manual or background) captured.
+    /// Distinguishes "never fetched" from "fetched, Antigravity wasn't
+    /// running" — both are legitimate nil states, not errors, but a user
+    /// staring at a blank panel needs to know which one they're looking at.
+    @ViewBuilder
+    private var antigravityLiveSummary: some View {
+        if let snapshot = loader.antigravityLive?.latestSnapshot {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("\(snapshot.availablePromptCredits) prompt credits")
+                        .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text("\(snapshot.availableFlowCredits) flow credits")
+                        .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Spacer()
+                    Text(relativeTime(fromMs: snapshot.timestamp))
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                }
+                if !snapshot.models.isEmpty {
+                    Text(snapshot.models.map(\.label).joined(separator: " · "))
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let used = loader.antigravityLive?.creditsUsedToday,
+                   used.promptCreditsUsed > 0 || used.flowCreditsUsed > 0 {
+                    Text("\(used.promptCreditsUsed) prompt + \(used.flowCreditsUsed) flow credits used today")
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(c.accent)
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(bg.secondaryTextColor.opacity(0.06)))
+        } else {
+            Text("Not fetched yet — turn on polling above, or tap Fetch now.")
+                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                .foregroundColor(bg.secondaryTextColor)
+        }
+    }
+
+    private func relativeTime(fromMs ms: Double) -> String {
+        let date = Date(timeIntervalSince1970: ms / 1000)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: - Footer actions

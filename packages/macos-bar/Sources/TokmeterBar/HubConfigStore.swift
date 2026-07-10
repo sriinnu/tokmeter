@@ -74,6 +74,12 @@ struct HubUserConfig: Codable {
     }
     struct DaemonConfig: Codable {
         var scanIntervalSeconds: Int
+        /// Off by default, deliberately. Reads a CSRF token out of
+        /// Antigravity's own running process and calls its undocumented
+        /// internal status RPC — real enough to run unsupervised and
+        /// indefinitely in the background that it needs an explicit,
+        /// durable opt-in (see config-service.ts for the full rationale).
+        var antigravityLivePolling: Bool
     }
     struct CliConfig: Codable {
         var defaultRange: ConfigDefaultRange
@@ -88,6 +94,11 @@ struct HubUserConfig: Codable {
     var daemon: DaemonConfig
     var cli: CliConfig
     var alerts: AlertsConfig
+    /// Extra per-provider search paths (config-service.ts). No Hub UI for
+    /// this yet — edit config.json by hand — but it must still round-trip:
+    /// without this field, saving any *other* Hub setting would silently
+    /// drop a hand-edited providerPaths entry on the next disk write.
+    var providerPaths: [String: [String]]
     var modifiedBy: ConfigModifiedBy
     var modifiedAt: String
 
@@ -97,9 +108,10 @@ struct HubUserConfig: Codable {
     static let defaults = HubUserConfig(
         version: 1,
         bar: .init(refreshSeconds: 30, menubarColorSource: .context),
-        daemon: .init(scanIntervalSeconds: 60),
+        daemon: .init(scanIntervalSeconds: 60, antigravityLivePolling: false),
         cli: .init(defaultRange: .all, defaultSort: .cost),
         alerts: .init(dailyCostThreshold: nil),
+        providerPaths: [:],
         modifiedBy: .tokmeter,
         modifiedAt: ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 0))
     )
@@ -213,9 +225,27 @@ final class HubConfigStore: ObservableObject {
                 out.bar.menubarColorSource = src
             }
         }
-        if let daemon = raw["daemon"] as? [String: Any],
-           let scan = daemon["scanIntervalSeconds"] as? Int {
-            out.daemon.scanIntervalSeconds = clamp(scan, min: 10, max: 3600, def: d.daemon.scanIntervalSeconds)
+        if let daemon = raw["daemon"] as? [String: Any] {
+            // Independent `if let`s, same reasoning as the `bar` block above —
+            // a missing scanIntervalSeconds must not also revert
+            // antigravityLivePolling (or vice versa).
+            if let scan = daemon["scanIntervalSeconds"] as? Int {
+                out.daemon.scanIntervalSeconds = clamp(scan, min: 10, max: 3600, def: d.daemon.scanIntervalSeconds)
+            }
+            // `as? Bool` alone is NOT strict here: on Darwin, JSONSerialization
+            // bridges JSON booleans AND JSON numbers to NSNumber (they share
+            // the same ObjC type encoding), so `(1 as Any) as? Bool` silently
+            // succeeds as `true`. A config.json with `"antigravityLivePolling":
+            // 1` would pass this cast and silently enable the exact
+            // unsupervised background job this field exists to gate — the
+            // opposite of "mirrors the TS side's === true". Guard on the
+            // underlying CFTypeID instead: only a real JSON boolean (encoded
+            // as __NSCFBoolean) has CFBooleanGetTypeID(); a JSON number does
+            // not, even when it happens to be 0 or 1.
+            if let num = daemon["antigravityLivePolling"] as? NSNumber,
+               CFGetTypeID(num) == CFBooleanGetTypeID() {
+                out.daemon.antigravityLivePolling = num.boolValue
+            }
         }
         if let cli = raw["cli"] as? [String: Any] {
             if let r = cli["defaultRange"] as? String,
@@ -233,6 +263,21 @@ final class HubConfigStore: ObservableObject {
             } else if alerts["dailyCostThreshold"] is NSNull {
                 out.alerts.dailyCostThreshold = nil
             }
+        }
+        if let pp = raw["providerPaths"] as? [String: Any] {
+            // Per-key tolerance, matching normalizeProviderPaths in
+            // config-service.ts: one provider's malformed value (not an
+            // array, or an array of non-strings) must not wipe every OTHER
+            // provider's valid entries. `pp as? [String: [Any]]` would have
+            // been an all-or-nothing cast — a single bad entry anywhere in
+            // the map fails the whole cast and silently drops the rest.
+            var merged: [String: [String]] = [:]
+            for (providerId, value) in pp {
+                guard let rawPaths = value as? [Any] else { continue }
+                let cleanPaths = rawPaths.compactMap { $0 as? String }.filter { !$0.isEmpty }
+                if !cleanPaths.isEmpty { merged[providerId] = cleanPaths }
+            }
+            out.providerPaths = merged
         }
         if let mb = raw["modifiedBy"] as? String,
            let flag = ConfigModifiedBy(rawValue: mb) {
