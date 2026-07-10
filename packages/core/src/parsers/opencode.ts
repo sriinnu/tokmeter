@@ -7,7 +7,15 @@
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, fileExists, findFiles, readJsonFile } from "./utils.js";
+import {
+  type ReadonlySqlite,
+  createRecord,
+  expandHome,
+  fileExists,
+  findFiles,
+  openReadonlySqlite,
+  readJsonFile,
+} from "./utils.js";
 
 interface OpenCodeMessage {
   id?: string;
@@ -48,20 +56,17 @@ export class OpenCodeParser implements SessionParser {
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
 
-    // Try SQLite first (v1.2+) — requires better-sqlite3 or similar optional dep
+    // Try SQLite first (v1.2+) — via bun:sqlite or better-sqlite3, whichever
+    // the runtime supports (see openReadonlySqlite in utils.ts)
     const dbPath = expandHome("~/.local/share/opencode/opencode.db", homeDir);
-    try {
-      // @ts-ignore — better-sqlite3 is optional
-      const { default: Database } = await import("better-sqlite3");
-      if (await fileExists(dbPath)) {
-        const db = new Database(dbPath, { readonly: true });
+    if (await fileExists(dbPath)) {
+      const db = await openReadonlySqlite(dbPath);
+      if (db) {
         try {
           const sessionProjects = this.loadSessionProjects(db);
-          const rows = db
-            .prepare(
-              "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id FROM messages WHERE role = 'assistant'"
-            )
-            .all() as OpenCodeMessageRow[];
+          const rows = db.all<OpenCodeMessageRow>(
+            "SELECT model_id, provider_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id FROM messages WHERE role = 'assistant'"
+          );
           for (const row of rows) {
             const project = (row.session_id && sessionProjects.get(row.session_id)) || "opencode";
 
@@ -80,13 +85,13 @@ export class OpenCodeParser implements SessionParser {
               })
             );
           }
+          return records;
+        } catch {
+          // DB read failed (schema drift) — fall through to legacy JSON
         } finally {
           db.close();
         }
-        return records;
       }
-    } catch {
-      // better-sqlite3 not available or DB read failed — fall through to legacy JSON
     }
 
     // Legacy JSON format
@@ -116,22 +121,19 @@ export class OpenCodeParser implements SessionParser {
     return records;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private loadSessionProjects(db: any): Map<string, string> {
+  private loadSessionProjects(db: ReadonlySqlite): Map<string, string> {
     const map = new Map<string, string>();
 
     try {
-      const tableCheck = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-        .get() as { name: string } | undefined;
+      const tableCheck = db.get<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+      );
 
       if (!tableCheck) {
         return map;
       }
 
-      const rows = db
-        .prepare("SELECT id, title, path, cwd FROM sessions")
-        .all() as OpenCodeSessionRow[];
+      const rows = db.all<OpenCodeSessionRow>("SELECT id, title, path, cwd FROM sessions");
 
       for (const row of rows) {
         const project = row.path || row.cwd || row.title || undefined;

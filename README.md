@@ -465,7 +465,7 @@ neobrutalist (canary yellow + sticky-note cards with hard offset shadows).
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite) + legacy JSON |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | Gemini CLI | `~/.gemini/tmp/*/chats/*.json` |
-| Cursor IDE | `~/.config/tokscale/cursor-cache/` (API sync) |
+| Cursor IDE | Local SQLite (`cursorDiskKV` in Cursor's own state.vscdb) by default; `~/.config/tokscale/cursor-cache/` (external API sync) takes priority when present |
 | Amp | `~/.local/share/amp/threads/` |
 | Droid | `~/.factory/sessions/` |
 | OpenClaw | `~/.openclaw/agents/` + legacy paths |
@@ -476,6 +476,9 @@ neobrutalist (canary yellow + sticky-note cards with hard offset shadows).
 | Kilo | VS Code globalStorage |
 | Kilo CLI | `~/.local/share/kilo/kilo.db` (SQLite) |
 | Mux | `~/.mux/sessions/` |
+| VS Code (Copilot Chat) | VS Code chat session store (model + request volume only — Copilot bills via quota, no local token/cost data) |
+| Antigravity | Local trajectory store (no public schema; session timestamps + touched-file paths only — no model/token/cost data) |
+| Zed | `~/Library/Application Support/Zed/threads/threads.db` (SQLite, real token counts + model) |
 | Synthetic | Re-attributed from other sources |
 
 OpenRouter models (free and paid) are automatically detected via model ID format and priced through kosha-discovery's OpenRouter integration.

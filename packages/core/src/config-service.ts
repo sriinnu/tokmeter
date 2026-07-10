@@ -59,6 +59,18 @@ export interface UserConfig {
   daemon: {
     /** Advisory: seconds between full rescans inside the daemon. */
     scanIntervalSeconds: number;
+    /**
+     * Off by default, deliberately. When on, the daemon polls Antigravity's
+     * running language_server on a timer to read live credit/model status —
+     * which means reading a CSRF token out of that process's own command
+     * line and calling an undocumented internal RPC endpoint with it (the
+     * same technique the community "antigravity-panel" extension uses, but
+     * still an internal channel Antigravity didn't publish for this). That's
+     * a real enough thing to automate indefinitely in the background that it
+     * shouldn't turn on from an in-conversation "yes" alone — flip this
+     * explicitly once you've decided you want it standing.
+     */
+    antigravityLivePolling: boolean;
   };
   cli: {
     /** Default time window when no --today/--week/... flag is passed. */
@@ -70,6 +82,19 @@ export interface UserConfig {
     /** USD/day that triggers an alert. `null` disables alerting. */
     dailyCostThreshold: number | null;
   };
+  /**
+   * Extra search roots per provider, keyed by ProviderId (e.g. "cursor",
+   * "antigravity"). Most parsers already probe several likely locations on
+   * their own (platform variants, app-name variants like "Code" vs "Code -
+   * Insiders") — this is the escape hatch for the rest: a non-standard
+   * install, an unreleased app rename, a portable/XDG-override install.
+   * Not every parser reads this yet; only ones built around
+   * vscodeFamilyUserDirs do. Not a fix for a provider storing data in a
+   * structurally different location than what that parser expects — that
+   * needs new parsing logic, not a new search path. Edit config.json by
+   * hand to set this; no CLI verb for it yet.
+   */
+  providerPaths: Record<string, string[]>;
   /** Who last wrote the file. Restore merges prefer user-flagged sides. */
   modifiedBy: "user" | "tokmeter";
   /** ISO timestamp of the last write. */
@@ -83,9 +108,10 @@ export interface UserConfig {
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
   bar: { refreshSeconds: 30, menubarColorSource: "context" },
-  daemon: { scanIntervalSeconds: 60 },
+  daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
+  providerPaths: {},
   modifiedBy: "tokmeter",
   modifiedAt: new Date(0).toISOString(),
 };
@@ -170,6 +196,9 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
         10,
         3600
       ),
+      // Strict === true, not truthy coercion — a malformed or garbage value
+      // in the config file must never accidentally turn this on.
+      antigravityLivePolling: raw.daemon?.antigravityLivePolling === true,
     },
     cli: {
       defaultRange: isDefaultRange(raw.cli?.defaultRange)
@@ -183,9 +212,26 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
           ? raw.alerts.dailyCostThreshold
           : d.alerts.dailyCostThreshold,
     },
+    providerPaths: normalizeProviderPaths(raw.providerPaths),
     modifiedBy: raw.modifiedBy === "user" ? "user" : "tokmeter",
     modifiedAt: typeof raw.modifiedAt === "string" ? raw.modifiedAt : new Date().toISOString(),
   };
+}
+
+/**
+ * Drops malformed entries instead of rejecting the whole config — a typo'd
+ * provider id or a non-string path shouldn't fall back to defaults for
+ * every other knob in the file.
+ */
+function normalizeProviderPaths(raw: unknown): Record<string, string[]> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [providerId, paths] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(paths)) continue;
+    const clean = paths.filter((p): p is string => typeof p === "string" && p.length > 0);
+    if (clean.length > 0) out[providerId] = clean;
+  }
+  return out;
 }
 
 function clampPositiveInt(value: unknown, fallback: number, min: number, max: number): number {
@@ -219,7 +265,7 @@ function isDefaultSort(value: unknown): value is DefaultSort {
  */
 export interface ConfigFieldMeta {
   path: string;
-  type: "int" | "enum" | "number-or-null";
+  type: "int" | "enum" | "number-or-null" | "bool";
   enumValues?: readonly string[];
   min?: number;
   max?: number;
@@ -258,6 +304,15 @@ export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
     type: "number-or-null",
     min: 0.01,
     description: 'USD/day that triggers an alert. "null" or "off" disables.',
+  },
+  {
+    path: "daemon.antigravityLivePolling",
+    type: "bool",
+    description:
+      "Off by default. When on, the daemon periodically reads a CSRF token from Antigravity's " +
+      "running language_server process and calls its undocumented internal status RPC for live " +
+      "model/credit data. Same technique the community antigravity-panel extension uses, but an " +
+      "internal channel Antigravity didn't publish for this — deliberately opt-in only.",
   },
 ] as const;
 
@@ -324,6 +379,11 @@ function coerceValue(field: ConfigFieldMeta, rawValue: string): unknown {
         throw new Error(`${field.path}: must be ≥ ${field.min} (or "null" to disable)`);
       }
       return n;
+    }
+    case "bool": {
+      if (v === "true" || v === "on" || v === "1") return true;
+      if (v === "false" || v === "off" || v === "0") return false;
+      throw new Error(`${field.path}: expected true/false (or on/off), got "${rawValue}"`);
     }
   }
 }

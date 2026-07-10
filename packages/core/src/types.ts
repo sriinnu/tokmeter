@@ -19,6 +19,9 @@ export type ProviderId =
   | "kilo"
   | "kilo-cli"
   | "mux"
+  | "vscode-copilot"
+  | "antigravity"
+  | "zed"
   | "synthetic";
 
 /** Where a record's usage facts came from. */

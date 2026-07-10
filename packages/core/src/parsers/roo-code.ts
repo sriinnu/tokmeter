@@ -5,8 +5,15 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  findFiles,
+  getConfiguredProviderPaths,
+  vscodeFamilyUserDirs,
+} from "./utils.js";
 
 interface RooUiMessage {
   type?: string;
@@ -29,16 +36,16 @@ interface RooApiReqStarted {
 export class RooCodeParser implements SessionParser {
   readonly providerId = "roo-code" as const;
 
-  private readonly paths = [
-    "~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
-    "~/.vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
-  ];
-
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
+    const userDirs = [
+      ...vscodeFamilyUserDirs(["Code", "Code - Insiders"], homeDir),
+      expandHome("~/.vscode-server/data/User", homeDir),
+      ...getConfiguredProviderPaths("roo-code", homeDir).map((p) => expandHome(p, homeDir)),
+    ];
 
-    for (const basePath of this.paths) {
-      const dir = expandHome(basePath, homeDir);
+    for (const userDir of userDirs) {
+      const dir = join(userDir, "globalStorage/rooveterinaryinc.roo-cline/tasks");
       const jsonFiles = await findFiles(dir, (f) => f === "ui_messages.json", 3);
 
       for (const file of jsonFiles) {
