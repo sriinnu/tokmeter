@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-07-10
+
+### Added
+
+- **VS Code Copilot Chat tracking.** Reads VS Code's own chat session store
+  for model + request timestamps. Copilot bills via a quota'd "premium
+  request" model, not tokens, so there's no local $/token figure to
+  report - those stay honestly blank rather than guessed at.
+- **Antigravity tracking.** Google's Antigravity IDE keeps its agent history
+  in an undocumented protobuf blob with no public schema. Decoded it by
+  hand (varint + length-delimited wire format, a one-field wrapper around
+  base64 text) to recover session timestamps and the project each session
+  touched. No model, token, or cost data exists anywhere in its local
+  state - not a gap in this parser, a gap in what the app exposes.
+- **Zed tracking.** Zed is open source, so this one's built straight from
+  its real schema (`crates/agent/src/db.rs`) instead of reverse-engineered
+  - real token counts and model name, read from its local SQLite thread
+  store.
+- **Local Cursor tracking, no external sync required.** Cursor's usage was
+  previously only visible via a CSV cache populated by a separate
+  "tokscale" sync tool. Added a second source that reads Cursor's own
+  local SQLite store (`cursorDiskKV`) directly - real per-message tokens
+  and model name, zero setup. The CSV path still wins when it has data, so
+  nobody who's already syncing gets double-counted.
+
+### Fixed
+
+- **Roo Code and Kilo were dead on macOS and Windows.** Both parsers only
+  ever checked the Linux VS Code path (`~/.config/Code/...`), so they
+  silently returned zero records on every Mac despite being listed as
+  supported providers.
+- **kilo-cli and OpenCode's SQLite reads were dead under Bun.** They used
+  `better-sqlite3`, whose native bindings Bun refuses to load - this
+  project's own CLI/daemon runtime. All SQLite-backed parsers now pick
+  `bun:sqlite` under Bun and fall back to `better-sqlite3` under Node.
+
 ## [1.8.0] - 2026-07-09
 
 ### Fixed
