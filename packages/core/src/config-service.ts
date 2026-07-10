@@ -59,6 +59,18 @@ export interface UserConfig {
   daemon: {
     /** Advisory: seconds between full rescans inside the daemon. */
     scanIntervalSeconds: number;
+    /**
+     * Off by default, deliberately. When on, the daemon polls Antigravity's
+     * running language_server on a timer to read live credit/model status —
+     * which means reading a CSRF token out of that process's own command
+     * line and calling an undocumented internal RPC endpoint with it (the
+     * same technique the community "antigravity-panel" extension uses, but
+     * still an internal channel Antigravity didn't publish for this). That's
+     * a real enough thing to automate indefinitely in the background that it
+     * shouldn't turn on from an in-conversation "yes" alone — flip this
+     * explicitly once you've decided you want it standing.
+     */
+    antigravityLivePolling: boolean;
   };
   cli: {
     /** Default time window when no --today/--week/... flag is passed. */
@@ -96,7 +108,7 @@ export interface UserConfig {
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
   bar: { refreshSeconds: 30, menubarColorSource: "context" },
-  daemon: { scanIntervalSeconds: 60 },
+  daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
   providerPaths: {},
@@ -184,6 +196,9 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
         10,
         3600
       ),
+      // Strict === true, not truthy coercion — a malformed or garbage value
+      // in the config file must never accidentally turn this on.
+      antigravityLivePolling: raw.daemon?.antigravityLivePolling === true,
     },
     cli: {
       defaultRange: isDefaultRange(raw.cli?.defaultRange)
@@ -250,7 +265,7 @@ function isDefaultSort(value: unknown): value is DefaultSort {
  */
 export interface ConfigFieldMeta {
   path: string;
-  type: "int" | "enum" | "number-or-null";
+  type: "int" | "enum" | "number-or-null" | "bool";
   enumValues?: readonly string[];
   min?: number;
   max?: number;
@@ -289,6 +304,15 @@ export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
     type: "number-or-null",
     min: 0.01,
     description: 'USD/day that triggers an alert. "null" or "off" disables.',
+  },
+  {
+    path: "daemon.antigravityLivePolling",
+    type: "bool",
+    description:
+      "Off by default. When on, the daemon periodically reads a CSRF token from Antigravity's " +
+      "running language_server process and calls its undocumented internal status RPC for live " +
+      "model/credit data. Same technique the community antigravity-panel extension uses, but an " +
+      "internal channel Antigravity didn't publish for this — deliberately opt-in only.",
   },
 ] as const;
 
@@ -355,6 +379,11 @@ function coerceValue(field: ConfigFieldMeta, rawValue: string): unknown {
         throw new Error(`${field.path}: must be ≥ ${field.min} (or "null" to disable)`);
       }
       return n;
+    }
+    case "bool": {
+      if (v === "true" || v === "on" || v === "1") return true;
+      if (v === "false" || v === "off" || v === "0") return false;
+      throw new Error(`${field.path}: expected true/false (or on/off), got "${rawValue}"`);
     }
   }
 }

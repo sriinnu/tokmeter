@@ -7,6 +7,18 @@
 
 export { TokmeterCore } from "./tokmeter-core.js";
 export {
+  computeCreditsUsedToday,
+  pollAntigravityLiveStatus,
+  pruneSnapshotHistory as pruneAntigravitySnapshotHistory,
+  readLatestSnapshot as readLatestAntigravitySnapshot,
+  readSnapshotHistory as readAntigravitySnapshotHistory,
+} from "./antigravity-live.js";
+export type {
+  AntigravityCreditsUsedToday,
+  AntigravityModelQuota,
+  AntigravitySnapshot,
+} from "./antigravity-live.js";
+export {
   PricingService,
   getKoshaRegistryMtime,
   maybeBackgroundRefresh,

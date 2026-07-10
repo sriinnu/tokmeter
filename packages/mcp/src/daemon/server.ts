@@ -26,7 +26,12 @@ import {
 } from "node:http";
 import { homedir, setPriority } from "node:os";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
-import { localDateKey, refreshKoshaRegistry } from "@sriinnu/tokmeter";
+import {
+  loadConfig,
+  localDateKey,
+  pollAntigravityLiveStatus,
+  refreshKoshaRegistry,
+} from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   AGENT_LABEL,
@@ -58,6 +63,7 @@ let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let sessionManager: SessionManager | null = null;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let saveStateInterval: ReturnType<typeof setInterval> | null = null;
+let antigravityLivePollInterval: ReturnType<typeof setInterval> | null = null;
 const HTTP_PORT = DAEMON_PORT + 1;
 
 /**
@@ -327,6 +333,28 @@ export function startDaemon(): void {
       reassertLegacyShims();
     }, 10_000);
 
+    // Poll Antigravity's live credit status (if it's running) on the same
+    // cadence as the daemon's own advisory rescan interval. This is a
+    // best-effort background signal, not a hot-path read: only this
+    // interval ever touches the process/network — readers (CLI, API) only
+    // ever read the on-disk snapshot log pollAntigravityLiveStatus appends
+    // to. A failed/empty poll (Antigravity not running) is silent, not an
+    // error — most of the time nobody has it open.
+    //
+    // Off by default (daemon.antigravityLivePolling, config-service.ts) —
+    // it works by reading a CSRF token out of Antigravity's own process
+    // command line and calling an undocumented internal RPC with it. Real
+    // enough to automate indefinitely in the background that it needs an
+    // explicit, durable opt-in, not just something inferred from a chat.
+    if (loadConfig().daemon.antigravityLivePolling) {
+      const scanIntervalMs = Math.max(loadConfig().daemon.scanIntervalSeconds, 30) * 1000;
+      antigravityLivePollInterval = setInterval(() => {
+        void pollAntigravityLiveStatus().catch(() => {
+          // best-effort signal — a failure here must never affect anything else
+        });
+      }, scanIntervalMs);
+    }
+
     // Start HTTP API server alongside WebSocket
     startHttpApi();
 
@@ -584,6 +612,10 @@ export function stopDaemon(): void {
   if (saveStateInterval) {
     clearInterval(saveStateInterval);
     saveStateInterval = null;
+  }
+  if (antigravityLivePollInterval) {
+    clearInterval(antigravityLivePollInterval);
+    antigravityLivePollInterval = null;
   }
 
   if (wss) {
@@ -1156,6 +1188,18 @@ function startHttpApi(): void {
           }
         } else if (pathname === "/api/providers") {
           json(res, core.getProviderBreakdown());
+        } else if (pathname === "/api/antigravity-live") {
+          // Cache-only read — never triggers a poll. The background
+          // interval (see startDaemon) is the only thing that ever hits
+          // Antigravity's process/network; readers just see what it's
+          // already captured, or null if Antigravity has never answered.
+          const { computeCreditsUsedToday, readLatestAntigravitySnapshot } = await import(
+            "@sriinnu/tokmeter"
+          );
+          json(res, {
+            latestSnapshot: readLatestAntigravitySnapshot(),
+            creditsUsedToday: computeCreditsUsedToday(),
+          });
         } else if (pathname === "/api/backups") {
           const service = new CleanupService(core);
           json(res, service.listBackups());
@@ -1178,6 +1222,7 @@ function startHttpApi(): void {
               "/api/models",
               "/api/daily",
               "/api/providers",
+              "/api/antigravity-live",
               "/api/backups",
               "/api/themes",
               "/api/cleanup/preview",

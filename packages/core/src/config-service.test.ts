@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configFilePath, loadConfig } from "./config-service.js";
+import { configFilePath, loadConfig, setConfigValue } from "./config-service.js";
 
 let tmpDir: string;
 
@@ -63,5 +63,34 @@ describe("providerPaths", () => {
   it("returns {} when providerPaths itself is the wrong type", () => {
     writeConfig({ version: 1, providerPaths: "not-an-object" });
     expect(loadConfig(tmpDir).providerPaths).toEqual({});
+  });
+});
+
+describe("daemon.antigravityLivePolling", () => {
+  it("defaults to false when absent from an existing config file", () => {
+    writeConfig({ version: 1 });
+    expect(loadConfig(tmpDir).daemon.antigravityLivePolling).toBe(false);
+  });
+
+  it("stays false for any non-boolean-true value — no truthy coercion", () => {
+    for (const garbage of ["true", 1, "yes", {}, [1]]) {
+      writeConfig({ version: 1, daemon: { antigravityLivePolling: garbage } });
+      expect(loadConfig(tmpDir).daemon.antigravityLivePolling).toBe(false);
+    }
+  });
+
+  it("turns on only for the literal boolean true", () => {
+    writeConfig({ version: 1, daemon: { antigravityLivePolling: true } });
+    expect(loadConfig(tmpDir).daemon.antigravityLivePolling).toBe(true);
+  });
+
+  it("can be set explicitly via setConfigValue (the CLI path)", () => {
+    const config = loadConfig(tmpDir);
+    expect(config.daemon.antigravityLivePolling).toBe(false);
+
+    const next = setConfigValue(config, "daemon.antigravityLivePolling", "true");
+    expect(next.daemon.antigravityLivePolling).toBe(true);
+
+    expect(() => setConfigValue(config, "daemon.antigravityLivePolling", "sure")).toThrow();
   });
 });
