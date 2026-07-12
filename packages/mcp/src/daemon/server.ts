@@ -1320,15 +1320,45 @@ function startHttpApi(): void {
             // fast path keeps serving; the user frees RAM and retries. This is
             // the guard that was missing when a rescan stacked on a 16 GB local
             // LLM and Jetsam-rebooted the box.
-            const os = await import("node:os");
-            const freeGb = os.freemem() / 1_073_741_824;
-            const NEED_FREE_GB = 6;
-            if (freeGb < NEED_FREE_GB) {
+            //
+            // On macOS the signal must be the kernel's memory-pressure level,
+            // NOT os.freemem(): freemem maps to truly-free pages only, which
+            // sit near zero on any warm Mac (inactive/purgeable pages are
+            // reclaimed on demand), so a GB threshold blocks every rescan on
+            // a machine that's actually fine (observed: 0.3 GB "free" at 68%
+            // real availability on a 38 GB box). Pressure levels: 1 = normal,
+            // 2 = warning, 4 = critical.
+            let memRefusal: string | null = null;
+            if (process.platform === "darwin") {
+              try {
+                const { execFileSync } = await import("node:child_process");
+                const level = Number(
+                  execFileSync(
+                    "/usr/sbin/sysctl",
+                    ["-n", "kern.memorystatus_vm_pressure_level"],
+                    { timeout: 2000 }
+                  )
+                    .toString()
+                    .trim()
+                );
+                if (Number.isFinite(level) && level > 1) {
+                  memRefusal = `Memory pressure is ${level === 2 ? "warning" : "critical"} — close memory-heavy apps (e.g. a local LLM) and retry.`;
+                }
+              } catch {
+                // Can't read the pressure level — don't block an explicit,
+                // user-initiated action on a missing metric.
+              }
+            } else {
+              const os = await import("node:os");
+              const freeGb = os.freemem() / 1_073_741_824;
+              const NEED_FREE_GB = 6;
+              if (freeGb < NEED_FREE_GB) {
+                memRefusal = `Low memory: ${freeGb.toFixed(1)} GB free, need ~${NEED_FREE_GB} GB to rebuild safely. Close memory-heavy apps (e.g. a local LLM) and retry.`;
+              }
+            }
+            if (memRefusal) {
               res.writeHead(503);
-              json(res, {
-                ok: false,
-                error: `Low memory: ${freeGb.toFixed(1)} GB free, need ~${NEED_FREE_GB} GB to rebuild safely. Close memory-heavy apps (e.g. a local LLM) and retry.`,
-              });
+              json(res, { ok: false, error: memRefusal });
               return;
             }
             const core = await getHttpCore();
