@@ -336,4 +336,207 @@ describe("CodexParser", () => {
     // so the parser skips it and avoids double-counting usage.
     expect(records.length).toBeGreaterThanOrEqual(1);
   });
+
+  /**
+   * Multi-file fixture writer for fork/subagent dedup tests. Unlike
+   * writeFakeSession it controls the session_meta linkage fields directly.
+   * `parentMetaReplay` appends a second session_meta (the parent's own),
+   * mirroring what codex 0.144 subagent rollouts really contain — the parser
+   * must read only the FIRST.
+   */
+  function writeLinkedSession(opts: {
+    name: string;
+    id: string;
+    forkedFromId?: string;
+    threadSource?: string;
+    parentThreadId?: string;
+    parentMetaReplay?: { id: string };
+    events: Array<{ totalIn: number; totalOut: number; cached: number }>;
+  }): string {
+    const fs = require("node:fs");
+    const dir = join(tmpDir, ".codex", "sessions", "2026", "07", "11");
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, `rollout-2026-07-11T12-00-00-${opts.name}.jsonl`);
+    const lines: string[] = [
+      JSON.stringify({
+        timestamp: "2026-07-11T12:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: opts.id,
+          ...(opts.forkedFromId ? { forked_from_id: opts.forkedFromId } : {}),
+          ...(opts.threadSource ? { thread_source: opts.threadSource } : {}),
+          ...(opts.parentThreadId ? { parent_thread_id: opts.parentThreadId } : {}),
+          cwd: "/tmp/test-project",
+          model_provider: "openai",
+        },
+      }),
+    ];
+    if (opts.parentMetaReplay) {
+      lines.push(
+        JSON.stringify({
+          timestamp: "2026-07-11T12:00:00.001Z",
+          type: "session_meta",
+          payload: {
+            id: opts.parentMetaReplay.id,
+            cwd: "/tmp/test-project",
+            model_provider: "openai",
+          },
+        })
+      );
+    }
+    lines.push(
+      JSON.stringify({
+        timestamp: "2026-07-11T12:00:01.000Z",
+        type: "turn_context",
+        payload: { model: "gpt-5.6-sol" },
+      })
+    );
+    for (let i = 0; i < opts.events.length; i++) {
+      const e = opts.events[i];
+      lines.push(
+        JSON.stringify({
+          timestamp: `2026-07-11T12:00:${String(10 + i).padStart(2, "0")}.000Z`,
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: e.totalIn,
+                cached_input_tokens: e.cached,
+                output_tokens: e.totalOut,
+                reasoning_output_tokens: 0,
+              },
+            },
+          },
+        })
+      );
+    }
+    fs.writeFileSync(filePath, `${lines.join("\n")}\n`);
+    return filePath;
+  }
+
+  it("counts EVERY subagent rollout of a multi-agent fan-out (codex 0.144 regression)", async () => {
+    // The 86M-token-day regression: codex multi-agent v2 spawns parallel
+    // subagent threads, each writing its own rollout with fresh counters and
+    // forked_from_id pointing at the parent. Fork-dedup grouped them with the
+    // parent and kept ONE file, silently dropping the rest of the day. Every
+    // subagent file must parse standalone.
+    writeLinkedSession({
+      name: "parent",
+      id: "parent-id",
+      events: [{ totalIn: 100_000, totalOut: 1_000, cached: 0 }],
+    });
+    for (const [i, tokens] of [200_000, 300_000, 400_000].entries()) {
+      writeLinkedSession({
+        name: `sub${i}`,
+        id: `sub-${i}`,
+        forkedFromId: "parent-id",
+        threadSource: "subagent",
+        parentThreadId: "parent-id",
+        parentMetaReplay: { id: "parent-id" },
+        events: [{ totalIn: tokens, totalOut: 2_000, cached: 0 }],
+      });
+    }
+
+    const records = await new CodexParser().scan(tmpDir);
+    const totalIn = records.reduce((s, r) => s + r.inputTokens, 0);
+    // Parent + all three subagents — nothing dropped.
+    expect(records.length).toBe(4);
+    expect(totalIn).toBe(100_000 + 200_000 + 300_000 + 400_000);
+  });
+
+  it("still dedupes true resume forks (non-subagent) to the largest sibling", async () => {
+    // A real `codex resume` replays ancestor history into a new, LARGER file —
+    // counting both would double-count. thread_source is absent on these, so
+    // they must keep competing in the keep-largest group.
+    writeLinkedSession({
+      name: "orig",
+      id: "orig-id",
+      events: [{ totalIn: 100_000, totalOut: 1_000, cached: 0 }],
+    });
+    writeLinkedSession({
+      name: "resume",
+      id: "resume-id",
+      forkedFromId: "orig-id",
+      events: [
+        // Replays the original's usage, then adds more.
+        { totalIn: 100_000, totalOut: 1_000, cached: 0 },
+        { totalIn: 150_000, totalOut: 2_000, cached: 0 },
+      ],
+    });
+
+    const records = await new CodexParser().scan(tmpDir);
+    const totalIn = records.reduce((s, r) => s + r.inputTokens, 0);
+    // Only the larger resume file counted: 100k + 50k delta.
+    expect(totalIn).toBe(150_000);
+  });
+
+  it("attributes a subagent rollout to its OWN thread despite the parent session_meta replay", async () => {
+    // Subagent rollouts carry the parent's session_meta as their SECOND meta
+    // event. If the parser read that one instead of the first, the subagent
+    // would inherit the parent's session id, collide with the parent's own
+    // (larger) file in the dedup group, and get dropped by keep-largest.
+    // The parent file on disk is what makes that failure observable — a
+    // misread here shows up as 100k instead of 150k.
+    writeLinkedSession({
+      name: "the-parent",
+      id: "shared-parent-id",
+      events: [
+        { totalIn: 60_000, totalOut: 600, cached: 0 },
+        { totalIn: 100_000, totalOut: 1_000, cached: 0 },
+      ],
+    });
+    writeLinkedSession({
+      name: "solo-sub",
+      id: "sub-id",
+      threadSource: "subagent",
+      parentThreadId: "shared-parent-id",
+      parentMetaReplay: { id: "shared-parent-id" },
+      events: [{ totalIn: 50_000, totalOut: 500, cached: 0 }],
+    });
+
+    const records = await new CodexParser().scan(tmpDir);
+    const totalIn = records.reduce((s, r) => s + r.inputTokens, 0);
+    expect(totalIn).toBe(150_000); // parent 100k + subagent 50k, both counted
+  });
+
+  it("a resume that forks FROM a subagent competes within that thread, not the spawner's group", async () => {
+    // resolveRoot must stop at a subagent boundary. A fork edge into a
+    // subagent is a resume OF that subagent thread; climbing through it to
+    // the spawning session's root would let a large resume evict the
+    // spawner's own file from keep-largest.
+    writeLinkedSession({
+      name: "spawner",
+      id: "spawner-id",
+      events: [{ totalIn: 100_000, totalOut: 1_000, cached: 0 }],
+    });
+    writeLinkedSession({
+      name: "sub",
+      id: "sub-id",
+      forkedFromId: "spawner-id",
+      threadSource: "subagent",
+      events: [{ totalIn: 40_000, totalOut: 400, cached: 0 }],
+    });
+    // Unmarked resume of the subagent thread — replays its history and grows
+    // past the spawner's file size.
+    writeLinkedSession({
+      name: "sub-resume",
+      id: "sub-resume-id",
+      forkedFromId: "sub-id",
+      events: [
+        { totalIn: 40_000, totalOut: 400, cached: 0 },
+        { totalIn: 90_000, totalOut: 900, cached: 0 },
+        { totalIn: 140_000, totalOut: 1_400, cached: 0 },
+      ],
+    });
+
+    const records = await new CodexParser().scan(tmpDir);
+    const totalIn = records.reduce((s, r) => s + r.inputTokens, 0);
+    // The spawner's 100k must NEVER vanish because the resume out-sized it in
+    // the wrong group, and the resume (which replays the subagent's 40k) must
+    // dedupe against the subagent within that one thread — not beside it.
+    const spawnerCounted = records.some((r) => r.inputTokens === 100_000);
+    expect(spawnerCounted).toBe(true);
+    expect(totalIn).toBe(100_000 + 140_000); // spawner + the larger of sub/resume
+  });
 });
