@@ -14,6 +14,11 @@ final class TokmeterLoader: ObservableObject {
     @Published var totalTokens: Int = 0
     @Published var todayCost: Double = 0
     @Published var todayTokens: Int = 0
+    /// Today's per-tier split for the hero breakdown line. Zero when the
+    /// daemon response predates the breakdown fields.
+    @Published var todayInputTokens: Int = 0
+    @Published var todayOutputTokens: Int = 0
+    @Published var todayCachedTokens: Int = 0
     @Published var stats: StatsData?
 
     // Phase 2 — details: populated from /api/models, /api/daily, /api/sessions
@@ -270,6 +275,9 @@ final class TokmeterLoader: ObservableObject {
                 if let today = daily.last {
                     self.todayCost = today.cost
                     self.todayTokens = today.totalTokens
+                    self.todayInputTokens = today.inputTokens ?? 0
+                    self.todayOutputTokens = today.outputTokens ?? 0
+                    self.todayCachedTokens = (today.cacheReadTokens ?? 0) + (today.cacheWriteTokens ?? 0)
                 }
                 let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
                 self.allDaily = mapped

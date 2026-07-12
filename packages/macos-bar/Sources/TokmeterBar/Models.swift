@@ -49,6 +49,13 @@ struct DailyData: Codable {
     let date: String
     let totalTokens: Int
     let cost: Double
+    /// Per-tier breakdown from the daemon's daily rows. Optional so older
+    /// cached daemon responses that predate these fields still decode.
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let cacheReadTokens: Int?
+    let cacheWriteTokens: Int?
+    let reasoningTokens: Int?
 }
 
 struct ModelData: Codable {

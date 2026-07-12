@@ -256,6 +256,23 @@ struct WeekSection: View {
                         colors: [c.accent.opacity(0.3), .clear],
                         startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.catmullRom)
+
+                    // Today is the still-accumulating last point — usually a
+                    // flat tail next to full days, so give it a marker + its
+                    // dollar reading or it reads as "no data for today".
+                    if day.date == loader.recentDaily.last?.date {
+                        PointMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(c.warm)
+                        .symbolSize(28)
+                        .annotation(position: .top, spacing: 3) {
+                            Text(Fmt.cost(day.cost))
+                                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                        }
+                    }
                 }
                 .frame(height: 60)
                 .chartYAxis(.hidden)

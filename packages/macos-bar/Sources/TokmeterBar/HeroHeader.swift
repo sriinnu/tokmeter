@@ -47,6 +47,7 @@ struct HeroHeader: View {
         VStack(alignment: .leading, spacing: 0) {
             topRow
             valueRow
+            tokenBreakdownRow
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
@@ -160,6 +161,27 @@ struct HeroHeader: View {
                     .italic()
                     .foregroundColor(foreground.opacity(0.65))
             }
+        }
+    }
+
+    /// Compact per-tier line under the hero cost — "64.5M tok · 787K in ·
+    /// 276K out · 62.4M cached". Hidden while warming or when the daemon
+    /// response predates the breakdown fields (all tiers zero).
+    @ViewBuilder
+    private var tokenBreakdownRow: some View {
+        if !loader.isWarming, loader.todayTokens > 0,
+           loader.todayInputTokens + loader.todayOutputTokens + loader.todayCachedTokens > 0 {
+            Text(
+                "\(Fmt.number(loader.todayTokens)) tok · \(Fmt.number(loader.todayInputTokens)) in"
+                    + " · \(Fmt.number(loader.todayOutputTokens)) out"
+                    + " · \(Fmt.number(loader.todayCachedTokens)) cached"
+            )
+            .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
+            .foregroundColor(foreground.opacity(0.55))
+            .lineLimit(1)
+            .padding(.top, 2)
+            .contentTransition(.numericText())
+            .animation(.default, value: loader.todayTokens)
         }
     }
 
