@@ -261,7 +261,11 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       label: "Today",
       value: today ? formatDashboardCurrency(today.cost) : "$0.00",
       helper: today
-        ? `${formatDashboardNumber(today.totalTokens)} tokens today`
+        ? `${formatDashboardNumber(today.totalTokens)} tokens · ${formatDashboardNumber(
+            today.inputTokens
+          )} in · ${formatDashboardNumber(today.outputTokens)} out · ${formatDashboardNumber(
+            today.cacheReadTokens + today.cacheWriteTokens
+          )} cached`
         : "No activity today yet",
       accent: webTheme.colors.olive,
     },

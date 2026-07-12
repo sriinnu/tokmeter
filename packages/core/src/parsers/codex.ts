@@ -19,6 +19,19 @@
  * sibling per group. This matches the invariant that a "session" represents
  * one logical continuous run of Codex, regardless of how many times it was
  * resumed or branched in the UI.
+ *
+ * ─── Subagent threads are NOT forks ─────────────────────────────────────
+ * Codex 0.144+ (multi-agent v2) spawns parallel subagent threads — each gets
+ * its OWN rollout file whose session_meta carries `thread_source: "subagent"`
+ * and a `forked_from_id`/`parent_thread_id` pointing at the spawning thread.
+ * Unlike a resume, a subagent file is DISJOINT usage: its token_count
+ * counters start fresh at its own initial context (verified on live 0.144.1
+ * data — first totals ~20-35k, not the parent's cumulative millions), and the
+ * parent's own token_count events never include the subagent's tokens.
+ * Grouping them as forks and keeping one sibling silently dropped ~95% of a
+ * heavy multi-agent day (86M tokens on one real day). Subagent files
+ * therefore always parse standalone; only non-subagent files (true resumes,
+ * which DO replay ancestor history) enter the keep-largest dedup.
  */
 
 import { stat } from "node:fs/promises";
@@ -93,8 +106,14 @@ interface CodexEvent {
     // session_meta fields (payload when type is "session_meta")
     id?: string;
     forked_from_id?: string;
+    // Codex 0.144+ multi-agent v2: subagent rollouts mark themselves with
+    // thread_source "subagent" and point at the spawner via parent_thread_id.
+    // `source` widened from string — new codex emits objects like
+    // {"subagent": {"thread_spawn": {...}}} alongside legacy "cli"/"vscode".
+    thread_source?: string;
+    parent_thread_id?: string;
     cwd?: string;
-    source?: string;
+    source?: string | Record<string, unknown>;
     model_provider?: string;
     agent_nickname?: string;
     git?: {
@@ -153,6 +172,13 @@ interface CodexFileMeta {
   file: string;
   sessionId: string;
   forkedFromId: string | null;
+  /**
+   * True when this rollout is a multi-agent subagent thread (codex 0.144+).
+   * Subagent files hold disjoint per-thread usage with fresh counters — they
+   * must NEVER enter fork-sibling dedup, or a parallel fan-out collapses to
+   * one counted file and the rest of the day's usage silently vanishes.
+   */
+  isSubagent: boolean;
   mtimeMs: number;
   /**
    * File size on disk. Used as the tiebreaker for fork-sibling dedup instead
@@ -174,6 +200,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
   const { open } = await import("node:fs/promises");
   let sessionId = "";
   let forkedFromId: string | null = null;
+  let isSubagent = false;
   let mtimeMs = 0;
   let sizeBytes = 0;
   try {
@@ -192,8 +219,16 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
         try {
           const evt = JSON.parse(line) as CodexEvent;
           if (evt.type === "session_meta" && evt.payload) {
-            sessionId = evt.payload.id ?? "";
-            forkedFromId = evt.payload.forked_from_id ?? null;
+            // FIRST session_meta only — subagent rollouts append a replay of
+            // the PARENT's session_meta right after their own, and reading
+            // that one would misattribute the file to the parent thread.
+            const p = evt.payload;
+            sessionId = p.id ?? "";
+            forkedFromId = p.forked_from_id ?? null;
+            isSubagent =
+              p.thread_source === "subagent" ||
+              (typeof p.parent_thread_id === "string" && p.parent_thread_id.length > 0) ||
+              (typeof p.source === "object" && p.source !== null && "subagent" in p.source);
             break;
           }
         } catch {
@@ -211,7 +246,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
     // the file is still parsed standalone (no dedup group, keeps it safe).
     sessionId = file;
   }
-  return { file, sessionId, forkedFromId, mtimeMs, sizeBytes };
+  return { file, sessionId, forkedFromId, isSubagent, mtimeMs, sizeBytes };
 }
 
 /**
@@ -272,6 +307,12 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
     seen.add(current.sessionId);
     const parent = bySessionId.get(current.forkedFromId);
     if (!parent) return current.forkedFromId; // root is upstream-only
+    // Never climb THROUGH a subagent boundary: a fork edge into a subagent
+    // is a resume OF that subagent thread, and it must compete within that
+    // thread's group — climbing on to the spawner's root would let a large
+    // resume evict the spawning session's own file (data loss) while the
+    // subagent file it replays is still kept standalone (double count).
+    if (parent.isSubagent) return parent.sessionId;
     current = parent;
   }
   return current?.sessionId ?? meta.sessionId;
@@ -287,6 +328,10 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
  * across scans rather than swapping winners under the user.
  *
  * Tiebreaker: latest mtime, then path order. Both are deterministic.
+ *
+ * Subagent rollouts (`thread_source: "subagent"`) never join their spawner's
+ * group — each forms its own group keyed by its own session id. See the
+ * header comment: they are parallel disjoint threads, not replays.
  */
 async function dedupForkedFiles(files: string[]): Promise<string[]> {
   const metas = (
@@ -298,7 +343,14 @@ async function dedupForkedFiles(files: string[]): Promise<string[]> {
 
   const winnerByRoot = new Map<string, CodexFileMeta>();
   for (const m of metas) {
-    const root = resolveRoot(m, bySessionId);
+    // Subagent threads (multi-agent v2) are disjoint parallel usage, not
+    // replays — each is its OWN group, keyed by its own session id, so a
+    // fan-out of N siblings yields N winners. Own-id keying (rather than an
+    // unconditional keep) still collapses byte-duplicate copies of the same
+    // subagent file, and lets a resume OF a subagent (a fork edge whose
+    // target is the subagent — resolveRoot stops there) compete keep-largest
+    // within that one thread instead of being double-counted beside it.
+    const root = m.isSubagent ? m.sessionId : resolveRoot(m, bySessionId);
     const existing = winnerByRoot.get(root);
     if (!existing) {
       winnerByRoot.set(root, m);
