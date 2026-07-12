@@ -1333,11 +1333,9 @@ function startHttpApi(): void {
               try {
                 const { execFileSync } = await import("node:child_process");
                 const level = Number(
-                  execFileSync(
-                    "/usr/sbin/sysctl",
-                    ["-n", "kern.memorystatus_vm_pressure_level"],
-                    { timeout: 2000 }
-                  )
+                  execFileSync("/usr/sbin/sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], {
+                    timeout: 2000,
+                  })
                     .toString()
                     .trim()
                 );
