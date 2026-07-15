@@ -65,12 +65,30 @@ enum MenubarColorSource: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Rendering style for the popover's LAST 7 DAYS chart. Mirrors
+/// WeekChartStyle in packages/core/src/config-service.ts — keep raw values
+/// identical.
+enum WeekChartStyle: String, Codable, CaseIterable, Identifiable {
+    case line, bars, area
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .line: return "Line"
+        case .bars: return "Bars"
+        case .area: return "Area"
+        }
+    }
+}
+
 struct HubUserConfig: Codable {
     struct BarConfig: Codable {
         var refreshSeconds: Int
         /// Optional so a config.json written before this field existed still
         /// decodes; nil means the default (context). Use `colorSource` to read.
         var menubarColorSource: MenubarColorSource?
+        /// Optional for the same decode-tolerance reason; nil means line.
+        /// Use `chartStyle` to read.
+        var weekChartStyle: WeekChartStyle?
     }
     struct DaemonConfig: Codable {
         var scanIntervalSeconds: Int
@@ -79,7 +97,12 @@ struct HubUserConfig: Codable {
         /// internal status RPC — real enough to run unsupervised and
         /// indefinitely in the background that it needs an explicit,
         /// durable opt-in (see config-service.ts for the full rationale).
-        var antigravityLivePolling: Bool
+        /// Optional so a config.json written before this field existed still
+        /// strict-decodes (same tolerance as the bar's optional fields);
+        /// nil means off — read through `antigravityPollingEnabled`.
+        var antigravityLivePolling: Bool?
+
+        var antigravityPollingEnabled: Bool { antigravityLivePolling ?? false }
     }
     struct CliConfig: Codable {
         var defaultRange: ConfigDefaultRange
@@ -98,16 +121,21 @@ struct HubUserConfig: Codable {
     /// this yet — edit config.json by hand — but it must still round-trip:
     /// without this field, saving any *other* Hub setting would silently
     /// drop a hand-edited providerPaths entry on the next disk write.
-    var providerPaths: [String: [String]]
+    /// Optional so a config.json from before the field strict-decodes; a
+    /// missing key means "none configured" and encodes back as absent.
+    var providerPaths: [String: [String]]?
     var modifiedBy: ConfigModifiedBy
     var modifiedAt: String
 
     /// Menubar color source with the nil-safe default applied.
     var colorSource: MenubarColorSource { bar.menubarColorSource ?? .context }
 
+    /// 7-day chart style with the nil-safe default applied.
+    var chartStyle: WeekChartStyle { bar.weekChartStyle ?? .line }
+
     static let defaults = HubUserConfig(
         version: 1,
-        bar: .init(refreshSeconds: 30, menubarColorSource: .context),
+        bar: .init(refreshSeconds: 30, menubarColorSource: .context, weekChartStyle: .line),
         daemon: .init(scanIntervalSeconds: 60, antigravityLivePolling: false),
         cli: .init(defaultRange: .all, defaultSort: .cost),
         alerts: .init(dailyCostThreshold: nil),
@@ -175,15 +203,30 @@ final class HubConfigStore: ObservableObject {
             return nil
         }
         // Tolerant decode: a missing field falls back to its default so schema
-        // growth on the CLI side doesn't brick the Swift side.
+        // growth on the CLI side doesn't brick the Swift side. The strict path
+        // MUST clamp too — the optional fields mean legacy files now succeed
+        // here instead of falling through to merge(), and a hand-edited
+        // "refreshSeconds": 0 would otherwise drive a near-continuous refresh
+        // loop (merge() was the only place the [5,3600] clamp lived).
         if let decoded = try? JSONDecoder().decode(HubUserConfig.self, from: data) {
-            return decoded
+            return sanitize(decoded)
         }
         // Partial / old schema — try a lenient Any decode and merge over defaults.
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             return Self.merge(defaults: .defaults, raw: obj)
         }
         return nil
+    }
+
+    /// Range-clamp the numeric knobs, mirroring config-service.ts. Applied to
+    /// every strict decode; merge() applies the same bounds on the lenient path.
+    private static func sanitize(_ cfg: HubUserConfig) -> HubUserConfig {
+        var out = cfg
+        let d = HubUserConfig.defaults
+        out.bar.refreshSeconds = clamp(out.bar.refreshSeconds, min: 5, max: 3600, def: d.bar.refreshSeconds)
+        out.daemon.scanIntervalSeconds = clamp(
+            out.daemon.scanIntervalSeconds, min: 10, max: 3600, def: d.daemon.scanIntervalSeconds)
+        return out
     }
 
     private func saveToDisk(_ cfg: HubUserConfig) {
@@ -223,6 +266,10 @@ final class HubConfigStore: ObservableObject {
             if let cs = bar["menubarColorSource"] as? String,
                let src = MenubarColorSource(rawValue: cs) {
                 out.bar.menubarColorSource = src
+            }
+            if let ws = bar["weekChartStyle"] as? String,
+               let style = WeekChartStyle(rawValue: ws) {
+                out.bar.weekChartStyle = style
             }
         }
         if let daemon = raw["daemon"] as? [String: Any] {

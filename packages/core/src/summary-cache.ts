@@ -20,7 +20,10 @@ export interface LoadedSummaryCache {
   warnings: ScanWarning[];
 }
 
-const SUMMARY_CACHE_VERSION = 2;
+// 3 — model summaries switched from day-level even-split to exact per-project
+//     (provider, model) attribution; cached summaries hold the old phantom
+//     half-token rows and must rebuild.
+const SUMMARY_CACHE_VERSION = 3;
 const SUMMARY_CACHE_DIR_NAME = ".cache/tokmeter";
 const SUMMARY_CACHE_FILE_NAME = "summary-cache.json";
 

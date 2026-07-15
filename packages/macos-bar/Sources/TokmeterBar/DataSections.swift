@@ -46,8 +46,16 @@ struct ModelsSection: View {
                     .foregroundColor(theme.backgroundMode.secondaryTextColor)
             } else {
                 let maxCost = activeModels.first?.cost ?? 1
+                // The same model can appear under two providers (codex +
+                // codex-desktop) — those rows are otherwise byte-identical
+                // (glyph and label derive from the model name), so surface
+                // the provider on exactly the ambiguous ones.
+                let dupNames = Set(
+                    Dictionary(grouping: activeModels, by: \.model)
+                        .filter { $0.value.count > 1 }.keys
+                )
                 ForEach(activeModels) { model in
-                    modelRow(model, maxCost: maxCost)
+                    modelRow(model, maxCost: maxCost, showProvider: dupNames.contains(model.model))
                 }
             }
         }
@@ -86,17 +94,25 @@ struct ModelsSection: View {
         model.cost == 0
     }
 
-    private func modelRow(_ model: ModelUsage, maxCost: Double) -> some View {
+    private func modelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool = false) -> some View {
         let activityOnly = isActivityOnly(model)
         return HStack(spacing: 8) {
             HStack(spacing: 3) {
                 Image(systemName: providerGlyph(for: model.model))
                     .font(.system(size: 10))
                     .foregroundColor(c.accent)
-                Text(Fmt.shortModel(model.model))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.backgroundMode.primaryTextColor)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Fmt.shortModel(model.model))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.backgroundMode.primaryTextColor)
+                        .lineLimit(1)
+                    if showProvider {
+                        Text(model.provider)
+                            .font(.system(size: 8, design: theme.fonts.bodyDesign))
+                            .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                            .lineLimit(1)
+                    }
+                }
             }
             .frame(width: 110, alignment: .leading)
             GeometryReader { geo in
@@ -218,10 +234,13 @@ struct ModelsSection: View {
 
 // MARK: - Week section
 
-/// Last-7-days line chart. Data changes animate with a spring curve so new
-/// values glide into place instead of snapping.
+/// Last-7-days chart. Style (line / bars / area) comes from
+/// `bar.weekChartStyle` in config.json, switchable from the settings popover.
+/// Data changes animate with a spring curve so new values glide into place
+/// instead of snapping.
 struct WeekSection: View {
     @ObservedObject var loader: TokmeterLoader
+    @ObservedObject private var configStore = HubConfigStore.shared
     let theme: AppTheme
 
     /// 0→1 over ~0.9s on first appear. Drives a leading-edge mask so the
@@ -229,6 +248,7 @@ struct WeekSection: View {
     @State private var drawProgress: CGFloat = 0
 
     private var c: ThemeColors { theme.colors }
+    private var style: WeekChartStyle { configStore.config.chartStyle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -238,24 +258,54 @@ struct WeekSection: View {
                 ShimmerBar(width: 340, height: 60, breathToggle: true)
             } else {
                 Chart(loader.recentDaily) { day in
-                    LineMark(
-                        x: .value("Date", String(day.date.suffix(5))),
-                        y: .value("Cost", day.cost)
-                    )
-                    .foregroundStyle(LinearGradient(
-                        colors: [c.accent, c.warm],
-                        startPoint: .leading, endPoint: .trailing))
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    if style == .bars {
+                        BarMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [c.accent, c.accent.opacity(0.45)],
+                            startPoint: .top, endPoint: .bottom))
+                        .cornerRadius(3)
+                    } else if style == .area {
+                        AreaMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [c.accent.opacity(0.55), c.accent.opacity(0.06)],
+                            startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.catmullRom)
 
-                    AreaMark(
-                        x: .value("Date", String(day.date.suffix(5))),
-                        y: .value("Cost", day.cost)
-                    )
-                    .foregroundStyle(LinearGradient(
-                        colors: [c.accent.opacity(0.3), .clear],
-                        startPoint: .top, endPoint: .bottom))
-                    .interpolationMethod(.catmullRom)
+                        LineMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [c.accent, c.warm],
+                            startPoint: .leading, endPoint: .trailing))
+                        .interpolationMethod(.catmullRom)
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    } else {
+                        LineMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [c.accent, c.warm],
+                            startPoint: .leading, endPoint: .trailing))
+                        .interpolationMethod(.catmullRom)
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+                        AreaMark(
+                            x: .value("Date", String(day.date.suffix(5))),
+                            y: .value("Cost", day.cost)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [c.accent.opacity(0.3), .clear],
+                            startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.catmullRom)
+                    }
 
                     // Today is the still-accumulating last point — usually a
                     // flat tail next to full days, so give it a marker + its
@@ -266,7 +316,7 @@ struct WeekSection: View {
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(c.warm)
-                        .symbolSize(28)
+                        .symbolSize(style == .bars ? 0 : 28)
                         .annotation(position: .top, spacing: 3) {
                             Text(Fmt.cost(day.cost))
                                 .font(.system(size: 8, weight: .semibold, design: .rounded))
@@ -295,6 +345,7 @@ struct WeekSection: View {
                     }
                 )
                 .animation(.spring(response: 0.7, dampingFraction: 0.80), value: loader.recentDaily.map(\.cost))
+                .animation(.spring(response: 0.5, dampingFraction: 0.80), value: style)
                 .onAppear {
                     withAnimation(.easeOut(duration: 0.9)) { drawProgress = 1.0 }
                 }

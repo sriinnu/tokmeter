@@ -341,8 +341,14 @@ export function clearRecordCache(): void {
   } catch {}
 }
 
-/** Read only the tail of a file from a byte offset (for append-only parsing). */
-export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: number): Promise<T[]> {
+/** Read only the tail of a file from a byte offset (for append-only parsing).
+ *  A read failure returns [] (fail-soft) — pass `onError` to distinguish that
+ *  from an empty tail when the caller seals history. */
+export async function readJsonlFileFromOffset<T>(
+  path: string,
+  offsetBytes: number,
+  onError?: (error: unknown) => void
+): Promise<T[]> {
   const { open } = await import("node:fs/promises");
   let fd: Awaited<ReturnType<typeof open>> | null = null;
   try {
@@ -379,7 +385,8 @@ export async function readJsonlFileFromOffset<T>(path: string, offsetBytes: numb
       } catch {}
     }
     return results;
-  } catch {
+  } catch (error) {
+    onError?.(error);
     return [];
   } finally {
     // Guarantee the fd is released even if read() threw mid-buffer. Without
@@ -576,8 +583,13 @@ export async function readJsonFile<T>(path: string): Promise<T | null> {
   }
 }
 
-/** Read JSONL file and parse each line. */
-export async function readJsonlFile<T>(path: string): Promise<T[]> {
+/** Read JSONL file and parse each line. Malformed lines are skipped; a read
+ *  failure returns [] (fail-soft) — pass `onError` to distinguish that from a
+ *  genuinely empty file when the caller seals history. */
+export async function readJsonlFile<T>(
+  path: string,
+  onError?: (error: unknown) => void
+): Promise<T[]> {
   try {
     const raw = await readFile(path, "utf-8");
     const lines = raw.split("\n").filter((l: string) => l.trim());
@@ -590,7 +602,8 @@ export async function readJsonlFile<T>(path: string): Promise<T[]> {
       }
     }
     return results;
-  } catch {
+  } catch (error) {
+    onError?.(error);
     return [];
   }
 }

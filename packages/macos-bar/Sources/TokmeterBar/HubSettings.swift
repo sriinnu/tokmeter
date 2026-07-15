@@ -404,7 +404,7 @@ struct HubSettingsPanel: View {
                         + "Antigravity didn't publish for this — an unsupervised, indefinite "
                         + "background job, so it's opt-in only.",
                     isOn: Binding(
-                        get: { store.config.daemon.antigravityLivePolling },
+                        get: { store.config.daemon.antigravityPollingEnabled },
                         set: { v in store.update { $0.daemon.antigravityLivePolling = v } }
                     ),
                     theme: theme

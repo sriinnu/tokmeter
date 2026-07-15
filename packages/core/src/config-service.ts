@@ -40,6 +40,8 @@ export type DefaultRange = "all" | "today" | "week" | "month" | "year";
 export type DefaultSort = "cost" | "tokens" | "activeDays";
 export type MenubarColorSource = "off" | "context" | "block" | "budget";
 const MENUBAR_COLOR_SOURCES: readonly MenubarColorSource[] = ["off", "context", "block", "budget"];
+export type WeekChartStyle = "line" | "bars" | "area";
+const WEEK_CHART_STYLES: readonly WeekChartStyle[] = ["line", "bars", "area"];
 
 export interface UserConfig {
   version: 1;
@@ -55,6 +57,9 @@ export interface UserConfig {
      *   - "off": no coloring.
      */
     menubarColorSource: MenubarColorSource;
+    /** Rendering style for the popover's LAST 7 DAYS chart (Swift mirrors
+     *  this in HubConfigStore.WeekChartStyle — keep raw values identical). */
+    weekChartStyle: WeekChartStyle;
   };
   daemon: {
     /** Advisory: seconds between full rescans inside the daemon. */
@@ -107,7 +112,7 @@ export interface UserConfig {
  */
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
-  bar: { refreshSeconds: 30, menubarColorSource: "context" },
+  bar: { refreshSeconds: 30, menubarColorSource: "context", weekChartStyle: "line" },
   daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
@@ -188,6 +193,9 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
       )
         ? (raw.bar?.menubarColorSource as MenubarColorSource)
         : d.bar.menubarColorSource,
+      weekChartStyle: WEEK_CHART_STYLES.includes(raw.bar?.weekChartStyle as WeekChartStyle)
+        ? (raw.bar?.weekChartStyle as WeekChartStyle)
+        : d.bar.weekChartStyle,
     },
     daemon: {
       scanIntervalSeconds: clampPositiveInt(

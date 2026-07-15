@@ -237,6 +237,14 @@ export interface ScanWarning {
   provider?: ProviderId;
   /** Human-readable warning message. */
   message: string;
+  /**
+   * True for a per-file fail-soft fault (one truncated/unreadable file) as
+   * opposed to a whole-provider crash. The gap fill aborts only on full
+   * crashes — a single permanently-bad file (iCloud-evicted, EACCES) must
+   * not block sealing forever, or the gap grows until the raw JSONL behind
+   * it ages out and those days are lost for every provider.
+   */
+  partial?: boolean;
 }
 
 /** Scan metadata describing the stable-history/live-today composition state. */
@@ -520,6 +528,15 @@ export interface TokmeterConfig {
 export interface ScanFilterOptions {
   /** Skip files whose mtime is strictly before this epoch-ms watermark. */
   modifiedSinceMs?: number;
+  /**
+   * Sink for per-file fail-soft conditions (a mid-stream read fault, a file
+   * that vanished between stat and read). Parsers deliberately return partial
+   * results rather than abort the provider — but a windowed relay rebuild must
+   * KNOW the result is partial, or it overwrites good sealed days with the
+   * truncated one. Callers that seal history should treat any invocation as
+   * "this provider's scan is incomplete".
+   */
+  onWarning?: (message: string) => void;
 }
 
 /** The interface every session parser must implement. */

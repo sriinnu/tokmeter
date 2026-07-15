@@ -4,11 +4,12 @@ import React from "react";
 import Plot from "react-plotly.js";
 import { ContributionHeatmap } from "../../charts/ContributionHeatmap.js";
 import { ProviderPieChart } from "../../charts/ProviderPieChart.js";
+import { TodayHourlyChart } from "../../charts/TodayHourlyChart.js";
 import type { LiveData } from "../../hooks/useLiveData.js";
 import type { TokmeterData } from "../../hooks/useTokmeterData.js";
 import { webTheme, withAlpha } from "../../theme.js";
 import { DashboardPanel } from "./DashboardPanel.js";
-import type { DashboardInsights } from "./buildDashboardInsights.js";
+import type { DashboardInsights, DashboardModelInsight } from "./buildDashboardInsights.js";
 import {
   formatDashboardCostPerMillion,
   formatDashboardCurrency,
@@ -81,6 +82,20 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
         ))}
       </div>
 
+      <DashboardPanel
+        eyebrow="Today"
+        title="Today, hour by hour"
+        description="Live view of the current local day. Hover any hour for its cost, tokens, records, and busiest model."
+        action={
+          <MetricBadge
+            label={insights.today.date}
+            value={formatDashboardCurrency(insights.today.cost)}
+          />
+        }
+      >
+        <TodayPanel insights={insights} />
+      </DashboardPanel>
+
       <div style={dualColumnGridStyle}>
         <DashboardPanel
           eyebrow="Activity window"
@@ -145,6 +160,68 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
     </div>
   );
 });
+
+function TodayPanel({ insights }: { insights: DashboardInsights }) {
+  const today = insights.today;
+  // Rank by cost, but on an all-unpriced day fall back to token volume —
+  // otherwise the sort is a no-op and insertion order crowns an arbitrary
+  // "$0.00 top model".
+  const rankedByCost = insights.todayModels[0] ?? null;
+  const topModel =
+    rankedByCost && rankedByCost.cost > 0
+      ? rankedByCost
+      : (insights.todayModels.reduce<DashboardModelInsight | null>(
+          (best, m) => (!best || m.totalTokens > best.totalTokens ? m : best),
+          null
+        ) ?? null);
+  const hourlyRecords = today.hourly.reduce((sum, h) => sum + h.records, 0);
+
+  if (!today.hasActivity) {
+    return (
+      <EmptyPanelState message="No activity yet today. The chart wakes up with the first tracked request of the day." />
+    );
+  }
+
+  return (
+    <div style={contentStackStyle}>
+      <div style={statsBadgeGridStyle}>
+        <div style={miniStatCardStyle}>
+          <div style={miniStatLabelStyle}>Cost today</div>
+          <div style={miniStatValueStyle}>{formatDashboardCurrency(today.cost)}</div>
+        </div>
+        <div style={miniStatCardStyle}>
+          <div style={miniStatLabelStyle}>Tokens today</div>
+          <div style={miniStatValueStyle}>{formatDashboardNumber(today.totalTokens)}</div>
+        </div>
+        <div style={miniStatCardStyle}>
+          <div style={miniStatLabelStyle}>Records</div>
+          <div style={miniStatValueStyle}>{formatDashboardNumber(today.records)}</div>
+        </div>
+        <div style={miniStatCardStyle}>
+          <div style={miniStatLabelStyle}>Top model</div>
+          <div style={miniStatValueStyle}>{topModel ? topModel.model : "—"}</div>
+          {topModel && (
+            <div style={miniStatHelperStyle}>
+              {topModel.cost > 0
+                ? `${formatDashboardCurrency(topModel.cost)} today`
+                : `${formatDashboardNumber(topModel.totalTokens)} tokens today (unpriced)`}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {hourlyRecords > 0 ? (
+        <TodayHourlyChart hours={today.hourly} />
+      ) : (
+        // Totals can exist without an hourly curve: the raw records window is
+        // what feeds the buckets, and a summary without records (stripped
+        // static export, writer-TZ mismatch) would otherwise render 24 dead
+        // bars under a real headline — reads as broken, not quiet.
+        <EmptyPanelState message="Hourly breakdown unavailable for this summary — totals above are still accurate." />
+      )}
+    </div>
+  );
+}
 
 function ActivityTrendPanel({
   data,

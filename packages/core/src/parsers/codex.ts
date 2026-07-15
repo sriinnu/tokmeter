@@ -449,7 +449,11 @@ function foldCodexEvent(
  * read. Either way the caller gets just this file's records — to fold and drop
  * — so peak memory is bounded to a single file, not the whole corpus.
  */
-export async function parseCodexFile(file: string, sizeBytes: number): Promise<TokenRecord[]> {
+export async function parseCodexFile(
+  file: string,
+  sizeBytes: number,
+  onWarning?: (message: string) => void
+): Promise<TokenRecord[]> {
   const out: TokenRecord[] = [];
   const state = defaultState();
   if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
@@ -469,19 +473,24 @@ export async function parseCodexFile(file: string, sizeBytes: number): Promise<T
         }
         foldCodexEvent(evt, state, file, out);
       }
-    } catch {
+    } catch (error) {
       // FAIL SOFT, per file — mirror readJsonlFile's contract. A mid-stream read
       // error (the file rotated/deleted by an active session between stat() and
       // read, EACCES/EIO, an evicted iCloud file) must NOT propagate: without
-      // this catch it aborts the ENTIRE codex provider, and a windowed rescan
-      // would then overwrite good sealed days with an empty result. Return what
-      // we parsed before the fault instead — one bad file costs only that file.
+      // this catch it aborts the ENTIRE codex provider. Return what we parsed
+      // before the fault instead — one bad file costs only that file. But the
+      // truncation must not be SILENT: a windowed rescan that doesn't know the
+      // result is partial overwrites a good sealed day with the truncated one
+      // (this exact failure shrank sealed history on 2026-07-12).
+      onWarning?.(`truncated read of ${file}: ${error instanceof Error ? error.message : error}`);
     } finally {
       rl.close();
       stream.destroy(); // rl.close() alone doesn't release the underlying fd
     }
   } else {
-    const events = await readJsonlFile<CodexEvent>(file);
+    const events = await readJsonlFile<CodexEvent>(file, (error) => {
+      onWarning?.(`failed read of ${file}: ${error instanceof Error ? error.message : error}`);
+    });
     for (const evt of events) foldCodexEvent(evt, state, file, out);
   }
   return out;
@@ -588,12 +597,12 @@ export class CodexParser implements SessionParser {
 
     // Big ones: strictly one at a time.
     for (const f of large) {
-      await onFile(await parseCodexFile(f.file, f.size));
+      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning));
     }
     // Small ones: a bounded concurrent batch. onFile's fold is synchronous, so
     // interleaved awaits here can't corrupt the caller's accumulators.
     await mapWithConcurrency(small, CODEX_SCAN_CONCURRENCY, async (f) => {
-      await onFile(await parseCodexFile(f.file, f.size));
+      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning));
     });
   }
 }

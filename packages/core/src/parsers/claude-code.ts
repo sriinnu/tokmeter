@@ -116,11 +116,16 @@ export class ClaudeCodeParser implements SessionParser {
       const cwd = decodeClaudeSlugDir(file);
       const isSubagent = file.includes("/subagents/");
 
-      // Append mode: only parse new bytes from where we left off
+      // Append mode: only parse new bytes from where we left off. Read faults
+      // fail soft but surface via onWarning so a rebuild knows it's partial.
+      const readFault = (error: unknown) =>
+        opts?.onWarning?.(
+          `failed read of ${file}: ${error instanceof Error ? error.message : error}`
+        );
       const lines =
         cacheResult.appendOffset > 0
-          ? await readJsonlFileFromOffset<ClaudeMessage>(file, cacheResult.appendOffset)
-          : await readJsonlFile<ClaudeMessage>(file);
+          ? await readJsonlFileFromOffset<ClaudeMessage>(file, cacheResult.appendOffset, readFault)
+          : await readJsonlFile<ClaudeMessage>(file, readFault);
 
       const newRecords: TokenRecord[] = [];
       // Dedup: using both usage values and a stable per-message discriminator so

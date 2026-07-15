@@ -13,6 +13,7 @@ struct SettingsPopover: View {
     /// @AppStorage and therefore every themed view in the tree.
     @Binding var theme: AppTheme
     @ObservedObject var loader: TokmeterLoader
+    @ObservedObject private var configStore = HubConfigStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,6 +21,10 @@ struct SettingsPopover: View {
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
 
             themeGrid
+
+            Divider()
+
+            chartStyleRow
 
             Divider()
 
@@ -52,6 +57,30 @@ struct SettingsPopover: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    // MARK: - 7-day chart style row
+
+    /// Segmented line/bars/area picker for the popover's LAST 7 DAYS chart.
+    /// Writes through HubConfigStore so the choice persists in config.json
+    /// and survives restarts (and cross-machine restores, via modifiedBy).
+    private var chartStyleRow: some View {
+        HStack {
+            Text("7-day chart")
+                .font(.system(size: 11, design: .rounded))
+            Spacer()
+            Picker("7-day chart style", selection: Binding(
+                get: { configStore.config.chartStyle },
+                set: { style in configStore.update { $0.bar.weekChartStyle = style } }
+            )) {
+                ForEach(WeekChartStyle.allCases) { s in
+                    Text(s.label).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 160)
+        }
     }
 
     // MARK: - Pricing refresh row

@@ -88,6 +88,26 @@ export interface DashboardActivityHighlight {
   helper: string;
 }
 
+/** One local-hour bucket of today's activity, derived from the raw records window. */
+export interface DashboardTodayHour {
+  hour: number;
+  cost: number;
+  totalTokens: number;
+  records: number;
+  topModel: string | null;
+}
+
+export interface DashboardTodayInsight {
+  /** Local calendar date this "today" refers to (browser timezone). */
+  date: string;
+  cost: number;
+  totalTokens: number;
+  records: number;
+  hasActivity: boolean;
+  /** Always 24 entries, hour 0–23; empty hours carry zeros. */
+  hourly: DashboardTodayHour[];
+}
+
 export interface DashboardInsights {
   spotlight: DashboardSpotlight;
   heroMetrics: DashboardHeroMetric[];
@@ -97,6 +117,7 @@ export interface DashboardInsights {
   topProjects: DashboardProjectInsight[];
   topModels: DashboardModelInsight[];
   todayModels: DashboardModelInsight[];
+  today: DashboardTodayInsight;
   recentDays: DashboardRecentDayInsight[];
   trendWindow: TokmeterDailyEntry[];
 }
@@ -114,7 +135,13 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
 
   const trendWindow = daily.slice(-TREND_WINDOW_DAYS);
   const recentWindow = trendWindow.length > 0 ? trendWindow : daily;
-  const today = daily[daily.length - 1] ?? null;
+  // "Today" must actually BE today. The last daily entry is just the most
+  // recent active day — on a fresh morning or against a stale summary it's a
+  // previous day, and presenting it as today misreports spend (the
+  // display-vs-ledger scare class). No entry for the local date → no today.
+  const todayKey = rawLocalDateKey(Date.now());
+  const latestDay = daily[daily.length - 1] ?? null;
+  const today = latestDay && latestDay.date === todayKey ? latestDay : null;
   const peakDay = daily.reduce<TokmeterDailyEntry | null>((best, entry) => {
     if (!best || entry.cost > best.cost) {
       return entry;
@@ -144,7 +171,8 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       percentageOfTotal: model.percentageOfTotal,
     }));
 
-  const todayModels = buildTodayModels(records, today?.date ?? null);
+  const todayModels = buildTodayModels(records, todayKey);
+  const todayInsight = buildTodayInsight(records, todayKey, today);
 
   const recentDays = [...daily]
     .slice(-MAX_RECENT_DAYS)
@@ -312,8 +340,86 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
     topProjects,
     topModels,
     todayModels,
+    today: todayInsight,
     recentDays,
     trendWindow,
+  };
+}
+
+/**
+ * Bucket today's raw records into 24 local-hour slots for the hourly chart.
+ * Headline totals prefer the daily entry when one exists for today (it runs
+ * through the accumulator's dedup); the hourly curve itself only exists in the
+ * raw records window.
+ */
+function buildTodayInsight(
+  rawRecords: Array<Record<string, unknown>>,
+  todayKey: string,
+  todayEntry: TokmeterDailyEntry | null
+): DashboardTodayInsight {
+  const hourly: DashboardTodayHour[] = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    cost: 0,
+    totalTokens: 0,
+    records: 0,
+    topModel: null,
+  }));
+  const modelsByHour: Array<Map<string, { cost: number; tokens: number }>> = Array.from(
+    { length: 24 },
+    () => new Map()
+  );
+
+  let cost = 0;
+  let totalTokens = 0;
+  let records = 0;
+  for (const raw of rawRecords) {
+    const r = raw as unknown as RawRecord;
+    if (rawLocalDateKey(r.timestamp) !== todayKey) continue;
+    const hour = new Date(r.timestamp).getHours();
+    const tokens =
+      (r.inputTokens ?? 0) +
+      (r.outputTokens ?? 0) +
+      (r.cacheReadTokens ?? 0) +
+      (r.cacheWriteTokens ?? 0) +
+      (r.reasoningTokens ?? 0);
+    const bucket = hourly[hour];
+    bucket.cost += r.cost ?? 0;
+    bucket.totalTokens += tokens;
+    bucket.records += 1;
+    cost += r.cost ?? 0;
+    totalTokens += tokens;
+    records += 1;
+    const models = modelsByHour[hour];
+    const entry = models.get(r.model) ?? { cost: 0, tokens: 0 };
+    entry.cost += r.cost ?? 0;
+    entry.tokens += tokens;
+    models.set(r.model, entry);
+  }
+
+  // Top model per hour: cost first, token volume strictly as the tie-break.
+  // Never a mixed-unit sum — a cache-heavy unpriced model shouldn't outrank a
+  // model that genuinely cost money that hour.
+  for (const bucket of hourly) {
+    let top: string | null = null;
+    let topCost = 0;
+    let topTokens = 0;
+    for (const [model, m] of modelsByHour[bucket.hour]) {
+      if (m.cost > topCost || (m.cost === topCost && m.tokens > topTokens)) {
+        top = model;
+        topCost = m.cost;
+        topTokens = m.tokens;
+      }
+    }
+    bucket.topModel = top;
+  }
+
+  return {
+    date: todayKey,
+    cost: todayEntry?.cost ?? cost,
+    totalTokens: todayEntry?.totalTokens ?? totalTokens,
+    records: todayEntry?.records ?? records,
+    hasActivity: records > 0 || (todayEntry?.totalTokens ?? 0) > 0,
+    hourly,
   };
 }
 
