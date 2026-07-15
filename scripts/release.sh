@@ -78,7 +78,7 @@ run "bun run lint"
 
 # ── 5. commit + tag (Titan-signed) ───────────────────────────────────────────
 say "5/10 commit + tag (signed)"
-run "git add -A packages/*/package.json packages/macos-bar/bundle.sh CHANGELOG.md"
+run "git add -A packages/*/package.json packages/macos-bar/bundle.sh CHANGELOG.md README.md"
 run "git commit -S -m 'chore(release): ${TAG}'"
 run "git tag -s '${TAG}' -m '${TAG}'"
 

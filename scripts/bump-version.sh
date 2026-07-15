@@ -9,6 +9,7 @@
 # Touches:
 #   - all packages/*/package.json  "version" field
 #   - packages/macos-bar/bundle.sh SHORT_VERSION default (+ bumps BUILD_VERSION)
+#   - README.md                    release badge version
 #   - CHANGELOG.md                 inserts a dated "## [X.Y.Z]" skeleton if absent
 #
 # The macOS bar BUILD_VERSION (CFBundleVersion) is monotonic — every run
@@ -49,7 +50,14 @@ if [[ -f "$BUNDLE" ]]; then
   echo "    bundle.sh  SHORT_VERSION=${VERSION}  BUILD_VERSION ${cur_build} -> ${new_build}"
 fi
 
-# 3. CHANGELOG.md — insert a dated skeleton entry directly above the newest
+# 3. README.md — release badge tracks the tag being cut.
+README="README.md"
+if [[ -f "$README" ]]; then
+  perl -i -pe 's/(badge\/release-v)[0-9.]+(-)/${1}'"$VERSION"'${2}/' "$README"
+  echo "    README.md  release badge -> v${VERSION}"
+fi
+
+# 4. CHANGELOG.md — insert a dated skeleton entry directly above the newest
 #    existing release heading, but only if this version isn't already present.
 CHANGELOG="CHANGELOG.md"
 if [[ -f "$CHANGELOG" ]] && ! grep -q "## \[${VERSION}\]" "$CHANGELOG"; then
