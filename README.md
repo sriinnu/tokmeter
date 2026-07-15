@@ -7,7 +7,7 @@
 <p align="center"><strong>Token Usage Tracker for AI Coding Agents</strong></p>
 
 <p align="center">
-  <a href="https://github.com/sriinnu/tokmeter/releases/latest"><img src="https://img.shields.io/badge/release-v1.9.1-39d353?style=flat-square&logo=github" alt="release" /></a>
+  <a href="https://github.com/sriinnu/tokmeter/releases/latest"><img src="https://img.shields.io/badge/release-v1.9.2-39d353?style=flat-square&logo=github" alt="release" /></a>
   <a href="https://www.npmjs.com/package/@sriinnu/tokmeter"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter-39d353?style=flat-square&logo=npm" alt="npm" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node" />
   <img src="https://img.shields.io/badge/license-AGPL--3.0-26a641?style=flat-square" alt="license" />

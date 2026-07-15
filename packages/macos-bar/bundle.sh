@@ -61,7 +61,7 @@ RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
 SHORT_VERSION="${CFBundleShortVersionString:-1.9.2}"
-BUILD_VERSION="${CFBundleVersion:-43}"
+BUILD_VERSION="${CFBundleVersion:-44}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
