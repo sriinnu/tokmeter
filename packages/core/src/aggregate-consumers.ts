@@ -389,11 +389,31 @@ export function computeModelCostsFromState(
     return modelTotalsToSummaries(totals.values(), grandTotalCost);
   }
 
-  // Unfiltered fast path: day-level model buckets. Multi-provider single-model
-  // days even-split (best we can do at this granularity).
+  // Unfiltered path. Exact (provider, model) pairing lives in the per-project
+  // cross-cut buckets — use them whenever the day carries them. Only
+  // pre-enrichment day files (modelBuckets backfilled empty by
+  // forwardMigrateAggregate) fall back to the day-level even-split
+  // approximation, which fabricates identical half-token rows when one model
+  // ran under two providers in a day (codex + codex-desktop sharing
+  // gpt-5.6-sol showed 190,725,623.5 tokens EACH).
   for (const day of iterateAllDays(aggregates, todayAccumulator)) {
     if (!dayInWindow(day, opts, todayKey)) continue;
     grandTotalCost += day.cost;
+    // The cross-cut must be COMPLETE for the day, not merely present: a
+    // partially corrupt/hand-edited file with one bucket-less project would
+    // otherwise silently drop that project's models from the rows. Every
+    // record folds into exactly one (project, model) bucket, so a complete
+    // cross-cut's record count equals the day's.
+    let bucketRecords = 0;
+    for (const project of Object.values(day.projects)) {
+      for (const mb of Object.values(project.modelBuckets)) bucketRecords += mb.recordCount;
+    }
+    if (bucketRecords >= day.recordCount && day.recordCount > 0) {
+      for (const project of Object.values(day.projects)) {
+        for (const mb of Object.values(project.modelBuckets)) foldCrossCut(totals, mb);
+      }
+      continue;
+    }
     for (const model of Object.values(day.models)) {
       const n = model.providers.length;
       for (const provider of model.providers) {

@@ -276,7 +276,15 @@ export class TokmeterCore {
       ...this.scanMeta,
       todayState: resolveTodayState(this.recentRecords, todayWarnings, false),
       lastScanAt: Date.now(),
-      warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "today"), ...todayWarnings],
+      // Drop the previous tick's today AND provider warnings before merging —
+      // this tick's todayWarnings carries both kinds afresh. Without the
+      // provider filter, a persistently unreadable file added one identical
+      // warning per 12s tick, growing scanMeta.warnings (and every
+      // /api/summary payload) without bound.
+      warnings: [
+        ...this.scanMeta.warnings.filter((w) => w.scope !== "today" && w.scope !== "provider"),
+        ...todayWarnings,
+      ],
     };
 
     // No saveSummaryCache here: that's an offline fallback, not per-tick —
@@ -353,14 +361,23 @@ export class TokmeterCore {
    * can exhaust memory. Older days (which pace never reads) are left as-is.
    * Streaming + windowed, so peak memory stays bounded. Today is untouched.
    */
-  async rebuildRecentDays(windowDays: number, now: number = Date.now()): Promise<void> {
+  async rebuildRecentDays(
+    windowDays: number,
+    now: number = Date.now(),
+    force = false
+  ): Promise<void> {
     const warnings: ScanWarning[] = [];
-    const relay = await rebuildRecentWindow(this.ctx(), now, warnings, windowDays);
+    const relay = await rebuildRecentWindow(this.ctx(), now, warnings, windowDays, force);
     this.aggregates = relay.aggregates;
     this.scanMeta = {
       ...this.scanMeta,
       lastScanAt: Date.now(),
-      warnings: [...this.scanMeta.warnings.filter((w) => w.scope !== "history"), ...warnings],
+      // The rebuild emits history AND provider warnings — replace both kinds
+      // rather than stacking a fresh copy per rescan.
+      warnings: [
+        ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
+        ...warnings,
+      ],
     };
   }
 

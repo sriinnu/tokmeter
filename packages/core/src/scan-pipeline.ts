@@ -59,11 +59,23 @@ export async function scanRawRecords(
   }
 
   const parsers = getParsers(providers);
-  const scanOpts = modifiedSinceMs !== undefined ? { modifiedSinceMs } : undefined;
   const results = await Promise.all(
     parsers.map(async (parser) => {
       try {
-        return await parser.scan(ctx.homeDir, scanOpts);
+        return await parser.scan(ctx.homeDir, {
+          ...(modifiedSinceMs !== undefined ? { modifiedSinceMs } : {}),
+          // Per-file fail-soft truncations surface as provider warnings so
+          // consumers can see the scan was partial. `partial: true` keeps the
+          // gap fill's abort reserved for whole-provider crashes — one
+          // persistently bad file must not block gap sealing forever.
+          onWarning: (message) =>
+            warnings.push({
+              scope: "provider",
+              provider: parser.providerId,
+              message: `${parser.providerId} partial scan: ${message}`,
+              partial: true,
+            }),
+        });
       } catch (error) {
         warnings.push({
           scope: "provider",

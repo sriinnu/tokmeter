@@ -129,3 +129,170 @@ describe("refreshFromRelay — bounded trailing-gap fill (no full rescan on a no
     expect(state.aggregates.has(yKey)).toBe(true);
   });
 });
+
+// ─── Deep Rescan sealed-day guard (the 2026-07-12 history-shrink regression) ──
+//
+// rebuildRecentWindow re-derives the window from raw and used to overwrite
+// sealed days unconditionally — a partial raw corpus (cleaned-up JSONL, a
+// truncated read) permanently shrank sealed history. The guard: a sealed day
+// is only replaced when the rebuild carries at least as much data, per
+// provider. These tests drive the REAL codex parser against a fixture corpus
+// in a temp home (codex keeps no record cache, so nothing leaks outside it).
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { type DailyAggregate, shouldKeepSealedDay } from "./aggregates.js";
+import { rebuildRecentWindow } from "./relay-loader.js";
+import type { ScanWarning } from "./types.js";
+
+// Local-time ISO (no Z) so day keys are TZ-stable under both bun and vitest.
+const codexEvents = (day: string, tokens: number[]): string =>
+  [
+    JSON.stringify({
+      timestamp: `${day}T12:00:00`,
+      type: "session_meta",
+      payload: { cwd: "/tmp/demo" },
+    }),
+    JSON.stringify({
+      timestamp: `${day}T12:00:01`,
+      type: "turn_context",
+      payload: { model: "gpt-5" },
+    }),
+    ...tokens.map((n, i) =>
+      JSON.stringify({
+        timestamp: `${day}T12:00:0${2 + i}`,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: n, output_tokens: 0 } },
+        },
+      })
+    ),
+  ].join("\n");
+
+function writeCodexFixture(homeDir: string, day: string, tokens: number[]): void {
+  const [y, m, d] = day.split("-");
+  const dir = join(homeDir, ".codex/sessions", y, m, d);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `rollout-${day}-fixture.jsonl`), codexEvents(day, tokens));
+}
+
+const codexRecord = (ts: number, inputTokens: number): TokenRecord =>
+  ({
+    timestamp: ts,
+    provider: "codex",
+    model: "gpt-5",
+    project: "demo",
+    inputTokens,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    cost: 0,
+  }) as TokenRecord;
+
+describe("rebuildRecentWindow — sealed days never shrink without force", () => {
+  let home: string;
+  const DAY_KEY = "2026-06-13";
+  const dayTs = Date.parse(`${DAY_KEY}T12:00:00`); // local noon
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-rescan-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function sealDay(tokenCounts: number[]): void {
+    const [day] = aggregateRecordsByDay(tokenCounts.map((n, i) => codexRecord(dayTs + i, n)));
+    writeDayFile(home, day);
+  }
+
+  test("partial raw (fewer tokens than sealed) → sealed day kept, warning pushed", async () => {
+    sealDay([100, 200]); // sealed: 300 tokens
+    writeCodexFixture(home, DAY_KEY, [100]); // raw now holds only 100
+    const warnings: ScanWarning[] = [];
+    const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+    expect(warnings.some((w) => w.scope === "history" && w.message.includes(DAY_KEY))).toBe(true);
+  });
+
+  test("force=true replaces the sealed day even when the rebuild is smaller", async () => {
+    sealDay([100, 200]);
+    writeCodexFixture(home, DAY_KEY, [100]);
+    const warnings: ScanWarning[] = [];
+    const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7, true);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(100);
+  });
+
+  test("richer raw (more tokens than sealed) → replaced without force", async () => {
+    sealDay([100]); // sealed: 100 tokens
+    writeCodexFixture(home, DAY_KEY, [100, 200]); // raw grew (e.g. parser fix found more)
+    const warnings: ScanWarning[] = [];
+    const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+  });
+
+  test("raw fully deleted → sealed day untouched (relay's core promise)", async () => {
+    sealDay([100, 200]);
+    const warnings: ScanWarning[] = [];
+    const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+  });
+});
+
+describe("shouldKeepSealedDay — per-provider no-shrink contract", () => {
+  const dayFrom = (records: TokenRecord[]): DailyAggregate => aggregateRecordsByDay(records)[0];
+  const ts = Date.parse("2026-06-13T12:00:00");
+
+  test("day grows overall but one provider bucket shrinks → keep sealed", () => {
+    const sealed = dayFrom([codexRecord(ts, 100), r(ts + 1, 0)]); // codex 100 + claude 120
+    const rebuilt = dayFrom([codexRecord(ts, 50), r(ts + 1, 0), r(ts + 2, 0)]); // codex 50, claude 240
+    expect(rebuilt.totalTokens).toBeGreaterThan(sealed.totalTokens);
+    expect(shouldKeepSealedDay(sealed, rebuilt, { force: false })).toBe(true);
+  });
+
+  test("identical rebuild → replace (costByHour backfill must work)", () => {
+    const sealed = dayFrom([codexRecord(ts, 100)]);
+    const rebuilt = dayFrom([codexRecord(ts, 100)]);
+    expect(shouldKeepSealedDay(sealed, rebuilt, { force: false })).toBe(false);
+  });
+
+  test("same tokens but lower cost (kosha offline during rescan) → keep sealed", () => {
+    const sealed = dayFrom([{ ...codexRecord(ts, 100), cost: 2.5 } as TokenRecord]);
+    const rebuilt = dayFrom([codexRecord(ts, 100)]); // cost 0 — pricing unavailable
+    expect(rebuilt.totalTokens).toBe(sealed.totalTokens);
+    expect(shouldKeepSealedDay(sealed, rebuilt, { force: false })).toBe(true);
+    expect(shouldKeepSealedDay(sealed, rebuilt, { force: true })).toBe(false);
+  });
+
+  test("provider missing entirely from rebuild → keep sealed", () => {
+    const sealed = dayFrom([codexRecord(ts, 100), r(ts + 1, 0)]);
+    const rebuilt = dayFrom([r(ts + 1, 0)]); // codex vanished
+    expect(shouldKeepSealedDay(sealed, rebuilt, { force: false })).toBe(true);
+  });
+});
+
+describe("refreshFromRelay — gap fill never seals days before the gap", () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-gapfix-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("pre-gap records admitted by the mtime watermark are not sealed as partial days", async () => {
+    // Relay is current through 2026-06-10; the gap starts 06-11. A fresh-mtime
+    // multi-day file also carries 06-09 records (a still-active old session).
+    // 06-09 is an interior hole — sealing it from this one file's slice would
+    // freeze a partial day forever.
+    const seeded = seedDay(home, Date.parse("2026-06-10T12:00:00"), 1.0);
+    expect(seeded).toBe("2026-06-10");
+    writeCodexFixture(home, "2026-06-09", [500]);
+    writeCodexFixture(home, "2026-06-14", [700]);
+    const warnings: ScanWarning[] = [];
+    const state = await refreshFromRelay(ctxFor(home), REF, warnings, false);
+    expect(state.aggregates.has("2026-06-09")).toBe(false); // interior hole stays open
+    expect(state.aggregates.get("2026-06-14")?.totalTokens).toBe(700); // gap day sealed
+    expect(state.aggregates.get("2026-06-10")?.cost).toBeCloseTo(1.0, 10); // untouched
+  });
+});

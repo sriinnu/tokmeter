@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.2] - 2026-07-15
+
+### Fixed
+
+- **Deep Rescan can no longer shrink sealed history.** The windowed rebuild
+  used to overwrite sealed relay days unconditionally; when the raw JSONL
+  behind a day had aged out (or a file read truncated mid-stream), the rebuilt
+  day was smaller and the loss was permanent — this shrank a sealed
+  2026-06-12 on 2026-07-12, and by 2026-07-15 four more days (2.4B tokens)
+  would have gone the same way. Sealed days are now only replaced when the
+  rebuild carries at least as much data, per provider (`shouldKeepSealedDay`);
+  `/api/rescan?force=true` remains the explicit override for parser-fix
+  rescans where shrinking is the point.
+- Per-file fail-soft read errors in the codex and claude-code parsers (and
+  the shared `readJsonlFile`/`readJsonlFileFromOffset` helpers) now surface
+  as provider warnings tagged `partial` instead of silently truncating a
+  scan. Partial faults deliberately do NOT abort the trailing gap-fill (one
+  permanently unreadable file must not block sealing forever); a forced deep
+  rescan refuses to shrink a sealed day for a provider that hit a truncated
+  read during that rebuild.
+- The sealed-day guard also protects frozen cost: a rebuild that re-derives
+  identical tokens but lower cost (kosha unreadable/offline during the
+  rescan, a model since pruned from the registry) keeps the sealed day.
+- Provider warnings no longer accumulate without bound in the warm daemon:
+  each refresh tick and each deep rescan replaces the previous cycle's
+  provider warnings instead of appending duplicates forever.
+- Summary cache schema bumped to 3 so cached summaries holding the old
+  even-split model rows rebuild instead of being served post-upgrade.
+- The trailing gap-fill no longer seals days BEFORE the gap from the partial
+  slice a fresh-mtime multi-day file happens to carry — interior holes stay
+  open for an explicit rescan instead of freezing a partial day forever.
+- Model summaries now use the exact per-project (provider, model) cross-cut
+  instead of even-splitting a day-level bucket across providers — one model
+  used by codex and codex-desktop in the same day no longer shows two
+  identical phantom rows with fractional half-tokens.
+- The web dashboard's "Today" is now actually today: the last daily entry is
+  only presented as today when its date matches the local calendar date,
+  instead of relabeling the most recent active day.
+- `ensure-summary` no longer bakes an arbitrarily stale cached summary into
+  the static web build: it prefers the live daemon, accepts the cache only if
+  it was scanned today, and rescans otherwise.
+
+### Added
+
+- **Today, hour by hour** panel on the web dashboard: today's cost per local
+  hour as a 24-bar chart with a custom hover tooltip (cost, tokens, records,
+  busiest model per hour), current-hour marker, and an honest whole-series
+  switch to token bars when the day has no priced usage.
+
 ## [1.9.1] - 2026-07-10
 
 ### Added

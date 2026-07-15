@@ -18,9 +18,11 @@ struct DailyUsage: Identifiable, Equatable {
 }
 
 struct ModelUsage: Identifiable, Equatable {
-    // Model name is the natural stable ID — SwiftUI diffs rows when models
-    // are added/removed or reorder, rather than rebuilding them all.
-    var id: String { model }
+    // Provider-qualified ID: the same model can legitimately appear under two
+    // providers in one day (codex + codex-desktop both running gpt-5.6-*).
+    // Keying by model name alone collided those rows, so SwiftUI rendered the
+    // first provider's cost twice.
+    var id: String { "\(provider)::\(model)" }
     let model: String
     let provider: String
     let cost: Double

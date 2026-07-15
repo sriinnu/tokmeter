@@ -16,7 +16,7 @@ import {
   migrateMonolithSnapshotIfNeeded,
   writeDayFile,
 } from "./aggregates-store.js";
-import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
+import { type DailyAggregate, aggregateRecordsByDay, shouldKeepSealedDay } from "./aggregates.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { getParsers } from "./parsers/index.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
@@ -73,15 +73,24 @@ export async function refreshFromRelay(
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
 
-  // A partial gap scan (provider crash mid-fill) writes nothing — a healthy
-  // re-run will fill it correctly. Better to retry than freeze a degraded day.
-  const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
+  // A crashed provider mid-fill writes nothing — a healthy re-run will fill
+  // it correctly. Better to retry than freeze a degraded day. Per-file
+  // `partial` faults deliberately do NOT abort: a permanently unreadable file
+  // would otherwise block the gap fill on every cold start until the raw
+  // JSONL behind the gap ages out — losing whole days to protect one file's
+  // tail.
+  const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider" && !w.partial);
   if (gapDegraded) return { aggregates, historySource: "extended" };
 
   const onDiskSet = new Set(onDisk);
   for (const day of aggregateRecordsByDay(raw)) {
     // Never seal today; never overwrite an already-sealed (immutable) day.
-    if (day.date >= todayKey || onDiskSet.has(day.date)) continue;
+    // Never seal a day BEFORE the gap either: the mtime watermark admits
+    // multi-day session files whose early records predate gapStart, but those
+    // records are only the slice living in still-fresh files — sealing an
+    // interior-hole day from them freezes a partial day permanently. Interior
+    // holes are recovered by an explicit rescan, not the gap fill.
+    if (day.date >= todayKey || day.date < gapStart || onDiskSet.has(day.date)) continue;
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(day.date, day);
@@ -121,7 +130,6 @@ async function foldRawIntoDays(
   floorMs?: number
 ): Promise<Map<string, DailyAggregate>> {
   const todayKey = localDateKey(referenceTimestamp);
-  const scanOpts = floorMs !== undefined ? { modifiedSinceMs: floorMs } : undefined;
   const dayAccs = new Map<string, DailyAccumulator>();
 
   const foldFile = async (records: TokenRecord[]): Promise<void> => {
@@ -147,6 +155,21 @@ async function foldRawIntoDays(
   };
 
   for (const parser of getParsers(undefined)) {
+    // Per-file fail-soft truncations surface here for visibility. They don't
+    // gate the rebuild — rebuildRecentWindow's overwrite-vs-keep decision is
+    // shouldKeepSealedDay's size/cost comparison, which catches the truncated
+    // result by its own shrinkage. `partial: true` keeps the gap fill's
+    // whole-provider abort from firing on a single bad file.
+    const scanOpts = {
+      ...(floorMs !== undefined ? { modifiedSinceMs: floorMs } : {}),
+      onWarning: (message: string) =>
+        warnings.push({
+          scope: "provider",
+          provider: parser.providerId,
+          message: `${parser.providerId} partial scan: ${message}`,
+          partial: true,
+        }),
+    };
     try {
       if (parser.scanStreaming) {
         await parser.scanStreaming(ctx.homeDir, scanOpts, foldFile);
@@ -204,19 +227,55 @@ async function rebuildHistoricalFromScratch(
  * day sealed by buggy code, WITHOUT the multi-GB full-history parse that OOM'd
  * the box. Older days' curves are never read by pace, so re-deriving them is
  * pure waste — we skip it.
+ *
+ * Sealed days are only REPLACED when the rebuild carries at least as much
+ * data — day total and every provider bucket (see shouldKeepSealedDay). A
+ * shrunken rebuild means missing data: raw JSONL cleaned up, a truncated
+ * per-file read (now surfaced via onWarning), or a provider crash. This is
+ * the guard whose absence let the 2026-07-12 deep rescan shrink a sealed
+ * 2026-06-12. `force` overrides for an explicit "replace it anyway" rescan.
  */
 export async function rebuildRecentWindow(
   ctx: ScanContext,
   referenceTimestamp: number,
   warnings: ScanWarning[],
-  windowDays: number
+  windowDays: number,
+  force = false
 ): Promise<RelayState> {
   migrateV2IfNeeded(ctx.homeDir);
   const floorMs = startOfLocalDay(referenceTimestamp - windowDays * 86_400_000);
+  const warnBefore = warnings.length;
   const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs);
+  // Providers whose scan soft-failed on a file during THIS fold. `force`
+  // consents to an intentional shrink (a parser fix), not to a broken read —
+  // a day that shrank for a partial-scan provider is kept even when forced,
+  // so a transient read fault during a forced rescan can't reproduce the
+  // 2026-07-12 loss with the user's own consent as the murder weapon.
+  const partialProviders = new Set(
+    warnings
+      .slice(warnBefore)
+      .filter((w) => w.scope === "provider" && w.partial && w.provider)
+      .map((w) => w.provider)
+  );
   // Start from what's already sealed, overwrite ONLY the window's days.
   const aggregates = loadAggregates(ctx.homeDir);
   for (const [date, day] of rebuilt) {
+    const existing = aggregates.get(date);
+    const forcedButTruncated =
+      force &&
+      existing &&
+      [...partialProviders].some(
+        (p) =>
+          p !== undefined &&
+          (day.providers[p]?.totalTokens ?? 0) < (existing.providers[p]?.totalTokens ?? 0)
+      );
+    if (existing && (forcedButTruncated || shouldKeepSealedDay(existing, day, { force }))) {
+      warnings.push({
+        scope: "history",
+        message: `Kept sealed day ${date} — rebuild carried less data (rebuilt ${day.totalTokens} vs sealed ${existing.totalTokens} tokens${forcedButTruncated ? "; a truncated file read made the forced rebuild untrustworthy for it — retry" : ""}).`,
+      });
+      continue;
+    }
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(date, day);

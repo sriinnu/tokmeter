@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-cli",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "private": true,
   "description": "Token usage tracking CLI and automation helpers",
   "type": "module",

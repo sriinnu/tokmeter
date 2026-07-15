@@ -1363,9 +1363,15 @@ function startHttpApi(): void {
             if (_rescanInFlight) {
               json(res, { ok: true, started: false, alreadyRunning: true });
             } else {
+              // `?force=true` bypasses the sealed-day shrink guard — an explicit
+              // "replace even if the rebuild carries less data" rescan. The
+              // default deep rescan can only grow or match sealed days.
+              const qi = url.indexOf("?");
+              const force =
+                qi >= 0 && new URLSearchParams(url.slice(qi + 1)).get("force") === "true";
               _rescanInFlight = true;
               void core
-                .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS)
+                .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS, Date.now(), force)
                 .then(() => {
                   _httpCore = { core, ts: Date.now() };
                 })

@@ -492,3 +492,44 @@ describe("Phase 3 parity — provider filter on aggregate getters", () => {
     expect(fresh).toEqual(legacy);
   });
 });
+
+describe("getModelCosts — one model under two providers stays exactly attributed", () => {
+  // codex + codex-desktop both ran gpt-5.6-sol on the same day with very
+  // different volumes. The old day-level even-split fabricated two identical
+  // half-token rows (…623.5 each); the per-project cross-cut is exact.
+  const now = Date.now();
+  const records = [
+    r({
+      timestamp: now,
+      provider: "codex" as TokenRecord["provider"],
+      model: "gpt-5.6-sol",
+      project: "alpha",
+      inputTokens: 1000,
+      outputTokens: 500,
+      cost: 2,
+    }),
+    r({
+      timestamp: now + 1,
+      provider: "codex-desktop" as TokenRecord["provider"],
+      model: "gpt-5.6-sol",
+      project: "alpha",
+      inputTokens: 9000,
+      outputTokens: 100,
+      cost: 0,
+    }),
+  ];
+  const { aggregates, todayAcc } = projectToState(records, now);
+
+  test("matches legacy exact pairing — no even-split, no fractional tokens", () => {
+    const legacy = aggregateByModel(records);
+    const fresh = computeModelCostsFromState(aggregates, todayAcc);
+    expect(fresh).toEqual(legacy);
+    const codexRow = fresh.find((m) => m.provider === "codex");
+    const desktopRow = fresh.find((m) => m.provider === "codex-desktop");
+    expect(codexRow?.inputTokens).toBe(1000);
+    expect(desktopRow?.inputTokens).toBe(9000);
+    for (const row of fresh) {
+      expect(Number.isInteger(row.totalTokens)).toBe(true);
+    }
+  });
+});
