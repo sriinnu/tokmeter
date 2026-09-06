@@ -1,0 +1,53 @@
+{
+  "description": "Synthetic numeric fixture shaped from Codex CLI/Desktop receipts observed 2026-09-06. No conversation content or real identifiers.",
+  "expected": {
+    "model": "gpt-6-astra",
+    "inputTokens": 200,
+    "cacheReadTokens": 800,
+    "outputTokens": 60,
+    "reasoningTokens": 40
+  },
+  "events": [
+    { "type": "session_meta", "payload": { "id": "fixture-thread", "cwd": "/demo/project" } },
+    { "type": "turn_context", "payload": { "turn_id": "fixture-turn", "model": "gpt-6-astra" } },
+    {
+      "timestamp": "2026-09-06T10:00:00Z",
+      "type": "token_usage_record",
+      "payload": {
+        "thread_id": "fixture-thread",
+        "turn_id": "fixture-turn",
+        "response_id": "fixture-response",
+        "usage": {
+          "input_tokens": 1000,
+          "cached_input_tokens": 800,
+          "output_tokens": 100,
+          "reasoning_output_tokens": 40,
+          "total_tokens": 1100
+        },
+        "thread_token_usage": {
+          "input_tokens": 1000,
+          "cached_input_tokens": 800,
+          "output_tokens": 100,
+          "reasoning_output_tokens": 40,
+          "total_tokens": 1100
+        }
+      }
+    },
+    {
+      "timestamp": "2026-09-06T10:00:01Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "token_count",
+        "info": {
+          "total_token_usage": {
+            "input_tokens": 1000,
+            "cached_input_tokens": 800,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 40,
+            "total_tokens": 1100
+          }
+        }
+      }
+    }
+  ]
+}

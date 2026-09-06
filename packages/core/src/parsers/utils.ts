@@ -115,7 +115,9 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  *      output bucket to visible output so aggregate totals and pricing do not
  *      count the same generated tokens twice.
  */
-const CACHE_VERSION = 10;
+// 11 — Codex per-response token_usage_record support and unknown model fallback.
+// 12 — Preserve explicit tool-reported zero cost instead of repricing it.
+const CACHE_VERSION = 12;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

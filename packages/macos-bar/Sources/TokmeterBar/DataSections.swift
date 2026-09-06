@@ -19,17 +19,26 @@ struct ModelsSection: View {
     @ObservedObject var loader: TokmeterLoader
     let theme: AppTheme
 
-    @State private var showToday: Bool = false
+    @State private var showToday: Bool = true
+    @State private var showAllModels: Bool = false
 
     private var c: ThemeColors { theme.colors }
-    private var activeModels: [ModelUsage] { showToday ? loader.todayModels : loader.topModels }
+    private var availableModels: [ModelUsage] { showToday ? loader.todayModels : loader.topModels }
+    private var activeModels: [ModelUsage] {
+        if showAllModels { return availableModels }
+        let ranked = Array(availableModels.prefix(5))
+        guard showToday else { return ranked }
+        // Preserve visibility for activity whose cost isn't exposed.
+        let rankedIDs = Set(ranked.map(\.id))
+        return ranked + availableModels.filter { $0.cost == 0 && !rankedIDs.contains($0.id) }.prefix(3)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 SectionHeader(
                     label: showToday ? "TODAY'S MODELS" : "TOP MODELS",
-                    count: activeModels.count,
+                    count: availableModels.count,
                     theme: theme
                 )
                 Spacer()
@@ -57,6 +66,14 @@ struct ModelsSection: View {
                 ForEach(activeModels) { model in
                     modelRow(model, maxCost: maxCost, showProvider: dupNames.contains(model.model))
                 }
+                if showAllModels || availableModels.count > activeModels.count {
+                    Button(showAllModels ? "Show fewer" : "Show all \(availableModels.count) models") {
+                        showAllModels.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                }
             }
         }
     }
@@ -80,7 +97,7 @@ struct ModelsSection: View {
                 .padding(.vertical, 3)
                 .background(active ? Capsule().fill(c.accent.opacity(0.18)) : nil)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
     }
 
     /// True whenever cost is honestly $0 rather than guessed — covers both
@@ -91,7 +108,11 @@ struct ModelsSection: View {
     /// guessing an input/output split to price it from). Drawn distinctly so
     /// neither case reads as "$0.00 = confirmed free."
     private func isActivityOnly(_ model: ModelUsage) -> Bool {
-        model.cost == 0
+        guard model.cost == 0 else { return false }
+        if showToday, let basis = loader.statbarSignals?.modelCostBasisToday?[model.id] {
+            return basis.unavailableRecords > 0 || basis.estimatedRecords + basis.reportedRecords == 0
+        }
+        return true
     }
 
     private func modelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool = false) -> some View {
@@ -149,7 +170,7 @@ struct ModelsSection: View {
             .help(
                 activityOnly
                     ? (model.tokens > 0
-                        ? "Real token count from this provider's local state — cost isn't shown because there's no reliable input/output split to price it from."
+                        ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
                         : "This provider doesn't expose token counts or cost locally — only that you used it.")
                     : compositionTooltip(
                         output: model.outputTokens,
@@ -164,7 +185,7 @@ struct ModelsSection: View {
                 // count (e.g. Codex Desktop's SQLite-sourced total) — show
                 // that number rather than an unhelpful "no cost data" when we
                 // actually have real data, just not a priceable one.
-                Text(model.tokens > 0 ? "\(Fmt.number(model.tokens)) tok" : "no cost data")
+                Text("Unavailable")
                     .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
                     .foregroundColor(theme.backgroundMode.secondaryTextColor)
                     .frame(width: 56, alignment: .trailing)
@@ -366,23 +387,23 @@ struct SessionsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(label: "SESSIONS", count: loader.sessions.count, theme: theme)
+            SectionHeader(label: "TODAY’S PROJECTS", count: loader.todayProjects.count, theme: theme)
 
             if loader.isWarming {
                 ForEach(0..<5, id: \.self) { _ in
                     ShimmerBar(width: 340, height: 28, breathToggle: true)
                 }
             } else {
-                let visible = showAll ? loader.sessions : Array(loader.sessions.prefix(8))
+                let visible = showAll ? loader.todayProjects : Array(loader.todayProjects.prefix(8))
                 ForEach(visible) { session in
                     row(session)
                 }
-                if loader.sessions.count > 8 && !showAll {
+                if loader.todayProjects.count > 8 && !showAll {
                     Button {
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { showAll = true }
                     } label: {
                         HStack(spacing: 4) {
-                            Text("Show all \(loader.sessions.count)")
+                            Text("Show all \(loader.todayProjects.count)")
                                 .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
                             Image(systemName: "chevron.down").font(.system(size: 9))
                         }
@@ -419,7 +440,7 @@ struct SessionsSection: View {
                         .foregroundColor(theme.backgroundMode.primaryTextColor)
                         .lineLimit(1)
                         .help(session.project)
-                    Text("\(session.activeDays)d  ·  \(Fmt.number(session.totalTokens)) tokens")
+                    Text("\(Fmt.number(session.totalTokens)) tokens today")
                         .font(.system(size: 10, design: theme.fonts.bodyDesign))
                         .foregroundColor(theme.backgroundMode.secondaryTextColor)
                 }

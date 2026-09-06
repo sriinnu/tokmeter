@@ -29,6 +29,7 @@ final class TokmeterLoader: ObservableObject {
     @Published var recentDaily: [DailyUsage] = []
     @Published var allDaily: [DailyUsage] = []
     @Published var sessions: [ProjectData] = []
+    @Published var todayProjects: [ProjectData] = []
     /// Live "right now" signals — burn rate, cache hit, pace vs typical,
     /// compaction tax, live session. nil until the first phase-2 fetch.
     @Published var statbarSignals: StatbarSignals?
@@ -112,7 +113,8 @@ final class TokmeterLoader: ObservableObject {
     /// a PID singleton on disk; this just stops the bar from spamming spawns.
     var isStartingDaemon: Bool = false
 
-    init() {
+    init(startPolling: Bool = true) {
+        guard startPolling else { return }
         Task { await loadData() }
         let initial = HubConfigStore.shared.config.bar.refreshSeconds
         restartTimer(interval: TimeInterval(initial))
@@ -124,6 +126,19 @@ final class TokmeterLoader: ObservableObject {
             }
             .store(in: &cancellables)
         startColorTimer()
+    }
+
+    func applyToday(from daily: [DailyData], now: Date = Date()) {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = daily.first { $0.date == formatter.string(from: now) }
+        todayCost = today?.cost ?? 0
+        todayTokens = today?.totalTokens ?? 0
+        todayInputTokens = today?.inputTokens ?? 0
+        todayOutputTokens = today?.outputTokens ?? 0
+        todayCachedTokens = (today?.cacheReadTokens ?? 0) + (today?.cacheWriteTokens ?? 0)
     }
 
     private func startColorTimer() {
@@ -242,6 +257,7 @@ final class TokmeterLoader: ObservableObject {
         async let modelsTask = fetchModelsSafe()
         async let todayModelsTask = fetchTodayModelsSafe()
         async let sessionsTask = fetchSessionsSafe()
+        async let todayProjectsTask = try? client.fetchSessions(today: true)
         async let pricingStatusTask = fetchPricingStatusSafe()
         async let cronStatusTask = fetchCronStatusSafe()
         async let healthTask = fetchHealthSafe()
@@ -257,6 +273,7 @@ final class TokmeterLoader: ObservableObject {
             modelsResult,
             todayModelsResult,
             sessionsResult,
+            todayProjectsResult,
             pricingStatusResult,
             cronStatusResult,
             healthResult,
@@ -265,45 +282,26 @@ final class TokmeterLoader: ObservableObject {
             crossToolResult,
             antigravityLiveResult
         ) = await (
-            dailyTask, modelsTask, todayModelsTask, sessionsTask, pricingStatusTask,
+            dailyTask, modelsTask, todayModelsTask, sessionsTask, todayProjectsTask, pricingStatusTask,
             cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask,
             antigravityLiveTask
         )
 
         withTransaction(noAnim) {
             if let daily = dailyResult {
-                if let today = daily.last {
-                    self.todayCost = today.cost
-                    self.todayTokens = today.totalTokens
-                    self.todayInputTokens = today.inputTokens ?? 0
-                    self.todayOutputTokens = today.outputTokens ?? 0
-                    self.todayCachedTokens = (today.cacheReadTokens ?? 0) + (today.cacheWriteTokens ?? 0)
-                }
+                self.applyToday(from: daily)
                 let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
                 self.allDaily = mapped
                 self.recentDaily = Array(mapped.suffix(7))
             }
             if let models = modelsResult {
-                self.topModels = models.prefix(5).map(Self.toUsage)
+                self.topModels = models.map(Self.toUsage)
             }
             if let todayMs = todayModelsResult {
-                // Quota-billed/activity-only clients (VS Code Copilot,
-                // Antigravity) and real-but-unpriced totals (Codex Desktop's
-                // SQLite fallback — genuine non-zero tokens, cost honestly
-                // left unexposed) both report cost == 0 — a pure cost
-                // ranking always buries them under same-day providers that
-                // DO report dollars, so "I used X today" silently never
-                // shows up. Top 5 by cost stays the primary ranking; up to 3
-                // cost==0 entries are appended so today's real usage is
-                // never invisible just because it isn't priced.
-                let all = todayMs.map(Self.toUsage)
-                let ranked = Array(all.prefix(5))
-                let rankedKeys = Set(ranked.map { "\($0.provider)/\($0.model)" })
-                let activityOnly = all
-                    .filter { $0.cost == 0 && !rankedKeys.contains("\($0.provider)/\($0.model)") }
-                    .prefix(3)
-                self.todayModels = ranked + activityOnly
+                // Keep the complete list; the view owns its collapsed limit.
+                self.todayModels = todayMs.map(Self.toUsage)
             }
+            if let projects = todayProjectsResult { self.todayProjects = projects }
             if let sessionsList = sessionsResult {
                 self.sessions = sessionsList
             }

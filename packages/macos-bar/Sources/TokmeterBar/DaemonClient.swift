@@ -154,8 +154,8 @@ final class DaemonClient {
 
     /// All sessions across all providers, up to 50 items, sorted by recency.
     /// Used for the expandable session list in the popover.
-    func fetchSessions() async throws -> [ProjectData] {
-        try await get("/api/sessions", as: [ProjectData].self)
+    func fetchSessions(today: Bool = false) async throws -> [ProjectData] {
+        try await get(today ? "/api/sessions?today=true" : "/api/sessions", as: [ProjectData].self)
     }
 
     func fetchProjectDetail(_ projectName: String) async throws -> ProjectDetailData {

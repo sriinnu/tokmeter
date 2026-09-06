@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { PricingService } from "./pricing.js";
 
 describe("PricingService", () => {
+  it("preserves explicit free cache and reasoning rates instead of charging fallback rates", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("free-buckets", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheReadPerMillion: 0,
+      reasoningOutputPerMillion: 0,
+    });
+    expect(
+      await pricing.calculateCost("free-buckets", 1000, 100, 1_000_000, 0, 1_000_000)
+    ).toBeCloseTo(0.015, 10);
+  });
+
+  it("rejects negative rates instead of subtracting from spending totals", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("invalid-rates", { inputPerMillion: 10, outputPerMillion: -50 });
+    expect(await pricing.getPricing("invalid-rates")).toBeNull();
+  });
+
   it("should create instance without errors", () => {
     const pricing = new PricingService();
     expect(pricing).toBeDefined();

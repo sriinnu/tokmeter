@@ -5,7 +5,8 @@
  * Sessions are stored in YYYY/MM/DD/ subdirectories as .jsonl files.
  *
  * Format: RolloutItem events (session_meta, turn_context, event_msg, etc.)
- * Token data comes from event_msg with type "token_count".
+ * Token data comes from token_usage_record (per response), falling back to
+ * event_msg/token_count cumulative counters for older turns.
  *
  * ─── Fork dedup ─────────────────────────────────────────────────────────
  * Codex writes a separate rollout file for every `codex resume` or branched
@@ -91,6 +92,22 @@ interface CodexTokenUsage {
   total_tokens?: number;
 }
 
+/** Only complete numeric receipts may supersede the legacy turn counters. */
+export function isCodexTokenUsage(value: unknown): value is CodexTokenUsage {
+  if (!value || typeof value !== "object") return false;
+  const usage = value as Record<string, unknown>;
+  return (
+    ["input_tokens", "output_tokens"].every(
+      (key) => typeof usage[key] === "number" && Number.isFinite(usage[key]) && usage[key] >= 0
+    ) &&
+    ["cached_input_tokens", "reasoning_output_tokens"].every(
+      (key) =>
+        usage[key] === undefined ||
+        (typeof usage[key] === "number" && Number.isFinite(usage[key]) && usage[key] >= 0)
+    )
+  );
+}
+
 interface CodexTokenCountInfo {
   total_token_usage?: CodexTokenUsage;
   last_token_usage?: CodexTokenUsage;
@@ -103,6 +120,11 @@ interface CodexEvent {
   payload?: {
     type?: string;
     info?: CodexTokenCountInfo;
+    usage?: CodexTokenUsage;
+    thread_token_usage?: CodexTokenUsage;
+    thread_id?: string;
+    turn_id?: string;
+    response_id?: string;
     // session_meta fields (payload when type is "session_meta")
     id?: string;
     forked_from_id?: string;
@@ -132,14 +154,23 @@ interface CodexParseState {
   project: string;
   cwd: string;
   prevTotal: CodexTokenUsage;
+  sessionId?: string;
+  currentTurn: string;
+  structuredTurns: Set<string>;
+  responseIds: Set<string>;
+  legacyRecordTurns: Map<number, string>;
 }
 
 function defaultState(): CodexParseState {
   return {
-    currentModel: "gpt-4o",
+    currentModel: "unknown",
     project: "codex",
     cwd: "",
     prevTotal: {},
+    currentTurn: "unscoped",
+    structuredTurns: new Set(),
+    responseIds: new Set(),
+    legacyRecordTurns: new Map(),
   };
 }
 
@@ -385,6 +416,9 @@ function foldCodexEvent(
   out: TokenRecord[]
 ): void {
   if (!evt.type) return;
+  if (evt.type === "session_meta" && evt.payload?.id && !state.sessionId) {
+    state.sessionId = evt.payload.id;
+  }
   if (evt.type === "session_meta" && evt.payload?.cwd) {
     state.project = projectFromCwd(evt.payload.cwd);
     state.cwd = evt.payload.cwd;
@@ -392,26 +426,44 @@ function foldCodexEvent(
   if (evt.type === "turn_context" && evt.payload?.model) {
     state.currentModel = evt.payload.model;
   }
-  if (evt.type !== "event_msg") return;
   const payload = evt.payload;
-  if (!payload || payload.type !== "token_count") return;
-  const info = payload.info;
-  if (!info) return;
+  if (!payload) return;
+  if (
+    evt.type === "turn_context" ||
+    (evt.type === "event_msg" && payload.type === "task_started")
+  ) {
+    if (payload.turn_id) state.currentTurn = payload.turn_id;
+  }
 
   let usage: CodexTokenUsage;
-  if (info.total_token_usage) {
-    usage = computeDelta(info.total_token_usage, state.prevTotal);
-    state.prevTotal = { ...info.total_token_usage };
-    const deltaSum =
-      (usage.input_tokens ?? 0) +
-      (usage.output_tokens ?? 0) +
-      (usage.cached_input_tokens ?? 0) +
-      (usage.reasoning_output_tokens ?? 0);
-    if (deltaSum === 0) return;
-  } else if (info.last_token_usage) {
-    usage = info.last_token_usage;
+  const structured = evt.type === "token_usage_record";
+  if (structured) {
+    if (!isCodexTokenUsage(payload.usage)) return;
+    // Forked subagents may replay their parent's history. Only the owning
+    // thread's response receipts represent fresh work in this rollout.
+    if (state.sessionId && payload.thread_id && payload.thread_id !== state.sessionId) return;
+    const turn = payload.turn_id ?? state.currentTurn;
+    state.structuredTurns.add(turn);
+    if (payload.response_id) {
+      if (state.responseIds.has(payload.response_id)) return;
+      state.responseIds.add(payload.response_id);
+    }
+    // These are per-response facts. thread_token_usage can begin with a
+    // historical baseline or reset on resume; never book it as new usage.
+    usage = payload.usage;
+    if (payload.thread_token_usage) state.prevTotal = { ...payload.thread_token_usage };
   } else {
-    return;
+    if (evt.type !== "event_msg" || payload.type !== "token_count") return;
+    const info = payload.info;
+    if (!info) return;
+    if (info.total_token_usage) {
+      usage = computeDelta(info.total_token_usage, state.prevTotal);
+      state.prevTotal = { ...info.total_token_usage };
+    } else if (info.last_token_usage) {
+      usage = info.last_token_usage;
+    } else {
+      return;
+    }
   }
 
   const totalInput = usage.input_tokens ?? 0;
@@ -427,6 +479,7 @@ function foldCodexEvent(
   const outputTokens = rawOutputTokens - reasoningTokens;
   if (inputTokens === 0 && outputTokens === 0 && cached === 0 && reasoningTokens === 0) return;
 
+  if (!structured) state.legacyRecordTurns.set(out.length, payload.turn_id ?? state.currentTurn);
   out.push(
     createRecord({
       timestamp: evt.timestamp ? new Date(evt.timestamp).getTime() : Date.now(),
@@ -493,7 +546,13 @@ export async function parseCodexFile(
     });
     for (const evt of events) foldCodexEvent(evt, state, file, out);
   }
-  return out;
+  // Recent CLI versions mirror the same responses in BOTH event formats.
+  // Choose the response ledger for each covered turn, independent of event
+  // ordering, while retaining old-format turns in long-lived sessions.
+  return out.filter((_, index) => {
+    const turn = state.legacyRecordTurns.get(index);
+    return turn === undefined || !state.structuredTurns.has(turn);
+  });
 }
 
 export class CodexParser implements SessionParser {

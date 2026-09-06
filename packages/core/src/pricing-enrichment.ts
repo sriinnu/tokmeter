@@ -61,7 +61,9 @@ export async function enrichCosts(
   unpricedTracker?: UnpricedTracker
 ): Promise<void> {
   const costPromises = records.map(async (r) => {
-    if (r.cost > 0) return;
+    // An explicit tool-reported $0 is still a fact. Do not replace it with
+    // an API-rate estimate or relabel it as missing pricing.
+    if (r.cost > 0 || r.usage?.cost === "direct") return;
     if (r.costEligible === false) {
       // Not a missing-pricing-data case (kosha may well have real rates for
       // this model) — an explicit per-record decision not to guess a cost

@@ -206,7 +206,10 @@ function renderDigest(
   console.log(chalk.cyan(`\u255A${border}\u255D`));
   console.log("");
 
-  console.log(`  ${chalk.dim("Total Spend:")}     ${chalk.white.bold(formatCost(totalCost))}`);
+  console.log(
+    chalk.dim("  Costs combine API-rate estimates and tool reports; not a subscription bill.")
+  );
+  console.log(`  ${chalk.dim("Cost Total:")}     ${chalk.white.bold(formatCost(totalCost))}`);
   if (prevRecords.length > 0) {
     const pctChange = prevTotalCost > 0 ? ((totalCost - prevTotalCost) / prevTotalCost) * 100 : 0;
     console.log(
@@ -337,7 +340,7 @@ function renderDigest(
 
   if (expensiveCost > 0 && cheapCost > 0) {
     tips.push(
-      `You spent ${chalk.yellow(formatCost(expensiveCost))} on premium models (Opus/GPT-4). Consider using Sonnet/Haiku/Flash for routine tasks.`
+      `Your usage has a ${chalk.yellow(formatCost(expensiveCost))} cost total on premium models (Opus/GPT-4). Consider using Sonnet/Haiku/Flash for routine tasks.`
     );
   } else if (expensiveCost > 0 && cheapCost === 0) {
     tips.push(

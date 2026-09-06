@@ -1,75 +1,57 @@
-<p align="center">
-  <img src="logo.svg" alt="Tokmeter" width="120" />
-</p>
+<p align="center"><img src="logo.svg" alt="Tokmeter" width="88" /></p>
 
-<h1 align="center">tokmeter</h1>
+# Tokmeter
 
-<p align="center"><strong>Token Usage Tracker for AI Coding Agents</strong></p>
+**See where your AI coding usage goes—across projects, models, and agents.**
 
-<p align="center">
-  <a href="https://github.com/sriinnu/tokmeter/releases/latest"><img src="https://img.shields.io/badge/release-v1.9.2-39d353?style=flat-square&logo=github" alt="release" /></a>
-  <a href="https://www.npmjs.com/package/@sriinnu/tokmeter"><img src="https://img.shields.io/badge/npm-@sriinnu/tokmeter-39d353?style=flat-square&logo=npm" alt="npm" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node" />
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-26a641?style=flat-square" alt="license" />
-  <img src="https://img.shields.io/badge/bun-monorepo-39d353?style=flat-square&logo=npm" alt="bun" />
-</p>
+Tokmeter turns local coding-agent usage into a daily view of tokens, estimated API cost, and the projects driving it. Your history stays on your machine, including saved daily totals after old session logs are removed.
 
----
+Start with Claude Code and Codex on macOS. Other integrations have different levels of evidence; see the [compatibility table](docs/compatibility.md).
 
-Tokmeter parses local session logs from 16+ AI coding agents into per-project / model / provider / day token-and-cost aggregates, and exposes them through five surfaces: CLI, TUI, web dashboard, MCP server, and a macOS menu-bar daemon.
+## See it
 
-Pricing is resolved locally via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery) (20+ providers, 300+ OpenRouter models); nothing leaves the machine.
+<p align="center"><img src="docs/assets/demo/scene-01.png" alt="Tokmeter showing today's tokens, estimated API cost, models, and projects with synthetic demo data" width="360" /></p>
 
-How it stores history, keeps "today" live, and stays memory-bounded - the daemon + relay model - is in [`docs/architecture.md`](docs/architecture.md). Package layout is under [Packages](#packages); programmatic use is under [Consume Tokmeter From Other Apps](#consume-tokmeter-from-other-apps).
+[Watch the 20-second walkthrough](docs/assets/demo/tokmeter-demo.mp4) · [How the numbers work](docs/how-the-numbers-work.md)
 
-## What it looks like
+The walkthrough renders the **1.10.0** macOS views using synthetic data; it is not a recording of a customer's usage. See the [release page](https://github.com/sriinnu/tokmeter/releases/tag/v1.10.0) for downloads.
 
-Below is exactly what tokmeter prints on a real machine - same code you'd `npm install`. Project names are swapped to generic ones for privacy; spend numbers, cache rates, optimization scores, model breakdowns, and everything else are unedited.
+## Try one report
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="280" />
-      <br/><em>macOS menu bar - live signals at a glance.</em>
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/screenshots/cli-digest.png" alt="tokmeter digest --period week" width="380" />
-      <br/><em><code>tokmeter digest</code> - weekly cost report card with optimization grade.</em>
-    </td>
-  </tr>
-</table>
+Requires Node.js 18+ and local usage from a supported coding agent:
 
-<p align="center">
-  <img src="docs/assets/screenshots/cli-overview.png" alt="tokmeter overview" width="560" />
-  <br/><em><code>tokmeter</code> - per-project breakdown across all parsed agents.</em>
-</p>
-
-Try it on your own data: `npx @sriinnu/tokmeter` (add `--light` to skip pricing on the first scan). More surface shots (TUI, web, Hub, statusline) are tracked in [`docs/assets/screenshots/README.md`](docs/assets/screenshots/README.md).
-
-## What it computes
-
-From parsed session logs, per project / model / provider / day:
-
-- Cost and token totals (input / output / cache-read / cache-write / reasoning).
-- Cache hit rate and cache savings.
-- Daily spend trend and active-day streaks.
-- Compaction overhead - the share of today's spend that went to `/compact`.
-- Live burn rate and pace vs. your typical spend at this hour (from the relay's `costByHour`).
-- Cheaper-model suggestions from the live kosha price registry.
-
-All local; no network calls except the kosha pricing fetch.
-
-## Quick Start
-
-```bash
-# Run directly
-npx @sriinnu/tokmeter
-
-# Or install globally - gives you both `tokmeter` and `tokmeter-tui`
-npm install -g @sriinnu/tokmeter
-tokmeter
-tokmeter-tui
+```sh
+npx @sriinnu/tokmeter --today
 ```
+
+No provider API key is needed to read Claude Code or Codex's local usage. Pricing lookup can fetch public catalog data. Session contents are not sent to a service. To skip pricing:
+
+```sh
+npx @sriinnu/tokmeter --today --light
+```
+
+## Keep it in your macOS menu bar
+
+Requires macOS 14+ and the local daemon:
+
+1. Install the daemon: `npm install -g @sriinnu/drishti`
+2. Start it: `drishti daemon start`
+3. Download **TokmeterBar** from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases/latest), move it into Applications, and open it.
+
+The menu bar shows today's tokens. Open it for estimated API cost, any tool-reported cost, and today's models and projects. Expand **Usage details** for trends and other metrics. The [macOS guide](packages/macos-bar/README.md) covers building locally.
+
+## Understand the dollars
+
+- **Estimated API cost** values recorded usage at model rates. It is not your ChatGPT or Claude subscription bill.
+- **Tool-reported cost** is an amount already present in local tool telemetry. It is not independently verified against an invoice.
+- **Unavailable** means the price, token breakdown, or source information is missing. A missing price is not a free request.
+- Historical totals can combine estimates and tool reports. Older saved days may lack enough information to separate them; normal refreshes preserve those days.
+
+## Help us test it
+
+The first trial focuses on macOS developers using both Claude Code and Codex. [The one-week trial guide](docs/trial/guide.md) explains what to try and how to report a mismatch without sharing a transcript.
+
+For developers integrating Tokmeter: the CLI, TUI, web dashboard, MCP server, and [daemon/relay architecture](docs/architecture.md) share the same accounting core. Details follow.
 
 ## Packages
 
@@ -230,7 +212,7 @@ The `digest` command gives you a cost report card:
     Discipline:      F (40)
 
   Tips:
-  - You spent $620 on GPT-5.4 today - Sonnet would've cost $124
+  - The same recorded token counts estimate to $620 on model A and $124 on model B; task quality is not evaluated
   - Cache efficiency is solid at 98% - keep sessions active
 ```
 
@@ -430,7 +412,7 @@ works whether or not a provider reports a context window. Turn it off for a plai
 monochrome icon.
 
 <p align="center">
-  <img src="docs/assets/screenshots/bar-popover.png" alt="TokmeterBar popover" width="320" />
+  <img src="docs/assets/demo/scene-01.png" alt="TokmeterBar popover" width="320" />
 </p>
 
 ```bash
@@ -667,5 +649,7 @@ bun run format                 # Format
 
 - Application - AGPL-3.0-only: [LICENSE](./LICENSE)
 - Core library `@sriinnu/tokmeter-core` - MPL-2.0: [packages/core/LICENSE](./packages/core/LICENSE)
+
+Release artifacts include the license texts and source snapshot. See [licenses and source](docs/licensing.md) for scope, bundled notices, and build instructions.
 
 Copyright (c) 2026 Srinivas Pendela.

@@ -309,7 +309,20 @@ export interface TokmeterStats {
  *   - liveSession: the most recently-active record within the freshness
  *     window (5 min) — null when nothing's live
  */
+/** Monetary provenance, without treating local tool totals as invoice charges. */
+export interface CostBasis {
+  estimatedCost: number;
+  reportedCost: number;
+  unclassifiedCost: number;
+  estimatedRecords: number;
+  reportedRecords: number;
+  unavailableRecords: number;
+}
+
 export interface StatbarSignals {
+  /** Optional for compatibility with older daemons and cached summaries. */
+  costBasisToday?: CostBasis;
+  modelCostBasisToday?: Record<string, CostBasis>;
   burnRate: {
     /** USD per hour over the recent window. */
     costPerHour: number;

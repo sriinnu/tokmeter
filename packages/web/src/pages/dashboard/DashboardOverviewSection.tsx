@@ -37,6 +37,10 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
           <div style={heroEyebrowStyle}>{insights.spotlight.eyebrow}</div>
           <h2 style={heroTitleStyle}>{insights.spotlight.title}</h2>
           <p style={heroBodyStyle}>{insights.spotlight.body}</p>
+          <p style={heroBodyStyle}>
+            Cost totals combine API-rate estimates and tool-reported amounts; they are not a
+            verified subscription bill. Missing prices are excluded.
+          </p>
 
           <div style={chipRowStyle}>
             {insights.spotlight.chips.map((chip) => (
@@ -135,7 +139,7 @@ export const DashboardOverviewSection = memo(function DashboardOverviewSection({
       <div style={dualColumnGridStyle}>
         <DashboardPanel
           eyebrow="Provider lanes"
-          title="Who owns the spend"
+          title="Where the usage goes"
           description="The donut gives a quick split, while the ranked list keeps the view precise enough for decisions."
         >
           <ProviderSnapshotPanel insights={insights} />
