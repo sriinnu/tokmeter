@@ -8,6 +8,7 @@
  */
 
 import type { DailyAggregate } from "./aggregates.js";
+import { modelCostBasis, summarizeCostBasis } from "./cost-basis.js";
 import { localDateKey } from "./date-utils.js";
 import type { StatbarSignals, TokenRecord } from "./types.js";
 import { deriveUsage, sumUsage } from "./usage.js";
@@ -343,15 +344,18 @@ export function computeStatbarSignals(
   };
 
   // ── Reasoning share (today) ────────────────────────────────────────────
-  // Reasoning tokens are a subset of output tokens for OpenAI-style providers
-  // (Codex et al.). Surfacing the share tells the user "your effort:low or
+  // The ledger separates visible output and reasoning. Add both buckets to
+  // reconstruct total generated output. Surfacing the share tells the user "your effort:low or
   // explicit-model choice is making this much of your output invisible
   // thinking" — actionable for routing decisions on routine tasks.
   let reasoningTokens = 0;
   let reasoningOutputTokens = 0;
   let reasoningRecords = 0;
   for (const r of todayRecords) {
-    reasoningOutputTokens += r.outputTokens;
+    // SQLite fallback totals have no output breakdown and must not dilute
+    // this ratio by presenting a thread's entire usage as generated output.
+    if (r.costEligible === false) continue;
+    reasoningOutputTokens += r.outputTokens + r.reasoningTokens;
     if (r.reasoningTokens > 0) {
       reasoningTokens += r.reasoningTokens;
       reasoningRecords++;
@@ -360,10 +364,6 @@ export function computeStatbarSignals(
   const reasoningToday = {
     tokens: reasoningTokens,
     outputTokens: reasoningOutputTokens,
-    // Clamp at 1.0 — some Codex variants over-report reasoning tokens (the
-    // count isn't always strictly nested inside output_tokens). Without the
-    // clamp the UI would render ">100% reasoning", which is technically
-    // honest but reads as a bug.
     share: reasoningOutputTokens > 0 ? Math.min(1, reasoningTokens / reasoningOutputTokens) : 0,
     records: reasoningRecords,
   };
@@ -503,6 +503,8 @@ export function computeStatbarSignals(
   }
 
   return {
+    costBasisToday: summarizeCostBasis(todayRecords),
+    modelCostBasisToday: modelCostBasis(todayRecords),
     burnRate,
     cacheHitToday,
     contextPressure: estimateContextPressure(records, now),

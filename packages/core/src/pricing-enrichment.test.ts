@@ -42,6 +42,15 @@ function makeRecord(overrides: Partial<TokenRecord> = {}): TokenRecord {
 }
 
 describe("enrichCosts — costEligible", () => {
+  it("preserves an explicit tool-reported zero instead of repricing it", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("gpt-5.6-sol", { inputPerMillion: 5, outputPerMillion: 30 });
+    const record = makeRecord();
+    record.usage!.cost = "direct";
+    await enrichCosts([record], pricing, "today", []);
+    expect(record.cost).toBe(0);
+    expect(record.usage?.cost).toBe("direct");
+  });
   it("prices a record normally when the model has real pricing and costEligible is unset", async () => {
     const pricing = new PricingService();
     pricing.seedPricing("gpt-5.6-sol", { inputPerMillion: 5, outputPerMillion: 30 });

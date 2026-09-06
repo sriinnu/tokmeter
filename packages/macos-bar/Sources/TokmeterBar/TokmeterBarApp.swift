@@ -45,7 +45,7 @@ struct TokmeterBarApp: App {
         if let pct = activePct {
             return "\(Int(pct.rounded()))%"
         }
-        return String(format: "$%.2f", loader.todayCost)
+        return "\(Fmt.number(loader.todayTokens)) tok"
     }
 
     /// The percentage for the selected live source, if it has data right now.
@@ -85,7 +85,7 @@ struct TokmeterBarApp: App {
         if loader.lastError != nil {
             return "Tokmeter: daemon offline"
         }
-        let base = String(format: "Tokmeter: today's cost is $%.2f", loader.todayCost)
+        let base = "Tokmeter: \(Fmt.number(loader.todayTokens)) tokens today"
         guard let band = menubarBand, let pct = activePct else { return base }
         let sourceName: String
         switch config.config.colorSource {

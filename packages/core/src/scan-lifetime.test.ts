@@ -49,6 +49,8 @@ describe("scanLifetimeRaw — cleanup sees beyond the 14-day window", () => {
     const hasOld = (rs: TokenRecord[]) => rs.some((r) => localDateKey(r.timestamp) === oldKey);
 
     const recent = await core.scan();
+    expect(core.getAllProjects({ today: true })[0].totalTokens).toBe(120);
+    expect(core.getAllProjects()[0].totalTokens).toBe(240);
     const lifetime = await core.scanLifetimeRaw();
 
     expect(hasOld(recent)).toBe(false); // 14-day window excludes the 30-day record

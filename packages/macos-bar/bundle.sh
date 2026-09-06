@@ -60,8 +60,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-1.9.2}"
-BUILD_VERSION="${CFBundleVersion:-44}"
+SHORT_VERSION="${CFBundleShortVersionString:-1.10.0}"
+BUILD_VERSION="${CFBundleVersion:-46}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
@@ -109,6 +109,9 @@ if [[ -d "${SPARKLE_XC}" ]]; then
         echo "==> Bundled Sparkle.framework"
     fi
 fi
+
+# License notices and matching source travel with the signed app.
+python3 ../../scripts/prepare-license-materials.py macos --destination "${RESOURCES_DIR}/Licenses"
 
 # ─── 4b. Copy the app icon so Finder/Dock don't show a grey placeholder ──
 # AppIcon.icns is produced by ./generate-icon.sh and committed to the repo.

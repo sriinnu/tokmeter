@@ -245,19 +245,21 @@ describe("computeStatbarSignals", () => {
 
   test("reasoning share is reasoning tokens over today's total output tokens", () => {
     const records = [
-      // 400 output, 240 of it reasoning
+      // 400 visible output plus 240 reasoning
       r({ timestamp: now - 1 * HOUR, outputTokens: 400, reasoningTokens: 240 }),
-      // 200 output, 60 reasoning
+      // 200 visible output plus 60 reasoning
       r({ timestamp: now - 30 * MIN, outputTokens: 200, reasoningTokens: 60 }),
       // Output-only turn, no reasoning — denominator climbs, numerator doesn't
       r({ timestamp: now - 10 * MIN, outputTokens: 100, reasoningTokens: 0 }),
+      // SQLite lifetime deltas have no output breakdown and must not dilute the ratio.
+      r({ timestamp: now - 5 * MIN, outputTokens: 1_000_000, costEligible: false }),
       // Yesterday — must not contribute
       r({ timestamp: now - 30 * HOUR, outputTokens: 5000, reasoningTokens: 5000 }),
     ];
     const s = computeStatbarSignals(records, now);
     expect(s.reasoningToday.tokens).toBe(300);
-    expect(s.reasoningToday.outputTokens).toBe(700);
-    expect(s.reasoningToday.share).toBeCloseTo(300 / 700, 5);
+    expect(s.reasoningToday.outputTokens).toBe(1000);
+    expect(s.reasoningToday.share).toBeCloseTo(300 / 1000, 5);
     // Only the two records with reasoningTokens > 0 count toward the record tally.
     expect(s.reasoningToday.records).toBe(2);
   });

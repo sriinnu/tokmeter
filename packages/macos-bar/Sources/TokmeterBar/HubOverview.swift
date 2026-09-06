@@ -77,7 +77,7 @@ struct HubOverviewPanel: View {
                 Text("Overview")
                     .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
                     .foregroundColor(bg.primaryTextColor)
-                Text("Everything you've spent, everywhere — at a glance.")
+                Text("Usage across your projects. Costs include estimates and tool reports.")
                     .font(.system(size: 12, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
             }

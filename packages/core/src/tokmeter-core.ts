@@ -413,8 +413,12 @@ export class TokmeterCore {
     return { ...this.scanMeta, warnings: [...this.scanMeta.warnings] };
   }
 
-  getAllProjects(): ProjectSummary[] {
-    return computeAllProjectsFromState(this.aggregates, this.todayAccumulator, this.getAliases());
+  getAllProjects(options?: { today?: boolean }): ProjectSummary[] {
+    return computeAllProjectsFromState(
+      options?.today ? new Map() : this.aggregates,
+      this.todayAccumulator,
+      this.getAliases()
+    );
   }
 
   getRawProjectNames(): string[] {

@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/drishti",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
   "type": "module",
   "bin": {
@@ -32,6 +32,7 @@
   },
   "files": ["dist"],
   "scripts": {
+    "prepack": "python3 ../../scripts/prepare-license-materials.py npm",
     "build": "tsc",
     "dev": "bun src/cli.ts",
     "serve": "bun src/cli.ts serve",

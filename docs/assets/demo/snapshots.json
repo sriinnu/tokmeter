@@ -1,0 +1,975 @@
+[
+  {
+    "caption": "Your day starts with a clear usage view",
+    "tokens": 0,
+    "signals": {
+      "costBasisToday": {
+        "estimatedCost": 0,
+        "reportedCost": 0,
+        "unclassifiedCost": 0,
+        "estimatedRecords": 0,
+        "reportedRecords": 0,
+        "unavailableRecords": 0
+      },
+      "modelCostBasisToday": {},
+      "burnRate": {
+        "costPerHour": 0,
+        "tokensPerHour": 0,
+        "windowMinutes": 60,
+        "recordsInWindow": 0
+      },
+      "cacheHitToday": {
+        "rate": 0,
+        "canonicalRate": 0,
+        "readShare": 0,
+        "missRate": 0,
+        "freshInputShare": 0,
+        "cacheWriteShare": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "inputTokens": 0,
+        "freshInputTokens": 0,
+        "totalInputTokens": 0
+      },
+      "contextPressure": {
+        "status": "none",
+        "dragShare": 0,
+        "dragTokens": 0,
+        "currentInputTokens": 0,
+        "baselineInputTokens": 0,
+        "turnCount": 0,
+        "sessionAgeMinutes": 0,
+        "source": "none",
+        "provenance": "not_exposed",
+        "reason": "No request input telemetry was available."
+      },
+      "projectContextToday": [],
+      "pace": {
+        "multiple": null,
+        "typicalCostByNow": 0,
+        "actualCostByNow": 0,
+        "daysOfHistory": 0
+      },
+      "compactionToday": {
+        "cost": 0,
+        "tokens": 0,
+        "share": 0,
+        "events": 0
+      },
+      "subagentToday": {
+        "cost": 0,
+        "records": 0,
+        "share": 0
+      },
+      "reasoningToday": {
+        "tokens": 0,
+        "outputTokens": 0,
+        "share": 0,
+        "records": 0
+      },
+      "toolCallsToday": {
+        "byTool": [],
+        "totalCost": 0,
+        "callCount": 0,
+        "turnsWithTools": 0
+      },
+      "billingWindow": null,
+      "liveSession": null
+    },
+    "models": [],
+    "projects": []
+  },
+  {
+    "caption": "See today's models and projects",
+    "tokens": 975000,
+    "signals": {
+      "costBasisToday": {
+        "estimatedCost": 2.05,
+        "reportedCost": 0,
+        "unclassifiedCost": 0,
+        "estimatedRecords": 2,
+        "reportedRecords": 0,
+        "unavailableRecords": 0
+      },
+      "modelCostBasisToday": {
+        "codex::gpt-6-astra": {
+          "estimatedCost": 1.05,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        },
+        "claude-code::claude-sonnet-4-6": {
+          "estimatedCost": 1,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        }
+      },
+      "burnRate": {
+        "costPerHour": 2.05,
+        "tokensPerHour": 975000,
+        "windowMinutes": 60,
+        "recordsInWindow": 2
+      },
+      "cacheHitToday": {
+        "rate": 0.9574468085106383,
+        "canonicalRate": 0.9574468085106383,
+        "readShare": 0.9574468085106383,
+        "missRate": 0.0425531914893617,
+        "freshInputShare": 0.0425531914893617,
+        "cacheWriteShare": 0,
+        "cacheReadTokens": 900000,
+        "cacheWriteTokens": 0,
+        "inputTokens": 40000,
+        "freshInputTokens": 40000,
+        "totalInputTokens": 940000
+      },
+      "contextPressure": {
+        "status": "critical",
+        "dragShare": 0,
+        "dragTokens": 0,
+        "currentInputTokens": 320000,
+        "baselineInputTokens": 320000,
+        "turnCount": 1,
+        "sessionAgeMinutes": 0,
+        "source": "project_provider_model",
+        "provider": "claude-code",
+        "model": "claude-sonnet-4-6",
+        "project": "sample-web",
+        "provenance": "estimated",
+        "reason": "Only one active-session record is available, so Tokmeter cannot see much session growth yet."
+      },
+      "projectContextToday": [
+        {
+          "project": "sample-web",
+          "cacheHitRate": 0.9375,
+          "missRate": 0.0625,
+          "freshInputShare": 0.0625,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 300000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 20000,
+          "freshInputTokens": 20000,
+          "totalInputTokens": 320000,
+          "contextStatus": "critical",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688770000
+        },
+        {
+          "project": "sample-api",
+          "cacheHitRate": 0.967741935483871,
+          "missRate": 0.03225806451612903,
+          "freshInputShare": 0.03225806451612903,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 600000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 20000,
+          "freshInputTokens": 20000,
+          "totalInputTokens": 620000,
+          "contextStatus": "critical",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688740000
+        }
+      ],
+      "pace": {
+        "multiple": null,
+        "typicalCostByNow": 0,
+        "actualCostByNow": 2.05,
+        "daysOfHistory": 0
+      },
+      "compactionToday": {
+        "cost": 0,
+        "tokens": 0,
+        "share": 0,
+        "events": 0
+      },
+      "subagentToday": {
+        "cost": 0,
+        "records": 0,
+        "share": 0
+      },
+      "reasoningToday": {
+        "tokens": 1000,
+        "outputTokens": 35000,
+        "share": 0.02857142857142857,
+        "records": 1
+      },
+      "toolCallsToday": {
+        "byTool": [],
+        "totalCost": 0,
+        "callCount": 0,
+        "turnsWithTools": 0
+      },
+      "billingWindow": {
+        "blockNumber": 1,
+        "blockStart": 1788688770000,
+        "blockEnd": 1788706770000,
+        "remainingSec": 17970,
+        "elapsedPct": 0.16666666666666669,
+        "cost": 1,
+        "tokens": 350000,
+        "records": 1
+      },
+      "liveSession": {
+        "provider": "claude-code",
+        "model": "claude-sonnet-4-6",
+        "project": "sample-web",
+        "ageSeconds": 30,
+        "lastRecordCost": 1
+      }
+    },
+    "models": [
+      {
+        "provider": "codex",
+        "model": "gpt-6-astra",
+        "totalTokens": 625000,
+        "cost": 1.05,
+        "inputTokens": 20000,
+        "outputTokens": 4000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "percentageOfTotal": 51.21951219512195
+      },
+      {
+        "provider": "claude-code",
+        "model": "claude-sonnet-4-6",
+        "totalTokens": 350000,
+        "cost": 1,
+        "inputTokens": 20000,
+        "outputTokens": 30000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "percentageOfTotal": 48.78048780487806
+      }
+    ],
+    "projects": [
+      {
+        "project": "sample-api",
+        "totalTokens": 625000,
+        "totalCost": 1.05,
+        "inputTokens": 20000,
+        "outputTokens": 4000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "models": [
+          {
+            "provider": "codex",
+            "model": "gpt-6-astra",
+            "totalTokens": 625000,
+            "cost": 1.05,
+            "inputTokens": 20000,
+            "outputTokens": 4000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "percentageOfTotal": 51.21951219512195
+          }
+        ],
+        "providers": [
+          {
+            "provider": "codex",
+            "totalTokens": 625000,
+            "cost": 1.05,
+            "models": ["gpt-6-astra"],
+            "percentageOfTotal": 51.21951219512195
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 625000,
+            "inputTokens": 20000,
+            "outputTokens": 4000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "cost": 1.05,
+            "records": 1
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688740000,
+        "lastUsed": 1788688740000
+      },
+      {
+        "project": "sample-web",
+        "totalTokens": 350000,
+        "totalCost": 1,
+        "inputTokens": 20000,
+        "outputTokens": 30000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "models": [
+          {
+            "provider": "claude-code",
+            "model": "claude-sonnet-4-6",
+            "totalTokens": 350000,
+            "cost": 1,
+            "inputTokens": 20000,
+            "outputTokens": 30000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "percentageOfTotal": 48.78048780487806
+          }
+        ],
+        "providers": [
+          {
+            "provider": "claude-code",
+            "totalTokens": 350000,
+            "cost": 1,
+            "models": ["claude-sonnet-4-6"],
+            "percentageOfTotal": 48.78048780487806
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 350000,
+            "inputTokens": 20000,
+            "outputTokens": 30000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "cost": 1,
+            "records": 1
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688770000,
+        "lastUsed": 1788688770000
+      }
+    ]
+  },
+  {
+    "caption": "Missing prices stay unavailable",
+    "tokens": 1025000,
+    "signals": {
+      "costBasisToday": {
+        "estimatedCost": 2.05,
+        "reportedCost": 0,
+        "unclassifiedCost": 0,
+        "estimatedRecords": 2,
+        "reportedRecords": 0,
+        "unavailableRecords": 1
+      },
+      "modelCostBasisToday": {
+        "codex::gpt-6-astra": {
+          "estimatedCost": 1.05,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        },
+        "claude-code::claude-sonnet-4-6": {
+          "estimatedCost": 1,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        },
+        "codex::new-model": {
+          "estimatedCost": 0,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 0,
+          "reportedRecords": 0,
+          "unavailableRecords": 1
+        }
+      },
+      "burnRate": {
+        "costPerHour": 2.05,
+        "tokensPerHour": 1025000,
+        "windowMinutes": 60,
+        "recordsInWindow": 3
+      },
+      "cacheHitToday": {
+        "rate": 0.9183673469387755,
+        "canonicalRate": 0.9183673469387755,
+        "readShare": 0.9183673469387755,
+        "missRate": 0.08163265306122448,
+        "freshInputShare": 0.08163265306122448,
+        "cacheWriteShare": 0,
+        "cacheReadTokens": 900000,
+        "cacheWriteTokens": 0,
+        "inputTokens": 80000,
+        "freshInputTokens": 80000,
+        "totalInputTokens": 980000
+      },
+      "contextPressure": {
+        "status": "low",
+        "dragShare": 0,
+        "dragTokens": 0,
+        "currentInputTokens": 40000,
+        "baselineInputTokens": 40000,
+        "turnCount": 1,
+        "sessionAgeMinutes": 0,
+        "source": "project_provider_model",
+        "provider": "codex",
+        "model": "new-model",
+        "project": "sample-api",
+        "provenance": "estimated",
+        "reason": "Only one active-session record is available, so Tokmeter cannot see much session growth yet."
+      },
+      "projectContextToday": [
+        {
+          "project": "sample-api",
+          "cacheHitRate": 0.9090909090909091,
+          "missRate": 0.09090909090909091,
+          "freshInputShare": 0.09090909090909091,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 600000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 60000,
+          "freshInputTokens": 60000,
+          "totalInputTokens": 660000,
+          "contextStatus": "low",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688790000
+        },
+        {
+          "project": "sample-web",
+          "cacheHitRate": 0.9375,
+          "missRate": 0.0625,
+          "freshInputShare": 0.0625,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 300000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 20000,
+          "freshInputTokens": 20000,
+          "totalInputTokens": 320000,
+          "contextStatus": "critical",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688770000
+        }
+      ],
+      "pace": {
+        "multiple": null,
+        "typicalCostByNow": 0,
+        "actualCostByNow": 2.05,
+        "daysOfHistory": 0
+      },
+      "compactionToday": {
+        "cost": 0,
+        "tokens": 0,
+        "share": 0,
+        "events": 0
+      },
+      "subagentToday": {
+        "cost": 0,
+        "records": 0,
+        "share": 0
+      },
+      "reasoningToday": {
+        "tokens": 1000,
+        "outputTokens": 45000,
+        "share": 0.022222222222222223,
+        "records": 1
+      },
+      "toolCallsToday": {
+        "byTool": [],
+        "totalCost": 0,
+        "callCount": 0,
+        "turnsWithTools": 0
+      },
+      "billingWindow": {
+        "blockNumber": 1,
+        "blockStart": 1788688770000,
+        "blockEnd": 1788706770000,
+        "remainingSec": 17970,
+        "elapsedPct": 0.16666666666666669,
+        "cost": 1,
+        "tokens": 350000,
+        "records": 1
+      },
+      "liveSession": {
+        "provider": "codex",
+        "model": "new-model",
+        "project": "sample-api",
+        "ageSeconds": 10,
+        "lastRecordCost": 0
+      }
+    },
+    "models": [
+      {
+        "provider": "codex",
+        "model": "gpt-6-astra",
+        "totalTokens": 625000,
+        "cost": 1.05,
+        "inputTokens": 20000,
+        "outputTokens": 4000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "percentageOfTotal": 51.21951219512195
+      },
+      {
+        "provider": "claude-code",
+        "model": "claude-sonnet-4-6",
+        "totalTokens": 350000,
+        "cost": 1,
+        "inputTokens": 20000,
+        "outputTokens": 30000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "percentageOfTotal": 48.78048780487806
+      },
+      {
+        "provider": "codex",
+        "model": "new-model",
+        "totalTokens": 50000,
+        "cost": 0,
+        "inputTokens": 40000,
+        "outputTokens": 10000,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "percentageOfTotal": 0
+      }
+    ],
+    "projects": [
+      {
+        "project": "sample-api",
+        "totalTokens": 675000,
+        "totalCost": 1.05,
+        "inputTokens": 60000,
+        "outputTokens": 14000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "models": [
+          {
+            "provider": "codex",
+            "model": "gpt-6-astra",
+            "totalTokens": 625000,
+            "cost": 1.05,
+            "inputTokens": 20000,
+            "outputTokens": 4000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "percentageOfTotal": 51.21951219512195
+          },
+          {
+            "provider": "codex",
+            "model": "new-model",
+            "totalTokens": 50000,
+            "cost": 0,
+            "inputTokens": 40000,
+            "outputTokens": 10000,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "percentageOfTotal": 0
+          }
+        ],
+        "providers": [
+          {
+            "provider": "codex",
+            "totalTokens": 675000,
+            "cost": 1.05,
+            "models": ["gpt-6-astra", "new-model"],
+            "percentageOfTotal": 51.21951219512195
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 675000,
+            "inputTokens": 60000,
+            "outputTokens": 14000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "cost": 1.05,
+            "records": 2
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688740000,
+        "lastUsed": 1788688790000
+      },
+      {
+        "project": "sample-web",
+        "totalTokens": 350000,
+        "totalCost": 1,
+        "inputTokens": 20000,
+        "outputTokens": 30000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "models": [
+          {
+            "provider": "claude-code",
+            "model": "claude-sonnet-4-6",
+            "totalTokens": 350000,
+            "cost": 1,
+            "inputTokens": 20000,
+            "outputTokens": 30000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "percentageOfTotal": 48.78048780487806
+          }
+        ],
+        "providers": [
+          {
+            "provider": "claude-code",
+            "totalTokens": 350000,
+            "cost": 1,
+            "models": ["claude-sonnet-4-6"],
+            "percentageOfTotal": 48.78048780487806
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 350000,
+            "inputTokens": 20000,
+            "outputTokens": 30000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "cost": 1,
+            "records": 1
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688770000,
+        "lastUsed": 1788688770000
+      }
+    ]
+  },
+  {
+    "caption": "Tool reports stay separate from estimates",
+    "tokens": 1000000,
+    "signals": {
+      "costBasisToday": {
+        "estimatedCost": 2.05,
+        "reportedCost": 0.4,
+        "unclassifiedCost": 0,
+        "estimatedRecords": 2,
+        "reportedRecords": 1,
+        "unavailableRecords": 0
+      },
+      "modelCostBasisToday": {
+        "codex::gpt-6-astra": {
+          "estimatedCost": 1.05,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        },
+        "claude-code::claude-sonnet-4-6": {
+          "estimatedCost": 1,
+          "reportedCost": 0,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 1,
+          "reportedRecords": 0,
+          "unavailableRecords": 0
+        },
+        "cursor::tool-reported-model": {
+          "estimatedCost": 0,
+          "reportedCost": 0.4,
+          "unclassifiedCost": 0,
+          "estimatedRecords": 0,
+          "reportedRecords": 1,
+          "unavailableRecords": 0
+        }
+      },
+      "burnRate": {
+        "costPerHour": 2.4499999999999997,
+        "tokensPerHour": 1000000,
+        "windowMinutes": 60,
+        "recordsInWindow": 3
+      },
+      "cacheHitToday": {
+        "rate": 0.9375,
+        "canonicalRate": 0.9375,
+        "readShare": 0.9375,
+        "missRate": 0.0625,
+        "freshInputShare": 0.0625,
+        "cacheWriteShare": 0,
+        "cacheReadTokens": 900000,
+        "cacheWriteTokens": 0,
+        "inputTokens": 60000,
+        "freshInputTokens": 60000,
+        "totalInputTokens": 960000
+      },
+      "contextPressure": {
+        "status": "low",
+        "dragShare": 0,
+        "dragTokens": 0,
+        "currentInputTokens": 20000,
+        "baselineInputTokens": 20000,
+        "turnCount": 1,
+        "sessionAgeMinutes": 0,
+        "source": "project_provider_model",
+        "provider": "cursor",
+        "model": "tool-reported-model",
+        "project": "sample-web",
+        "provenance": "estimated",
+        "reason": "Only one active-session record is available, so Tokmeter cannot see much session growth yet."
+      },
+      "projectContextToday": [
+        {
+          "project": "sample-web",
+          "cacheHitRate": 0.8823529411764706,
+          "missRate": 0.11764705882352941,
+          "freshInputShare": 0.11764705882352941,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 300000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 40000,
+          "freshInputTokens": 40000,
+          "totalInputTokens": 340000,
+          "contextStatus": "low",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688795000
+        },
+        {
+          "project": "sample-api",
+          "cacheHitRate": 0.967741935483871,
+          "missRate": 0.03225806451612903,
+          "freshInputShare": 0.03225806451612903,
+          "cacheWriteShare": 0,
+          "cacheReadTokens": 600000,
+          "cacheWriteTokens": 0,
+          "inputTokens": 20000,
+          "freshInputTokens": 20000,
+          "totalInputTokens": 620000,
+          "contextStatus": "critical",
+          "dragShare": 0,
+          "dragTokens": 0,
+          "turnCount": 1,
+          "lastUsed": 1788688740000
+        }
+      ],
+      "pace": {
+        "multiple": null,
+        "typicalCostByNow": 0,
+        "actualCostByNow": 2.4499999999999997,
+        "daysOfHistory": 0
+      },
+      "compactionToday": {
+        "cost": 0,
+        "tokens": 0,
+        "share": 0,
+        "events": 0
+      },
+      "subagentToday": {
+        "cost": 0,
+        "records": 0,
+        "share": 0
+      },
+      "reasoningToday": {
+        "tokens": 1000,
+        "outputTokens": 40000,
+        "share": 0.025,
+        "records": 1
+      },
+      "toolCallsToday": {
+        "byTool": [],
+        "totalCost": 0,
+        "callCount": 0,
+        "turnsWithTools": 0
+      },
+      "billingWindow": {
+        "blockNumber": 1,
+        "blockStart": 1788688770000,
+        "blockEnd": 1788706770000,
+        "remainingSec": 17970,
+        "elapsedPct": 0.16666666666666669,
+        "cost": 1,
+        "tokens": 350000,
+        "records": 1
+      },
+      "liveSession": {
+        "provider": "cursor",
+        "model": "tool-reported-model",
+        "project": "sample-web",
+        "ageSeconds": 5,
+        "lastRecordCost": 0.4
+      }
+    },
+    "models": [
+      {
+        "provider": "codex",
+        "model": "gpt-6-astra",
+        "totalTokens": 625000,
+        "cost": 1.05,
+        "inputTokens": 20000,
+        "outputTokens": 4000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "percentageOfTotal": 42.85714285714287
+      },
+      {
+        "provider": "claude-code",
+        "model": "claude-sonnet-4-6",
+        "totalTokens": 350000,
+        "cost": 1,
+        "inputTokens": 20000,
+        "outputTokens": 30000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "percentageOfTotal": 40.81632653061225
+      },
+      {
+        "provider": "cursor",
+        "model": "tool-reported-model",
+        "totalTokens": 25000,
+        "cost": 0.4,
+        "inputTokens": 20000,
+        "outputTokens": 5000,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "percentageOfTotal": 16.3265306122449
+      }
+    ],
+    "projects": [
+      {
+        "project": "sample-api",
+        "totalTokens": 625000,
+        "totalCost": 1.05,
+        "inputTokens": 20000,
+        "outputTokens": 4000,
+        "cacheReadTokens": 600000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 1000,
+        "models": [
+          {
+            "provider": "codex",
+            "model": "gpt-6-astra",
+            "totalTokens": 625000,
+            "cost": 1.05,
+            "inputTokens": 20000,
+            "outputTokens": 4000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "percentageOfTotal": 42.85714285714287
+          }
+        ],
+        "providers": [
+          {
+            "provider": "codex",
+            "totalTokens": 625000,
+            "cost": 1.05,
+            "models": ["gpt-6-astra"],
+            "percentageOfTotal": 42.85714285714287
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 625000,
+            "inputTokens": 20000,
+            "outputTokens": 4000,
+            "cacheReadTokens": 600000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 1000,
+            "cost": 1.05,
+            "records": 1
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688740000,
+        "lastUsed": 1788688740000
+      },
+      {
+        "project": "sample-web",
+        "totalTokens": 375000,
+        "totalCost": 1.4,
+        "inputTokens": 40000,
+        "outputTokens": 35000,
+        "cacheReadTokens": 300000,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "models": [
+          {
+            "provider": "claude-code",
+            "model": "claude-sonnet-4-6",
+            "totalTokens": 350000,
+            "cost": 1,
+            "inputTokens": 20000,
+            "outputTokens": 30000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "percentageOfTotal": 40.81632653061225
+          },
+          {
+            "provider": "cursor",
+            "model": "tool-reported-model",
+            "totalTokens": 25000,
+            "cost": 0.4,
+            "inputTokens": 20000,
+            "outputTokens": 5000,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "percentageOfTotal": 16.3265306122449
+          }
+        ],
+        "providers": [
+          {
+            "provider": "claude-code",
+            "totalTokens": 350000,
+            "cost": 1,
+            "models": ["claude-sonnet-4-6"],
+            "percentageOfTotal": 40.81632653061225
+          },
+          {
+            "provider": "cursor",
+            "totalTokens": 25000,
+            "cost": 0.4,
+            "models": ["tool-reported-model"],
+            "percentageOfTotal": 16.3265306122449
+          }
+        ],
+        "dailyBreakdown": [
+          {
+            "date": "2026-09-06",
+            "totalTokens": 375000,
+            "inputTokens": 40000,
+            "outputTokens": 35000,
+            "cacheReadTokens": 300000,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "cost": 1.4,
+            "records": 2
+          }
+        ],
+        "activeDays": 1,
+        "firstUsed": 1788688770000,
+        "lastUsed": 1788688795000
+      }
+    ]
+  }
+]

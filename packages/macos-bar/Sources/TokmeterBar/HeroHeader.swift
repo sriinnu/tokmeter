@@ -30,12 +30,6 @@ struct HeroHeader: View {
     /// overlay on the top-level VStack so it floats above the scroll content.
     @Binding var showCachePanel: Bool
 
-    /// Briefly bumped to >1 / non-zero degrees when `todayCost` changes so
-    /// the hero number reacts visibly to fresh data — secondary action that
-    /// reinforces the ECG's "live" message.
-    @State private var costWiggleScale: CGFloat = 1.0
-    @State private var costWiggleAngle: Double = 0
-
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
@@ -125,67 +119,60 @@ struct HeroHeader: View {
         }
     }
 
-    /// Main value row. Hero number + "today" inline at the value baseline so
-    /// we spend one row instead of two. Tight line-spacing keeps the whole
-    /// hero from ballooning with leading whitespace around the glyphs.
+    /// Usage is the headline; monetary estimates and tool reports stay separate.
     private var valueRow: some View {
         HStack(alignment: .lastTextBaseline, spacing: 6) {
             if loader.isWarming {
                 skeletonHero
             } else {
-                Text(Fmt.cost(loader.todayCost))
+                Text(Fmt.number(loader.todayTokens))
                     .font(theme.fonts.hero(size: heroFontSize))
                     .foregroundColor(foreground)
                     .contentTransition(.numericText())
-                    .scaleEffect(costWiggleScale)
-                    .rotationEffect(.degrees(costWiggleAngle))
-                    // Tighten the text's intrinsic leading so large fonts don't
-                    // leave vertical padding around glyphs. Caps the line height
-                    // to the actual font size.
-                    .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(1)
-                    .animation(.spring(response: 0.55, dampingFraction: 0.70), value: loader.todayCost)
-                    .onChange(of: loader.todayCost) { _, _ in
-                        // Two-step wiggle: pop up + tilt, then settle back.
-                        // The seed-driven tilt direction adds organic variance.
-                        let tiltDirection: Double = Bool.random() ? 1.0 : -1.0
-                        costWiggleScale = 1.04
-                        costWiggleAngle = 0.6 * tiltDirection
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.50)) {
-                            costWiggleScale = 1.0
-                            costWiggleAngle = 0
-                        }
-                    }
-                Text("today")
+                    .minimumScaleFactor(0.6)
+                Text("tokens today")
                     .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
-                    .italic()
                     .foregroundColor(foreground.opacity(0.65))
             }
         }
     }
 
-    /// Compact per-tier line under the hero cost — "64.5M tok · 787K in ·
-    /// 276K out · 62.4M cached". Hidden while warming or when the daemon
-    /// response predates the breakdown fields (all tiers zero).
     @ViewBuilder
     private var tokenBreakdownRow: some View {
-        if !loader.isWarming, loader.todayTokens > 0,
-           loader.todayInputTokens + loader.todayOutputTokens + loader.todayCachedTokens > 0 {
-            Text(
-                "\(Fmt.number(loader.todayTokens)) tok · \(Fmt.number(loader.todayInputTokens)) in"
-                    + " · \(Fmt.number(loader.todayOutputTokens)) out"
-                    + " · \(Fmt.number(loader.todayCachedTokens)) cached"
-            )
-            .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
-            .foregroundColor(foreground.opacity(0.55))
-            .lineLimit(1)
-            .padding(.top, 2)
-            .contentTransition(.numericText())
-            .animation(.default, value: loader.todayTokens)
+        if !loader.isWarming {
+            VStack(alignment: .leading, spacing: 4) {
+                if let basis = loader.statbarSignals?.costBasisToday {
+                    if basis.estimatedRecords > 0 {
+                        costLine("Estimated API cost", value: basis.estimatedCost)
+                    }
+                    if basis.reportedRecords > 0 {
+                        costLine("Tool-reported cost", value: basis.reportedCost)
+                    }
+                    if basis.unavailableRecords > 0 {
+                        Text("Cost unavailable for some usage")
+                            .foregroundColor(Color.tokWarning)
+                    } else if basis.estimatedRecords + basis.reportedRecords == 0 {
+                        Text("No usage recorded today")
+                    }
+                } else {
+                    Text("Cost breakdown unavailable")
+                }
+            }
+            .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+            .foregroundColor(foreground.opacity(0.75))
+            .padding(.top, 4)
+            .help("API estimates value usage at model rates. Tool-reported costs come from local usage records. Neither is a verified subscription bill.")
         }
     }
 
-    // MARK: - Status indicator (pill or live ECG)
+    private func costLine(_ label: String, value: Double) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Text(Fmt.cost(value)).monospacedDigit()
+        }
+    }
 
     @ViewBuilder
     private var statusIndicator: some View {

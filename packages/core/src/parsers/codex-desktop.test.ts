@@ -1,8 +1,8 @@
 /**
  * Codex SQLite-state fallback parser regression tests.
  *
- * Codex Desktop / VS Code-extension sessions never emit token_count events
- * in their rollout JSONL, but every Codex thread (CLI included) gets a row
+ * Older Codex Desktop / VS Code sessions lack granular usage events in
+ * their rollout JSONL, but every Codex thread (CLI included) gets a row
  * in local state_5.sqlite with a real cumulative tokens_used total — this
  * parser fills exactly the gap CodexParser's JSONL-only reading leaves.
  *
@@ -30,7 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { localDateKey } from "../date-utils.js";
-import { CodexDesktopParser } from "./codex-desktop.js";
+import { CodexDesktopParser, hasJsonlTokenCoverage } from "./codex-desktop.js";
 import { CodexParser } from "./codex.js";
 
 let tmpDir: string;
@@ -238,6 +238,81 @@ describe("CodexDesktopParser (SQLite state fallback)", () => {
     expect(desktopRecords.length).toBe(0);
     expect(cliRecords.length).toBe(1);
     expect(cliRecords[0].provider).toBe("codex");
+  });
+
+  it("skips a growing SQLite thread covered by new response receipts", async () => {
+    const rolloutPath = writeRollout("rollout-astra.jsonl");
+    seedStateDb([
+      {
+        id: "thread-astra",
+        tokensUsed: 1000,
+        model: "gpt-6-astra",
+        cwd: "/tmp/demo",
+        rolloutPath,
+        updatedAtSec: nowSec(),
+      },
+    ]);
+    const parser = new CodexDesktopParser();
+    await parser.scan(tmpDir);
+    updateTokensUsed("thread-astra", 5000);
+    writeFileSync(
+      rolloutPath,
+      `${JSON.stringify({
+        type: "token_usage_record",
+        payload: {
+          thread_id: "thread-astra",
+          usage: { input_tokens: 3500, output_tokens: 500 },
+        },
+      })}\n`
+    );
+    expect(await parser.scan(tmpDir)).toEqual([]);
+  });
+
+  it.each(["token_count", "token_usage_record"])(
+    "finds %s coverage buried before a large tool output",
+    async (type) => {
+      const rolloutPath = join(tmpDir, "buried.jsonl");
+      const event =
+        type === "token_count"
+          ? {
+              type: "event_msg",
+              payload: {
+                type,
+                info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } },
+              },
+            }
+          : {
+              type,
+              payload: { thread_id: "own", usage: { input_tokens: 100, output_tokens: 10 } },
+            };
+      writeFileSync(
+        rolloutPath,
+        `${JSON.stringify(event)}\n${JSON.stringify({ type: "response_item", payload: { text: "x".repeat(100_000) } })}\n`
+      );
+      expect(await hasJsonlTokenCoverage(rolloutPath, "own")).toBe(true);
+      // A rewrite invalidates cached coverage.
+      writeFileSync(
+        rolloutPath,
+        `${JSON.stringify({ type: "token_usage_record", payload: { usage: {} } })}\n`
+      );
+      expect(await hasJsonlTokenCoverage(rolloutPath, "own")).toBe(false);
+    }
+  );
+
+  it("does not treat a parent's replayed receipts as coverage for the child", async () => {
+    const rolloutPath = join(tmpDir, "parent-only.jsonl");
+    writeFileSync(
+      rolloutPath,
+      `${JSON.stringify({
+        type: "token_usage_record",
+        payload: {
+          thread_id: "parent",
+          usage: { input_tokens: 100, output_tokens: 10 },
+        },
+      })}\n`
+    );
+    expect(await hasJsonlTokenCoverage(rolloutPath, "child")).toBe(false);
+    expect(await hasJsonlTokenCoverage(rolloutPath, "parent")).toBe(true);
   });
 
   it("does not mistake a literal 'token_count' substring in session text for a real event", async () => {

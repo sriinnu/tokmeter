@@ -48,14 +48,17 @@ ad-hoc signs it so macOS Gatekeeper allows local execution.
 drishti daemon start
 
 # Launch the app
-open TokmeterBar.app
+open /Applications/TokmeterBar.app
 ```
 
-The menubar icon shows `♾️ $X.YY` (today's cost). Click it to see:
-- Today / Total Tokens / Total Cost
-- Top 3 models bar chart
-- 7-day cost line chart
-- Projects / Active Days / Streak
+The menubar icon shows today's tokens. Click it to see:
+- Today's tokens, estimated API cost, and tool-reported cost separately
+- Today's models, with Today/All and Show all controls
+- Today's projects
+- Usage details: lifetime totals, trends, cache and other signals
+
+Costs are not a verified subscription bill. Missing cost data is shown as unavailable.
+See [how the numbers work](../../docs/how-the-numbers-work.md).
 
 It refreshes every 30 seconds.
 

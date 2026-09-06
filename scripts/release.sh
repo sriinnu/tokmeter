@@ -105,11 +105,13 @@ fi
 if [[ $SKIP_NPM -eq 0 ]]; then
   say "8/10 npm publish"
   if confirm "Publish public packages to npm?"; then
-    for pj in packages/*/package.json; do
-      node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1])).private?0:1)' "$pj" && continue
-      name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).name)' "$pj")"
-      echo "  → $name"
-      run "(cd '$(dirname "$pj")' && npm publish --access public)"
+    # Pack with Bun first so workspace:* dependencies become installable
+    # semver ranges. npm publish directly from a workspace does not do this.
+    candidate_dir="${TMPDIR:-/tmp}/tokmeter-release-${VERSION}-$$"
+    run "bash scripts/prepare-packages.sh '$candidate_dir'"
+    # Publish the shared core/CLI distribution before the daemon that needs it.
+    for package in tokmeter mcp; do
+      run "npm publish '$candidate_dir/$package-$VERSION.tgz' --access public"
     done
   else echo "  npm publish skipped."; fi
 else say "8/10 npm publish — skipped (--skip-npm)"; fi

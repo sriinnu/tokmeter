@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-09-06
+
+### Changed
+
+- The macOS opening view now leads with today's tokens, separates estimated API cost from tool-reported amounts, and shows today's projects. Secondary gauges and lifetime metrics live under Usage details.
+- Model lists open on Today and retain all models behind Show all. Missing cost data is labeled Unavailable; an explicit known zero stays zero.
+- Added a compatibility table, pricing methodology, synthetic-data walkthrough, and a one-week tester guide.
+
+### Fixed
+
+- Read Codex `token_usage_record` receipts, deduplicate mirrored legacy counters and repeated response IDs, and skip replayed parent receipts in subagents.
+- Keep SQLite fallback usage separate from sessions covered by JSONL, including receipts buried before long tool output.
+- Correct reasoning percentages and preserve explicit zero cache/reasoning rates and tool-reported zero costs.
+- An idle local day no longer inherits the previous active day's totals in the macOS header.
+- npm and macOS artifacts now include the application/core license texts and matching source; the macOS app also includes Sparkle notices and a Licenses & source control.
+
+### Validation
+
+See [release preparation](docs/release/1.10.0.md) for checks and [the tagged release](https://github.com/sriinnu/tokmeter/releases/tag/v1.10.0) for publication status and downloads.
+
 ## [1.9.2] - 2026-07-15
 
 ### Fixed

@@ -55,7 +55,7 @@ jobs:
         run: bun run lint
 
       - name: Test
-        run: bun test
+        run: bun run test
 
   # ==========================================================================
   # Job 2: Publish — only after verify succeeds
@@ -88,12 +88,19 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Publish @sriinnu/tokmeter
-        run: cd packages/tokmeter && npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @sriinnu/drishti
-        run: cd packages/mcp && npm publish --provenance --access public
+      - name: Prepare and publish verified package artifacts
+        run: |
+          bash scripts/prepare-packages.sh "$RUNNER_TEMP/tokmeter-packages"
+          for package in tokmeter mcp; do
+            name=$(node -p "require('./packages/$package/package.json').name")
+            version=$(node -p "require('./packages/$package/package.json').version")
+            # A local signed release can publish npm before creating the
+            # GitHub release. Never attempt to overwrite that version.
+            if npm view "$name@$version" version 2>/dev/null | grep -Fx "$version"; then
+              echo "$name@$version is already published"
+              continue
+            fi
+            npm publish "$RUNNER_TEMP/tokmeter-packages/$package-$version.tgz" --provenance --access public
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

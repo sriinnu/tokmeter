@@ -461,7 +461,7 @@ function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
 
   table.push(
     ["Total Tokens", formatNumber(stats.totalTokens)],
-    ["Total Cost", formatCost(stats.totalCost)],
+    ["Cost total (not a bill)", formatCost(stats.totalCost)],
     ["Input Tokens", formatNumber(stats.inputTokens)],
     ["Output Tokens", formatNumber(stats.outputTokens)],
     ["Cache Read", formatNumber(stats.cacheReadTokens)],
@@ -702,7 +702,9 @@ async function runRoutes(options: {
       `${totals.cacheWrite.toLocaleString()} cacheWrite · ` +
       `${totals.reasoning.toLocaleString()} reasoning`
   );
-  console.log(`Actual cost (historical pricing): $${actualCost.toFixed(2)}`);
+  console.log(
+    `Recorded cost total (historical estimates and tool reports): $${actualCost.toFixed(2)}`
+  );
   console.log("");
   console.log("Projected cost on today's kosha (sorted, cheapest first):");
   console.log("");

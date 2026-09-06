@@ -10,11 +10,140 @@
  * These tests pin that contract to a fixture so we never regress.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CodexParser, parseCodexFile } from "./codex.js";
+
+describe("Codex per-response usage receipts", () => {
+  it("reconciles the documented current-format compatibility fixture", async () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL("./fixtures/codex-response-usage.json", import.meta.url), "utf8")
+    );
+    const file = join(tmpDir, "current-format.jsonl");
+    writeFileSync(file, fixture.events.map((event: unknown) => JSON.stringify(event)).join("\n"));
+    const records = await parseCodexFile(file, 1000);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject(fixture.expected);
+  });
+  const usage = {
+    input_tokens: 1000,
+    cached_input_tokens: 800,
+    output_tokens: 100,
+    reasoning_output_tokens: 40,
+    total_tokens: 1100,
+  };
+  const context = (turn = "turn-1", model = "gpt-6-astra") => ({
+    type: "turn_context",
+    payload: { turn_id: turn, model },
+  });
+  const receipt = (response = "response-1", turn = "turn-1") => ({
+    timestamp: "2026-09-05T12:00:00Z",
+    type: "token_usage_record",
+    payload: {
+      thread_id: "own-thread",
+      turn_id: turn,
+      response_id: response,
+      usage,
+      thread_token_usage: { ...usage, input_tokens: 101000, total_tokens: 101100 },
+    },
+  });
+  const legacy = (total = usage) => ({
+    timestamp: "2026-09-05T12:00:01Z",
+    type: "event_msg",
+    payload: { type: "token_count", info: { total_token_usage: total } },
+  });
+  async function parse(events: unknown[], streamed = false) {
+    const file = join(tmpDir, "receipts.jsonl");
+    writeFileSync(
+      file,
+      [{ type: "session_meta", payload: { id: "own-thread", cwd: "/tmp/demo" } }, ...events]
+        .map((e) => JSON.stringify(e))
+        .join("\n")
+    );
+    return parseCodexFile(file, streamed ? 8_000_000 : 1000);
+  }
+
+  it.each([false, true])(
+    "reads Astra receipts without booking historical thread totals (streamed=%s)",
+    async (streamed) => {
+      const records = await parse([context(), receipt()], streamed);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        model: "gpt-6-astra",
+        inputTokens: 200,
+        cacheReadTokens: 800,
+        outputTokens: 60,
+        reasoningTokens: 40,
+      });
+    }
+  );
+
+  it.each([false, true])(
+    "counts mirrored legacy and structured telemetry once (legacy first=%s)",
+    async (legacyFirst) => {
+      const events = legacyFirst ? [legacy(), receipt()] : [receipt(), legacy()];
+      const records = await parse([context(), ...events, receipt()]);
+      expect(records).toHaveLength(1);
+      expect(
+        records[0].inputTokens +
+          records[0].cacheReadTokens +
+          records[0].outputTokens +
+          records[0].reasoningTokens
+      ).toBe(1100);
+    }
+  );
+
+  it("retains old-format turns and their models across a session upgrade", async () => {
+    const records = await parse([context("old", "gpt-5.6-sol"), legacy(), context(), receipt()]);
+    expect(records.map((r) => r.model)).toEqual(["gpt-5.6-sol", "gpt-6-astra"]);
+  });
+
+  it("retains the cumulative baseline when a later turn uses only legacy events", async () => {
+    const r = receipt();
+    r.payload.thread_token_usage = usage;
+    const records = await parse([
+      context(),
+      r,
+      context("later"),
+      legacy({
+        ...usage,
+        input_tokens: 2000,
+        cached_input_tokens: 1600,
+        output_tokens: 200,
+        reasoning_output_tokens: 80,
+        total_tokens: 2200,
+      }),
+    ]);
+    expect(records).toHaveLength(2);
+    expect(records[1]).toMatchObject({
+      inputTokens: 200,
+      cacheReadTokens: 800,
+      outputTokens: 60,
+      reasoningTokens: 40,
+    });
+  });
+
+  it("ignores parent receipts replayed in a child rollout", async () => {
+    const parent = receipt();
+    parent.payload.thread_id = "parent";
+    const records = await parse([context(), parent, receipt()]);
+    expect(records).toHaveLength(1);
+  });
+
+  it("does not let malformed new telemetry suppress valid legacy accounting", async () => {
+    const malformed = {
+      ...receipt(),
+      payload: { ...receipt().payload, usage: { input_tokens: "1000", output_tokens: 100 } },
+    };
+    expect(await parse([context(), legacy(), malformed])).toHaveLength(1);
+  });
+
+  it("labels missing model metadata honestly", async () => {
+    expect((await parse([receipt()]))[0].model).toBe("unknown");
+  });
+});
 
 let tmpDir: string;
 

@@ -38,7 +38,7 @@ describe("deriveUsage", () => {
     expect(usage.hasCacheTelemetry).toBe(true);
   });
 
-  test("estimates visible output when reasoning is a reported sub-bucket", () => {
+  test("does not subtract reasoning again from normalized visible output", () => {
     const usage = deriveUsage({
       inputTokens: 75,
       cacheReadTokens: 0,
@@ -47,7 +47,7 @@ describe("deriveUsage", () => {
       reasoningTokens: 1_024,
     });
 
-    expect(usage.visibleOutputTokensApprox).toBe(162);
+    expect(usage.visibleOutputTokensApprox).toBe(1_186);
     expect(usage.ledgerTotalTokens).toBe(2_285);
   });
 });

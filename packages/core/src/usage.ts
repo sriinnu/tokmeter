@@ -27,8 +27,7 @@ export interface DerivedUsage {
   outputTokens: number;
   reasoningTokens: number;
   /**
-   * Best-effort visible output estimate when reasoning is reported as an
-   * output sub-bucket by the upstream provider.
+   * Visible output from the normalized ledger (reasoning is already separate).
    */
   visibleOutputTokensApprox?: number;
   /**
@@ -75,8 +74,7 @@ export function deriveUsage(breakdown: UsageBreakdown): DerivedUsage {
     totalInputTokens,
     outputTokens,
     reasoningTokens,
-    visibleOutputTokensApprox:
-      reasoningTokens > 0 ? Math.max(0, outputTokens - reasoningTokens) : undefined,
+    visibleOutputTokensApprox: reasoningTokens > 0 ? outputTokens : undefined,
     ledgerTotalTokens,
     cacheHitRate: totalInputTokens > 0 ? cacheReadTokens / totalInputTokens : 0,
     cacheMissRate: totalInputTokens > 0 ? uncachedInputTokens / totalInputTokens : 0,

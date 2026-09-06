@@ -30,7 +30,6 @@ struct TokmeterBarView: View {
     @AppStorage("appTheme") var theme: AppTheme = .nebula
 
     /// Local UI state — never persisted.
-    @State private var showAllSessions = false
     @State private var breathToggle = false
     /// Tracks whether this popover's window is actually on screen — see
     /// PanelVisibility.swift. Every ambient animation in the hero/footer is
@@ -67,28 +66,7 @@ struct TokmeterBarView: View {
                 .cascadeIn(delay: 0.08)
 
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Thin "right now" telemetry strip — burn rate, cache hit,
-                    // compaction tax. Self-hides when there's no live signal.
-                    SignalsRibbon(loader: loader, theme: theme)
-                        .cascadeIn(delay: 0.10)
-                    // CACHE & CONTEXT is no longer inline — it lives in the
-                    // wallet drawer, opened from the hero header icon.
-                    StatsGrid(loader: loader, theme: theme)
-                        .cascadeIn(delay: 0.14)
-                    if !loader.topModels.isEmpty || loader.isWarming {
-                        ModelsSection(loader: loader, theme: theme)
-                            .cascadeIn(delay: 0.22)
-                    }
-                    if loader.recentDaily.count > 1 || loader.isWarming {
-                        WeekSection(loader: loader, theme: theme)
-                            .cascadeIn(delay: 0.30)
-                    }
-                    if !loader.sessions.isEmpty || loader.isWarming {
-                        SessionsSection(loader: loader, theme: theme, showAll: $showAllSessions)
-                            .cascadeIn(delay: 0.38)
-                    }
-                }
+                UsageOverview(loader: loader, theme: theme)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 10)
@@ -109,7 +87,7 @@ struct TokmeterBarView: View {
             .cascadeIn(delay: 0.46)
         }
         .frame(width: 400)
-        .frame(minHeight: 620, maxHeight: 820)
+        .frame(minHeight: 520, maxHeight: 780)
         .background(popoverBackground)
         .trackPanelVisibility(panelVisibility)
         // Cache "wallet" drawer — slides in from the trailing edge over the

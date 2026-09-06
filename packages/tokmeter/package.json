@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "description": "Token usage tracking for AI coding agents — parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",
@@ -25,6 +25,7 @@
   },
   "files": ["dist"],
   "scripts": {
+    "prepack": "python3 ../../scripts/prepare-license-materials.py npm",
     "build": "rm -rf dist && mkdir -p dist/core dist/cli dist/tui && cp -r ../core/dist/* dist/core/ && cp -r ../cli/dist/* dist/cli/ && cp -r ../tui/dist/* dist/tui/"
   },
   "dependencies": {

@@ -29,7 +29,8 @@
  *
  * Keys are exact model ids. Values are partial ModelPricing objects
  * (input/output required; cache + reasoning fields optional). Missing
- * fields default to 0 — set them explicitly if your contract differs.
+ * cache reads default to 10% of input and reasoning to the output rate;
+ * cache writes default to 0. Explicit zero rates are respected.
  *
  * Why kosha is the single source of truth (otherwise):
  *
@@ -613,7 +614,7 @@ export class PricingService {
 
   /**
    * Round all pricing fields to 6 decimal places to eliminate float noise.
-   * Returns null if any required field is NaN or Infinity (treat as unpriced).
+   * Returns null for invalid or negative rates (treat as unpriced).
    */
   private roundPricing(p: ModelPricing): FullPricing | null {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
@@ -627,17 +628,21 @@ export class PricingService {
       p.reasoningOutputPerMillion,
     ];
     for (const v of allValues) {
-      if (v !== undefined && !Number.isFinite(v)) return null;
+      if (v !== undefined && (!Number.isFinite(v) || v < 0)) return null;
     }
     return {
       inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),
-      ...(p.cacheReadPerMillion ? { cacheReadPerMillion: r(p.cacheReadPerMillion) } : {}),
-      ...(p.cacheWritePerMillion ? { cacheWritePerMillion: r(p.cacheWritePerMillion) } : {}),
-      ...(p.reasoningInputPerMillion
+      ...(p.cacheReadPerMillion !== undefined
+        ? { cacheReadPerMillion: r(p.cacheReadPerMillion) }
+        : {}),
+      ...(p.cacheWritePerMillion !== undefined
+        ? { cacheWritePerMillion: r(p.cacheWritePerMillion) }
+        : {}),
+      ...(p.reasoningInputPerMillion !== undefined
         ? { reasoningInputPerMillion: r(p.reasoningInputPerMillion) }
         : {}),
-      ...(p.reasoningOutputPerMillion
+      ...(p.reasoningOutputPerMillion !== undefined
         ? { reasoningOutputPerMillion: r(p.reasoningOutputPerMillion) }
         : {}),
     };

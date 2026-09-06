@@ -64,7 +64,7 @@ struct StatsGrid: View {
             )
             StatCard(
                 icon: "dollarsign.circle.fill",
-                label: "SPENT",
+                label: "COST TOTAL",
                 value: Fmt.cost(loader.totalCost),
                 role: c.highlight,
                 delta: weekDelta { $0.cost },

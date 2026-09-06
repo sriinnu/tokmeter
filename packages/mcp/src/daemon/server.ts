@@ -1017,7 +1017,9 @@ function startHttpApi(): void {
           // All projects across providers, sorted by most-recently-used descending.
           // Used by the menubar's expandable session list — supports 10/20/50+ items.
           const projects = core
-            .getAllProjects()
+            .getAllProjects({
+              today: new URL(url, "http://localhost").searchParams.get("today") === "true",
+            })
             .slice()
             .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed);
           json(res, projects.slice(0, 50));

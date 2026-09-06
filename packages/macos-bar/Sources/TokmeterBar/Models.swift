@@ -425,7 +425,18 @@ struct CrossToolComparison: Codable, Equatable {
     let projections: [CrossToolProjection]
 }
 
+struct CostBasis: Codable, Equatable {
+    let estimatedCost: Double
+    let reportedCost: Double
+    let unclassifiedCost: Double
+    let estimatedRecords: Int
+    let reportedRecords: Int
+    let unavailableRecords: Int
+}
+
 struct StatbarSignals: Codable, Equatable {
+    var costBasisToday: CostBasis? = nil
+    var modelCostBasisToday: [String: CostBasis]? = nil
     let burnRate: BurnRate
     let cacheHitToday: CacheHitToday
     let contextPressure: ContextPressure?

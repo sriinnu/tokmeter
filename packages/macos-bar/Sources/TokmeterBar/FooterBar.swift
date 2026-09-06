@@ -60,6 +60,15 @@ struct FooterBar: View {
             Text("v\(appVersion)")
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
+            if let resources = Bundle.main.resourceURL {
+                Button("Licenses & source") {
+                    NSWorkspace.shared.open(resources.appendingPathComponent("Licenses"))
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 9, design: theme.fonts.bodyDesign))
+                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                .help("Open license texts, third-party notices, and the source archive")
+            }
             Spacer()
             // Amber pill when today's records contain models with no resolved
             // pricing — silent $0 leaks would otherwise hide in the totals.

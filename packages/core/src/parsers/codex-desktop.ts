@@ -16,8 +16,9 @@
  * granular per-turn input/output/cache/reasoning breakdowns from JSONL
  * token_count events, which is strictly better data where it exists (real
  * CLI sessions always have it). This parser is a pure fallback for threads
- * whose rollout JSONL has NO token_count events at all — Codex Desktop /
- * VS Code-extension-sourced threads, confirmed to never emit them locally.
+ * whose rollout JSONL has neither token_count nor token_usage_record
+ * telemetry. Newer Desktop / VS Code sessions expose per-response receipts
+ * and are handled by CodexParser.
  * A thread already covered by CodexParser is explicitly skipped here so a
  * session can never be double-counted under both provider ids.
  *
@@ -35,12 +36,14 @@
  * the same delta-tracking shape as antigravity-live.ts's credit deltas.
  */
 
+import { createReadStream } from "node:fs";
 import { open, stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import { readCheckpoints, writeCheckpoints } from "./codex-sqlite-checkpoint.js";
-import { codexHomeDir } from "./codex.js";
+import { codexHomeDir, isCodexTokenUsage } from "./codex.js";
 import {
   type ReadonlySqlite,
   createRecord,
@@ -87,15 +90,31 @@ async function openStateDb(homeDir: string): Promise<ReadonlySqlite | null> {
 
 interface CodexEventShape {
   type?: string;
-  payload?: { type?: string };
+  payload?: { type?: string; usage?: unknown; thread_id?: string };
+}
+
+const coverageCache = new Map<string, { size: number; mtimeMs: number; covered: boolean }>();
+
+function isTokenCoverage(line: string, threadId?: string): boolean {
+  try {
+    const evt = JSON.parse(line) as CodexEventShape;
+    return (
+      (evt.type === "event_msg" && evt.payload?.type === "token_count") ||
+      (evt.type === "token_usage_record" &&
+        isCodexTokenUsage(evt.payload?.usage) &&
+        (!threadId || !evt.payload?.thread_id || evt.payload.thread_id === threadId))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
  * True if this rollout file already carries at least one real token_count
- * event — meaning CodexParser already covers it with granular data and this
- * fallback must stay out of the way. A tail read is enough: an actively
- * logging CLI session writes token_count events steadily, so one appears in
- * the last 64 KB whenever the file genuinely has them.
+ * or token_usage_record event — meaning CodexParser already covers it with
+ * granular data and this fallback must stay out of the way. Try the tail
+ * first, then stream the file: a long tool output can bury the last receipt
+ * beyond 64 KB. Cache unchanged files to keep repeated polls cheap.
  *
  * Parses each tail line as JSON and checks the STRUCTURED
  * `payload.type === "token_count"` field, not a raw substring match — a
@@ -105,10 +124,21 @@ interface CodexEventShape {
  * that substring and get permanently, silently excluded from this
  * fallback with no other source ever covering it.
  */
-async function hasJsonlTokenCoverage(rolloutPath: string): Promise<boolean> {
+export async function hasJsonlTokenCoverage(
+  rolloutPath: string,
+  threadId?: string
+): Promise<boolean> {
   try {
     const st = await stat(rolloutPath);
     if (st.size === 0) return false;
+    const cacheKey = JSON.stringify([rolloutPath, threadId]);
+    const cached = coverageCache.get(cacheKey);
+    if (cached?.size === st.size && cached.mtimeMs === st.mtimeMs) return cached.covered;
+    const remember = (covered: boolean) => {
+      if (coverageCache.size >= 2048) coverageCache.clear();
+      coverageCache.set(cacheKey, { size: st.size, mtimeMs: st.mtimeMs, covered });
+      return covered;
+    };
     const fd = await open(rolloutPath, "r");
     try {
       const tail = Math.min(TAIL_CHECK_BYTES, st.size);
@@ -117,17 +147,24 @@ async function hasJsonlTokenCoverage(rolloutPath: string): Promise<boolean> {
       const lines = buf.toString("utf-8").split("\n");
       for (const line of lines) {
         if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line) as CodexEventShape;
-          if (evt.type === "event_msg" && evt.payload?.type === "token_count") return true;
-        } catch {
-          // partial line (tail read can start mid-record) — skip
-        }
+        if (isTokenCoverage(line, threadId)) return remember(true);
       }
-      return false;
     } finally {
       await fd.close();
     }
+    if (st.size > TAIL_CHECK_BYTES) {
+      const stream = createReadStream(rolloutPath, { encoding: "utf-8" });
+      const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+      try {
+        for await (const line of lines) {
+          if (isTokenCoverage(line, threadId)) return remember(true);
+        }
+      } finally {
+        lines.close();
+        stream.destroy();
+      }
+    }
+    return remember(false);
   } catch {
     // Missing/unreadable rollout file — nothing for CodexParser to have
     // covered, so this fallback should still consider the thread.
@@ -164,7 +201,7 @@ export class CodexDesktopParser implements SessionParser {
         // total — prunes the (large, mostly historical) thread table down
         // to today's handful before the pricier per-file coverage check runs.
         if (localDateKey(row.updated_at * 1000) !== today) continue;
-        if (!row.rollout_path || (await hasJsonlTokenCoverage(row.rollout_path))) continue;
+        if (!row.rollout_path || (await hasJsonlTokenCoverage(row.rollout_path, row.id))) continue;
 
         const existing = checkpoints[row.id];
         if (!existing || existing.baselineDate !== today) {
