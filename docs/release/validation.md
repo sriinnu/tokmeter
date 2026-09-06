@@ -1,6 +1,6 @@
 # 1.10.0 local validation
 
-Checked on 2026-09-06 on Apple Silicon macOS. These results describe the uncommitted local candidate, not a published release or a signed source revision.
+Initial checks on 2026-09-06 on Apple Silicon macOS described the then-uncommitted local candidate. The publication follow-up below records the later signed and published release.
 
 | Check | Result |
 |---|---|
@@ -19,7 +19,7 @@ Checked on 2026-09-06 on Apple Silicon macOS. These results describe the uncommi
 
 The accounting work reconciled newer Codex receipts and repaired the specifically inspected September 5 totals with a backup. This does not establish correctness of every older sealed day. See [compatibility](../compatibility.md) for per-integration evidence and [number semantics](../how-the-numbers-work.md) for accounting limits.
 
-## Remaining release and trial gates
+## Gates outstanding at the initial local checkpoint
 
 - Review and signed source commit; changes remain local and uncommitted.
 - Developer ID signing, notarization, Sparkle update validation, and a 1.10.0 release archive.
@@ -40,3 +40,9 @@ The original candidates omitted the application/core license texts, and the app 
 - The isolated npm installation's package license declarations were MIT, MIT OR CC0-1.0, ISC, BSD-2-Clause, BSD-3-Clause, or AGPL-3.0-only. No non-private installed package lacked a declaration. This is a metadata inventory, not a source-ownership or exhaustive dependency legal audit.
 
 See [licenses and source](../licensing.md). Signing a source commit and public publishing remain pending.
+
+## Publication follow-up
+
+The release work subsequently completed the source/signing/publication gates: signed source commit `76fbfe4`, [PR #73](https://github.com/sriinnu/tokmeter/pull/73) merged as `c09b441`, and signed tag `v1.10.0` on that merged commit. PR and main CI passed. Both npm packages were published at 1.10.0, and [the GitHub release](https://github.com/sriinnu/tokmeter/releases/tag/v1.10.0) carries the Developer ID signed, notarized, stapled 1.10.0 (46) app and its checksum.
+
+Gatekeeper accepted the installed app as Notarized Developer ID, the ticket validated, and the final secret guard covered the actual 1.10.0 ZIP. The new appcast entry identifies that exact signed archive. The hardware/platform and real-user trial limitations above still apply.
