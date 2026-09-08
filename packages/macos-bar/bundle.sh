@@ -119,6 +119,7 @@ cp ../web/scripts/dashboard-server.mjs "${RESOURCES_DIR}/Dashboard/"
 
 # License notices and matching source travel with the signed app.
 python3 ../../scripts/prepare-license-materials.py macos --destination "${RESOURCES_DIR}/Licenses"
+cp ../web/dist/dashboard/THIRD_PARTY_NOTICES.txt "${RESOURCES_DIR}/Licenses/WebThirdPartyNotices.txt"
 
 # ─── 4b. Copy the app icon so Finder/Dock don't show a grey placeholder ──
 # AppIcon.icns is produced by ./generate-icon.sh and committed to the repo.

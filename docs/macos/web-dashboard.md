@@ -12,11 +12,12 @@ The dashboard needs Node.js 18+ and the usage daemon used by the menubar. Stoppi
 | `SettingsPopover.swift` | Start/open, stop/cancel and error controls |
 | `packages/web/scripts/dashboard-server.mjs` | Node standard-library HTTP server, local read-only routing, summary proxy, asset bounds and stdin/signal shutdown |
 | `packages/web/vite.config.ts` | App-build mode disables public-file copying |
+| `packages/web/scripts/app-notices.ts` | Collects installed dependency license texts from the actual web bundle modules; a missing notice fails the app build |
 | `packages/macos-bar/bundle.sh` | Builds and bundles only dashboard HTML, hashed assets, and the server script before signing |
 
 The optional server binds IPv4 loopback, accepts only its own localhost Host/Origin, and exposes GET requests. `/api/summary` forwards to the existing daemon on port 9877 with a timeout and bounded response. SPA routes render the app shell; realpath checks keep asset reads within the bundled dashboard directory. It does not expose daemon mutations or serve `data.json`. These are application checks, not OS sandbox containment.
 
-The build deliberately excludes the developer's `public/data.json`. A failed live summary displays an error instead of falling back to somebody else's packaged usage history. Development/preview and intentional static exports retain the separate behavior described in the [web README](../../packages/web/README.md).
+The build bundles web dependency notices in `Resources/Licenses/WebThirdPartyNotices.txt` and deliberately excludes the developer's `public/data.json`. A failed live summary displays an error instead of falling back to somebody else's packaged usage history. Development/preview and intentional static exports retain the separate behavior described in the [web README](../../packages/web/README.md).
 
 ## Verify a change
 
