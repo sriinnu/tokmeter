@@ -1,14 +1,6 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
+# Web dashboard
 
-<h1 align="center">@sriinnu/tokmeter-web</h1>
-
-<p align="center"><strong>React + Plotly web dashboard for token usage visualization</strong></p>
-
----
-
-Rich browser-based dashboard with interactive charts. Built with React and Plotly.js.
+Browser dashboard for token and cost data. Built with React and Plotly.js.
 
 ## Setup
 

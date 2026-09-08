@@ -1,20 +1,6 @@
-<p align="center"><img src="https://raw.githubusercontent.com/sriinnu/tokmeter/main/logo.svg" width="180" /></p>
+# Drishti
 
-<h1 align="center">@sriinnu/drishti</h1>
-
-<p align="center">
-  दृष्टि — MCP server + live token observatory for AI coding agents
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/@sriinnu/drishti"><img src="https://img.shields.io/npm/v/@sriinnu/drishti?style=flat-square&color=6C5CE7&label=npm" alt="npm version" /></a>
-  <img src="https://img.shields.io/badge/license-AGPL--3.0--only-4834D4?style=flat-square" alt="AGPL-3.0-only License" />
-  <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node >= 18" />
-</p>
-
----
-
-**@sriinnu/drishti** (दृष्टि — "vision") is the observation layer for token usage across AI coding agents. It provides an MCP server that exposes token data as tools, a live TUI dashboard, a statusline for editor hooks, and a cross-provider aggregation daemon.
+`@sriinnu/drishti` provides an MCP server for usage queries, a local aggregation daemon, a live terminal UI, and editor statusline hooks.
 
 Pairs with [`@sriinnu/tokmeter`](https://www.npmjs.com/package/@sriinnu/tokmeter) for the core parsing engine. Works with Claude Code, Cursor, OpenCode, Codex CLI, Windsurf, Zed, VS Code Copilot, and more.
 
@@ -52,7 +38,7 @@ npx @sriinnu/drishti
 ### Live Dashboard
 
 ```bash
-# Launch the real-time TUI observatory
+# Launch the live terminal UI
 drishti live
 ```
 

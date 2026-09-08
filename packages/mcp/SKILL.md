@@ -1,6 +1,6 @@
 # @sriinnu/drishti
 
-MCP server + live token observatory for AI coding agents.
+MCP server, local daemon, and live usage reporting for AI coding agents.
 
 ## Capabilities
 

@@ -1,659 +1,176 @@
-<p align="center"><img src="logo.svg" alt="Tokmeter" width="88" /></p>
-
 # Tokmeter
 
-**See where your AI coding usage goes—across projects, models, and agents.**
+Tokmeter parses local AI coding-agent session files and aggregates token usage and cost by project, model, provider, and day. It provides a CLI, TypeScript API, terminal UI, web workspace, MCP server, local daemon, and macOS app.
 
-Tokmeter turns local coding-agent usage into a daily view of tokens, estimated API cost, and the projects driving it. Your history stays on your machine, including saved daily totals after old session logs are removed.
+Claude Code and Codex are the primary validation targets. See [provider compatibility](docs/compatibility.md) for the other parsers and their known limits.
 
-Start with Claude Code and Codex on macOS. Other integrations have different levels of evidence; see the [compatibility table](docs/compatibility.md).
+## Requirements and installation
 
-## See it
-
-<p align="center"><img src="docs/assets/demo/scene-01.png" alt="Tokmeter showing today's tokens, estimated API cost, models, and projects with synthetic demo data" width="360" /></p>
-
-[Watch the 20-second walkthrough](docs/assets/demo/tokmeter-demo.mp4) · [How the numbers work](docs/how-the-numbers-work.md)
-
-The walkthrough renders the **1.10.0** macOS views using synthetic data; it is not a recording of a customer's usage. See the [release page](https://github.com/sriinnu/tokmeter/releases/tag/v1.10.0) for downloads.
-
-## Try one report
-
-Requires Node.js 18+ and local usage from a supported coding agent:
+The npm packages require Node.js 18+. Reading Claude Code and Codex session files does not require provider credentials. Pricing lookups can fetch public catalog data; `--light` skips them.
 
 ```sh
+# Run a report without a global install
 npx @sriinnu/tokmeter --today
+npx @sriinnu/tokmeter --today --light
+
+# Install the CLI and local daemon/MCP server
+npm install -g @sriinnu/tokmeter @sriinnu/drishti
 ```
 
-No provider API key is needed to read Claude Code or Codex's local usage. Pricing lookup can fetch public catalog data. Session contents are not sent to a service. To skip pricing:
+Two packages are published:
+
+| Package | Contents |
+| --- | --- |
+| [`@sriinnu/tokmeter`](packages/tokmeter/README.md) | Core API, CLI, and terminal UI |
+| [`@sriinnu/drishti`](packages/mcp/README.md) | MCP server, daemon, statusline, and live terminal UI |
+
+`packages/core`, `packages/cli`, and `packages/tui` are private workspace packages bundled into `@sriinnu/tokmeter`. `packages/web` is a separate private workspace app run from source.
+
+## CLI usage
 
 ```sh
-npx @sriinnu/tokmeter --today --light
+tokmeter --today
+tokmeter models --project my-app --json
+tokmeter daily --week
+tokmeter projects
+tokmeter stats --month
+tokmeter digest --period week
+tokmeter pricing sonnet
 ```
 
-## Keep it in your macOS menu bar
+Filters include `--project`, `--claude`, `--codex`, `--week`, `--month`, and `--since YYYY-MM-DD --until YYYY-MM-DD`. Use `--json` for machine-readable output and `--light` for token-only reports.
 
-Requires Apple silicon, macOS 14+, and Node.js 18+. For the published 1.10.0 build:
+Project naming and backup operations have separate guides:
 
-1. Install the daemon: `npm install -g @sriinnu/drishti`
-2. Start it: `drishti daemon start`
-3. Download **TokmeterBar** from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases/latest), move it into Applications, and open it.
+- [Aliases](docs/aliases.md): merge display names, tag projects, or hide them from lists.
+- [Backup and restore](docs/backup-restore.md): create portable snapshots, preview cleanup, and restore backups. Cleanup deletes source files; keep the confirmation and backup steps.
+- [CLI reference](packages/cli/README.md): commands and examples.
 
-The menu bar shows today's tokens. Open it for estimated API cost, any tool-reported cost, and today's models and projects. Expand **Usage details** for trends and other metrics. The [macOS guide](packages/macos-bar/README.md) covers building locally.
+## TypeScript API
 
-macOS completion work is tracked in the [six-area checklist](docs/macos-completion.md), including fresh installation, sustained reliability, updates, accounting, accessibility, and the user trial.
-
-## Understand the dollars
-
-- **Estimated API cost** values recorded usage at model rates. It is not your ChatGPT or Claude subscription bill.
-- **Tool-reported cost** is an amount already present in local tool telemetry. It is not independently verified against an invoice.
-- **Unavailable** means the price, token breakdown, or source information is missing. A missing price is not a free request.
-- Historical totals can combine estimates and tool reports. Older saved days may lack enough information to separate them; normal refreshes preserve those days.
-
-## Help us test it
-
-The first trial focuses on macOS developers using both Claude Code and Codex. [The one-week trial guide](docs/trial/guide.md) explains what to try and how to report a mismatch without sharing a transcript.
-
-For developers integrating Tokmeter: the CLI, TUI, web dashboard, MCP server, and [daemon/relay architecture](docs/architecture.md) share the same accounting core. Details follow.
-
-## Packages
-
-Two packages ship to npm; everything else is bundled inside `@sriinnu/tokmeter`.
-
-| Package | What | Install |
-|---------|------|---------|
-| [`@sriinnu/tokmeter`](packages/tokmeter/) | Umbrella distribution - bundles CLI + TUI + core + parsers | `npx @sriinnu/tokmeter` |
-| [`@sriinnu/drishti`](packages/mcp/) | MCP server + live TUI + statusline + cross-provider daemon | `npx @sriinnu/drishti` |
-
-The following packages are workspace-internal - they're built and bundled into
-the umbrella above, not published as standalone npm packages:
-
-- `@sriinnu/tokmeter-core` - session parsers, aggregator, pricing, public API
-- `@sriinnu/tokmeter-cli` - CLI entry point (table + JSON output + cost digest)
-- `@sriinnu/tokmeter-tui` - interactive terminal UI with charts
-- `@sriinnu/tokmeter-web` - React + Plotly web dashboard with live mode (run locally; see [Web App](#web-app))
-
-## Consume Tokmeter From Other Apps
-
-Use the surface that matches the job:
-
-| Need | Use | Notes |
-| --- | --- | --- |
-| Shell / CI automation | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract for scripts |
-| Convenience helpers without shelling out | `@sriinnu/tokmeter/cli` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
-| Live in-session token/cost answers | `@sriinnu/drishti` | MCP + daemon + statusline + live tracker |
-
-### Programmatic convenience helpers
+The root export provides the core API. Convenience query helpers use the `/cli` subpath.
 
 ```ts
-import {
-  loadTokmeterSummary,
-  loadTokmeterProjects,
-  loadTokmeterModels,
-  loadTokmeterStats,
-  lookupTokmeterPricing,
-} from "@sriinnu/tokmeter/cli";
+import { TokmeterCore } from "@sriinnu/tokmeter";
+import { loadTokmeterSummary } from "@sriinnu/tokmeter/cli";
 
-const summary = await loadTokmeterSummary({ month: true });
-const projects = await loadTokmeterProjects({ project: "tokmeter" });
-const models = await loadTokmeterModels({ providers: ["codex"] });
-const stats = await loadTokmeterStats({ week: true, light: true });
-const pricing = await lookupTokmeterPricing("claude-sonnet-4-20250514");
+const core = new TokmeterCore();
+await core.scan({ providers: ["codex", "claude-code"], today: true });
+const models = core.getModelCosts();
+const daily = core.getDailyBreakdown();
+
+const summary = await loadTokmeterSummary({ week: true, light: true });
 ```
 
-### Stable shell contract
+Reuse one core scan when querying several breakdowns. See [integration guidance](docs/consuming-tokmeter.md), [core API usage](packages/core/README.md), and [SKILL.md](SKILL.md) for agent-facing integration instructions.
 
-```bash
-npx @sriinnu/tokmeter --json
-npx @sriinnu/tokmeter models --json --project tokmeter
-npx @sriinnu/tokmeter digest --json --period week
-```
+## Daemon, MCP, and statusline
 
-For a deeper integration guide, see [`docs/consuming-tokmeter.md`](docs/consuming-tokmeter.md).
-
-## CLI Usage
-
-```bash
-tokmeter                          # overview (all projects)
-tokmeter models                   # per-model cost breakdown
-tokmeter daily                    # daily usage over time
-tokmeter projects                 # per-project summary
-tokmeter stats                    # overall statistics
-tokmeter pricing sonnet           # lookup model pricing
-tokmeter digest                   # weekly cost digest with optimization score
-tokmeter digest --period today    # today's digest
-tokmeter digest --period month    # monthly digest
-
-# Live & Daemon (install @sriinnu/drishti)
-drishti live                     # TUI dashboard
-drishti statusline               # Statusline mode
-drishti daemon start             # Start aggregation daemon
-drishti daemon stop              # Stop daemon
-drishti daemon status            # Check daemon status
-
-# Pricing maintenance
-tokmeter update                   # Refresh kosha pricing on demand
-tokmeter pricing-audit            # Audit pricing coverage across observed models
-tokmeter install-cron             # Install daily kosha-refresh cron (macOS launchd)
-tokmeter uninstall-cron           # Remove the daily kosha-refresh cron
-tokmeter cron-status              # Show daily-cron install + last-run state
-
-# Backup / Restore (see docs/backup-restore.md)
-tokmeter cleanup                  # interactive: pick projects → dates → confirm
-tokmeter snapshot                 # non-destructive portable backup
-tokmeter restore --latest         # restore the most recent backup
-
-# Installer (all editors)
-drishti install-statusline       # Install statusline for ALL editors
-drishti install-mcp              # Install MCP for ALL editors
-drishti editors                  # List supported editors
-
-# Filters
-tokmeter --project my-app         # specific project
-tokmeter --claude --opencode      # specific providers
-tokmeter --today                  # today only
-tokmeter --week                   # last 7 days
-tokmeter --month                  # current month
-tokmeter --since 2025-01-01 --until 2025-12-31
-
-# Output
-tokmeter --json                   # JSON output (for piping/CI)
-tokmeter --light                  # skip pricing (faster)
-```
-
-### Backup, Snapshot & Restore
-
-`tokmeter cleanup`, `tokmeter snapshot`, and `tokmeter restore` handle disk
-reclaim and cross-machine portability with automatic tar backups and
-homedir-aware path remapping. See [docs/backup-restore.md](docs/backup-restore.md)
-for the full walkthrough.
-
-### Project Aliases
-
-Collapse variants of the same project (e.g. `Vortex` on Mac and `vortex` on
-Linux become one row), rename noisy canonical names
-(`weather-app/frontend` → `weather-app`), tag projects (`work`,
-`client`, `self`), or hide archived ones.
-
-File: `~/.tokmeter/aliases.json`. Included in `snapshot` bundles automatically,
-so your project renames and tags travel across machines with the rest of your
-data.
-
-```bash
-tokmeter alias list                              # show current aliases
-tokmeter alias set "Vortex" "Vortex"               # single rename
-tokmeter alias merge "Vortex" "Vortex" "vortex"     # group keys under one display
-tokmeter alias tag add "weather-app" work client
-tokmeter alias hide "old-scratch"                # drop from per-project tables
-tokmeter alias suggest                           # interactive auto-detect
-```
-
-Every entry carries `modifiedBy: "user" | "tokmeter"`. Auto-suggest only
-proposes for unaliased keys; it **never overwrites** a user-flagged entry. User
-confirmations flip the flag so future scans leave it alone.
-
-### Cost Digest
-
-The `digest` command gives you a cost report card:
-
-```
-+==========================================+
-|  Weekly Digest: Mar 30 - Apr 5, 2026     |
-+==========================================+
-
-  Total Spend:     $2,847.32
-  vs Last Week:    $2,102.55 (+35.4%)
-  Daily Average:   $406.76
-  Busiest Day:     Thursday ($892.11)
-
-  Cache Efficiency: 98.2% hit rate
-  Est. Savings:     $977.52
-
-  Optimization Score: B (85/100)
-    Cache:           A (100)
-    Model Selection: A (100)
-    Discipline:      F (40)
-
-  Tips:
-  - The same recorded token counts estimate to $620 on model A and $124 on model B; task quality is not evaluated
-  - Cache efficiency is solid at 98% - keep sessions active
-```
-
-Aliases: `tokmeter weekly`, `tokmeter report`
-
-### Example Output
-
-```
-+---------------------------+------------+--------+--------+----------+---------+
-| Project                   | Tokens     | Cost   | Models | Providers| Days    |
-+---------------------------+------------+--------+--------+----------+---------+
-| myapp                     | 2.4M       | $24.20 | 3      | 2        | 14      |
-| api-server                | 800.0K     | $8.50  | 2      | 1        | 7       |
-| scripts                   | 120.5K     | $1.44  | 1      | 1        | 3       |
-+---------------------------+------------+--------+--------+----------+---------+
-
-Total: 3.3M tokens | $34.14 | 24 active days
-```
-
-## Drishti -- MCP Server + Live Observatory + Daemon
-
-[`@sriinnu/drishti`](packages/mcp/) is the observability layer. It provides:
-
-### MCP Server
-
-Exposes **24 tools** to Claude Code, Codex, Cursor, and any MCP client. All
-tools are prefixed `drishti_*` so they don't collide with other servers in the
-same client.
-
-```json
-// ~/.claude/settings.json
-{
-  "mcpServers": {
-    "drishti": {
-      "command": "npx",
-      "args": ["-y", "@sriinnu/drishti", "mcp"]
-    }
-  }
-}
-```
-
-**Snapshot & breakdowns:** `drishti_pulse`, `drishti_models`, `drishti_providers`, `drishti_projects`, `drishti_timeline`, `drishti_heatmap`
-
-**Search, compare, export:** `drishti_search`, `drishti_compare`, `drishti_export`
-
-**Cost intelligence:** `drishti_cache_efficiency`, `drishti_model_advisor`, `drishti_budget_alert`, `drishti_cost_optimization_tips`, `drishti_efficiency`, `drishti_anomaly`, `drishti_forecast`, `drishti_budget`
-
-**Reports & behavior:** `drishti_digest`, `drishti_streaks`, `drishti_leaderboard`
-
-**Storage hygiene:** `drishti_cleanup_preview`, `drishti_cleanup_execute`, `drishti_backups`, `drishti_restore`
-
-Every tool output carries a transparency footer (record count, scan duration,
-warnings for models with missing pricing) so you can audit the math.
-
-### Statusline Hook
-
-Live animated status bar inside Claude Code with cache hit rate:
-
-```json
-// ~/.claude/settings.json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "npx -y @sriinnu/drishti statusline"
-  }
-}
-```
-
-```
-【♾️】 ○ ❯ 📂myproject ❯ 🌿main ❯ ⚡$5.97 ❯ sonnet-4 ❯ ↑42.5K ↓18.2K ❯ ⚡98.2% ❯ 🔥$4.55/hr ❯ 📈 today $37.8
-```
-
-Features:
-- Rainbow animated infinity logo
-- Real-time token counts with intensity bars
-- Live cost tracking with hourly burn rate
-- Cache hit rate indicator (green >80%, yellow 50-80%, red <50%)
-- Today's total across all providers
-- Cross-provider aggregation when daemon is running
-- Four fallback layers, so it still prints a valid line if pricing or the daemon is unavailable
-
-### Cross-Provider Aggregation Daemon
-
-The daemon aggregates token usage across **multiple AI coding assistants running simultaneously**:
-
-```bash
-# Start the daemon
+```sh
 drishti daemon start
-
-# Check status
 drishti daemon status
-
-# Stop the daemon
-drishti daemon stop
+drishti serve             # MCP server over stdio
+drishti statusline        # one statusline tick
+drishti live              # live terminal UI
 ```
 
-When multiple Claude Code, Codex, or OpenCode instances are running, the statusline shows **aggregated totals** across all of them in real-time via WebSocket.
+The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. The macOS app, statusline, and MCP server consume its shared state. Daemon commands belong to `@sriinnu/drishti`; install it for these surfaces.
 
-The daemon is the **single source of truth**: it holds usage warm in memory and
-every consumer (macOS bar, statusline, MCP) is a thin **reader** of it. Opening
-the macOS bar starts the daemon if it's down (singleton - only one ever runs),
-and nothing else scans the corpus on a hot path. This keeps reads fast and
-memory bounded. See [docs/architecture.md](docs/architecture.md) for the data
-freshness, immutability, and memory model.
+MCP tools use the `drishti_` prefix. They include usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [Drishti reference](packages/mcp/README.md) for names, configuration, and programmatic exports.
 
-### Live TUI
+`drishti editors` lists installer targets. `drishti install-mcp` and `drishti install-statusline` write editor configuration; inspect the generated settings for your editor. See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
-```bash
-npx @sriinnu/drishti live
-# or
-drishti live
-```
+## Terminal and web interfaces
 
-Real-time terminal dashboard with 2-second refresh.
-
-## Universal Installer
-
-Install statusline and MCP across **all supported editors** at once:
-
-```bash
-# Install statusline for Claude Code, OpenCode, Codex
-drishti install-statusline
-
-# Install MCP server for all editors
-drishti install-mcp
-
-# List supported editors
-drishti editors
-```
-
-Supported editors:
-- **Claude Code** -- statusline + MCP
-- **OpenCode** -- statusline + MCP
-- **Codex** -- statusline + MCP
-- **Cursor** -- MCP
-- **Windsurf** -- MCP
-- **Zed** -- MCP
-
-## TUI
-
-Interactive terminal UI with bar charts, sparklines, and contribution heatmaps.
-
-```bash
-# After `npm install -g @sriinnu/tokmeter`
+```sh
+# After installing @sriinnu/tokmeter
 tokmeter-tui
 
-# Or one-shot
+# Without a global install
 npx -p @sriinnu/tokmeter tokmeter-tui
 ```
 
-| View | Key | Description |
-|------|-----|-------------|
-| Overview | `1` | Bar charts, sparklines, provider breakdown |
-| Models | `2` | Sortable table with inline charts |
-| Daily | `3` | Sparkline + heatmap |
-| Stats | `4` | Streaks, averages, contribution calendar |
+The terminal UI supports overview, model, daily, and statistics views. See its [keys and commands](packages/tui/README.md).
 
-## Web App
+Run the web workspace from a source checkout:
 
-React + Plotly dashboard with rich visualizations and **live mode**.
-
-```bash
-cd packages/web
+```sh
 bun install
-bun run dev
+bun run dev:web
 ```
 
-Open http://localhost:3000
+Open `http://localhost:3000`. See [web setup and data sources](packages/web/README.md).
 
-When the daemon is running, the web dashboard connects via WebSocket and shows **live session data** alongside historical charts:
-- Green pulsing "Live" indicator when connected
-- Real-time cost, token counts, and active sessions
-- Per-provider and per-model live breakdowns
-- Falls back to static data when daemon is offline
+## macOS app
 
-| Chart | Description |
-|-------|-------------|
-| Model cost bars | Horizontal bar chart comparing model costs |
-| Provider pie | Donut chart of cost split by provider |
-| Daily trend | Dual-axis line chart (tokens + cost) |
-| Token breakdown | Stacked bars (input/output/cache per model) |
-| Contribution heatmap | GitHub-style calendar heatmap |
+Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also required for the local daemon.
 
-Export data: `tokmeter --json > packages/web/public/data.json`
+For published 1.10.0, install `@sriinnu/drishti`, run `drishti daemon start`, and open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases). The current source improves automatic startup by resolving paired Node/npx and invoking version-matched Drishti, with prerequisite and retry controls on failure.
 
-## macOS Menu Bar
+The popup shows today's tokens, cost, models, and projects. **Usage details** expands lifetime totals, trends, and signals; the view scrolls when it exceeds the available height. Six themes are selectable: Terminal, Paper, Nebula, Aurora, Nocturne, and Glass. Glass uses native light frost and explicit theme-based text/status colors. The Hub provides larger breakdowns and settings.
 
-A native SwiftUI menubar app that surfaces your live token spend without ever
-leaving the menubar. Reads from the local Drishti daemon and starts it when unavailable.
-The current source resolves Node.js 18+ and paired npx, starts the version-matched
-Drishti package, and shows prerequisite or retry controls if startup fails.
+See [macOS build and runtime details](packages/macos-bar/README.md), [first-use checks](docs/macos/first-use.md), and [popover validation](docs/macos/popover-usability.md). The [completion tracker](docs/macos-completion.md) records remaining fresh-machine, reliability, update, accounting, accessibility, and trial gates.
 
-The menu bar icon itself is a live health gauge: it tints **green → yellow → red**
-as your most-loaded session approaches its ceiling (worst-session-wins across every
-connected provider). Pick which ceiling drives the color in settings - **context
-window** fill, the Claude **5-hour block**, or a **daily budget** - so the signal
-works whether or not a provider reports a context window. Turn it off for a plain
-monochrome icon.
+The [synthetic walkthrough](docs/assets/demo/README.md) documents how the 1.10.0 example images were generated; it is not a capture of the current local candidate.
 
-<p align="center">
-  <img src="docs/assets/demo/scene-01.png" alt="TokmeterBar popover" width="320" />
-</p>
+## Accounting and limitations
 
-```bash
-bun run bar                        # build, install to /Applications, launch
-```
+- Estimated API cost applies model rates to recorded usage. It is not a subscription bill.
+- Tool-reported cost comes from local telemetry and has not been independently reconciled to an invoice.
+- Missing prices or usage fields remain unavailable; missing price does not mean zero cost.
+- Earlier saved days can lack provenance needed to separate estimates from tool reports. Ordinary refreshes preserve those aggregates.
+- Sealed daily aggregates retain totals after raw logs are removed. They do not preserve every transcript or per-request detail.
 
-Beyond the standard totals (today's cost, week sparkline, top models, per-project
-sessions), the bar surfaces a set of live "right now" signals so the surface reads
-as a speedometer, not a scoreboard. The statbar foregrounds these six; the rest
-(subagent share, reasoning share, per-tool cost, Claude 5-hour billing window,
-per-project context pressure) live in the Hub. All eleven are computed in one pass
-in [`packages/core/src/signals.ts`](packages/core/src/signals.ts):
-
-| Signal | What it tells you |
-|--------|-------------------|
-| **Burn rate** | $/hr over the last 60 min - color ramps green → amber → red as you heat up. |
-| **Cache hit %** today | Read tokens served from cache. Two denominators are tracked: the *canonical* rate `cacheRead / (input + cacheRead + cacheWrite)` (counts cache writes as a cost, the honest number) and a *legacy read-share* `cacheRead / (input + cacheRead)` for back-compat. The bar shows the read-share; `missRate + cacheWriteShare + canonicalRate` always sums to exactly 1. |
-| **Pace** | Today's cost-by-this-hour vs. the median of your last 7 active days. Tortoise / hare / equal icon. |
-| **Compaction tax** | % of today's spend going to `/compact` overhead (Claude Code-specific signal). |
-| **Context pressure** | How much the latest request's input has grown over the session's early baseline (the "drag" cache reads add) - the lever behind when to `/compact`. |
-| **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
-
-Six themes (Terminal / Paper / Nebula / Aurora / Nocturne / Glass) and
-a companion "Hub" full-window with project drilldown, command palette, and
-settings. Glass uses light desktop frost with dark text and status colors.
-The popup fits collapsed content and scrolls when expanded details exceed the
-available height. See [popover validation](docs/macos/popover-usability.md).
-
-## Supported Providers
-
-| Provider | Data Location |
-|----------|--------------|
-| Claude Code | `~/.claude/projects/**/*.jsonl` |
-| OpenCode | `~/.local/share/opencode/opencode.db` (SQLite) + legacy JSON |
-| Codex CLI | `~/.codex/sessions/*.jsonl` |
-| Gemini CLI | `~/.gemini/tmp/*/chats/*.json` |
-| Cursor IDE | Local SQLite (`cursorDiskKV` in Cursor's own state.vscdb) by default; `~/.config/tokscale/cursor-cache/` (external API sync) takes priority when present |
-| Amp | `~/.local/share/amp/threads/` |
-| Droid | `~/.factory/sessions/` |
-| OpenClaw | `~/.openclaw/agents/` + legacy paths |
-| Pi | `~/.pi/agent/sessions/` |
-| Kimi CLI | `~/.kimi/sessions/` |
-| Qwen CLI | `~/.qwen/projects/` |
-| Roo Code | VS Code globalStorage |
-| Kilo | VS Code globalStorage |
-| Kilo CLI | `~/.local/share/kilo/kilo.db` (SQLite) |
-| Mux | `~/.mux/sessions/` |
-| VS Code (Copilot Chat) | VS Code chat session store (model + request volume only — Copilot bills via quota, no local token/cost data) |
-| Antigravity | Local trajectory store (no public schema; session timestamps + touched-file paths only — no model/token/cost data) |
-| Zed | `~/Library/Application Support/Zed/threads/threads.db` (SQLite, real token counts + model) |
-| Synthetic | Re-attributed from other sources |
-
-OpenRouter models (free and paid) are automatically detected via model ID format and priced through kosha-discovery's OpenRouter integration.
-
-## Pricing
-
-Pricing is resolved entirely through [`@sriinnu/kosha-discovery`](https://github.com/sriinnu/kosha-discovery)
- - one source of truth, refreshed daily, no stale hardcoded fallback.
-
-Resolution chain (see `packages/core/src/pricing.ts`):
-
-1. **In-memory cache** - per-process, invalidated on kosha registry mtime change.
-2. **User overrides** - `~/.tokmeter/pricing-overrides.json` for negotiated rates, free internal deployments, or per-model corrections. Keyed by exact model id; partial `ModelPricing` shapes accepted.
-3. **kosha direct** - `registry.model(id)` for canonical model IDs. Prefers `originPricing` (direct-provider rate) over `pricing` (proxy/gateway rate) when both are usable.
-4. **kosha fuzzy** - searches the full discovered catalog with an exact-first scorer; covers the long tail (including 300+ OpenRouter models).
-5. **Manifest fallback** - direct read of `~/.kosha/registry.json` when the runtime state is missing models the manifest knows about.
-
-Reasoning tokens get their own rate when kosha publishes one (o1/o3/gemini-thinking/deepseek-r1 and equivalents); otherwise they fall back to the output rate with the cell flagged.
-
-Covers Anthropic, OpenAI, Google, DeepSeek, xAI, Mistral, Meta, Moonshot, Cohere, Perplexity, Qwen, and 10+ more - whatever kosha is currently tracking.
-
-Historical records are immutable: prices freeze at write time. Only today reprices when kosha updates. The `tokmeter routes` CLI extends this into a cost-surface explorer - projects today's exact token shape against every model in your lifetime lineup using kosha's live registry, with Δ-vs-actual and honest exclusion of unpriced models. Run `tokmeter routes` for a table or `tokmeter routes --json` for piping. Layer 1 (pure pricing translation) ships in v1.3.0; the full multi-layer design is in [`docs/designs/routes.md`](docs/designs/routes.md).
-
-All formatters are NaN/Infinity-safe - malformed data never leaks into output.
-
-## Performance
-
-The daemon scans your sessions once, persists them as per-day immutable aggregate files, and serves every reader (CLI, statusline, bar, web) from in-memory state.
-
-**Storage layout** (`~/.cache/tokmeter/aggregates/`):
-
-| | before (v2 monolith) | after (v3 relay) | delta |
-|---|---|---|---|
-| History store on disk | 1 file × 187 MB | ~190 files × ~6 KB each (~1.1 MB total) | **~170× smaller** |
-| Lifetime `TokenRecord[]` in heap | held warm | structurally eliminated | gone |
-| Cold-start I/O | parse 187 MB JSON + dispatch | load the sealed day files + a today-only scan | bounded to today, not the corpus |
-
-**Hot-path query latency** (measured against a 77 GB / 319k-record corpus, daemon HTTP port):
-
-| endpoint | cache hit (within 12s TTL) | cache miss (TTL refresh) | response size |
-|---|---|---|---|
-| `/api/stats` | ~1 - 6 ms | ~5 s (today scan) | 341 B |
-| `/api/today` | ~1 ms | - | ~700 B |
-| `/api/projects` | ~2 - 4 ms | - | 170 KB |
-| `/api/models` | ~1 ms | - | 7.5 KB |
-| `/api/daily` | ~1 ms | - | 30 KB |
-| `/api/statbar-signals` | ~38 - 58 ms | - | 4.6 KB |
-| `/api/cross-tool` | ~2 ms | - | 600 B |
-
-The statusline polls inside the 12 s TTL, so every visible query is a cache hit. One query per TTL window pays the today-scan cost; that scan reads only today's files - mtime-pruned, then confirmed by each file's newest event timestamp so a touched-but-old file can't masquerade as today (typically a handful of active session files).
-
-**Memory - the honest version:** RSS is noisy on macOS (V8 retains arenas after GC) and the parser-level scan cache (`~/.cache/tokmeter/scan-cache.json`, ~34 MB on disk, several× that in heap) is real weight, so any single `ps` sample is meaningless. Sampled over a warm session the daemon sits in a **~700 MB - 1.1 GB steady-state band**, dips briefly toward ~30 MB right after a GC, and spikes toward ~1.5 GB mid-scan. That is *modestly* better than the pre-v1.5 daemon's stable ~1 GB+ - not the dramatic reduction the early numbers suggested. The win that actually holds is **structural, not the RSS figure**: the daemon no longer pins lifetime records in heap (it holds today plus the sealed day aggregates instead - past days are never re-parsed), and the on-disk store is ~170× smaller. The remaining heap bulk is the parser scan cache (Claude Code's per-file record cache); bounding it is the next memory fight.
-
-**Reproduce locally:**
-
-```bash
-# Stop daemon, restart, sample RSS over warmup
-node packages/cli/dist/cli.js daemon stop
-node packages/cli/dist/cli.js daemon start
-PID=$(cat ~/.tokmeter/daemon/daemon.pid)
-for i in 1 2 3 4 5; do ps -o rss,pcpu -p $PID | tail -1; sleep 2; done
-
-# Endpoint latency battery
-TOK=$(cat ~/.tokmeter/daemon/daemon.token)
-for ep in api/stats api/today api/projects api/models api/daily; do
-  curl -s -H "Authorization: Bearer $TOK" -o /dev/null \
-    -w "$ep  %{time_total}s  %{size_download}B\n" \
-    http://127.0.0.1:9877/$ep
-done
-
-# Relay store inspection
-ls -1 ~/.cache/tokmeter/aggregates/ | wc -l   # day count
-du -sh ~/.cache/tokmeter/aggregates/          # total size
-```
-
-## Architecture
-
-```
-Session Files (local disk)
-    |
-@sriinnu/tokmeter-core (parsers -> aggregation -> pricing via @sriinnu/kosha-discovery)
-    |
-    +-- per-day relay store (~/.cache/tokmeter/aggregates/YYYY-MM-DD.json, immutable)
-    +-- today's records + per-day costByHour curves (signals + pace)
-    +-- live today accumulator (DailyAccumulator, sealed at midnight)
-    +-- StatbarSignals (burn/cache/pace/compaction/live)
-    |
-+----------+----------+----------+----------+-----------+----------+
-|  CLI     |  TUI     |  Web App | Drishti  | Daemon    | macOS    |
-| (table)  | (Ink)    | (Plotly) | (MCP)    | (WebSocket)| menu bar |
-| (digest) |          | (live)   | (24 tools)|           | (Swift)  |
-+----------+----------+----------+----------+-----------+----------+
-```
-
-### Relay store (history persistence)
-
-History is a relay race of **per-day immutable aggregate files** at
-`~/.cache/tokmeter/aggregates/YYYY-MM-DD.json` (~6 KB each). Each sealed day is
-write-once-ever - no code path rewrites an existing day file. "Today" lives only
-in an in-memory `DailyAccumulator`; at the midnight rollover (or the first scan
-after it) the accumulator seals to its own day file and a fresh one starts. The
-raw session JSONL is just the *source* today is re-derived from - once a day is
-sealed, **deleting the underlying JSONL loses nothing**, because the sealed
-aggregate already holds that day's counts. Cross-machine sync is plain `rsync`:
-each day file is a self-contained unit, so union-merging two machines'
-`aggregates/` directories yields unified history with no coordination protocol.
-
-### Daemon lifecycle (and why the bar reads `/tmp`)
-
-The daemon binds two localhost ports - `9876` (WebSocket, live registration) and
-`9877` (HTTP REST, every reader's query path). On a successful bind it writes its
-PID and an auth token to **two** locations:
-
-- **Canonical** - `~/.tokmeter/daemon/daemon.{pid,token}` (the source of truth;
-  the daemon's own singleton guard reads this).
-- **Legacy shim** - `/tmp/drishti-daemon.{pid,token}` (what the macOS bar reads).
-
-The bar treats "is the daemon up?" as `fileExists(/tmp/drishti-daemon.pid)` +
-`kill(pid, 0)` + a `proc_name` check, *before* it ever hits HTTP - this avoids a
-60 s URLSession hang when the daemon is genuinely down. The catch: macOS reaps
-`/tmp` files untouched for ~3 days. A daemon that stays up for days writes the
-shim once at startup and never again, so the reaper eventually deletes it - after
-which the bar reports **"offline" against a perfectly healthy daemon**, and a
-naive restart can't recover (the live daemon still owns the *canonical* pidfile,
-so the singleton guard makes the new start bow out). The fix: the daemon
-re-asserts the `/tmp` shims on its 10 s state-save tick whenever they go missing,
-so the reaper can never outlast it (`reassertLegacyShims` in
-`packages/mcp/src/daemon/server.ts`).
+See [how the numbers work](docs/how-the-numbers-work.md) for token buckets, pricing sources, and reconciliation examples. Performance and integration coverage depend on local history and provider formats; the [validation record](docs/release/validation.md) states what was checked.
 
 ## Development
 
-```bash
+```sh
 git clone https://github.com/sriinnu/tokmeter.git
 cd tokmeter
 bun install
 bun run build
-
-# Run surfaces
-bun run cli                    # CLI overview
-bun run cli:models             # Model breakdown
-bun run cli:daily              # Daily usage
-bun run cli:projects           # Project breakdown
-bun run cli:stats              # Statistics
-bun run cli:digest             # Cost digest report
-bun run cli:pricing            # Model pricing lookup
-bun run tui                    # Interactive TUI
-bun run dev:web                # Web dashboard (dev server)
-bun run drishti:live           # Live TUI dashboard
-bun run drishti:serve          # MCP server
-bun run drishti:statusline     # Statusline hook
-
-# Daemon
-bun run daemon:start           # Start aggregation daemon
-bun run daemon:stop            # Stop daemon
-bun run daemon:status          # Check daemon status
-
-# Installer
-bun run install:statusline     # Install statusline for all editors
-bun run install:mcp            # Install MCP for all editors
-bun run list:editors           # List supported editors
-
-# macOS menu bar (Swift app)
-bun run bar                    # Build + install to /Applications + launch (ad-hoc signed)
-bun run bar:build              # Build only - produces ./packages/macos-bar/TokmeterBar.app
-bun run bar:signed             # Developer ID signed - Gatekeeper-friendly for AirDrop
-bun run bar:release            # Signed + notarized + stapled + appcast.xml updated
-                               # Requires packages/macos-bar/.env with Apple credentials.
-                               # See packages/macos-bar/RELEASE.md for the full pipeline.
-bun run bar:publish            # Upload the built TokmeterBar-<version>.zip to a
-                               # GitHub release v<version>. Run after bar:release.
-bun run bar:ship               # One-shot: clean → bar:release → bar:publish.
-                               # Bump CFBundleShortVersionString in bundle.sh first.
-
-# Cleanup
-bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.zip, *.dSYM,
-                               # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
-
-# Quality
-bun run test                   # Run the monorepo test suite
-bun run lint                   # Lint
-bun run format                 # Format
+bun run lint
+bun run test
 ```
+
+Useful workspace commands:
+
+| Command | Purpose |
+| --- | --- |
+| `bun run cli` | CLI from source |
+| `bun run tui` | Terminal UI from source |
+| `bun run dev:web` | Web development server |
+| `bun run drishti:serve` | MCP server from source |
+| `bun run daemon:start` | Start the source daemon |
+| `bun run daemon:status` | Check daemon status |
+| `bun run daemon:stop` | Stop the daemon |
+| `bun run bar:build` | Build an ad-hoc macOS bundle without installing |
+| `bun run bar` | Build, install, and launch the macOS app |
+
+Native tests require macOS and Xcode:
+
+```sh
+swift test --package-path packages/macos-bar
+```
+
+Optional UI fixtures use `TOKMETER_UI_QA_DIR`; the walkthrough renderer uses `TOKMETER_DEMO_DIR`. Create the output directory before running. The JavaScript suite and native suite are separate; neither replaces live accessibility or sustained runtime checks.
+
+## Packaging and release
+
+```sh
+# After bun run build: prepare local npm tarballs without publishing
+bash scripts/prepare-packages.sh /tmp/tokmeter-candidate
+bun run check:secrets
+```
+
+Native release scripts support Developer ID signing, notarization, stapling, Sparkle metadata, and ZIP packaging. `bun run bar:signed` and `bun run bar:release` require configured distribution credentials; publishing is a separate action. Follow the [native release pipeline](packages/macos-bar/RELEASE.md) and [release validation](docs/release/validation.md).
 
 ## License
 
-- Application - AGPL-3.0-only: [LICENSE](./LICENSE)
-- Core library `@sriinnu/tokmeter-core` - MPL-2.0: [packages/core/LICENSE](./packages/core/LICENSE)
+- Applications: [AGPL-3.0-only](LICENSE).
+- Core source under `packages/core`: [MPL-2.0](packages/core/LICENSE), including when bundled into an application.
 
-Release artifacts include the license texts and source snapshot. See [licenses and source](docs/licensing.md) for scope, bundled notices, and build instructions.
+Release artifacts include license texts and a source snapshot. The macOS bundle also includes Sparkle notices. See [licenses and source](docs/licensing.md) for artifact contents and rebuild instructions.
 
-Copyright (c) 2026 Srinivas Pendela.
+Copyright (c) 2026 Srinivas Pendela and contributors.

@@ -1,14 +1,6 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
+# Core API
 
-<h1 align="center">@sriinnu/tokmeter-core</h1>
-
-<p align="center"><strong>Session parsers, aggregation, and pricing for 16+ AI coding agents</strong></p>
-
----
-
-The engine behind tokmeter. Scans local session files, parses token records from 16+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes a clean API for aggregation.
+The engine behind tokmeter. Scans local session files, parses token records from 16+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
 
 ## Install
 

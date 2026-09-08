@@ -1,12 +1,4 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
-
-<h1 align="center">@sriinnu/tokmeter-tui</h1>
-
-<p align="center"><strong>Interactive terminal UI with charts, sparklines, and heatmaps</strong></p>
-
----
+# Terminal UI
 
 A full-screen terminal dashboard for exploring token usage. Built with [Ink](https://github.com/vadimdemedes/ink) (React for CLIs).
 
