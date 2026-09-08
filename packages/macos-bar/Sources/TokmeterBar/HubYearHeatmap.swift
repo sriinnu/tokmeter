@@ -21,6 +21,7 @@ struct YearHeatmap: View {
     let theme: AppTheme
 
     @State private var hovered: String?
+    @State private var showDailyValues = false
     /// Cached grid + month-label keyed by `gridDateKey` (today's start-of-day
     /// string). 365 × 2 `Calendar.date(byAdding:)` calls used to fire every
     /// time the parent's 30s data poll re-rendered. Now: built once on
@@ -85,6 +86,18 @@ struct YearHeatmap: View {
     private static let maxCell: CGFloat = 22
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heatmap
+            HeatmapDailyValues(daily: recordedDays, theme: theme, isExpanded: $showDailyValues)
+        }
+    }
+
+    private var recordedDays: [DailyUsage] {
+        let visibleDates = Set(grid.flatMap { $0 }.compactMap { $0 }.map(dateKey))
+        return daily.filter { visibleDates.contains($0.date) }.sorted { $0.date > $1.date }
+    }
+
+    private var heatmap: some View {
         // SELF-SIZING grid: each of the 7-tall columns is an equal-width slot
         // (maxWidth: .infinity) and each cell is square via aspectRatio, so the
         // grid reports its true height to the parent with NO GeometryReader and
@@ -208,8 +221,59 @@ struct YearHeatmap: View {
             return f
         }()
         let dateStr = formatter.string(from: date)
-        if cost <= 0 { return "\(dateStr) — no activity" }
-        return String(format: "%@ — $%.2f", dateStr, cost)
+        let tokens = daily.first { $0.date == dateKey(date) }?.tokens ?? 0
+        if cost <= 0 && tokens <= 0 { return "\(dateStr) — no activity" }
+        return "\(dateStr) — \(tokens.formatted()) tokens · \(Fmt.cost(cost)) cost"
+    }
+}
+
+/// A native table provides keyboard row navigation and accessible column values
+/// without turning every painted heatmap square into a separate Tab stop.
+struct HeatmapDailyValues: View {
+    let daily: [DailyUsage]
+    let theme: AppTheme
+    @Binding var isExpanded: Bool
+    @State private var selection: DailyUsage.ID?
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Recorded days only, newest first. Missing dates are not treated as zero usage.")
+                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                    .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                if daily.isEmpty {
+                    Text("No recorded days in this period.")
+                        .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+                } else {
+                    Table(daily, selection: $selection) {
+                        TableColumn("Date") { day in
+                            Text(day.date)
+                        }
+                        .width(min: 94, ideal: 110)
+                        TableColumn("Cost") { day in
+                            Text(String(format: "$%.2f", day.cost))
+                        }
+                        .width(min: 80, ideal: 100)
+                        TableColumn("Tokens") { day in
+                            Text(day.tokens.formatted())
+                        }
+                        .width(min: 100, ideal: 140)
+                    }
+                    .tableStyle(.inset)
+                    .frame(height: min(220, CGFloat(daily.count) * 28 + 34))
+                    .accessibilityLabel("Recorded daily usage")
+                }
+            }
+            .font(.system(size: 11, design: theme.fonts.bodyDesign))
+            .foregroundStyle(theme.backgroundMode.primaryTextColor)
+            .padding(.top, 8)
+        } label: {
+            Text("Daily values · \(daily.count) recorded days")
+                .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
+                .foregroundStyle(theme.backgroundMode.primaryTextColor)
+        }
+        .tint(theme.colors.accent)
     }
 }
 
@@ -234,14 +298,14 @@ private struct HeatmapCellTooltip: View {
                     .foregroundColor(bg.secondaryTextColor)
             } else {
                 row(label: "Cost", value: Fmt.cost(day.cost))
-                row(label: "Tokens", value: Fmt.number(day.tokens))
+                row(label: "Tokens", value: day.tokens.formatted())
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
+                .fill(bg.surfaceColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(c.accent.opacity(0.35), lineWidth: 1)
@@ -249,6 +313,7 @@ private struct HeatmapCellTooltip: View {
                 .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
         )
         .fixedSize()
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder

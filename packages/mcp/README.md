@@ -174,3 +174,9 @@ Claude Code, OpenCode, Codex CLI, Cursor, Windsurf, Zed, VS Code Copilot, and mo
 ## License
 
 AGPL-3.0-only. Core source retains MPL-2.0. License texts and the build source snapshot are included in `dist/licenses/`; see [licenses and source](https://github.com/sriinnu/tokmeter/blob/main/docs/licensing.md).
+
+## Daemon ownership and refresh
+
+Status and stop verify the PID against a recorded process start time and command hash. Legacy instances without an identity file must match the installed Drishti CLI entrypoint. Uncertain or changed identity is refused; process inspection and signalling are separate OS operations, so this is not an atomic process handle.
+
+Startup publishes credentials and ownership only after acquiring the WebSocket listener. A competing start cannot replace the winner's token. Concurrent full rescans share one active or queued full refresh; incremental refreshes remain serialized. These paths have synthetic identity, refresh-count, and listener-contention tests. Windows process inspection still needs Windows runtime validation.

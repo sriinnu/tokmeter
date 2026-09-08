@@ -8,6 +8,7 @@ import {
   loadSummaryCache,
   saveSummaryCache,
 } from "../core/src/index.ts";
+import { appNoticesPlugin } from "./scripts/app-notices.js";
 
 const DEV_SUMMARY_TTL_MS = 15_000;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
@@ -146,7 +147,8 @@ function toErrorMessage(error: unknown): string {
 }
 
 export default defineConfig({
-  plugins: [react(), tokmeterSummaryDevPlugin()],
+  publicDir: process.env.TOKMETER_APP_BUILD === "1" ? false : "public",
+  plugins: [react(), tokmeterSummaryDevPlugin(), appNoticesPlugin()],
   resolve: {
     alias: {
       "@sriinnu/tokmeter-core": resolve(__dirname, "../core/src/index.ts"),

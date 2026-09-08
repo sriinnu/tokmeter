@@ -14,6 +14,7 @@ struct SettingsPopover: View {
     @Binding var theme: AppTheme
     @ObservedObject var loader: TokmeterLoader
     @ObservedObject private var configStore = HubConfigStore.shared
+    @ObservedObject private var dashboard = WebDashboardController.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -43,11 +44,21 @@ struct SettingsPopover: View {
 
             Divider()
 
-            Button(action: openWebPanel) {
-                Label("Open web dashboard", systemImage: "safari")
+            Button { Task { await dashboard.open() } } label: {
+                Label(dashboard.isStarting ? "Starting dashboard…" : "Open web dashboard", systemImage: "safari")
                     .font(.system(size: 11, design: .rounded))
             }
             .buttonStyle(.borderless)
+
+            if dashboard.isStarting || dashboard.isRunning {
+                Button(dashboard.isStarting ? "Cancel dashboard startup" : "Stop web dashboard") {
+                    dashboard.stop()
+                }
+                .buttonStyle(.borderless)
+            }
+            if let error = dashboard.error {
+                Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
 
             Button(action: openConfigFile) {
                 Label("Open Config File", systemImage: "doc.text")
@@ -248,12 +259,6 @@ struct SettingsPopover: View {
     }
 
     // MARK: - Actions
-
-    private func openWebPanel() {
-        if let url = URL(string: "http://localhost:3000") {
-            NSWorkspace.shared.open(url)
-        }
-    }
 
     /// Open the user's `~/.tokmeter/config.json` in the default editor. If
     /// that path has been replaced with a symlink escaping ~/.tokmeter/

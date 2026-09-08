@@ -127,6 +127,7 @@ try {
   /* dir may already exist with different perms; not fatal — we still write 0600 files */
 }
 
+export const DAEMON_IDENTITY_FILE = join(DAEMON_STATE_DIR, "daemon-identity.json");
 export const DAEMON_PID_FILE = join(DAEMON_STATE_DIR, "daemon.pid");
 export const DAEMON_TOKEN_FILE = join(DAEMON_STATE_DIR, "daemon.token");
 export const DAEMON_STATE_FILE = join(DAEMON_STATE_DIR, "daemon-state.json");

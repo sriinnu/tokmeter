@@ -38,6 +38,53 @@ final class StartupTests: XCTestCase {
         XCTAssertNil(NodeToolchain.majorVersion("not node"))
     }
 
+    func testOldNodeAndBrokenShimDoNotHideWorkingManagedNode() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let old = try makeToolchain(root: root, name: "system", script: "echo v16.20.0")
+        let broken = try makeToolchain(root: root, name: "shim", script: "exit 9")
+        let working = try makeToolchain(root: root, name: "managed", script: "echo v22.10.0")
+        let candidates = NodeToolchain.candidates(home: root.path,
+            systemDirectories: [old.binDirectory, broken.binDirectory, working.binDirectory])
+        XCTAssertEqual(candidates, [old, broken, working])
+        let selected = await NodeToolchain.firstSupported(candidates: candidates, environment: ["PATH": "/usr/bin:/bin"])
+        XCTAssertEqual(selected, working)
+    }
+
+    func testHungNodeProbeFallsThroughToWorkingInstallation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hung = try makeToolchain(root: root, name: "hung", script: "exec /bin/sleep 10")
+        let working = try makeToolchain(root: root, name: "working", script: "echo v18.20.0")
+        // Exercise the production budgets; a one-second override also timed
+        // out the healthy child intermittently after native render work.
+        let selected = await NodeToolchain.firstSupported(candidates: [hung, working], environment: [:])
+        XCTAssertEqual(selected, working)
+    }
+
+    func testProbeBudgetStopsBeforeAnotherCandidateStarts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hung = try makeToolchain(root: root, name: "hung", script: "exec /bin/sleep 10")
+        let working = try makeToolchain(root: root, name: "working", script: "echo v22.10.0")
+        let start = Date()
+        let selected = await NodeToolchain.firstSupported(candidates: [hung, working], environment: [:],
+                                                         timeout: 0.1, probeTimeout: 2)
+        XCTAssertNil(selected)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
+
+    private func makeToolchain(root: URL, name: String, script: String) throws -> NodeToolchain {
+        let bin = root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for (name, body) in [("node", script), ("npx", "exit 90")] {
+            let executable = bin.appendingPathComponent(name)
+            try Data("#!/bin/sh\n\(body)\n".utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        return NodeToolchain(binDirectory: bin.path)
+    }
+
     @MainActor
     func testProtocolFailureStopsWarmingAndClearsLiveClaims() {
         let loader = TokmeterLoader(startPolling: false)

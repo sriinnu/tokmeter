@@ -77,10 +77,12 @@ only proposes for unaliased keys and **never overwrites** a user-flagged entry.
 tokmeter --project my-app         # specific project
 tokmeter --claude --opencode      # specific providers
 tokmeter --today                  # today only
-tokmeter --week                   # last 7 days
+tokmeter --week                   # today + previous 6 local calendar days
 tokmeter --month                  # current month
 tokmeter --since 2025-01-01 --until 2025-12-31
 ```
+
+Date bounds are inclusive local `YYYY-MM-DD` dates. Reports use saved daily aggregates, so intraday timestamps are rejected. Project/provider/date filters intersect; sealed history remains queryable even when raw session files are gone.
 
 ## Output
 

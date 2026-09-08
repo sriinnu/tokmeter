@@ -9,6 +9,11 @@ struct NodeToolchain: Equatable {
 
     static func resolve(home: String = NSHomeDirectory(), fileManager: FileManager = .default,
                         systemDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) -> NodeToolchain? {
+        candidates(home: home, fileManager: fileManager, systemDirectories: systemDirectories).first
+    }
+
+    static func candidates(home: String = NSHomeDirectory(), fileManager: FileManager = .default,
+                           systemDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) -> [NodeToolchain] {
         let fixed = systemDirectories + [home + "/.volta/bin"]
         let managed = [
             (home + "/.nvm/versions/node", "/bin"),
@@ -23,12 +28,41 @@ struct NodeToolchain: Equatable {
                 .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
                 .map { root + "/" + $0 + suffix } ?? []
         }
-        return firstAvailable(directories: directories, isExecutable: fileManager.isExecutableFile(atPath:))
+        return available(directories: directories, isExecutable: fileManager.isExecutableFile(atPath:))
     }
 
     static func firstAvailable(directories: [String], isExecutable: (String) -> Bool) -> NodeToolchain? {
-        directories.first { isExecutable($0 + "/node") && isExecutable($0 + "/npx") }
-            .map { NodeToolchain(binDirectory: $0) }
+        available(directories: directories, isExecutable: isExecutable).first
+    }
+
+    private static func available(directories: [String], isExecutable: (String) -> Bool) -> [NodeToolchain] {
+        var seen = Set<String>()
+        return directories.filter {
+            seen.insert($0).inserted && isExecutable($0 + "/node") && isExecutable($0 + "/npx")
+        }.map { NodeToolchain(binDirectory: $0) }
+    }
+
+    /// An old system Node or broken version-manager shim must not hide a
+    /// working installation. Probe in preference order, with one total budget
+    /// as well as a per-child timeout; never run a shell profile or npm here.
+    static func firstSupported(candidates: [NodeToolchain], environment: [String: String],
+                               timeout: TimeInterval = 10, probeTimeout: TimeInterval = 2) async -> NodeToolchain? {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        for candidate in candidates {
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0, !Task.isCancelled else { return nil }
+            do {
+                let version = try await SubprocessRunner.run(
+                    executable: candidate.node, arguments: ["--version"],
+                    environment: candidate.environment(base: environment),
+                    timeout: min(probeTimeout, remaining))
+                if let major = majorVersion(version), major >= 18 { return candidate }
+            } catch {
+                // Missing runtimes behind executable shims and hung probes
+                // are candidate failures, not proof that Node is unavailable.
+            }
+        }
+        return nil
     }
 
     static func majorVersion(_ version: String) -> Int? {

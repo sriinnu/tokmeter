@@ -6,8 +6,8 @@ import XCTest
 final class ThemeContrastTests: XCTestCase {
     @MainActor
     func testStatusInkContrastAndThemeAppearance() throws {
-        for theme in [AppTheme.glass, .paper, .terminal, .nebula] {
-            for color in [theme.statusWarning, theme.statusSuccess, theme.statusDanger] {
+        for theme in [AppTheme.glass, .paper, .terminal, .nebula, .nocturne, .aurora] {
+            for color in [theme.statusWarning, theme.statusSuccess, theme.statusDanger, theme.costInk] {
                 let lightHost = try renderedRGB(color, scheme: .light)
                 let darkHost = try renderedRGB(color, scheme: .dark)
                 for (a, b) in zip(lightHost, darkHost) { XCTAssertEqual(a, b, accuracy: 0.01) }
@@ -71,7 +71,7 @@ final class ThemeContrastTests: XCTestCase {
             // when the selected theme is light. Both pace and delta text must
             // contain the selected theme's opaque ink in the captured pixels.
             for color in [theme.statusWarning, theme.statusSuccess] {
-                let expected = try renderedRGB(color, scheme: .dark)
+                let expected = try nativeRenderedRGB(color)
                 var matches = 0
                 for y in 0..<bitmap.pixelsHigh {
                     for x in 0..<bitmap.pixelsWide {
@@ -80,7 +80,7 @@ final class ThemeContrastTests: XCTestCase {
                         if zip(actual, expected).allSatisfy({ abs($0 - $1) < 0.025 }) { matches += 1 }
                     }
                 }
-                XCTAssertGreaterThan(matches, 5, "Missing selected-theme status ink in \(theme) widgets")
+                XCTAssertGreaterThan(matches, 5, "Missing selected-theme status ink \(expected) in \(theme) widgets")
             }
             if let directory {
                 try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
@@ -88,6 +88,25 @@ final class ThemeContrastTests: XCTestCase {
             }
             window.contentView = nil
         }
+    }
+
+    // Match the AppKit bitmap path used by the production widget capture.
+    // ImageRenderer's offscreen color profile differs from a native window.
+    @MainActor
+    private func nativeRenderedRGB(_ color: Color) throws -> [Double] {
+        let host = NSHostingView(rootView: color.frame(width: 10, height: 10)
+            .environment(\.colorScheme, .dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let pixel = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2,
+                                               y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+        return [pixel.redComponent, pixel.greenComponent, pixel.blueComponent]
     }
 
     @MainActor

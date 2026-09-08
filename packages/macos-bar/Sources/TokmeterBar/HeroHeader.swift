@@ -2,7 +2,7 @@
 //
 // Structure:
 //   - One row: ♾️ (smaller) + TOKMETER wordmark + status (warming/stale/ECG)
-//   - One row: $48.95 (hero number) · "today" inline at baseline
+//   - Tokens today and estimated API cost today, with equal headline weight
 // Total hero height is ~110pt — down from the earlier 160pt — so the KPI
 // cards and sections below get the vertical real estate.
 //
@@ -119,23 +119,40 @@ struct HeroHeader: View {
         }
     }
 
-    /// Usage is the headline; monetary estimates and tool reports stay separate.
+    /// Both headline values describe today; estimates remain separate from tool reports.
     private var valueRow: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 6) {
+        HStack(alignment: .top, spacing: 16) {
             if loader.isWarming {
                 skeletonHero
             } else {
-                Text(Fmt.number(loader.todayTokens))
-                    .font(theme.fonts.hero(size: heroFontSize))
-                    .foregroundColor(foreground)
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text("tokens today")
-                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
-                    .foregroundColor(foreground.opacity(0.65))
+                headline(Fmt.number(loader.todayTokens), label: "Tokens today", color: foreground)
+                headline(estimatedCostText, label: "Estimated API cost today", color: theme.costInk)
+                    .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
             }
         }
+        .padding(.top, 5)
+    }
+
+    private var estimatedCostText: String {
+        guard let basis = loader.statbarSignals?.costBasisToday,
+              basis.estimatedRecords > 0 else { return "—" }
+        return Fmt.cost(basis.estimatedCost)
+    }
+
+    private func headline(_ value: String, label: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(theme.fonts.hero(size: heroFontSize))
+                .foregroundColor(color)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+                .foregroundColor(foreground.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -143,9 +160,6 @@ struct HeroHeader: View {
         if !loader.isWarming {
             VStack(alignment: .leading, spacing: 4) {
                 if let basis = loader.statbarSignals?.costBasisToday {
-                    if basis.estimatedRecords > 0 {
-                        costLine("Estimated API cost", value: basis.estimatedCost)
-                    }
                     if basis.reportedRecords > 0 {
                         costLine("Tool-reported cost", value: basis.reportedCost)
                     }
@@ -329,15 +343,15 @@ struct HeroHeader: View {
 
     private var ambientShadow: Color {
         switch theme {
-        case .nebula:    return c.secondary.opacity(0.45)
-        case .nocturne:  return c.accent.opacity(0.22)
+        case .nebula:    return Color.clear
+        case .nocturne:  return Color.clear
         case .daylight:  return Color.black.opacity(0.12)
         case .synthwave: return c.primary.opacity(0.60)
         case .hud:       return c.secondary.opacity(0.30)
         case .terminal:  return c.secondary.opacity(0.40)
         case .paper:     return Color.black.opacity(0.08)
         case .glass:     return Color.clear
-        case .aurora:    return c.accent.opacity(0.35)
+        case .aurora:    return Color.clear
         case .blueprint: return Color.black.opacity(0.10)
         case .noise:     return Color.black.opacity(0.40)   // hard offset reads as "stuck on"
         case .mint:      return Color.black.opacity(0.06)   // hairline whisper
@@ -353,10 +367,20 @@ struct HeroHeader: View {
 
     /// Bottom-rounded "notch" shape — the popover's top corners stay square
     /// to match the menubar chrome; bottom corners tuck inward.
+    private var heroCornerRadius: CGFloat {
+        switch theme {
+        case .glass: return 0
+        case .nocturne: return 6
+        case .nebula: return 18
+        case .aurora: return 14
+        default: return 26
+        }
+    }
+
     private var notchShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            cornerRadii: .init(topLeading: 0, bottomLeading: theme == .glass ? 0 : 26,
-                              bottomTrailing: theme == .glass ? 0 : 26, topTrailing: 0),
+            cornerRadii: .init(topLeading: 0, bottomLeading: heroCornerRadius,
+                              bottomTrailing: heroCornerRadius, topTrailing: 0),
             style: .continuous
         )
     }
@@ -366,7 +390,7 @@ struct HeroHeader: View {
     @ViewBuilder
     private var innerHighlight: some View {
         switch theme {
-        case .daylight, .hud, .terminal, .paper, .blueprint, .noise, .mint, .glass:
+        case .daylight, .hud, .terminal, .paper, .blueprint, .noise, .mint, .glass, .nocturne, .aurora:
             EmptyView()
         default:
             notchShape.strokeBorder(

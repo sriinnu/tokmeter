@@ -172,7 +172,7 @@ struct ModelsSection: View {
                     ? (model.tokens > 0
                         ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
                         : "This provider doesn't expose token counts or cost locally — only that you used it.")
-                    : compositionTooltip(
+                    : "\(model.tokens.formatted()) tokens · \(Fmt.cost(model.cost)) cost\n" + compositionTooltip(
                         output: model.outputTokens,
                         cacheRead: model.cacheReadTokens,
                         cacheWrite: model.cacheWriteTokens,
@@ -269,13 +269,14 @@ struct WeekSection: View {
     /// 0→1 over ~0.9s on first appear. Drives a leading-edge mask so the
     /// chart reveals left-to-right like an ink pen drawing the line.
     @State private var drawProgress: CGFloat = 0
+    @State private var hoveredDate: String?
 
     private var c: ThemeColors { theme.colors }
     private var style: WeekChartStyle { configStore.config.chartStyle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(label: "LAST 7 DAYS", count: loader.recentDaily.count, theme: theme)
+            SectionHeader(label: "LAST 7 RECORDED DAYS", count: loader.recentDaily.count, theme: theme)
 
             if loader.isWarming {
                 ShimmerBar(width: 340, height: 60, breathToggle: true)
@@ -283,7 +284,7 @@ struct WeekSection: View {
                 Chart(loader.recentDaily) { day in
                     if style == .bars {
                         BarMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(LinearGradient(
@@ -292,7 +293,7 @@ struct WeekSection: View {
                         .cornerRadius(3)
                     } else if style == .area {
                         AreaMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(LinearGradient(
@@ -301,7 +302,7 @@ struct WeekSection: View {
                         .interpolationMethod(.catmullRom)
 
                         LineMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(LinearGradient(
@@ -311,7 +312,7 @@ struct WeekSection: View {
                         .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                     } else {
                         LineMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(LinearGradient(
@@ -321,7 +322,7 @@ struct WeekSection: View {
                         .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
 
                         AreaMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(LinearGradient(
@@ -335,7 +336,7 @@ struct WeekSection: View {
                     // dollar reading or it reads as "no data for today".
                     if day.date == loader.recentDaily.last?.date {
                         PointMark(
-                            x: .value("Date", String(day.date.suffix(5))),
+                            x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
                         .foregroundStyle(c.warm)
@@ -352,7 +353,7 @@ struct WeekSection: View {
                 .chartXAxis {
                     AxisMarks { value in
                         AxisValueLabel {
-                            Text(value.as(String.self) ?? "")
+                            Text(String((value.as(String.self) ?? "").suffix(5)))
                                 .font(.system(size: 9, design: .rounded))
                                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
                         }
@@ -372,6 +373,27 @@ struct WeekSection: View {
                 .onAppear {
                     withAnimation(.easeOut(duration: 0.9)) { drawProgress = 1.0 }
                 }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Color.clear.contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(let point):
+                                    guard let anchor = proxy.plotFrame else { hoveredDate = nil; return }
+                                    let frame = geometry[anchor]
+                                    guard frame.contains(point) else { hoveredDate = nil; return }
+                                    hoveredDate = proxy.value(atX: point.x - frame.minX, as: String.self)
+                                case .ended: hoveredDate = nil
+                                }
+                            }
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if let day = loader.recentDaily.first(where: { $0.date == hoveredDate }) {
+                        DailyUsageTooltip(day: day, theme: theme).offset(y: -30)
+                    }
+                }
+
             }
         }
     }

@@ -16,7 +16,7 @@ npm install @sriinnu/tokmeter
 import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
-const records = await core.scan();
+const records = await core.scan(); // today on a new instance; recent records on a warm instance
 
 // Per-project breakdown
 const projects = core.getAllProjects();
@@ -28,14 +28,16 @@ const models = core.getModelCosts({ project: "my-app" });
 // Daily trend
 const daily = core.getDailyBreakdown({ since: "2025-01-01" });
 
-// Overall stats
+// Lifetime stats, including sealed historical days
 const stats = core.getStats();
 console.log(`$${stats.totalCost.toFixed(2)} across ${stats.projects} projects`);
 
-// Derived usage math works across every parser's canonical buckets.
+// Cache hit rate for the returned recent records, not lifetime history.
 const usage = sumUsage(records);
 console.log(`Cache hit: ${(usage.cacheHitRate * 100).toFixed(1)}%`);
 ```
+
+For a scoped report, call `core.getSummary({ week: true, project: "my-app", providers: ["codex"] })` after scanning. No-argument getters retain their all-time view; filters passed only to `scan()` do not scope them. Reports use inclusive local calendar dates; `week` means today plus the previous six days. See [report filters and retained history](../../docs/consuming-tokmeter.md#report-filters-and-retained-history) for record, timestamp, and provenance limits.
 
 ## Supported Providers
 
@@ -43,11 +45,14 @@ Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, 
 
 ## Pricing
 
-4-tier resolution:
-1. **kosha direct** -- `registry.model(id)` with API keys
-2. **Static table** -- 50+ models with accurate direct-API rates
-3. **kosha fuzzy** -- 300+ OpenRouter models for the long tail
-4. **null** -- unpriced
+After the in-memory cache, pricing resolves through:
+1. User overrides in `~/.tokmeter/pricing-overrides.json`.
+2. Kosha direct model lookup, preferring usable origin rates over gateway rates.
+3. Kosha fuzzy lookup.
+4. The kosha registry manifest when runtime discovery lacks a model.
+5. `null` when no rate is available.
+
+There is no bundled static pricing table. Public catalog pricing does not require provider credentials. See [how the numbers work](../../docs/how-the-numbers-work.md) for estimation rules and unavailable costs.
 
 Covers: input, output, cache read, cache write, and reasoning tokens.
 

@@ -80,11 +80,11 @@ Use these wrappers when you want the convenience of the CLI package but not the 
 import { TokmeterCore } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
-await core.scan({ since: "2026-04-01", providers: ["codex", "claude-code"] });
+await core.scan();
 
-const summary = core.getSummary();
-const projects = core.getAllProjects();
-const stats = core.getStats();
+const summary = core.getSummary({ since: "2026-04-01", providers: ["codex", "claude-code"] });
+const projects = summary.projects;
+const stats = summary.stats;
 ```
 
 Use core directly when you need:
@@ -93,6 +93,16 @@ Use core directly when you need:
 - cleanup or restore services
 - low-level filtering/aggregation helpers
 - control over caching and pricing lifecycle
+
+## Report filters and retained history
+
+CLI reports, the convenience helpers, and `core.getSummary(options)` filter saved daily aggregates together with today's live aggregate. Calling `scan(options)` alone does not scope later no-argument getters. Those getters keep their all-time view.
+
+Report dates use the machine's local calendar: `week` means today and the previous six days, `month` means the current month through today, and `year` means the selected calendar year. `since` and `until` accept inclusive `YYYY-MM-DD` bounds. Intraday timestamps are rejected because saved daily history cannot reconstruct partial days. Report `--older-than` selects complete days before the cutoff date; destructive cleanup retains its timestamp cutoff. The lower-level raw `scan()` API retains its separate timestamp filtering.
+
+Project filters match raw names or alias display names; provider and date filters intersect with that selection. Hidden projects stay out of project lists but remain in totals. `records` contains only the available recent raw records and their original provenance; it is not a reconstruction of all historical records contributing to the totals.
+
+Scan metadata describes the full refresh. Narrowed reports omit rolling live signals, whose time windows differ from the report. With project/provider filtering, first/last timestamps retain the original project-day bounds; per-provider intraday boundaries are not available in the saved cross-cut buckets. Costs retain their saved values and may lack provenance for a retrospective estimate/report split.
 
 ## MCP / live integrations
 

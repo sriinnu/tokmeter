@@ -107,7 +107,7 @@ Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also 
 
 For published 1.10.0, install `@sriinnu/drishti`, run `drishti daemon start`, and open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases). The current source improves automatic startup by resolving paired Node/npx and invoking version-matched Drishti, with prerequisite and retry controls on failure.
 
-The popup shows today's tokens, cost, models, and projects. **Usage details** expands lifetime totals, trends, and signals; the view scrolls when it exceeds the available height. Six themes are selectable: Terminal, Paper, Nebula, Aurora, Nocturne, and Glass. Glass uses native light frost and explicit theme-based text/status colors. The Hub provides larger breakdowns and settings.
+The popup gives today's tokens and estimated API cost equal prominence, with models and projects below. Chart hover cards show exact daily tokens and cost. **Usage details** expands lifetime totals, trends, and signals; the view scrolls when it exceeds the available height. Six themes are selectable: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. Glass uses native light frost and explicit theme-based text/status colors. The Hub provides larger breakdowns and settings. Settings → **Open web dashboard** starts its local server on demand; **Stop web dashboard** or quitting the app stops it.
 
 See [macOS build and runtime details](packages/macos-bar/README.md), [first-use checks](docs/macos/first-use.md), and [popover validation](docs/macos/popover-usability.md). The [completion tracker](docs/macos-completion.md) records remaining fresh-machine, reliability, update, accounting, accessibility, and trial gates.
 

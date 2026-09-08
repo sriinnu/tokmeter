@@ -5,9 +5,8 @@
 // command reference, settings. Shares the same TokmeterLoader as the bar so
 // both surfaces refresh off a single timer.
 //
-// Skeleton phase: sidebar + empty section panels. Data wiring, charts, and
-// project drilldown land in follow-up commits. Everything here is themed
-// against the same AppTheme the bar uses.
+// Overview, project detail, command reference, and settings share the bar's
+// telemetry and theme.
 
 import SwiftUI
 
@@ -49,7 +48,7 @@ enum HubSection: String, CaseIterable, Identifiable {
 }
 
 /// The hub window's content root. Holds the selected section and lays out the
-/// sidebar + detail panels inside a NavigationSplitView.
+/// sidebar and detail panels in a fixed-sidebar HStack.
 struct HubView: View {
     @ObservedObject var loader: TokmeterLoader
 
@@ -80,6 +79,9 @@ struct HubView: View {
             detailPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(hubBackground)
+        }
+        .background {
+            if bg.usesMaterial { FrostedGlassBackground() }
         }
         .environment(\.colorScheme, bg.isLight ? .light : .dark)
         .preferredColorScheme(bg.isLight ? .light : .dark)
@@ -134,7 +136,8 @@ struct HubView: View {
     @ViewBuilder
     private var hubBackground: some View {
         if bg.usesMaterial {
-            FrostedGlassBackground()
+            // The root supplies one continuous material behind sidebar and detail.
+            Color.clear
         } else {
             LinearGradient(
                 colors: bg.gradientColors(),

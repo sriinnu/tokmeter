@@ -60,8 +60,8 @@ MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 FRAMEWORKS_DIR="${CONTENTS}/Frameworks"
 ENTITLEMENTS="entitlements.plist"
-SHORT_VERSION="${CFBundleShortVersionString:-1.10.0}"
-BUILD_VERSION="${CFBundleVersion:-46}"
+SHORT_VERSION="${CFBundleShortVersionString:-1.11.0}"
+BUILD_VERSION="${CFBundleVersion:-48}"
 SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/main/packages/macos-bar/appcast.xml}"
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
@@ -110,8 +110,16 @@ if [[ -d "${SPARKLE_XC}" ]]; then
     fi
 fi
 
+# Bundle code-only web assets. Never ship public/data.json from this machine.
+(cd ../web && TOKMETER_APP_BUILD=1 bunx vite build --outDir dist/dashboard --emptyOutDir)
+mkdir -p "${RESOURCES_DIR}/Dashboard"
+cp ../web/dist/dashboard/index.html "${RESOURCES_DIR}/Dashboard/"
+cp -R ../web/dist/dashboard/assets "${RESOURCES_DIR}/Dashboard/"
+cp ../web/scripts/dashboard-server.mjs "${RESOURCES_DIR}/Dashboard/"
+
 # License notices and matching source travel with the signed app.
 python3 ../../scripts/prepare-license-materials.py macos --destination "${RESOURCES_DIR}/Licenses"
+cp ../web/dist/dashboard/THIRD_PARTY_NOTICES.txt "${RESOURCES_DIR}/Licenses/WebThirdPartyNotices.txt"
 
 # ─── 4b. Copy the app icon so Finder/Dock don't show a grey placeholder ──
 # AppIcon.icns is produced by ./generate-icon.sh and committed to the repo.

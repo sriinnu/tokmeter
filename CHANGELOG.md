@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-09-08
+
+### Changed
+
+- Give today's tokens and estimated API cost equal prominence in the macOS popup, with exact daily token/cost hover details.
+- Add Prism, Lagoon, and Carbon styles while preserving existing saved theme identifiers; share theme renderers across popup and Hub and document their modules.
+- Refine responsive Hub layouts, heatmap keyboard navigation, chart details, and readable status/cost colors.
+- Align README and skill guidance with current query, provider, pricing, and web behavior; add native build, test, and fixture rendering to CI.
+
+### Fixed
+
+- Start the bundled web dashboard on demand from macOS Settings, verify readiness before opening it, and provide stop/cancel and app-quit cleanup; exclude private build-machine usage exports.
+- Intersect date, project, and provider filters over saved daily buckets in CLI/API summaries, including sealed-only history.
+- Preserve encoded project names and query strings in native daemon requests; continue Node discovery past unsupported, broken, or hung candidates.
+- Quote copied Hub project commands as literal shell arguments, correct Drishti command examples, and report settings save failures without discarding the previous configuration.
+- Verify daemon process identity before signalling, publish credentials only after listener ownership, and coalesce concurrent forced rescans.
+
 ## [1.10.0] — 2026-09-06
 
 ### Changed

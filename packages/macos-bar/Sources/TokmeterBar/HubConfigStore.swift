@@ -155,6 +155,8 @@ final class HubConfigStore: ObservableObject {
     static let shared = HubConfigStore()
 
     @Published private(set) var config: HubUserConfig
+    @Published private(set) var saveError: String?
+    private let storagePath: String
 
     /// Where the file lives. Same path the CLI uses in config-service.ts.
     static let filePath: String = {
@@ -162,25 +164,26 @@ final class HubConfigStore: ObservableObject {
         return "\(home)/.tokmeter/config.json"
     }()
 
-    private init() {
-        self.config = Self.loadFromDisk() ?? .defaults
+    init(filePath: String? = nil) {
+        let path = filePath ?? Self.filePath
+        self.storagePath = path
+        self.config = Self.loadFromDisk(filePath: path) ?? .defaults
     }
 
-    /// Atomic update: mutate in memory, stamp user flag + timestamp, then
-    /// write to disk. Subscribers on `$config` see the new value immediately.
+    /// Stamp and persist edits before notifying subscribers. Failed writes
+    /// retain the prior settings and expose a visible error.
     func update(_ mutate: (inout HubUserConfig) -> Void) {
         var next = config
         mutate(&next)
         next.modifiedBy = .user
         next.modifiedAt = ISO8601DateFormatter().string(from: Date())
-        config = next
-        saveToDisk(next)
+        persist(next)
     }
 
     /// Reload from disk — used when reopening the Settings panel in case the
     /// user also edited the file by hand, or the CLI wrote to it.
     func reload() {
-        if let fresh = Self.loadFromDisk() {
+        if let fresh = Self.loadFromDisk(filePath: storagePath) {
             self.config = fresh
         }
     }
@@ -191,13 +194,12 @@ final class HubConfigStore: ObservableObject {
         var fresh = HubUserConfig.defaults
         fresh.modifiedBy = .user
         fresh.modifiedAt = ISO8601DateFormatter().string(from: Date())
-        config = fresh
-        saveToDisk(fresh)
+        persist(fresh)
     }
 
     // MARK: - Disk IO
 
-    private static func loadFromDisk() -> HubUserConfig? {
+    private static func loadFromDisk(filePath: String) -> HubUserConfig? {
         guard FileManager.default.fileExists(atPath: filePath),
               let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)) else {
             return nil
@@ -229,24 +231,19 @@ final class HubConfigStore: ObservableObject {
         return out
     }
 
-    private func saveToDisk(_ cfg: HubUserConfig) {
-        let dir = (Self.filePath as NSString).deletingLastPathComponent
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(cfg) else { return }
-        // Atomic replace: write to sibling tmp, rename over the real file.
-        let tmp = Self.filePath + ".tmp-\(getpid())"
+    /// Publish the new settings only after their atomic disk write succeeds.
+    private func persist(_ cfg: HubUserConfig) {
         do {
-            try data.write(to: URL(fileURLWithPath: tmp))
-            _ = try FileManager.default.replaceItemAt(
-                URL(fileURLWithPath: Self.filePath),
-                withItemAt: URL(fileURLWithPath: tmp)
-            )
+            let url = URL(fileURLWithPath: storagePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(cfg).write(to: url, options: .atomic)
+            config = cfg
+            saveError = nil
         } catch {
-            // If replaceItemAt fails because the target doesn't exist, fall
-            // back to a direct write — replaceItemAt is strict about that.
-            try? data.write(to: URL(fileURLWithPath: Self.filePath))
+            saveError = "Settings weren't saved: \(error.localizedDescription)"
         }
     }
 

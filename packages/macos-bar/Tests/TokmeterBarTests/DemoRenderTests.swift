@@ -32,7 +32,23 @@ final class DemoRenderTests: XCTestCase {
         loader.todayModels = scene.models.map(TokmeterLoader.toUsage)
         loader.topModels = loader.todayModels
         loader.todayProjects = scene.projects
+        loader.totalTokens = 27_500_000
+        loader.totalCost = 78.42
+        loader.recentDaily = (1...7).map { day in
+            DailyUsage(date: "2026-09-0\(day)", tokens: day * 125_000, cost: Double(day) * 0.37)
+        }
         for theme in AppTheme.allCases {
+            let tooltipPreview = VStack(spacing: 12) {
+                DailyUsageTooltip(day: DailyUsage(date: "2026-09-07", tokens: 1_234_567, cost: 12.34), theme: theme)
+                HubChartTooltip(date: "2026-09-07", daily: 12.34, tokens: 1_234_567, avg: 9.87, theme: theme)
+            }.padding(16).background(theme.backgroundMode.surfaceColor)
+                .environment(\.colorScheme, theme.backgroundMode.isLight ? .light : .dark)
+            let tooltipRenderer = ImageRenderer(content: tooltipPreview)
+            tooltipRenderer.scale = 2
+            let tooltipImage = try XCTUnwrap(tooltipRenderer.nsImage)
+            let tooltipBitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(tooltipImage.tiffRepresentation)))
+            try XCTUnwrap(tooltipBitmap.representation(using: .png, properties: [:]))
+                .write(to: root.appendingPathComponent("\(theme.rawValue)-tooltips.png"))
             for expanded in [false, true] {
                 let view = VStack(alignment: .leading, spacing: 0) {
                     HeroHeader(loader: loader, theme: theme, breathToggle: false,

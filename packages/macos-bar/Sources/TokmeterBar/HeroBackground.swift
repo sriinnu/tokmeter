@@ -18,9 +18,7 @@ struct HeroBackground: View {
     let theme: AppTheme
     let breathToggle: Bool
     /// Whether the popover is actually on screen — see PanelVisibility.swift.
-    /// Only `aurora` needs this directly (its own TimelineView); every other
-    /// theme's ambient motion already rides on `breathToggle`, which the
-    /// parent already gates on visibility.
+    /// Shared visibility input; ambient motion follows the parent's gated breath flag.
     var isVisible: Bool = true
 
     private var c: ThemeColors { theme.colors }
@@ -55,114 +53,28 @@ struct HeroBackground: View {
         }
     }
 
-    // MARK: - Aurora
+    // MARK: - Lagoon (legacy Aurora identifier)
 
-    /// Drifting northern-lights gradient. The MeshGradient stops shift their
-    /// positions on a slow 60s cycle so the bg is alive but never flashy —
-    /// motion as identity, not motion as ornament. Apple's macOS Sonoma
-    /// "Sky" wallpapers are the lineage. Performance: the only animated
-    /// view in the entire bar; runs on Core Animation off the main thread.
     private var aurora: some View {
-        Group {
-            if isVisible {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-                    auroraContent(at: timeline.date)
-                }
-            } else {
-                // Frozen — no TimelineView means no ticking while the panel
-                // is closed. Whatever phase it's at when hidden is fine;
-                // nobody can see it, and it resumes instantly when reopened.
-                auroraContent(at: Date())
-            }
+        ZStack(alignment: .bottom) {
+            LinearGradient(colors: [Color(red: 0.025, green: 0.19, blue: 0.18),
+                                    Color(red: 0.035, green: 0.12, blue: 0.15)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Rectangle().fill(c.secondary.opacity(0.6)).frame(height: 2)
         }
     }
 
-    @ViewBuilder
-    private func auroraContent(at date: Date) -> some View {
-        let t = date.timeIntervalSinceReferenceDate
-        // 45/60/75s phased periods — faster than the initial pass so the
-        // motion is actually visible without being distracting. Each
-        // stop drifts on its own phase to keep the pattern non-looping.
-        let p1 = sin(t * 2 * .pi / 45)
-        let p2 = cos(t * 2 * .pi / 75)
-        let p3 = sin(t * 2 * .pi / 60)
-        ZStack {
-            // Solid base anchor.
-            Color(red: 0.02, green: 0.03, blue: 0.08)
-            // Three radial gradients drift independently with stronger
-            // peak intensities than v1 — "curtain of light" should land
-            // as luminous, not subliminal.
-            RadialGradient(
-                colors: [c.secondary.opacity(0.78), c.secondary.opacity(0.10), Color.clear],
-                center: UnitPoint(x: 0.25 + p1 * 0.22, y: 0.30 + p2 * 0.16),
-                startRadius: 15, endRadius: 320
-            )
-            RadialGradient(
-                colors: [c.accent.opacity(0.65), c.accent.opacity(0.08), Color.clear],
-                center: UnitPoint(x: 0.72 + p3 * 0.20, y: 0.55 + p1 * 0.14),
-                startRadius: 20, endRadius: 360
-            )
-            RadialGradient(
-                colors: [c.tertiary.opacity(0.45), Color.clear],
-                center: UnitPoint(x: 0.50 + p2 * 0.25, y: 0.20 + p3 * 0.12),
-                startRadius: 30, endRadius: 280
-            )
-            // Faint star-like specular over the top.
-            RadialGradient(
-                colors: [Color.white.opacity(0.08), Color.clear],
-                center: .top, startRadius: 0, endRadius: 220
-            )
-        }
-    }
-
-
-    // MARK: - Nebula
-    /// Deep purple → magenta → warm orange diagonal with a slow breathing
-    /// white overlay and a corner vignette. The identity look.
+    // MARK: - Prism (legacy Nebula identifier)
     private var nebula: some View {
-        ZStack {
-            LinearGradient(
-                colors: [c.primary, c.secondary, c.warm, c.highlight],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.22)],
-                center: .bottomTrailing, startRadius: 100, endRadius: 400
-            )
-            Color.white
-                .opacity(breathToggle ? 0.08 : 0.0)
-                .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: breathToggle)
-        }
+        PrismHeroBackdrop(colors: c)
     }
 
-    // MARK: - Nocturne
-    /// Solid deep indigo with a slowly-pulsing corner glow and a faint
-    /// starfield. The pulse breathes between 0.6 and 1.0 opacity over 5s.
-    private var nocturne: some View {
-        ZStack(alignment: .topTrailing) {
-            c.primary
-            RadialGradient(
-                colors: [c.accent.opacity(0.35), c.accent.opacity(0.0)],
-                center: .topTrailing, startRadius: 20, endRadius: 260
-            )
-            // Soft breathing — opacity oscillates so the glow feels alive
-            // without changing color or position. Keyed off breathToggle so
-            // it shares the same rhythm as the hero's other ambient motion.
-            .opacity(breathToggle ? 1.0 : 0.55)
-            .animation(.easeInOut(duration: 5).repeatForever(autoreverses: true), value: breathToggle)
+    // MARK: - Carbon (legacy Nocturne identifier)
 
-            GeometryReader { geo in
-                ForEach(0..<8, id: \.self) { i in
-                    Circle()
-                        .fill(Color.white.opacity(0.12))
-                        .frame(width: 1.5, height: 1.5)
-                        .position(
-                            x: CGFloat((i * 47 + 13) % Int(geo.size.width)),
-                            y: CGFloat((i * 31 + 8) % Int(geo.size.height))
-                        )
-                }
-            }
-            .allowsHitTesting(false)
+    private var nocturne: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color(red: 0.105, green: 0.105, blue: 0.11)
+            Rectangle().fill(c.highlight).frame(width: 60, height: 2)
         }
     }
 

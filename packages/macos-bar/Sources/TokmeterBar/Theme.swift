@@ -11,8 +11,8 @@
 // The user picks a theme in Settings; persisted via @AppStorage("appTheme").
 //
 // Themes:
-//   • Nebula    — purple→magenta→orange gradient, glossy dark cards (default)
-//   • Nocturne  — deep indigo, calm, no gradient, sparkline-friendly
+//   • Prism     — dark glass, spectrum edges, gold monetary figures (default)
+//   • Carbon    — graphite panels, copper values, monospaced figures
 //   • Daylight  — cream/ivory light theme for light-mode Mac users
 //   • Synthwave — retrofuture horizon sun + grid + neon-outlined cards
 //   • HUD       — tactical sci-fi with mono typography and status overlays
@@ -40,6 +40,13 @@ struct ThemeColors {
 /// Resolve from the selected theme, independently of the menu window's native
 /// appearance. MenuBarExtra can retain Dark Aqua while displaying light Glass.
 extension AppTheme {
+    /// Shared burn-rate status for the popup, Hub tile, and sidebar badge.
+    func burnRateColor(_ costPerHour: Double) -> Color {
+        if costPerHour >= 20 { return statusDanger }
+        if costPerHour >= 10 { return statusWarning }
+        return statusSuccess
+    }
+
     var statusDanger: Color {
         backgroundMode.isLight
             ? Color(.sRGB, red: 0.35, green: 0.025, blue: 0.04)
@@ -62,15 +69,15 @@ extension AppTheme {
 // MARK: - Theme enum
 
 enum AppTheme: String, CaseIterable, Identifiable {
-    case nebula
-    case nocturne
+    case nebula // Prism; retain the stored identifier for existing preferences.
+    case nocturne // Carbon; keep the stored identifier for existing preferences.
     case daylight
     case synthwave
     case hud
     case terminal
     case paper
     case glass
-    case aurora
+    case aurora // Lagoon; keep the stored identifier for existing preferences.
     case blueprint
     case noise
     case mint
@@ -93,15 +100,15 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .nebula:    return "Nebula"
-        case .nocturne:  return "Nocturne"
+        case .nebula:    return "Prism"
+        case .nocturne:  return "Carbon"
         case .daylight:  return "Daylight"
         case .synthwave: return "Synthwave"
         case .hud:       return "HUD"
         case .terminal:  return "Terminal"
         case .paper:     return "Paper"
         case .glass:     return "Glass"
-        case .aurora:    return "Aurora"
+        case .aurora:    return "Lagoon"
         case .blueprint: return "Blueprint"
         case .noise:     return "Noise"
         case .mint:      return "Mint"
@@ -110,15 +117,15 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     var tagline: String {
         switch self {
-        case .nebula:    return "Warm purple identity"
-        case .nocturne:  return "Calm dark focus"
+        case .nebula:    return "Iridescent edges, dark glass"
+        case .nocturne:  return "Graphite, copper, precise type"
         case .daylight:  return "Cream daytime view"
         case .synthwave: return "Retrofuture neon"
         case .hud:       return "Tactical panel"
         case .terminal:  return "CRT phosphor retro"
         case .paper:     return "Editorial serif"
         case .glass:     return "Frosted glass"
-        case .aurora:    return "Northern lights, drifting"
+        case .aurora:    return "Deep teal and clear mint"
         case .blueprint: return "Drafting paper, cyan grid"
         case .noise:     return "Neobrutalist canary yellow"
         case .mint:      return "Warm peach + lime accent"
@@ -127,15 +134,15 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .nebula:    return "sparkles"
-        case .nocturne:  return "moon.stars.fill"
+        case .nebula:    return "diamond.fill"
+        case .nocturne:  return "square.stack.3d.up.fill"
         case .daylight:  return "sun.max.fill"
         case .synthwave: return "sunrise.fill"
         case .hud:       return "scope"
         case .terminal:  return "terminal.fill"
         case .paper:     return "doc.text.fill"
         case .glass:     return "circle.lefthalf.filled"
-        case .aurora:    return "sparkle"
+        case .aurora:    return "water.waves"
         case .blueprint: return "ruler.fill"
         case .noise:     return "exclamationmark.octagon.fill"
         case .mint:      return "leaf.fill"
@@ -202,17 +209,26 @@ enum AppTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Opaque monetary ink with contrast on each theme's light or dark surface.
+    var costInk: Color {
+        if self == .nocturne { return Color(.sRGB, red: 1.0, green: 0.72, blue: 0.51) }
+        if self == .aurora { return Color(.sRGB, red: 1.0, green: 0.75, blue: 0.64) }
+        return backgroundMode.isLight
+            ? Color(.sRGB, red: 0.29, green: 0.13, blue: 0.005)
+            : Color(.sRGB, red: 1.0, green: 0.82, blue: 0.42)
+    }
+
     /// Type personality for each role. The view reads this to pick fonts.
     var fonts: ThemeFonts {
         switch self {
         case .nebula:
-            return ThemeFonts(heroDesign: .rounded,    heroWeight: .bold,
-                              valueDesign: .rounded,   valueWeight: .bold,
-                              labelDesign: .rounded,   bodyDesign: .rounded)
+            return ThemeFonts(heroDesign: .default, heroWeight: .bold,
+                              valueDesign: .default, valueWeight: .bold,
+                              labelDesign: .default, bodyDesign: .default)
         case .nocturne:
-            return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,
-                              valueDesign: .rounded,   valueWeight: .semibold,
-                              labelDesign: .rounded,   bodyDesign: .rounded)
+            return ThemeFonts(heroDesign: .monospaced, heroWeight: .semibold,
+                              valueDesign: .monospaced, valueWeight: .semibold,
+                              labelDesign: .default, bodyDesign: .default)
         case .daylight:
             return ThemeFonts(heroDesign: .default,    heroWeight: .bold,
                               valueDesign: .default,   valueWeight: .bold,
@@ -241,7 +257,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
                               valueDesign: .default,   valueWeight: .semibold,
                               labelDesign: .default,   bodyDesign: .default)
         case .aurora:
-            // Soft rounded — the bg is doing the heavy visual lifting
+            // Lagoon: rounded values and clear body labels.
             return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,
                               valueDesign: .rounded,   valueWeight: .semibold,
                               labelDesign: .rounded,   bodyDesign: .rounded)

@@ -18,25 +18,25 @@ extension AppTheme {
     var palette: ThemeColors {
         switch self {
         case .nebula:
-            // Purple → magenta → orange. Classic TOKMETER identity.
+            // Prism: violet/cyan spectrum, pale gold for monetary values.
             return ThemeColors(
-                primary:   Color(red: 0.295, green: 0.175, blue: 0.705),  // #4b2cb4 deep purple
-                secondary: Color(red: 0.568, green: 0.259, blue: 0.890),  // #9142e3 electric violet
-                accent:    Color(red: 0.710, green: 0.408, blue: 0.980),  // #b568fa soft violet
-                highlight: Color(red: 0.984, green: 0.600, blue: 0.180),  // #fb992e amber
-                warm:      Color(red: 0.992, green: 0.420, blue: 0.322),  // #fd6b52 warm orange
-                tertiary:  Color(red: 0.098, green: 0.816, blue: 0.675)   // #19d0ac teal
+                primary:   Color(red: 0.22, green: 0.12, blue: 0.46),
+                secondary: Color(red: 0.76, green: 0.66, blue: 1.00),
+                accent:    Color(red: 0.43, green: 0.88, blue: 1.00),
+                highlight: Color(red: 1.00, green: 0.82, blue: 0.48),
+                warm:      Color(red: 0.96, green: 0.55, blue: 0.76),
+                tertiary:  Color(red: 0.38, green: 0.94, blue: 0.80)
             )
 
         case .nocturne:
-            // Deep indigo, calm lavenders, sparkline-friendly. No loud colors.
+            // Carbon: neutral graphite, chalk data, copper monetary emphasis.
             return ThemeColors(
-                primary:   Color(red: 0.102, green: 0.122, blue: 0.212),  // #1a1f36 midnight
-                secondary: Color(red: 0.498, green: 0.525, blue: 0.678),  // #7f86ad soft lavender
-                accent:    Color(red: 0.376, green: 0.647, blue: 0.980),  // #60a5fa electric blue
-                highlight: Color(red: 0.957, green: 0.894, blue: 0.757),  // #f4e4c1 cream highlight
-                warm:      Color(red: 0.878, green: 0.478, blue: 0.371),  // #e07a5f muted coral
-                tertiary:  Color(red: 0.529, green: 0.659, blue: 0.471)   // #87a878 sage
+                primary:   Color(red: 0.105, green: 0.105, blue: 0.11),
+                secondary: Color(red: 0.88, green: 0.89, blue: 0.90),
+                accent:    Color(red: 0.83, green: 0.85, blue: 0.87),
+                highlight: Color(red: 1.00, green: 0.72, blue: 0.51),
+                warm:      Color(red: 0.87, green: 0.57, blue: 0.39),
+                tertiary:  Color(red: 0.70, green: 0.75, blue: 0.73)
             )
 
         case .daylight:
@@ -112,16 +112,14 @@ extension AppTheme {
             )
 
         case .aurora:
-            // Northern-lights palette — deep teal, electric green, soft violet,
-            // with a warm coral highlight so the cost number doesn't melt into
-            // the cool background.
+            // Lagoon: deep petrol with mint data and peach monetary emphasis.
             return ThemeColors(
-                primary:   Color(red: 0.055, green: 0.255, blue: 0.353),  // #0e4159 deep teal
-                secondary: Color(red: 0.180, green: 0.792, blue: 0.694),  // #2ecaa3 aurora green
-                accent:    Color(red: 0.541, green: 0.482, blue: 0.945),  // #8a7af1 electric violet
-                highlight: Color(red: 0.984, green: 0.722, blue: 0.420),  // #fbb86b warm coral
-                warm:      Color(red: 0.961, green: 0.553, blue: 0.420),  // #f58d6b sunset coral
-                tertiary:  Color(red: 0.412, green: 0.871, blue: 0.847)   // #69ded8 light teal
+                primary:   Color(red: 0.025, green: 0.20, blue: 0.19),
+                secondary: Color(red: 0.40, green: 0.91, blue: 0.76),
+                accent:    Color(red: 0.32, green: 0.82, blue: 0.79),
+                highlight: Color(red: 1.00, green: 0.75, blue: 0.64),
+                warm:      Color(red: 0.62, green: 0.88, blue: 0.69),
+                tertiary:  Color(red: 0.77, green: 0.86, blue: 0.56)
             )
 
         case .blueprint:

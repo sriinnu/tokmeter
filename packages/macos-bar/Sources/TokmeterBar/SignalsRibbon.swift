@@ -160,28 +160,16 @@ struct SignalsRibbon: View {
         .help(help)
     }
 
-    /// Animated burn-rate chip. The flame uses SF Symbols' `.variableColor`
-    /// effect to feel like it's actually burning — the hierarchical layers
-    /// pulse through the icon like real fire shifting between layers of fuel.
-    /// Speed scales with intensity: cold = no flicker, warm = lazy flicker,
-    /// hot = fast flicker, blazing = full burn.
-    ///
-    /// The number uses `.contentTransition(.numericText())` so it rolls between
-    /// values instead of snapping — Apple's canonical numeric reveal.
+    /// Keep the small status glyph at full contrast; animated variable-color
+    /// layers can dim the entire flame against Terminal's black background.
     @ViewBuilder
     private func burnChip(_ rate: BurnRate) -> some View {
         let cph = rate.costPerHour
-        let intensity = burnIntensity(cph)
         HStack(spacing: 4) {
             Image(systemName: "flame.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundColor(burnColor(cph))
-                .symbolEffect(
-                    .variableColor.iterative.reversing,
-                    options: .speed(intensity.symbolSpeed),
-                    isActive: intensity.flickering
-                )
+                .symbolRenderingMode(.monochrome)
+                .foregroundColor(theme.burnRateColor(cph))
             Text(Fmt.costPerHour(cph))
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.primaryTextColor.opacity(0.85))
@@ -193,32 +181,6 @@ struct SignalsRibbon: View {
             "Burn rate over the last \(rate.windowMinutes) min — "
             + "\(rate.recordsInWindow) record(s)."
         )
-    }
-
-    /// How "alive" the flame should look. Mapped from $/hr; thresholds match
-    /// `burnColor` so visuals stay in sync (cool color → calm flicker, hot
-    /// color → fast flicker). Idle = no animation at all so a quiet $0.30/hr
-    /// trickle doesn't pretend to be a fire.
-    private struct BurnIntensity {
-        let flickering: Bool
-        let symbolSpeed: Double
-    }
-
-    private func burnIntensity(_ cph: Double) -> BurnIntensity {
-        if cph >= 20 { return .init(flickering: true, symbolSpeed: 1.7) }
-        if cph >= 10 { return .init(flickering: true, symbolSpeed: 1.3) }
-        if cph >= 2  { return .init(flickering: true, symbolSpeed: 0.9) }
-        return         .init(flickering: false, symbolSpeed: 1.0)
-    }
-
-    /// Burn-rate color: ramps from green (cold) → amber (warm) → red (hot).
-    /// Thresholds are deliberately gentle — $2/hr is normal work, $10/hr is
-    /// a fire-hose session, $20/hr is "are you OK".
-    private func burnColor(_ costPerHour: Double) -> Color {
-        if costPerHour >= 20 { return theme.statusDanger }
-        if costPerHour >= 10 { return theme.statusWarning }
-        if costPerHour >= 2  { return c.secondary }
-        return theme.statusSuccess
     }
 
     /// Cache-hit color: green when the cache is doing its job (≥90%),

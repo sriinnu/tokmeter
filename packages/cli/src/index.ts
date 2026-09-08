@@ -26,10 +26,11 @@ export interface TokmeterPricingLookup {
   pricing: TokmeterPricing;
 }
 
-async function scanCore(options: TokmeterQueryOptions = {}): Promise<TokmeterCore> {
+async function scanSummary(options: TokmeterQueryOptions = {}): Promise<TokmeterSummary> {
   const core = new TokmeterCore({ skipPricing: options.light });
-  await core.scan(options);
-  return core;
+  core.getSummary(options); // Validate calendar bounds before any scan I/O.
+  await core.scan({ today: options.today, rescanHistory: options.rescanHistory });
+  return core.getSummary(options);
 }
 
 /**
@@ -38,8 +39,7 @@ async function scanCore(options: TokmeterQueryOptions = {}): Promise<TokmeterCor
 export async function loadTokmeterSummary(
   options: TokmeterQueryOptions = {}
 ): Promise<TokmeterSummary> {
-  const core = await scanCore(options);
-  return core.getSummary();
+  return scanSummary(options);
 }
 
 /**
@@ -48,8 +48,7 @@ export async function loadTokmeterSummary(
 export async function loadTokmeterProjects(
   options: TokmeterQueryOptions = {}
 ): Promise<ProjectSummary[]> {
-  const core = await scanCore(options);
-  return core.getAllProjects();
+  return (await scanSummary(options)).projects;
 }
 
 /**
@@ -58,8 +57,7 @@ export async function loadTokmeterProjects(
 export async function loadTokmeterModels(
   options: TokmeterQueryOptions = {}
 ): Promise<ModelSummary[]> {
-  const core = await scanCore(options);
-  return core.getModelCosts({ project: options.project });
+  return (await scanSummary(options)).models;
 }
 
 /**
@@ -68,12 +66,7 @@ export async function loadTokmeterModels(
 export async function loadTokmeterDailyBreakdown(
   options: TokmeterQueryOptions = {}
 ): Promise<DailyEntry[]> {
-  const core = await scanCore(options);
-  return core.getDailyBreakdown({
-    since: options.since,
-    until: options.until,
-    project: options.project,
-  });
+  return (await scanSummary(options)).daily;
 }
 
 /**
@@ -82,8 +75,7 @@ export async function loadTokmeterDailyBreakdown(
 export async function loadTokmeterStats(
   options: TokmeterQueryOptions = {}
 ): Promise<TokmeterStats> {
-  const core = await scanCore(options);
-  return core.getStats();
+  return (await scanSummary(options)).stats;
 }
 
 /**

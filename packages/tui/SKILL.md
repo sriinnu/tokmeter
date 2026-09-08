@@ -10,7 +10,8 @@ Interactive terminal UI for token usage tracking. Full-screen dashboard with cha
 - Model comparison table with inline charts
 - Daily usage trend with contribution heatmap
 - Statistics view with streaks and averages
-- Keyboard navigation (1-4 views, Tab, arrows, q to quit)
+- Cleanup view with project selection, preview, and explicit deletion confirmation
+- Keyboard navigation (1-5 views, Tab, left/right arrows, r to refresh, q to quit)
 
 ## Usage
 

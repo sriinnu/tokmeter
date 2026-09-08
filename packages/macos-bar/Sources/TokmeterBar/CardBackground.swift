@@ -57,28 +57,13 @@ struct CardBackground: View {
             }
 
         case .glossyDark:
-            // Nebula: color-tint fill, inner top highlight, role glow.
-            ZStack {
-                RoundedRectangle(cornerRadius: radius)
-                    .fill(LinearGradient(
-                        colors: [role.opacity(0.16), role.opacity(0.06)],
-                        startPoint: .top, endPoint: .bottom))
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.22), Color.clear],
-                            startPoint: .top, endPoint: .center),
-                        lineWidth: 1
-                    )
-            }
-            .shadow(color: role.opacity(0.30), radius: 8, x: 0, y: 3)
-            .shadow(color: Color.black.opacity(0.25), radius: 1, x: 0, y: 1)
+            PrismPanel(colors: themeColors, cornerRadius: radius)
 
         case .flatDark:
             ZStack {
-                RoundedRectangle(cornerRadius: radius).fill(role.opacity(0.09))
+                RoundedRectangle(cornerRadius: radius).fill(Color(red: 0.10, green: 0.10, blue: 0.105))
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
             }
 
         case .terminalPanel:
@@ -107,19 +92,12 @@ struct CardBackground: View {
             FrostedGlassPanel(cornerRadius: radius, tint: role)
 
         case .auroraGlass:
-            // Thin material that lets the drifting bg show through, with a
-            // soft role-tinted glow at the top edge — like aurora light
-            // catching the lip of a glass shelf.
             ZStack {
-                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: radius).fill(role.opacity(0.10))
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(LinearGradient(
-                        colors: [role.opacity(0.45), Color.white.opacity(0.06)],
-                        startPoint: .top, endPoint: .bottom
-                    ), lineWidth: 0.8)
+                    .fill(Color(red: 0.035, green: 0.135, blue: 0.14))
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(role.opacity(0.35), lineWidth: 0.8)
             }
-            .shadow(color: Color.black.opacity(0.30), radius: 10, x: 0, y: 4)
 
         case .blueprintFrame:
             ZStack {

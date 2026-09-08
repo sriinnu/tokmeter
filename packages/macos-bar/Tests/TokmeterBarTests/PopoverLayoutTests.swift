@@ -6,7 +6,7 @@ import XCTest
 final class PopoverLayoutTests: XCTestCase {
     @MainActor
     func testFullPopoverHasUsageContentOnFirstLayout() throws {
-        for theme in [AppTheme.nebula, .glass, .terminal, .paper] {
+        for theme in [AppTheme.nebula, .glass, .terminal, .paper, .nocturne, .aurora] {
             for expanded in [false, true] {
                 try checkFullPopover(expanded: expanded, theme: theme)
             }

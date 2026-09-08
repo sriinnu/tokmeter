@@ -18,29 +18,26 @@ struct HubKpiTile: View {
 
     var body: some View {
         HubCard(theme: theme) {
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(accent.opacity(0.18))
-                        .frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(accent)
-                }
-                VStack(alignment: .leading, spacing: 1) {
                     Text(label.uppercased())
                         .font(.system(size: 9, weight: .semibold, design: theme.fonts.labelDesign))
-                        .tracking(1.3)
+                        .tracking(0.7)
                         .foregroundColor(bg.secondaryTextColor)
-                    Text(value)
-                        .font(.system(size: 20, weight: .bold, design: theme.fonts.valueDesign))
-                        .foregroundColor(bg.primaryTextColor)
-                        .contentTransition(.numericText())
                         .lineLimit(1)
-                        .truncationMode(.tail)
                 }
-                Spacer(minLength: 0)
+                Text(value)
+                    .font(.system(size: 22, weight: .bold, design: theme.fonts.valueDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .accessibilityElement(children: .combine)
         }
         .scaleEffect(hovered ? 1.015 : 1.0)
         .offset(y: hovered ? -1 : 0)

@@ -55,7 +55,8 @@ extension TokmeterLoader {
     /// after forking the real daemon).
     func ensureDaemonStarted() {
         guard !isStartingDaemon else { return }
-        guard let toolchain = NodeToolchain.resolve() else {
+        let candidates = NodeToolchain.candidates()
+        guard !candidates.isEmpty else {
             self.lastError =
                 "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
             self.isWarming = false
@@ -69,10 +70,10 @@ extension TokmeterLoader {
             guard let self else { return }
             defer { self.isStartingDaemon = false }
             do {
-                let version = try await self.runProcess(executable: toolchain.node, arguments: ["--version"], timeout: 5)
-                guard let major = NodeToolchain.majorVersion(version), major >= 18 else {
+                guard let toolchain = await NodeToolchain.firstSupported(
+                    candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
                     self.needsNodeSetup = true
-                    throw DaemonError.networkError("Node.js 18 or later is required. Update Node and choose Retry.")
+                    throw DaemonError.networkError("No working Node.js 18 or later was found. Update Node and choose Retry.")
                 }
                 // `daemon start` forks a detached child and returns fast; the
                 // child becomes the long-lived daemon. This invocation never

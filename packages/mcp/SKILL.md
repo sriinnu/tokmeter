@@ -39,3 +39,7 @@ Use `drishti install-mcp` for the repository's supported editor setup; inspect t
 ## License
 
 AGPL-3.0-only; see [licenses and source](../../docs/licensing.md).
+
+## Daemon lifecycle
+
+Use `drishti daemon status` before lifecycle actions. Stop refuses uncertain process identity; do not bypass that refusal by killing a PID read from disk. Startup credentials are published after listener ownership, and concurrent forced rescans share one full refresh. These safeguards do not make process inspection and signalling atomic. See [README](README.md#daemon-ownership-and-refresh).

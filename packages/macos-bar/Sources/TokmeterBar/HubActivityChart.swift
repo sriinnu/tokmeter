@@ -19,8 +19,8 @@ struct HubActivityChart: View {
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
 
-    /// 7-day trailing average, clamped at the leading edge so the first few
-    /// days reflect a smaller window rather than zero-padding skewing low.
+    /// Trailing average of up to seven recorded days. Missing calendar dates
+    /// are not filled; the leading edge uses the available smaller window.
     private var movingAvg: [TrendPoint] {
         guard !daily.isEmpty else { return [] }
         let window = 7
@@ -57,7 +57,7 @@ struct HubActivityChart: View {
             ForEach(movingAvg) { p in
                 LineMark(
                     x: .value("Day", p.date),
-                    y: .value("7-day avg", p.value)
+                    y: .value("7 recorded days average", p.value)
                 )
                 .foregroundStyle(c.accent)
                 .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
@@ -66,7 +66,7 @@ struct HubActivityChart: View {
             if let last = movingAvg.last {
                 PointMark(
                     x: .value("Day", last.date),
-                    y: .value("7-day avg", last.value)
+                    y: .value("7 recorded days average", last.value)
                 )
                 .foregroundStyle(c.accent)
                 .symbolSize(70)
@@ -78,7 +78,7 @@ struct HubActivityChart: View {
                 PointMark(x: .value("Day", hd), y: .value("Cost", v.bar))
                     .foregroundStyle(c.warm)
                     .symbolSize(55)
-                PointMark(x: .value("Day", hd), y: .value("7-day avg", v.avg))
+                PointMark(x: .value("Day", hd), y: .value("7 recorded days average", v.avg))
                     .foregroundStyle(c.accent)
                     .symbolSize(60)
             }
@@ -90,6 +90,7 @@ struct HubActivityChart: View {
                         switch phase {
                         case .active(let pt):
                             guard let plotFrame = proxy.plotFrame else { return }
+                            guard geo[plotFrame].contains(pt) else { hoveredDate = nil; return }
                             let plotX = pt.x - geo[plotFrame].origin.x
                             if let date: String = proxy.value(atX: plotX) {
                                 hoveredDate = date
@@ -104,8 +105,9 @@ struct HubActivityChart: View {
         }
         .overlay(alignment: .topTrailing) {
             if let hd = hoveredDate, let v = byDate[hd] {
-                HubChartTooltip(date: hd, daily: v.bar, avg: v.avg, theme: theme)
+                HubChartTooltip(date: hd, daily: v.bar, tokens: daily.first { $0.date == hd }?.tokens ?? 0, avg: v.avg, theme: theme)
                     .padding(8)
+                    .allowsHitTesting(false)
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
             }
         }
@@ -175,6 +177,7 @@ private struct TrendPoint: Identifiable {
 struct HubChartTooltip: View {
     let date: String
     let daily: Double
+    let tokens: Int
     let avg: Double
     let theme: AppTheme
 
@@ -188,15 +191,18 @@ struct HubChartTooltip: View {
                 .tracking(0.5)
                 .foregroundColor(bg.secondaryTextColor)
             tooltipRow(
-                label: "Daily",
+                label: "Daily cost",
                 value: Fmt.cost(daily),
                 swatch: LinearGradient(
                     colors: [c.primary, c.secondary, c.warm],
                     startPoint: .bottom, endPoint: .top
                 )
             )
+            Text("\(tokens.formatted()) tokens")
+                .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
+                .foregroundColor(bg.primaryTextColor)
             tooltipRow(
-                label: "7-day avg",
+                label: "7 recorded days avg",
                 value: Fmt.cost(avg),
                 swatch: LinearGradient(
                     colors: [c.accent, c.accent],
@@ -208,7 +214,7 @@ struct HubChartTooltip: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
+                .fill(bg.surfaceColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(c.accent.opacity(0.35), lineWidth: 1)
@@ -271,9 +277,10 @@ struct HubChartLegend: View {
                 Capsule()
                     .fill(c.accent)
                     .frame(width: 12, height: 2)
-                Text("7-day avg")
+                Text("7-record avg")
                     .font(.system(size: 9, weight: .medium, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.secondaryTextColor)
+                    .help("Trailing average of up to seven recorded days; missing dates are not filled.")
             }
         }
     }
