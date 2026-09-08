@@ -78,8 +78,10 @@ struct ToolCallRow: View {
             Text(entry.tool)
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
                 .foregroundColor(bg.primaryTextColor)
-                .frame(width: 100, alignment: .leading)
-                .lineLimit(1)
+                .frame(width: 140, alignment: .leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(entry.tool)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)

@@ -1,6 +1,6 @@
 # @sriinnu/tokmeter-web
 
-Private workspace package. Run the web dashboard from this source checkout.
+Private workspace package, also bundled with the macOS app. In app Settings, Open web dashboard starts its local server; Stop web dashboard or quitting the app stops it. The app mode forwards read-only summary requests to the usage daemon and ships no usage export.
 
 React + Plotly web dashboard for token usage visualization.
 
@@ -14,9 +14,12 @@ React + Plotly web dashboard for token usage visualization.
 ## Setup
 
 ```bash
-tokmeter --json > packages/web/public/data.json
-cd packages/web && bun run dev
+# From the repository root
+bun install
+bun run dev:web
 ```
+
+Development and Vite preview read `/api/summary`, which scans local usage. `/data.json` is a fallback, not an override for the live endpoint. See the [README](README.md#data) for exporting and previewing a static snapshot.
 
 ## License
 

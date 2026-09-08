@@ -7,7 +7,7 @@ A native SwiftUI `MenuBarExtra` and companion Hub for local token usage and cost
 Install Node.js 18+ with npx, then open TokmeterBar from `/Applications`.
 The current source discovers paired Node/npx in common system and managed installations and starts the version-matched `@sriinnu/drishti` daemon when it is unavailable. The first download needs network access. Missing prerequisites and startup failures show an explanation and Retry control.
 
-For the published 1.10.0 build, install and start the daemon explicitly:
+For older 1.10.0 builds, install and start the daemon explicitly:
 
 ```sh
 npm install -g @sriinnu/drishti
@@ -21,9 +21,11 @@ The app reads HTTP telemetry from `http://127.0.0.1:9877`. It does not run a sep
 
 The menubar shows today's tokens. Open it for estimated API cost, tool-reported cost when available, and today's models and projects. The full **Usage details** row expands lifetime totals, trends, and signals. The popup fits its content and scrolls when it reaches the available height. The Hub offers larger breakdowns and settings.
 
-Six themes are selectable: Terminal, Paper, Nebula, Aurora, Nocturne, and Glass. Glass uses native light desktop frost, dark ink, and explicit theme-based status colors; Reduce Transparency selects an opaque fallback. The footer separates version and licensing from pricing status.
+Six themes are selectable: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. Prism replaces Nebula and retains the stored `nebula` identifier. Carbon replaces Nocturne; Lagoon replaces Aurora. Their stored identifiers remain `nocturne` and `aurora` so existing preferences continue to decode. Glass uses native light desktop frost, dark ink, and explicit theme-based status colors; Reduce Transparency selects an opaque fallback. The footer separates version and licensing from pricing status.
 
 Refresh frequency is configurable. Costs are not a verified subscription bill; missing cost data is shown as unavailable. See [how the numbers work](../../docs/how-the-numbers-work.md) and [popover validation](../../docs/macos/popover-usability.md).
+
+Settings → **Open web dashboard** starts a local dashboard server when needed and opens it after readiness. **Stop web dashboard** stops that child; quitting the app also stops it. The usage daemon continues independently. See [dashboard lifecycle and development](../../docs/macos/web-dashboard.md).
 
 ## Build and test
 
@@ -45,8 +47,11 @@ For optional synthetic UI captures, create an output directory and set `TOKMETER
 - `TokmeterLoader.swift`: observable telemetry, refresh, and connection state.
 - `NodeToolchain.swift` and `SubprocessRunner.swift`: Node discovery and bounded startup commands.
 - `DaemonClient.swift`: version-checked REST client.
-- `Theme.swift`, `Theme+Modes.swift`, and `FrostedGlass.swift`: colors and native surfaces.
+- `Theme.swift`, `ThemePalettes.swift`, and `Theme+Modes.swift`: identity, colors, and visual modes.
+- `PrismSurface.swift` and `FrostedGlass.swift`: reusable surface drawing shared by the popup and Hub.
 - `HubView.swift`: full-window companion.
+
+See [native theme development](../../docs/macos/themes.md) for module ownership, adding styles, stored identifiers, and render checks.
 
 GET endpoints cover quick/readiness state, stats, daily usage, models, sessions/projects, signals, pricing, and health. User-triggered pricing updates, deep rescans, and live Antigravity fetches use POST requests authenticated by the daemon's local bearer token. See `DaemonClient.swift` for the exact routes.
 

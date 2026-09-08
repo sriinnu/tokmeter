@@ -14,7 +14,7 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { TokmeterCore } from "@sriinnu/tokmeter";
+import { TokmeterCore, localDateKey } from "@sriinnu/tokmeter";
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
@@ -271,12 +271,12 @@ Installer:
 
 Date Filters:
   --today         Only today's usage
-  --week          Last 7 days
+  --week          Today and previous 6 local calendar days
   --month         Current calendar month
   --year N        Specific year
-  --since D       From date (YYYY-MM-DD or ISO)
-  --until D       To date (inclusive)
-  --older-than N  Anything older than N (e.g. 30d, 2w, 1m)
+  --since D       From local date (YYYY-MM-DD; inclusive)
+  --until D       Through local date (YYYY-MM-DD; inclusive)
+  --older-than N  Completed days before the cutoff date (e.g. 30d, 2w, 1m)
 
 Digest Options:
   --period P      Period for digest: today, week (default), month
@@ -1138,6 +1138,14 @@ async function main() {
     return;
   }
 
+  // Reports can only select whole saved days. Cleanup/restore handling above
+  // keeps its existing precise timestamp cutoff.
+  if (args.olderThan && args.until) {
+    const cutoff = new Date(args.until);
+    cutoff.setDate(cutoff.getDate() - 1);
+    args.until = localDateKey(cutoff.getTime());
+  }
+
   // Daemon-read fast path: for `--json` read commands, prefer the warm
   // singleton daemon over a fresh full-corpus scan. This is the fix for
   // external pollers that loop `tokmeter stats/daily --json --codex` — each
@@ -1148,10 +1156,13 @@ async function main() {
     if (await tryServeFromDaemon(cmd, args)) return;
   }
 
-  // Scan session files
-  const records = await core.scan(args);
+  // Refresh shared state, then filter saved daily aggregates. A raw-record
+  // return can be empty while sealed history still contains valid usage.
+  core.getSummary(args); // Validate report bounds before scanning.
+  await core.scan({ today: args.today, rescanHistory: args.rescanHistory });
+  const summary = core.getSummary(args);
 
-  if (records.length === 0) {
+  if (!args.json && summary.stats.totalRecords === 0) {
     console.log("No token usage data found.");
     console.log("\nMake sure you have session files from supported AI coding agents:");
     console.log("  Claude Code: ~/.claude/projects/");
@@ -1159,7 +1170,7 @@ async function main() {
     console.log("  Codex CLI: ~/.codex/sessions/");
     console.log("  Gemini CLI: ~/.gemini/tmp/");
     console.log("  and more... Run `tokmeter --help` for all supported platforms.");
-    process.exit(0);
+    return;
   }
 
   // JSON output
@@ -1167,19 +1178,19 @@ async function main() {
     const command = args.command || "overview";
     switch (command) {
       case "models":
-        console.log(JSON.stringify(core.getModelCosts({ project: args.project }), null, 2));
+        console.log(JSON.stringify(summary.models, null, 2));
         break;
       case "daily":
-        console.log(JSON.stringify(core.getDailyBreakdown({ project: args.project }), null, 2));
+        console.log(JSON.stringify(summary.daily, null, 2));
         break;
       case "projects":
-        console.log(JSON.stringify(core.getAllProjects(), null, 2));
+        console.log(JSON.stringify(summary.projects, null, 2));
         break;
       case "stats":
-        console.log(JSON.stringify(core.getStats(), null, 2));
+        console.log(JSON.stringify(summary.stats, null, 2));
         break;
       default:
-        console.log(JSON.stringify(core.toJSON(), null, 2));
+        console.log(JSON.stringify(summary, null, 2));
     }
     return;
   }
@@ -1188,21 +1199,21 @@ async function main() {
   const command = args.command || "overview";
   switch (command) {
     case "models":
-      renderModelsTable(core.getModelCosts({ project: args.project }));
+      renderModelsTable(summary.models);
       break;
     case "daily":
-      renderDailyTable(core.getDailyBreakdown({ project: args.project }));
+      renderDailyTable(summary.daily);
       break;
     case "projects":
-      renderProjectsTable(core.getAllProjects());
+      renderProjectsTable(summary.projects);
       break;
     case "stats":
-      renderStats(core.getStats());
+      renderStats(summary.stats);
       break;
     default: {
       // Overview: projects + totals
-      const stats = core.getStats();
-      renderProjectsTable(core.getAllProjects());
+      const stats = summary.stats;
+      renderProjectsTable(summary.projects);
       console.log(
         `\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`
       );

@@ -84,25 +84,14 @@ struct HubOverviewPanel: View {
             Spacer()
             // Tok waves hello from the header — the mascot echoed where there's
             // real room, not crammed into a data view.
-            TokMascot(theme: theme, scale: 0.62)
+            TokMascot(theme: theme, scale: 0.42)
         }
     }
 
     // MARK: - KPI row
 
-    // A LazyVGrid with fixed flexible columns — NOT an HStack of
-    // `.frame(maxWidth: .infinity)` cards. Four greedy equal-priority cards in an
-    // HStack let the flex solver re-divide width on every render; when a tile's
-    // numericText value changes on the 30s poll, its transient intrinsic width
-    // perturbs the split and, at large width (lots of slack), the solver never
-    // settles within AppKit's Update-Constraints pass budget → crash. A grid
-    // resolves column widths deterministically (available/4), so a tile's content
-    // can no longer feed back into the row's geometry.
     private var kpiRow: some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4),
-            spacing: 12
-        ) {
+        BalancedGrid(columnCounts: [4, 2, 1], minimumColumnWidth: 145) {
             HubKpiTile(
                 label: "Total cost",
                 value: Fmt.cost(loader.totalCost),
@@ -140,7 +129,7 @@ struct HubOverviewPanel: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("30-day activity")
+                    Text("Last 30 recorded days")
                         .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                         .foregroundColor(bg.primaryTextColor)
                     Spacer()

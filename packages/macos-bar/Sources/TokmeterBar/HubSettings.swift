@@ -33,6 +33,12 @@ struct HubSettingsPanel: View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 20) {
                 header.cascadeIn(delay: 0.04)
+                if let error = store.saveError {
+                    Text(error)
+                        .font(.system(size: 12, design: theme.fonts.bodyDesign))
+                        .foregroundColor(theme.statusDanger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 themeSection.cascadeIn(delay: 0.12)
                 refreshSection.cascadeIn(delay: 0.22)
                 menubarSection.cascadeIn(delay: 0.30)
@@ -55,7 +61,7 @@ struct HubSettingsPanel: View {
             Text("Settings")
                 .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
                 .foregroundColor(bg.primaryTextColor)
-            Text("Edits save to ~/.tokmeter/config.json. Takes effect instantly.")
+            Text("Saved edits take effect immediately. Settings are stored in ~/.tokmeter/config.json.")
                 .font(.system(size: 12, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
         }

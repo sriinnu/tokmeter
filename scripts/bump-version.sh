@@ -2,13 +2,14 @@
 #
 # bump-version.sh <X.Y.Z>
 #
-# Bump every in-repo version source in lockstep. Mechanical, idempotent, and
+# Bump every in-repo version source in lockstep. Mechanical and
 # offline — no git, no network, no signing. Safe to run anytime; `release.sh`
 # calls it as its first stage, but you can run it standalone to stage a bump.
 #
 # Touches:
 #   - all packages/*/package.json  "version" field
 #   - packages/macos-bar/bundle.sh SHORT_VERSION default (+ bumps BUILD_VERSION)
+#   - bun.lock                     workspace version metadata
 #   - README.md                    release badge version
 #   - CHANGELOG.md                 inserts a dated "## [X.Y.Z]" skeleton if absent
 #
@@ -39,6 +40,14 @@ for pj in packages/*/package.json; do
   ' "$pj"
   printf '    %-34s %s\n' "${pj#packages/}" "$(grep -m1 '"version"' "$pj" | tr -d ' ,')"
 done
+
+# Keep Bun's workspace metadata aligned; --lockfile-only can retain old versions.
+if [[ -f "bun.lock" ]]; then
+  perl -i -pe '
+    $packages = 1 if /^  "packages":/;
+    s/("version": ")[0-9.]+(")/${1}'"$VERSION"'${2}/ unless $packages;
+  ' bun.lock
+fi
 
 # 2. macOS bar bundle.sh — SHORT_VERSION default + monotonic BUILD_VERSION.
 BUNDLE="packages/macos-bar/bundle.sh"

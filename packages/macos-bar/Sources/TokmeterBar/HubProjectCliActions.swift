@@ -19,32 +19,34 @@ struct HubProjectCliActions: View {
     /// on the clicked button only, not every row.
     @State private var flashed: String?
 
-    private var commands: [CliCommand] {
-        let name = projectName
+    private var commands: [CliCommand] { Self.commands(for: projectName) }
+
+    static func commands(for projectName: String) -> [CliCommand] {
+        let name = ShellArgument.quote(projectName)
         return [
             CliCommand(
                 id: "dry-run",
                 icon: "trash.circle",
                 title: "Preview cleanup",
-                command: #"tokmeter cleanup --project "\#(name)" --dry-run"#
+                command: #"tokmeter cleanup --project \#(name) --dry-run"#
             ),
             CliCommand(
                 id: "snapshot",
                 icon: "archivebox",
                 title: "Snapshot project",
-                command: #"tokmeter snapshot --project "\#(name)""#
+                command: #"tokmeter snapshot --project \#(name)"#
             ),
             CliCommand(
                 id: "alias-rename",
                 icon: "character.cursor.ibeam",
                 title: "Rename via alias",
-                command: #"tokmeter alias set "\#(name)" "Better Name""#
+                command: #"tokmeter alias set \#(name) "Better Name""#
             ),
             CliCommand(
                 id: "alias-hide",
                 icon: "eye.slash",
                 title: "Hide from tables",
-                command: #"tokmeter alias hide "\#(name)""#
+                command: #"tokmeter alias hide \#(name)"#
             ),
         ]
     }

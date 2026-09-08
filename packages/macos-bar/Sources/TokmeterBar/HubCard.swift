@@ -18,18 +18,32 @@ struct HubCard<Content: View>: View {
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
 
+    private var panelRadius: CGFloat {
+        theme == .nocturne ? 6 : (theme == .aurora ? 18 : 14)
+    }
+
+    private var panelFill: Color {
+        switch theme {
+        case .nocturne: return Color(red: 0.10, green: 0.10, blue: 0.105)
+        case .aurora: return Color(red: 0.035, green: 0.135, blue: 0.14)
+        default: return Color.primary.opacity(bg.isLight ? 0.03 : 0.05)
+        }
+    }
+
     var body: some View {
         content()
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
-                if bg.usesMaterial {
+                if theme == .nebula {
+                    PrismPanel(colors: c)
+                } else if bg.usesMaterial {
                     FrostedGlassPanel()
                 } else {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.primary.opacity(bg.isLight ? 0.03 : 0.05))
+                    RoundedRectangle(cornerRadius: panelRadius)
+                        .fill(panelFill)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14)
+                            RoundedRectangle(cornerRadius: panelRadius)
                                 .stroke(c.accent.opacity(0.12), lineWidth: 1)
                         )
                 }

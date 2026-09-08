@@ -41,7 +41,7 @@ final class DaemonClient {
     /// JSON decode crash.
     static let expectedApiMajor = 1
 
-    private let baseURL = URL(string: "http://127.0.0.1:9877")!
+    private static let baseURL = URL(string: "http://127.0.0.1:9877")!
     private let pidPath = "/tmp/drishti-daemon.pid"
     private let tokenPath = "/tmp/drishti-daemon.token"
     private let session: URLSession
@@ -159,6 +159,10 @@ final class DaemonClient {
     }
 
     func fetchProjectDetail(_ projectName: String) async throws -> ProjectDetailData {
+        try await get(Self.projectDetailPath(projectName), as: ProjectDetailData.self)
+    }
+
+    static func projectDetailPath(_ projectName: String) -> String {
         // Encode as a single path SEGMENT: .urlPathAllowed leaves "/" intact, so
         // a project name containing "/" or "../" could reshape the request path.
         // Removing "/" from the allowed set forces %2F, keeping the name in one
@@ -168,7 +172,7 @@ final class DaemonClient {
         let encoded = projectName.addingPercentEncoding(
             withAllowedCharacters: segmentAllowed
         ) ?? projectName
-        return try await get("/api/projects/\(encoded)", as: ProjectDetailData.self)
+        return "/api/projects/\(encoded)"
     }
 
     /// Fetch the mtime of ~/.kosha/registry.json so the bar can display
@@ -258,10 +262,16 @@ final class DaemonClient {
 
     // MARK: - Internal
 
+    /// Routes already contain their query and escaped path segments. Appending
+    /// them as one path component escapes `?` and escapes every `%` again.
+    static func requestURL(for path: String) -> URL {
+        URL(string: path, relativeTo: baseURL)!.absoluteURL
+    }
+
     private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
         guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
 
-        let url = baseURL.appendingPathComponent(path)
+        let url = Self.requestURL(for: path)
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -295,7 +305,7 @@ final class DaemonClient {
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
 
-        let url = baseURL.appendingPathComponent(path)
+        let url = Self.requestURL(for: path)
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")

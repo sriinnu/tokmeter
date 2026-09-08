@@ -9,7 +9,7 @@ Core engine for token usage tracking. Provides session parsers for 16+ AI agent 
 - Parse session files from Claude Code, Codex, Cursor, Gemini, OpenCode, and 11 more providers
 - Aggregate tokens by project, model, provider, and time period
 - Enrich records with estimated API pricing (input, output, cache, reasoning tokens)
-- 4-tier pricing: kosha direct, static table, kosha fuzzy, null
+- Pricing: user overrides, kosha direct/fuzzy lookup, registry manifest fallback, or unavailable
 - Filter by date range, provider, project
 
 ## API

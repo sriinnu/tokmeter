@@ -56,8 +56,9 @@ struct StatsGrid: View {
                 label: "TOKENS",
                 value: Fmt.number(loader.totalTokens),
                 role: c.secondary,
-                delta: weekDelta { Double($0.tokens) },
+                delta: recordedDayTrend(metric: .tokens) { Double($0.tokens) },
                 sparkValues: settledDaily.map { Double($0.tokens) },
+                sparkDays: settledDaily,
                 theme: theme,
                 isWarming: loader.isWarming,
                 index: 0
@@ -67,8 +68,9 @@ struct StatsGrid: View {
                 label: "COST TOTAL",
                 value: Fmt.cost(loader.totalCost),
                 role: c.highlight,
-                delta: weekDelta { $0.cost },
+                delta: recordedDayTrend(metric: .cost) { $0.cost },
                 sparkValues: settledDaily.map { $0.cost },
+                sparkDays: settledDaily,
                 theme: theme,
                 isWarming: loader.isWarming,
                 index: 1
@@ -93,6 +95,7 @@ struct StatsGrid: View {
                 role: paceRole(for: multiple),
                 delta: nil,
                 sparkValues: loader.recentDaily.map { $0.cost },
+                sparkDays: loader.recentDaily,
                 theme: theme,
                 isWarming: false,
                 index: 2
@@ -104,7 +107,7 @@ struct StatsGrid: View {
                 value: "\(s.longestStreak)d",
                 role: c.tertiary,
                 delta: nil,
-                sparkValues: streakSpark(for: s),
+                sparkValues: [],
                 theme: theme,
                 isWarming: false,
                 index: 2
@@ -132,21 +135,17 @@ struct StatsGrid: View {
     /// trend — never a half-day-vs-full-day comparison — so it can't make a
     /// frozen lifetime total look like it's depleting. Returns nil when there
     /// aren't two settled days or the prior day is near-zero.
-    private func weekDelta(extract: (DailyUsage) -> Double) -> Double? {
-        let days = settledDaily
+    private func recordedDayTrend(metric: RecordedDayTrend.Metric, extract: (DailyUsage) -> Double) -> RecordedDayTrend? {
+        let days = settledDaily.filter { $0.date < todayKey }
         guard days.count >= 2 else { return nil }
         let latest = extract(days[days.count - 1])
         let prior = extract(days[days.count - 2])
         guard prior > 0.0001 else { return nil }
-        return ((latest - prior) / prior) * 100
+        return RecordedDayTrend(percent: ((latest - prior) / prior) * 100, metric: metric,
+                                previousDate: days[days.count - 2].date, latestDate: days[days.count - 1].date)
     }
 
-    /// A visually-balanced sparkline for the streak card — a gently rising
-    /// line whose slope tracks activity density. Not raw data, but a signal.
-    private func streakSpark(for s: StatsData) -> [Double] {
-        let activeFraction = min(Double(s.activeDays) / 30.0, 1.0)
-        return (0..<7).map { 0.3 + activeFraction * Double($0) / 6.0 }
-    }
+
 }
 
 // MARK: - StatCard
@@ -158,8 +157,9 @@ struct StatCard: View {
     let label: String
     let value: String
     let role: Color
-    let delta: Double?
+    let delta: RecordedDayTrend?
     let sparkValues: [Double]
+    var sparkDays: [DailyUsage] = []
     let theme: AppTheme
     let isWarming: Bool
     /// Card's position in the row (0..2). Controls enter-animation stagger.
@@ -184,7 +184,7 @@ struct StatCard: View {
                 IconBadge(symbol: icon, role: role, cardMode: theme.cardMode)
                 Spacer(minLength: 0)
                 if let d = delta, !isWarming {
-                    DeltaPill(percent: d, theme: theme)
+                    DeltaPill(trend: d, theme: theme)
                 }
             }
             .padding(.horizontal, 10)
@@ -217,6 +217,7 @@ struct StatCard: View {
             // Sparkline — scroll into view with spring-eased draw-in.
             InlineSparkline(values: sparkValues, color: role, progress: sparkProgress)
                 .frame(height: 18)
+                .modifier(SparklineUsageHover(days: sparkDays, theme: theme))
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
         }
@@ -246,6 +247,7 @@ struct StatCard: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: hovered)
         .animation(.spring(response: 0.18, dampingFraction: 0.62), value: pressed)
         .onHover { hovered = $0 }
+        .zIndex(hovered ? 10 : 0)
         .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity, pressing: { isPressing in
             pressed = isPressing
         }, perform: {})
@@ -297,11 +299,28 @@ struct IconBadge: View {
 
 // MARK: - Delta pill
 
-/// Small up/down-percentage pill. Green for positive, red for negative.
-/// System semantic colors aren't used because we want consistent hue across
-/// light and dark surfaces.
-struct DeltaPill: View {
+struct RecordedDayTrend {
+    enum Metric { case tokens, cost }
     let percent: Double
+    let metric: Metric
+    let previousDate: String
+    let latestDate: String
+
+    var description: String {
+        let name = metric == .cost ? "Daily cost" : "Daily tokens"
+        let direction = percent >= 0 ? "up" : "down"
+        return "\(name) \(direction) \(String(format: "%.1f%%", abs(percent))): \(latestDate) vs \(previousDate). Last two completed recorded days; the card value is the lifetime total."
+    }
+
+    func color(theme: AppTheme) -> Color {
+        metric == .cost && percent > 0 ? theme.statusWarning : theme.backgroundMode.secondaryTextColor
+    }
+}
+
+/// Direction does not imply success. Rising cost uses warning ink; other
+/// changes are neutral and expose their actual comparison dates.
+struct DeltaPill: View {
+    let trend: RecordedDayTrend
     let theme: AppTheme
 
     /// Signs-flipped detector: when the sign changes (e.g. trend reversed),
@@ -309,12 +328,12 @@ struct DeltaPill: View {
     @State private var pulseScale: CGFloat = 1.0
 
     var body: some View {
-        let positive = percent >= 0
-        let color: Color = positive ? theme.statusSuccess : theme.statusDanger
+        let positive = trend.percent >= 0
+        let color = trend.color(theme: theme)
         HStack(spacing: 2) {
             Image(systemName: positive ? "arrow.up" : "arrow.down")
                 .font(.system(size: 7, weight: .bold))
-            Text(String(format: "%.1f%%", abs(percent)))
+            Text(String(format: "%.1f%%", abs(trend.percent)))
                 .font(.system(size: 9, weight: .semibold, design: .rounded))
         }
         .foregroundColor(color)
@@ -324,6 +343,9 @@ struct DeltaPill: View {
             Capsule().fill(Color.white.opacity(theme.backgroundMode.isLight ? 0.5 : 0))
                 .overlay(Capsule().fill(color.opacity(theme.backgroundMode.isLight ? 0.12 : 0.18)))
         }
+        .help(trend.description)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(trend.description)
         .scaleEffect(pulseScale)
         // Bump scale → spring back on any sign change (positive flag toggles).
         .onChange(of: positive) { _, _ in

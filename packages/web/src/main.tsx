@@ -17,6 +17,9 @@ function App() {
     <BrowserRouter>
       <div style={appShellStyle}>
         <style>{`
+          *, *::before, *::after { box-sizing: border-box; }
+          html, body, #root { margin: 0; min-height: 100%; }
+          body { background: ${webTheme.surfaces.shellBackground}; }
           @keyframes fadeUp {
             from { opacity: 0; transform: translateY(12px); }
             to   { opacity: 1; transform: translateY(0); }

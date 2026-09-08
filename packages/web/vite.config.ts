@@ -146,6 +146,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 export default defineConfig({
+  publicDir: process.env.TOKMETER_APP_BUILD === "1" ? false : "public",
   plugins: [react(), tokmeterSummaryDevPlugin()],
   resolve: {
     alias: {

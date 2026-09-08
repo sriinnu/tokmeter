@@ -16,7 +16,8 @@ def source_files():
     files = set()
     for name in ("LICENSE", "README.md", "SKILL.md", "CHANGELOG.md", "package.json", "bun.lock",
                  "tsconfig.base.json", "biome.json", "vitest.config.ts",
-                 "docs/licensing.md", "docs/assets/demo/snapshots.json"):
+                 "docs/licensing.md", "docs/macos/themes.md", "docs/macos/web-dashboard.md",
+                 "packages/macos-bar/RELEASE.md", "docs/assets/demo/snapshots.json"):
         path = ROOT / name
         if path.is_file():
             files.add(path)
@@ -31,7 +32,7 @@ def source_files():
             if base.exists():
                 for path in base.rglob("*"):
                     if path.is_file() and path.suffix in (
-                        ".ts", ".tsx", ".swift", ".json", ".css", ".html", ".svg", ".sh", ".py"
+                        ".ts", ".tsx", ".mjs", ".swift", ".json", ".css", ".html", ".svg", ".sh", ".py"
                     ):
                         files.add(path)
         for pattern in ("package.json", "tsconfig*.json", "vite.config.*", "index.html",

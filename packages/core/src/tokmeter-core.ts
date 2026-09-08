@@ -41,6 +41,7 @@ import {
 } from "./scan-pipeline.js";
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
+import { createSummaryQuery } from "./summary-query.js";
 import type {
   DailyEntry,
   ModelSummary,
@@ -491,7 +492,43 @@ export class TokmeterCore {
     return computeStatbarSignals(this.recentRecords, now, this.getDailyAggregates());
   }
 
-  getSummary(): TokmeterSummary {
+  /**
+   * Query saved daily aggregates without rescanning or changing instance state.
+   * Report dates are inclusive local calendar days; week is today plus six days.
+   * Returned records are only the available recent raw evidence, not history.
+   */
+  getSummary(options: ScanOptions = {}): TokmeterSummary {
+    const aliases = this.getAliases();
+    const query = createSummaryQuery(options, aliases);
+    if (query.narrowed) {
+      const today = this.getTodayAggregate();
+      const days = query.selectDays([
+        ...this.getDailyAggregates().filter((day) => day.date !== today?.date),
+        ...(today ? [today] : []),
+      ]);
+      const meta = this.getScanMeta();
+      return {
+        records: this.recentRecords.filter(query.matchesRecord),
+        projects: computeAllProjectsFromState(days, null, aliases),
+        models: computeModelCostsFromState(days, null, {}),
+        daily: computeDailyBreakdownFromState(days, null),
+        stats: computeStatsFromState(days, null, aliases),
+        meta: query.narrowedBuckets
+          ? {
+              ...meta,
+              warnings: [
+                ...meta.warnings,
+                {
+                  scope: "history",
+                  message:
+                    "Filtered totals use saved project/provider buckets. First/last timestamps retain project-day bounds; scan metadata describes the full refresh.",
+                },
+              ],
+            }
+          : meta,
+        // Live signals have rolling/intraday scopes that daily buckets cannot reconstruct.
+      };
+    }
     return {
       records: this.recentRecords,
       projects: this.getAllProjects(),

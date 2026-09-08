@@ -48,7 +48,7 @@ export function daemonReadEligible(command: string, args: DaemonReadArgs): boole
     args.today ||
     args.week ||
     args.month ||
-    args.year
+    args.year !== undefined
   ) {
     return false;
   }

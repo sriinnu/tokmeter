@@ -60,14 +60,7 @@ struct HubSidebar: View {
             }
             .padding(.horizontal, 10)
 
-            // A living ∞ mascot floats in the sidebar's breathing room — the
-            // one always-visible spot with real blank space, so the doodle is
-            // actually seen (unlike empty states on a data-rich account).
-            Spacer(minLength: 8)
-            TokMascot(theme: theme)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-            Spacer(minLength: 8)
+            Spacer(minLength: 16)
 
             HubSidebarRow(
                 section: .settings,
@@ -175,9 +168,15 @@ struct HubSidebar: View {
                 shimmerLine(width: 92, height: 22)
                 shimmerLine(width: 120, height: 11)
             } else {
-                Text(Fmt.cost(loader.todayCost))
+                Text("\(Fmt.number(loader.todayTokens)) tokens")
+                    .font(.system(size: 22, weight: .bold, design: theme.fonts.valueDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                    .lineLimit(1)
+                Text(loader.statbarSignals?.costBasisToday.flatMap { basis in
+                    basis.estimatedRecords > 0 ? Fmt.cost(basis.estimatedCost) : nil
+                } ?? "—")
                     .font(.system(size: 24, weight: .heavy, design: theme.fonts.labelDesign))
-                    .foregroundColor(c.highlight)
+                    .foregroundColor(theme.costInk)
                     .contentTransition(.numericText())
                     // Single-pass text only. minimumScaleFactor is a TWO-pass
                     // intrinsic-width measurement; on the 30s data poll it re-reports
@@ -185,13 +184,17 @@ struct HubSidebar: View {
                     // window's constraint pass — a prime driver of the delayed crash.
                     .lineLimit(1)
                     .truncationMode(.tail)
+                Text("Estimated API cost today")
+                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+                    .foregroundColor(bg.secondaryTextColor)
+                    .help("Usage valued at model API rates. The overview's Today cost also includes tool reports.")
 
                 HStack(spacing: 6) {
                     if let burn = loader.statbarSignals?.burnRate.costPerHour, burn >= 0.01 {
                         miniPill(
                             icon: "flame.fill",
                             text: Fmt.costPerHour(burn),
-                            tint: c.warm
+                            tint: theme.burnRateColor(burn)
                         )
                     }
                     if let cache = loader.statbarSignals?.cacheHitToday.canonicalRate, cache > 0 {

@@ -40,7 +40,7 @@ import { TokmeterCore } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
 
-// Scan all session files
+// Refresh today and load sealed historical aggregates
 const records = await core.scan();
 
 // Get per-project breakdown
@@ -60,29 +60,33 @@ const stats = core.getStats();
 
 #### Filtering
 
+After `await core.scan()`, query the saved aggregates without another scan:
+
 ```typescript
 // Today only
-const today = await core.scan({ today: true });
+const today = core.getSummary({ today: true });
 
-// Last 7 days
-const week = await core.scan({ week: true });
+// Last seven local calendar days, including saved history
+const week = core.getSummary({ week: true });
 
-// Specific date range
-const range = await core.scan({
+// Inclusive local calendar date range
+const range = core.getSummary({
   since: "2025-01-01",
   until: "2025-01-31",
 });
 
 // Single provider
-const claude = await core.scan({
+const claude = core.getSummary({
   providers: ["claude-code"],
 });
 
 // Single project
-const project = await core.scan({
+const project = core.getSummary({
   project: "my-app",
 });
 ```
+
+Report dates are inclusive `YYYY-MM-DD` values in the local timezone; intraday timestamps are rejected. The default scan return and `summary.records` contain recent raw evidence, while summary totals also include sealed history. See [integration guidance](https://github.com/sriinnu/tokmeter/blob/main/docs/consuming-tokmeter.md#report-filters-and-retained-history).
 
 #### Pricing
 
@@ -151,7 +155,9 @@ The TUI provides a real-time interactive view with navigable project/model/daily
 
 ## Supported Providers
 
-Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo Code, Kilo CLI, Mux, Windsurf, and more.
+Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo Code, Kilo CLI, Mux, and other implemented parsers. See [integration coverage](https://github.com/sriinnu/tokmeter/blob/main/docs/compatibility.md) for validation scope.
+
+Editor MCP installer targets are separate from session-parser support; Windsurf is an installer target, not a usage parser.
 
 ## Author
 

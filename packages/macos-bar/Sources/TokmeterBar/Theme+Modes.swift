@@ -13,14 +13,14 @@ import SwiftUI
 enum BackgroundMode {
     case dark             // Standard macOS dark background
     case darkGradient     // Subtle top→bottom dark gradient
-    case deepIndigo       // Near-black with cool blue tint (Nocturne)
+    case deepIndigo       // Neutral graphite (Carbon; legacy mode name)
     case lightCream       // Light ivory/cream (Daylight)
     case deepMagenta      // Very dark purple base (Synthwave)
     case tactical         // Very dark with green-black tint (HUD)
     case terminalBlack    // True black (Terminal)
     case paperWarm        // Warm off-white editorial (Paper)
     case glassBlur        // Translucent material — works over wallpaper (Glass)
-    case auroraDrift      // Deep night with slow-drifting northern-lights gradient
+    case auroraDrift      // Deep petrol (Lagoon; legacy mode name)
     case blueprintGrid    // Cream-paper bg with cyan grid lines (Blueprint)
     case noiseYellow      // Canary-yellow flat surface (Noise / neobrutalist)
     case mintPeach        // Warm peach surface (Mint / soft editorial)
@@ -28,10 +28,12 @@ enum BackgroundMode {
     /// The base surface color painted as the popover's background.
     var surfaceColor: Color {
         switch self {
-        case .dark, .darkGradient:
+        case .dark:
             return Color(NSColor.windowBackgroundColor)
+        case .darkGradient:
+            return Color(red: 0.035, green: 0.04, blue: 0.07)
         case .deepIndigo:
-            return Color(red: 0.04, green: 0.05, blue: 0.10)
+            return Color(red: 0.065, green: 0.065, blue: 0.07)
         case .lightCream:
             return Color(red: 0.975, green: 0.955, blue: 0.925)
         case .deepMagenta:
@@ -46,7 +48,7 @@ enum BackgroundMode {
         case .glassBlur:
             return Color(red: 0.86, green: 0.92, blue: 0.96).opacity(0.42)
         case .auroraDrift:
-            return Color(red: 0.02, green: 0.03, blue: 0.08)
+            return Color(red: 0.025, green: 0.09, blue: 0.095)
         case .blueprintGrid:
             return Color(red: 0.955, green: 0.945, blue: 0.910)
         case .noiseYellow:
@@ -88,7 +90,7 @@ enum BackgroundMode {
         case .darkGradient:
             return [base, base.opacity(0.92)]
         case .deepIndigo:
-            return [base, Color(red: 0.02, green: 0.03, blue: 0.07)]
+            return [base, base]
         case .deepMagenta:
             return [base, Color(red: 0.04, green: 0.02, blue: 0.08)]
         case .tactical:
@@ -102,7 +104,7 @@ enum BackgroundMode {
         case .glassBlur:
             return [base, base.opacity(0.55)]
         case .auroraDrift:
-            return [base, Color(red: 0.01, green: 0.02, blue: 0.05)]
+            return [base, base]
         case .blueprintGrid:
             return [base, Color(red: 0.942, green: 0.928, blue: 0.890)]
         case .noiseYellow:
@@ -120,14 +122,14 @@ enum BackgroundMode {
 /// How the giant "$48.95 / today" header renders. Branch on this in the view.
 enum HeroMode {
     case nebulaGradient     // Classic purple→magenta→orange diagonal
-    case nocturneCalm       // Deep indigo solid with a faint accent glow
+    case nocturneCalm       // Carbon: flat graphite and copper rule
     case daylightSoft       // Cream with soft color wave; dark foreground
     case synthwaveHorizon   // Sunset horizon + perspective grid overlay
     case hudScanlines       // Dark panel with scanline + OPERATIONAL pill
     case terminalCRT        // Pure black + dense scanlines + green phosphor + cursor
     case paperEditorial     // Cream, large serif display number, hairline rule
     case glassMaterial      // Translucent material + soft tint + glossy highlight
-    case auroraDrift        // Slow-drifting aurora gradient — motion as identity
+    case auroraDrift        // Lagoon: static teal gradient and mint rule
     case blueprintTechnical // Hairline cyan frame, mono digits, drafting feel
     case noiseBrutal        // Heavy black sans on canary yellow, brutalist
     case mintEditorial      // Peach surface, lime accent, hairline underline
@@ -137,15 +139,15 @@ enum HeroMode {
 
 /// How KPI cards and list rows render — fill, border, corner radius, shadow.
 enum CardMode {
-    case glossyDark       // Nebula: color-tinted fill with soft glow
-    case flatDark         // Nocturne: gray-tinted flat fill
+    case glossyDark       // Prism: shared dark surface and spectrum rim
+    case flatDark         // Carbon: flat graphite fill
     case lightPaper       // Daylight: white fill with soft shadow
     case neonOutlined     // Synthwave: neon border, minimal fill, inner glow
     case hudPanel         // HUD: rectangular, tactical, mono values
     case terminalPanel    // Terminal: black fill, green hairline border, mono
     case paperHairline    // Paper: no fill, thin black hairline border, serif
     case glassFrost       // Glass: ultra-thin material with subtle border
-    case auroraGlass      // Aurora: thin-material on the drifting bg, soft glow
+    case auroraGlass      // Lagoon: opaque teal panels
     case blueprintFrame   // Blueprint: cyan hairline frame, no fill, mono
     case noiseStuck       // Noise: solid color + 2pt black border + hard offset shadow
     case mintHairline     // Mint: peach fill + 0.5pt black hairline, no shadow
@@ -156,7 +158,10 @@ enum CardMode {
         case .hudPanel, .terminalPanel, .blueprintFrame: return 4
         case .paperHairline: return 2
         case .neonOutlined: return 10
-        case .glassFrost, .auroraGlass: return 14
+        case .glassFrost: return 14
+        case .auroraGlass: return 18
+        case .flatDark: return 6
+        case .glossyDark: return 16
         case .noiseStuck: return 8
         case .mintHairline: return 14
         default: return 12

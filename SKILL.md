@@ -57,14 +57,16 @@ const pricing = await lookupTokmeterPricing("claude-sonnet-4-20250514");
 import { TokmeterCore } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
-await core.scan({ providers: ["codex", "claude-code"], since: "2026-04-01" });
-const summary = core.getSummary();
+await core.scan();
+const summary = core.getSummary({ providers: ["codex", "claude-code"], since: "2026-04-01" });
 ```
 
 ## Integration notes
 
 - Tokmeter reads local session files; there is no hosted backend requirement.
-- `TokmeterSummary` is the best high-level contract for downstream apps and dashboards.
+- `TokmeterSummary` is the high-level contract for downstream apps and dashboards.
+- Use `getSummary(options)` to scope aggregate reports; `scan(options)` alone does not filter subsequent no-argument getters. Reports use inclusive local calendar days (`week`: today plus six days); timestamps are rejected.
+- Summary `records` is recent raw evidence, not a complete historical ledger.
 - `light` / `--light` skips pricing lookups when token counts are enough.
 - `@sriinnu/drishti` is the preferred live surface for other AI assistants.
 

@@ -34,6 +34,12 @@ import {
 } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  captureDaemonIdentity,
+  inspectDaemon,
+  readProcessEvidence,
+  signalVerifiedDaemon,
+} from "./identity.js";
+import {
   AGENT_LABEL,
   agentPlistPath,
   installAgent,
@@ -45,6 +51,7 @@ import {
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
   DAEMON_HOST,
+  DAEMON_IDENTITY_FILE,
   DAEMON_PID_FILE,
   DAEMON_PORT,
   DAEMON_STATE_DIR,
@@ -54,6 +61,7 @@ import {
   LEGACY_DAEMON_PID_FILE,
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
+import { RefreshCoordinator } from "./refresh-coordinator.js";
 import { SessionManager } from "./session.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
@@ -120,6 +128,7 @@ const DAEMON_HEAP_CAP_MB = Number.parseInt(process.env.TOKMETER_DAEMON_HEAP_MB ?
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
 let _authToken: string | null = null;
+let _ownsDaemonState = false;
 
 /**
  * Write `data` to `path` with mode 0600 using `O_CREAT|O_EXCL|O_WRONLY`. The
@@ -226,63 +235,9 @@ export function startDaemon(): void {
     // Non-fatal — if the OS refuses, the daemon still works, just less polite.
   }
 
-  // Cross-process singleton guard. The statusline + bar both fire-and-forget
-  // a `daemon start` when they can't reach the daemon; without this guard a
-  // burst of those would spawn a stampede of servers all fighting for the
-  // port. If a live daemon already owns the PID file, bow out silently.
-  if (existsSync(DAEMON_PID_FILE)) {
-    const raw = (() => {
-      try {
-        return readFileSync(DAEMON_PID_FILE, "utf-8").trim();
-      } catch {
-        return "";
-      }
-    })();
-    const pid = Number.parseInt(raw, 10);
-    if (Number.isFinite(pid) && pid > 1 && pid !== process.pid) {
-      // process.kill(pid, 0) probes the process WITHOUT signalling it.
-      //   - succeeds         → process exists and is signalable by us → alive, bow out
-      //   - throws EPERM     → process exists but is owned by another user (or restricted) → alive, bow out
-      //   - throws ESRCH     → no such process → stale PID, safe to reclaim
-      //   - throws anything else → conservative: treat as alive (avoid stomping on a real daemon)
-      let liveness: "alive" | "stale" = "stale";
-      try {
-        process.kill(pid, 0);
-        liveness = "alive";
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "EPERM") {
-          liveness = "alive";
-        } else if (code === "ESRCH") {
-          liveness = "stale";
-        } else {
-          // Unknown errno — fail safe by assuming alive. Better to bow out
-          // than to double-bind and crash a working daemon.
-          liveness = "alive";
-        }
-      }
-      if (liveness === "alive") {
-        console.log(`daemon already running (pid ${pid})`);
-        return;
-      }
-      // Stale PID file — clean up both canonical and legacy paths.
-      for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
-        try {
-          unlinkSync(f);
-        } catch {}
-      }
-    } else {
-      // Garbage PID (empty / non-numeric / self) — treat as stale.
-      for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
-        try {
-          unlinkSync(f);
-        } catch {}
-      }
-    }
-  }
-
+  // Binding the WebSocket port is the cross-process startup claim. A PID
+  // file alone cannot establish ownership and must never decide publication.
   sessionManager = new SessionManager();
-  initAuthToken();
 
   wss = new WebSocketServer({
     port: DAEMON_PORT,
@@ -302,10 +257,24 @@ export function startDaemon(): void {
   });
 
   wss.on("listening", () => {
+    // Only the process that bound the port may publish credentials or identity.
+    const evidence = readProcessEvidence(process.pid);
+    if (!evidence) {
+      console.error("Cannot verify this daemon process; refusing to publish credentials");
+      stopDaemon();
+      process.exitCode = 1;
+      return;
+    }
+    _ownsDaemonState = true;
+    initAuthToken();
+    writeSecretFile(
+      DAEMON_IDENTITY_FILE,
+      JSON.stringify(captureDaemonIdentity(process.pid, evidence))
+    );
     console.log(`【♾️】 Drishti Daemon listening on ${DAEMON_URL}`);
 
     // Write PID file (canonical + legacy /tmp shim for bar v1.4.0 compat).
-    writeFileSync(DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+    writeSecretFile(DAEMON_PID_FILE, String(process.pid));
     try {
       writeFileSync(LEGACY_DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
     } catch {
@@ -403,7 +372,7 @@ export function startDaemon(): void {
       // Another daemon won the bind race (the PID-file check above has a
       // small TOCTOU window). Exit cleanly rather than crash-looping — the
       // other daemon is the live singleton and there's nothing for us to do.
-      console.log(`daemon port ${DAEMON_PORT} already in use — another daemon won the race`);
+      console.log(`daemon port ${DAEMON_PORT} already in use — startup skipped`);
       process.exit(0);
     }
     console.error("Server error:", err.message);
@@ -602,8 +571,8 @@ function loadState(): void {
 // ─── Daemon Management ──────────────────────────────────────────────────
 
 export function stopDaemon(): void {
-  // Save state one final time before stopping
-  saveState();
+  // A losing startup process must not save over or unlink the winner's state.
+  if (_ownsDaemonState) saveState();
 
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
@@ -628,13 +597,25 @@ export function stopDaemon(): void {
     httpServer = null;
   }
 
-  // Clean up PID and token files (canonical + legacy /tmp shims).
-  for (const f of [
-    DAEMON_PID_FILE,
-    DAEMON_TOKEN_FILE,
-    LEGACY_DAEMON_PID_FILE,
-    LEGACY_DAEMON_TOKEN_FILE,
-  ]) {
+  // Remove only files belonging to this process, never a successor's state.
+  const ownsPid =
+    _ownsDaemonState &&
+    (() => {
+      try {
+        return readFileSync(DAEMON_PID_FILE, "utf8").trim() === String(process.pid);
+      } catch {
+        return false;
+      }
+    })();
+  for (const f of ownsPid
+    ? [
+        DAEMON_IDENTITY_FILE,
+        DAEMON_PID_FILE,
+        DAEMON_TOKEN_FILE,
+        LEGACY_DAEMON_PID_FILE,
+        LEGACY_DAEMON_TOKEN_FILE,
+      ]
+    : []) {
     try {
       unlinkSync(f);
     } catch {
@@ -643,63 +624,25 @@ export function stopDaemon(): void {
   }
 
   _authToken = null;
+  _ownsDaemonState = false;
   sessionManager = null;
   console.log("Daemon stopped");
 }
 
-/**
- * Distinguish a truly-dead PID from one we just don't have permission to
- * signal. EPERM ⇒ the process exists (alive); ESRCH ⇒ no such process (stale).
- * Anything else ⇒ unknown — fail conservatively as "alive" so we never blow
- * away the canonical singleton.
- */
-function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return false;
-    if (code === "EPERM") return true;
-    return true; // unknown errno → conservative
-  }
-}
-
 export function isDaemonRunning(): boolean {
-  if (!existsSync(DAEMON_PID_FILE)) return false;
-  let pid: number;
-  try {
-    pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
-  } catch {
-    return false;
-  }
-  if (isPidAlive(pid)) return true;
-  // Truly stale — clean up so the next start can reclaim cleanly.
-  for (const f of [DAEMON_PID_FILE, LEGACY_DAEMON_PID_FILE]) {
-    try {
-      unlinkSync(f);
-    } catch {}
-  }
-  return false;
+  return getDaemonStatus().running;
 }
 
 export function getDaemonStatus(): {
   running: boolean;
   pid?: number;
   port: number;
+  identity: "verified" | "absent" | "unverified";
 } {
-  if (!existsSync(DAEMON_PID_FILE)) {
-    return { running: false, port: DAEMON_PORT };
-  }
-  let pid: number;
-  try {
-    pid = Number.parseInt(readFileSync(DAEMON_PID_FILE, "utf-8").trim(), 10);
-  } catch {
-    return { running: false, port: DAEMON_PORT };
-  }
-  if (isPidAlive(pid)) return { running: true, pid, port: DAEMON_PORT };
-  return { running: false, port: DAEMON_PORT };
+  const owner = inspectDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
+  return owner.state === "verified"
+    ? { running: true, pid: owner.identity.pid, port: DAEMON_PORT, identity: owner.state }
+    : { running: false, port: DAEMON_PORT, identity: owner.state };
 }
 
 // ─── HTTP REST API ──────────────────────────────────────────────────────
@@ -734,12 +677,6 @@ function invalidateHttpCore(): void {
 const TODAY_REFRESH_TTL = 12_000;
 const MAX_BODY_BYTES = 1_048_576; // 1MB
 
-/**
- * Tracks the in-flight refresh/scan so concurrent callers don't trigger
- * duplicate work. The first caller does the work; subsequent callers await the
- * same promise.
- */
-let _httpCorePromise: Promise<any> | null = null;
 /** True once the first warmup scan has completed. */
 let _httpCoreReady = false;
 
@@ -754,15 +691,6 @@ let _httpCoreReady = false;
 const DRISHTI_API_VERSION = 1;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
 
-/**
- * Set by `rescanHttpCore()` when a pricing update arrives while another core
- * operation is in flight. The in-flight promise will see this on completion
- * and queue exactly one fullRescan after it — collapsing N back-to-back
- * pricing-update bursts into a single follow-up scan instead of stacking N
- * full-corpus scans. Resets to false when consumed.
- */
-let _pendingFullRescan = false;
-
 // Guards /api/rescan: the deep rebuild runs in the background, so concurrent
 // triggers (impatient double-click) must coalesce, not stack.
 let _rescanInFlight = false;
@@ -772,83 +700,30 @@ let _rescanInFlight = false;
 // staying far below the full-history parse that exhausts memory.
 const DEEP_RESCAN_WINDOW_DAYS = 30;
 
-/**
- * Single mediator for ALL core work — warm reads, today refreshes, and full
- * rescans — through ONE single-flight promise. Without this, a concurrent
- * `rescanHttpCore()` could replace `_httpCorePromise` after awaiting it,
- * back-to-back-running TWO full-corpus scans (the exact stampede the rebuild
- * exists to prevent, just serialized instead of parallel).
- *
- * Rules:
- *   - Warm + fresh (within {@link TODAY_REFRESH_TTL}) and no rescan requested
- *     → return the warm core instantly.
- *   - Something already in flight → wait for it. If a rescan was requested
- *     while a refresh was running, mark it pending so we queue exactly one
- *     rescan after the current operation completes.
- *   - Nothing in flight → claim `_httpCorePromise` and run the right work
- *     (refresh / fullRescan / cold start).
- */
-async function ensureCoreFresh(forceFullRescan = false, depth = 0): Promise<any> {
-  const now = Date.now();
-  if (!forceFullRescan && _httpCore && now - _httpCore.ts < TODAY_REFRESH_TTL) {
+const coreRefresh = new RefreshCoordinator<any>(async (full) => {
+  if (_httpCore) {
+    if (full) await _httpCore.core.scan();
+    else await _httpCore.core.refreshToday();
+    _httpCore.ts = Date.now();
     return _httpCore.core;
   }
+  const { TokmeterCore } = await import("@sriinnu/tokmeter");
+  const core = new TokmeterCore();
+  await core.scan();
+  _httpCore = { core, ts: Date.now() };
+  _httpCoreReady = true;
+  return core;
+});
 
-  if (_httpCorePromise) {
-    if (forceFullRescan) _pendingFullRescan = true;
-    // Tolerate rejection so a single failed scan doesn't poison every caller
-    // (the inner finally still clears `_httpCorePromise`).
-    await _httpCorePromise.catch(() => undefined);
-    // Re-evaluate: the just-finished work may already have satisfied us, or
-    // we may need to chain a rescan if `_pendingFullRescan` was set. Cap
-    // the recursion depth as a belt-and-suspenders against a pathological
-    // rescan-storm livelock — at depth > 4 we just return whatever core we
-    // have (even if "stale" by TTL), since the queued rescan will eventually
-    // catch up on the next caller.
-    if (depth > 4) {
-      if (_httpCore) return _httpCore.core;
-      throw new Error("ensureCoreFresh exceeded recursion depth without producing a core");
-    }
-    return ensureCoreFresh(forceFullRescan || _pendingFullRescan, depth + 1);
-  }
-
-  const wantFullRescan = forceFullRescan || _pendingFullRescan;
-  _pendingFullRescan = false;
-
-  _httpCorePromise = (async () => {
-    try {
-      if (_httpCore && !wantFullRescan) {
-        // Warm + stale → cheap incremental today refresh. `refreshToday()`
-        // re-reads ONLY today's active files and splices onto frozen history,
-        // which is never touched (immutability rule).
-        await _httpCore.core.refreshToday();
-        _httpCore.ts = Date.now();
-        return _httpCore.core;
-      }
-      if (_httpCore) {
-        // Warm + full rescan (e.g. after `/api/update-pricing`). Core's own
-        // immutability rules keep frozen history frozen; only today reprices.
-        await _httpCore.core.scan();
-        _httpCore.ts = Date.now();
-        return _httpCore.core;
-      }
-      // Cold start: build the ONE persistent core and load frozen history once.
-      const { TokmeterCore } = await import("@sriinnu/tokmeter");
-      const core = new TokmeterCore();
-      await core.scan();
-      _httpCore = { core, ts: Date.now() };
-      _httpCoreReady = true;
-      return core;
-    } finally {
-      // Promise tracking ends here regardless of success/failure — the next
-      // caller starts a fresh attempt. `_httpCoreReady` is NOT flipped here
-      // because we want it to reflect "have we ever produced a warm core",
-      // not "did the last attempt succeed".
-      _httpCorePromise = null;
-    }
-  })();
-
-  return _httpCorePromise;
+async function ensureCoreFresh(forceFullRescan = false): Promise<any> {
+  if (
+    !forceFullRescan &&
+    !coreRefresh.busy &&
+    _httpCore &&
+    Date.now() - _httpCore.ts < TODAY_REFRESH_TTL
+  )
+    return _httpCore.core;
+  return coreRefresh.run(forceFullRescan);
 }
 
 async function getHttpCore(): Promise<any> {
@@ -950,7 +825,7 @@ function startHttpApi(): void {
         if (pathname === "/api/ready") {
           json(res, {
             ready: _httpCoreReady,
-            warming: _httpCorePromise !== null,
+            warming: coreRefresh.busy,
             apiVersion: DRISHTI_API_VERSION,
           });
           return;
@@ -1718,6 +1593,15 @@ async function readBody(req: IncomingMessage): Promise<any> {
 const DAEMON_CHILD_FLAG = "__DRISHTI_DAEMON_CHILD__";
 
 export async function runDaemonCLI(command: string): Promise<void> {
+  if (
+    ["stop", "restart", "install-agent"].includes(command) &&
+    !isAgentLoaded() &&
+    getDaemonStatus().identity === "unverified"
+  ) {
+    throw new Error(
+      "Cannot verify daemon ownership; refusing process control. Inspect daemon status before retrying."
+    );
+  }
   switch (command) {
     case "start":
       if (isDaemonRunning()) {
@@ -1814,7 +1698,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
         if (pid) {
-          process.kill(pid, "SIGTERM");
+          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
           // Wait for the daemon to actually exit and clean up its PID file.
           let stopRetries = 10;
           while (stopRetries > 0 && isDaemonRunning()) {
@@ -1850,7 +1734,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
         if (pid) {
-          process.kill(pid, "SIGTERM");
+          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
           // Wait for old process to die
           let retries = 10;
           while (retries > 0 && isDaemonRunning()) {
@@ -1875,9 +1759,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       if (isDaemonRunning()) {
         const { pid } = getDaemonStatus();
         if (pid) {
-          try {
-            process.kill(pid, "SIGTERM");
-          } catch {}
+          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
           let retries = 10;
           while (retries > 0 && isDaemonRunning()) {
             Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);

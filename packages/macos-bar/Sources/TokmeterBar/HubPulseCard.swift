@@ -24,12 +24,7 @@ struct HubPulseCard: View {
                 Text("Today's pulse")
                     .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
-                // Deterministic 5-column grid, not a flexible HStack: same fix as
-                // the overview KPI row — greedy maxWidth:.infinity tiles let the
-                // flex solver re-divide width on every poll (numericText values
-                // change), which doesn't converge at large width and trips AppKit's
-                // Update-Constraints pass budget. A grid pins the columns.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
+                BalancedGrid(columnCounts: [5, 3, 2, 1], minimumColumnWidth: 170, spacing: 10) {
                     // "—" for inactive numeric tiles instead of "0%" — "0%"
                     // reads as "cache failed today / reasoning crashed" when
                     // truth is "no data flowed through that path." Em-dash is
@@ -53,7 +48,7 @@ struct HubPulseCard: View {
                                 + "\(signals.burnRate.windowMinutes)m"
                             : "no activity yet",
                         icon: "flame.fill",
-                        accent: c.warm,
+                        accent: theme.burnRateColor(signals.burnRate.costPerHour),
                         active: burnActive,
                         theme: theme
                     )
@@ -187,10 +182,11 @@ struct PulseTile: View {
                 Text(sub)
                     .font(.system(size: 10, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor.opacity(active ? 1 : 0.70))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .lineLimit(2, reservesSpace: true)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .accessibilityElement(children: .combine)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scaleEffect(hovered ? 1.015 : 1.0)

@@ -20,6 +20,7 @@ describe("daemonReadEligible — the 'silently wrong numbers' guard", () => {
     expect(daemonReadEligible("stats", { week: true })).toBe(false);
     expect(daemonReadEligible("stats", { month: true })).toBe(false);
     expect(daemonReadEligible("stats", { year: 2026 })).toBe(false);
+    expect(daemonReadEligible("stats", { year: 0 })).toBe(false);
     expect(daemonReadEligible("daily", { since: "2026-01-01" })).toBe(false);
     expect(daemonReadEligible("daily", { until: "2026-06-01" })).toBe(false);
     expect(daemonReadEligible("models", { project: "demo" })).toBe(false);

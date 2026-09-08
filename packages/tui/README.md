@@ -15,16 +15,19 @@ npx -p @sriinnu/tokmeter tokmeter-tui
 | View | Key | Description |
 |------|-----|-------------|
 | Overview | `1` | Bar charts, sparklines, provider breakdown |
-| Models | `2` | Sortable table with inline charts |
+| Models | `2` | Model table with inline charts |
 | Daily | `3` | Sparkline + contribution heatmap |
 | Stats | `4` | Streaks, averages, activity calendar |
+| Cleanup | `5` | Select projects, preview deletion, and confirm cleanup |
 
 ## Key Bindings
 
 | Key | Action |
 |-----|--------|
-| `1-4` | Switch views |
-| `Tab` / arrow keys | Navigate |
+| `1-5` | Switch views |
+| `Tab` / left/right arrows | Switch views |
+| `r` | Refresh usage |
+| Up/down arrows / Space | Move through cleanup projects / select |
 | `q` / `Ctrl+C` | Quit |
 
 ## License
