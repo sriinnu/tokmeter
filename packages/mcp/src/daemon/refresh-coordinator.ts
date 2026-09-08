@@ -10,6 +10,9 @@ export class RefreshCoordinator<T> {
   }
 
   run(full: boolean): Promise<T> {
+    // An ordinary read can use the refresh already in flight, even when a
+    // forced scan is queued behind it. Forced callers still share that queue.
+    if (!full && this.flight) return this.flight.promise;
     if (this.queuedFull) return this.queuedFull;
     if (this.flight) {
       if (!full || this.flight.full) return this.flight.promise;

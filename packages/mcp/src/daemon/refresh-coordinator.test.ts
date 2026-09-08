@@ -20,9 +20,12 @@ describe("refresh coalescing", () => {
     const read = gate.run(false);
     const rescans = Array.from({ length: 10 }, () => gate.run(true));
     expect(new Set(rescans).size).toBe(1);
+    const laterRead = gate.run(false);
+    expect(laterRead).toBe(read);
     expect(gate.busy).toBe(true);
     incremental.resolve("incremental");
     expect(await read).toBe("incremental");
+    expect(await laterRead).toBe("incremental");
     await Promise.resolve();
     expect(gate.run(true)).toBe(rescans[0]);
     full.resolve("full");
