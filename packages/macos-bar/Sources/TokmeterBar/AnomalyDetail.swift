@@ -7,9 +7,7 @@
 import AppKit
 import SwiftUI
 
-/// Tappable footer pill. Pressed state squashes 0.97 with a quick spring
-/// (anticipation), releases on tap, then triggers `onTap`. Pixar: motion
-/// confirms the gesture before the sheet starts to rise.
+/// A compact native button opens the pricing breakdown on click or keyboard activation.
 struct AnomalyPill: View {
     let text: String
     let detailCount: Int
@@ -17,38 +15,28 @@ struct AnomalyPill: View {
     let theme: AppTheme
     let onTap: () -> Void
 
-    @State private var pressed = false
     @State private var hovered = false
 
     var body: some View {
-        Text(text + " ›")
-            .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
-            .foregroundColor(.red)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.red.opacity(hovered ? 0.12 : 0.06))
-            )
-            // Squash 0.92 instead of 0.96 — at ~80pt wide / 10pt text, the
-            // smaller deformation was below the perceptual floor. 90ms dwell
-            // (was 120ms) keeps the confirm snappy. The press feels like
-            // touching a real button instead of "did it register?"
-            .scaleEffect(pressed ? 0.92 : 1.0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: pressed)
-            .animation(.easeInOut(duration: 0.15), value: hovered)
-            .onHover { hovered = $0 }
-            .onTapGesture {
-                pressed = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
-                    pressed = false
-                    onTap()
-                }
-            }
-            .help(
-                "Click for the per-field breakdown — \(detailCount) field "
-                + "movement(s) across \(modelCount) model(s)."
-            )
+        Button(action: onTap) {
+            Text(text + " ›")
+                .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+                .foregroundColor(theme.statusDanger)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(theme.statusDanger.opacity(hovered ? 0.12 : 0.06))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: hovered)
+        .onHover { hovered = $0 }
+        .help(
+            "Click for the per-field breakdown — \(detailCount) field "
+            + "movement(s) across \(modelCount) model(s)."
+        )
     }
 }
 
@@ -247,7 +235,7 @@ private struct AnomalyFieldRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
     private var sign: String { row.deltaPct > 0 ? "↑" : "↓" }
     private var deltaColor: Color {
-        row.deltaPct > 0 ? Color.tokDanger : Color.tokSuccess
+        row.deltaPct > 0 ? theme.statusDanger : theme.statusSuccess
     }
 
     var body: some View {

@@ -22,14 +22,18 @@ struct HubCard<Content: View>: View {
         content()
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.primary.opacity(bg.isLight ? 0.03 : 0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(c.accent.opacity(0.12), lineWidth: 1)
-                    )
-            )
+            .background {
+                if bg.usesMaterial {
+                    FrostedGlassPanel()
+                } else {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.primary.opacity(bg.isLight ? 0.03 : 0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(c.accent.opacity(0.12), lineWidth: 1)
+                        )
+                }
+            }
     }
 }
 

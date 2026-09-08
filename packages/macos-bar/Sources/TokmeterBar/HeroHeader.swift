@@ -89,8 +89,8 @@ struct HeroHeader: View {
             let pressured = status == "critical" || status == "high"
             let tint: Color = {
                 switch status {
-                case "critical": return Color.tokDanger
-                case "high":     return Color.tokWarning
+                case "critical": return theme.statusDanger
+                case "high":     return theme.statusWarning
                 default:         return foreground.opacity(0.7)
                 }
             }()
@@ -151,7 +151,7 @@ struct HeroHeader: View {
                     }
                     if basis.unavailableRecords > 0 {
                         Text("Cost unavailable for some usage")
-                            .foregroundColor(Color.tokWarning)
+                            .foregroundColor(theme.statusWarning)
                     } else if basis.estimatedRecords + basis.reportedRecords == 0 {
                         Text("No usage recorded today")
                     }
@@ -205,7 +205,7 @@ struct HeroHeader: View {
     /// "something is happening right now and here's what." Tooltip shows the
     /// model + last-record cost for the user who wants the detail.
     private func liveSessionPill(_ live: LiveSession) -> some View {
-        let dotColor = Color.tokSuccess
+        let dotColor = theme.statusSuccess
         let project = Fmt.projectBasename(live.project)
         return HStack(spacing: 5) {
             Circle()
@@ -313,7 +313,7 @@ struct HeroHeader: View {
             // is hidden from picker but kept here for consistency.
             return Color.black.opacity(0.92)
         case .hud, .terminal:   return c.secondary
-        case .glass:            return Color.white.opacity(0.95)
+        case .glass:            return Color(red: 0.14, green: 0.20, blue: 0.28)
         default:                return Color.white
         }
     }
@@ -336,7 +336,7 @@ struct HeroHeader: View {
         case .hud:       return c.secondary.opacity(0.30)
         case .terminal:  return c.secondary.opacity(0.40)
         case .paper:     return Color.black.opacity(0.08)
-        case .glass:     return Color.black.opacity(0.18)
+        case .glass:     return Color.clear
         case .aurora:    return c.accent.opacity(0.35)
         case .blueprint: return Color.black.opacity(0.10)
         case .noise:     return Color.black.opacity(0.40)   // hard offset reads as "stuck on"
@@ -345,7 +345,8 @@ struct HeroHeader: View {
     }
 
     private var contactShadow: Color {
-        theme.backgroundMode.isLight ? Color.black.opacity(0.08) : Color.black.opacity(0.30)
+        if theme == .glass { return Color.clear }
+        return theme.backgroundMode.isLight ? Color.black.opacity(0.08) : Color.black.opacity(0.30)
     }
 
     // MARK: - Shapes + overlays
@@ -354,7 +355,8 @@ struct HeroHeader: View {
     /// to match the menubar chrome; bottom corners tuck inward.
     private var notchShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            cornerRadii: .init(topLeading: 0, bottomLeading: 26, bottomTrailing: 26, topTrailing: 0),
+            cornerRadii: .init(topLeading: 0, bottomLeading: theme == .glass ? 0 : 26,
+                              bottomTrailing: theme == .glass ? 0 : 26, topTrailing: 0),
             style: .continuous
         )
     }
@@ -364,7 +366,7 @@ struct HeroHeader: View {
     @ViewBuilder
     private var innerHighlight: some View {
         switch theme {
-        case .daylight, .hud, .terminal, .paper, .blueprint, .noise, .mint:
+        case .daylight, .hud, .terminal, .paper, .blueprint, .noise, .mint, .glass:
             EmptyView()
         default:
             notchShape.strokeBorder(
@@ -385,7 +387,7 @@ struct HeroHeader: View {
             case .hud:       return c.secondary.opacity(0.30)
             case .terminal:  return c.secondary.opacity(0.40)
             case .paper:     return Color.black.opacity(0.18)
-            case .glass:     return Color.white.opacity(0.25)
+            case .glass:     return Color.clear
             case .noise:     return Color.black.opacity(0.45)   // ink frame
             case .mint:      return Color.black.opacity(0.12)   // hairline
             case .blueprint: return Color.black.opacity(0.18)

@@ -20,8 +20,10 @@ import SwiftUI
 @MainActor
 final class PanelVisibility: ObservableObject {
     @Published var isVisible: Bool = false
+    @Published var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 812
 
     private var observer: NSObjectProtocol?
+    private var screenObservers: [NSObjectProtocol] = []
     private weak var window: NSWindow?
 
     func attach(to window: NSWindow) {
@@ -29,6 +31,7 @@ final class PanelVisibility: ObservableObject {
         detach()
         self.window = window
         isVisible = window.occlusionState.contains(.visible)
+        screenHeight = window.screen?.visibleFrame.height ?? screenHeight
         observer = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification,
             object: window,
@@ -40,7 +43,18 @@ final class PanelVisibility: ObservableObject {
             Task { @MainActor [weak self, weak window] in
                 guard let self, let window else { return }
                 self.isVisible = window.occlusionState.contains(.visible)
+                self.screenHeight = window.screen?.visibleFrame.height ?? self.screenHeight
             }
+        }
+        for name in [NSWindow.didChangeScreenNotification, NSApplication.didChangeScreenParametersNotification] {
+            screenObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: name == NSWindow.didChangeScreenNotification ? window : nil, queue: .main
+            ) { _ in
+                Task { @MainActor [weak self, weak window] in
+                    guard let self, let window else { return }
+                    self.screenHeight = window.screen?.visibleFrame.height ?? self.screenHeight
+                }
+            })
         }
     }
 
@@ -49,12 +63,15 @@ final class PanelVisibility: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         observer = nil
+        screenObservers.forEach(NotificationCenter.default.removeObserver)
+        screenObservers = []
     }
 
     deinit {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }
+        screenObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 

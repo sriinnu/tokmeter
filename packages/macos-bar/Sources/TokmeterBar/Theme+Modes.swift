@@ -44,7 +44,7 @@ enum BackgroundMode {
         case .paperWarm:
             return Color(red: 0.962, green: 0.943, blue: 0.904)
         case .glassBlur:
-            return Color(red: 0.18, green: 0.20, blue: 0.26).opacity(0.35)
+            return Color(red: 0.86, green: 0.92, blue: 0.96).opacity(0.42)
         case .auroraDrift:
             return Color(red: 0.02, green: 0.03, blue: 0.08)
         case .blueprintGrid:
@@ -59,13 +59,13 @@ enum BackgroundMode {
     /// Whether this surface is light (drives text color inversion).
     var isLight: Bool {
         switch self {
-        case .lightCream, .paperWarm, .blueprintGrid, .noiseYellow, .mintPeach: return true
+        case .lightCream, .paperWarm, .blueprintGrid, .noiseYellow, .mintPeach, .glassBlur: return true
         default: return false
         }
     }
 
     /// Whether this surface uses a translucent material layer (Glass).
-    /// The view renders a regular-material background + tint instead of a solid fill.
+    /// Glass uses a native desktop blur with a pale frost tint.
     var usesMaterial: Bool {
         if case .glassBlur = self { return true }
         return false
@@ -78,7 +78,7 @@ enum BackgroundMode {
 
     /// Secondary/label text color.
     var secondaryTextColor: Color {
-        isLight ? Color.black.opacity(0.55) : Color.white.opacity(0.55)
+        isLight ? Color.black.opacity(0.65) : Color.white.opacity(0.55)
     }
 
     /// The subtle gradient pair applied to the outer background.

@@ -221,26 +221,9 @@ struct HeroBackground: View {
     }
 
     // MARK: - Glass
-    /// Translucent regular-material + color tint + a top gloss that gently
-    /// shimmers — the glass appears to catch and lose light over a slow cycle.
+    /// The header is a thin frosted surface over the shared desktop blur.
     private var glass: some View {
-        ZStack {
-            Rectangle().fill(.regularMaterial)
-            LinearGradient(
-                colors: [
-                    c.primary.opacity(0.22),
-                    c.secondary.opacity(0.12),
-                    c.accent.opacity(0.10),
-                ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            // Top gloss with breathing intensity — opacity oscillates 0.14↔0.28
-            // so the glass plate "catches the light" subtly over 6s.
-            LinearGradient(
-                colors: [Color.white.opacity(breathToggle ? 0.28 : 0.14), Color.clear],
-                startPoint: .top, endPoint: .center
-            )
-            .animation(.easeInOut(duration: 6).repeatForever(autoreverses: true), value: breathToggle)
-        }
+        LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.06), Color.clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }

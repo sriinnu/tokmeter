@@ -61,8 +61,8 @@ struct HubCrossToolCard: View {
         let isSavings = delta < -0.005
         let isUpcharge = delta > 0.005
         let deltaColor: Color =
-            isSavings ? Color.tokSuccess
-            : isUpcharge ? Color.tokDanger
+            isSavings ? theme.statusSuccess
+            : isUpcharge ? theme.statusDanger
             : bg.secondaryTextColor
         return HStack(spacing: 10) {
             Image(systemName: glyphFor(provider: p.provider))

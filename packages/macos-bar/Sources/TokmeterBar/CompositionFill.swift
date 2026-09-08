@@ -27,7 +27,7 @@ func tierColor(_ tier: TokenTier, theme: AppTheme) -> Color {
     let c = theme.colors
     switch tier {
     case .output:     return c.warm
-    case .cacheRead:  return Color.tokSuccess
+    case .cacheRead:  return theme.statusSuccess
     case .cacheWrite: return c.accent
     case .input:      return c.secondary
     case .reasoning:  return c.tertiary

@@ -31,6 +31,7 @@ struct TokmeterBarView: View {
 
     /// Local UI state — never persisted.
     @State private var breathToggle = false
+    @State var usageDetailsExpanded = false
     /// Tracks whether this popover's window is actually on screen — see
     /// PanelVisibility.swift. Every ambient animation in the hero/footer is
     /// gated on this so they stop burning CPU while the panel is closed.
@@ -45,6 +46,13 @@ struct TokmeterBarView: View {
     /// Top-anchored gradient ripple flashed briefly on theme change so the
     /// transition reads as deliberate, not a glitch.
     @State private var themeRipple: Bool = false
+    @State private var heroHeight: CGFloat = 110
+    @State private var errorHeight: CGFloat = 8
+    @State private var footerHeight: CGFloat = 80
+
+    private var maximumPanelHeight: CGFloat {
+        min(780, panelVisibility.screenHeight - 32)
+    }
 
     private var c: ThemeColors { theme.colors }
     private var bg: BackgroundMode { theme.backgroundMode }
@@ -59,14 +67,16 @@ struct TokmeterBarView: View {
                 showCachePanel: $showCachePanel
             )
             .cascadeIn(delay: 0.02)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heroHeight = $0 }
 
             errorBanner
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .cascadeIn(delay: 0.08)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { errorHeight = $0 }
 
-            ScrollView(.vertical, showsIndicators: true) {
-                UsageOverview(loader: loader, theme: theme)
+            ContentSizedScrollView(maximumHeight: max(80, maximumPanelHeight - heroHeight - errorHeight - footerHeight - 1)) {
+                UsageOverview(loader: loader, theme: theme, showUsageDetails: $usageDetailsExpanded)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 10)
@@ -85,9 +95,10 @@ struct TokmeterBarView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .cascadeIn(delay: 0.46)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
         .frame(width: 400)
-        .frame(minHeight: 520, maxHeight: 780)
+        .fixedSize(horizontal: false, vertical: true)
         .background(popoverBackground)
         .trackPanelVisibility(panelVisibility)
         // Cache "wallet" drawer — slides in from the trailing edge over the
@@ -156,6 +167,7 @@ struct TokmeterBarView: View {
         .animation(.spring(response: 0.50, dampingFraction: 0.82), value: theme)
         // Force the color scheme to match the theme's surface so built-in
         // SwiftUI chrome (Divider, .secondary, system sheets) reads correctly.
+        .environment(\.colorScheme, bg.isLight ? .light : .dark)
         .preferredColorScheme(bg.isLight ? .light : .dark)
         // NOT just `breathToggle = visible` — every `.animation(curve.repeatForever(...),
         // value: breathToggle)` site (hero pulse, shimmer bars, glow scale effects,
@@ -195,13 +207,7 @@ struct TokmeterBarView: View {
     @ViewBuilder
     private var popoverBackground: some View {
         if bg.usesMaterial {
-            ZStack {
-                Rectangle().fill(.regularMaterial)
-                LinearGradient(
-                    colors: bg.gradientColors(),
-                    startPoint: .top, endPoint: .bottom
-                )
-            }
+            FrostedGlassBackground()
         } else {
             LinearGradient(
                 colors: bg.gradientColors(),
@@ -219,21 +225,11 @@ struct TokmeterBarView: View {
     @ViewBuilder
     private var errorBanner: some View {
         if let error = loader.lastError, !loader.isWarming {
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
-                    .foregroundColor(.orange)
-                    .font(.system(size: 12))
-                Text(Fmt.shortError(error))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundColor(.primary.opacity(0.8))
-                    .lineLimit(1)
-                    .help(error)
+            ConnectionIssueView(error: error, needsNodeSetup: loader.needsNodeSetup,
+                                isRetrying: loader.isLoading || loader.isStartingDaemon) {
+                Task { await loader.loadData() }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(Color.orange.opacity(0.12)))
             .padding(.bottom, 4)
-            .accessibilityElement(children: .combine)
             .transition(
                 .asymmetric(
                     insertion: .move(edge: .top).combined(with: .opacity),

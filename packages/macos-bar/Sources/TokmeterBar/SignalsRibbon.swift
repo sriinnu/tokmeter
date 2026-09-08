@@ -2,7 +2,7 @@
 //
 //   🔥 $3.20/hr  ·  🪣 92% cache  ·  🗜 12% compact  ·  🧠 60% reasoning  ·  ⏱ 2h12m · $4.20
 //
-// One row, up to five chips, each a different signal:
+// Chips wrap onto additional rows instead of truncating their readings:
 //   - burn      → dollars per hour over the last 60 min (motion indicator)
 //   - cache     → % of read tokens served from cache today (efficiency)
 //   - compact   → % of today's spend going to /compact overhead (hygiene)
@@ -31,10 +31,9 @@ struct SignalsRibbon: View {
 
     var body: some View {
         if let signals = loader.statbarSignals, shouldShow(signals) {
-            HStack(spacing: 0) {
+            SignalFlowLayout() {
                 if signals.burnRate.recordsInWindow > 0 {
                     burnChip(signals.burnRate)
-                    divider
                 }
                 let cacheHit = signals.cacheHitToday.canonicalRate ?? signals.cacheHitToday.rate
                 let cacheMiss = signals.cacheHitToday.missRate ?? max(0, 1 - cacheHit)
@@ -48,7 +47,6 @@ struct SignalsRibbon: View {
                         + "\(signals.cacheHitToday.inputTokens) missed."
                 )
                 if let pressure = signals.contextPressure, pressure.status != "none" {
-                    divider
                     chip(
                         icon: "memorychip.fill",
                         iconColor: contextColor(pressure.status),
@@ -60,7 +58,6 @@ struct SignalsRibbon: View {
                     )
                 }
                 if signals.compactionToday.events > 0 {
-                    divider
                     chip(
                         icon: "rectangle.compress.vertical",
                         iconColor: c.tertiary,
@@ -72,7 +69,6 @@ struct SignalsRibbon: View {
                     )
                 }
                 if signals.reasoningToday.records > 0 {
-                    divider
                     chip(
                         icon: "brain",
                         iconColor: reasoningColor(signals.reasoningToday.share),
@@ -89,7 +85,6 @@ struct SignalsRibbon: View {
                     )
                 }
                 if let billing = signals.billingWindow {
-                    divider
                     chip(
                         icon: "timer",
                         iconColor: billingColor(billing.elapsedPct),
@@ -106,7 +101,6 @@ struct SignalsRibbon: View {
                         )
                     )
                 }
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -144,13 +138,6 @@ struct SignalsRibbon: View {
 
     private func pct(_ value: Double) -> Int {
         Int((max(0, min(1, value)) * 100).rounded())
-    }
-
-    private var divider: some View {
-        Text("·")
-            .font(.system(size: 11, weight: .bold))
-            .foregroundColor(theme.backgroundMode.secondaryTextColor.opacity(0.5))
-            .padding(.horizontal, 5)
     }
 
     /// Generic chip. Numbers in `text` roll instead of snapping thanks to
@@ -228,26 +215,26 @@ struct SignalsRibbon: View {
     /// Thresholds are deliberately gentle — $2/hr is normal work, $10/hr is
     /// a fire-hose session, $20/hr is "are you OK".
     private func burnColor(_ costPerHour: Double) -> Color {
-        if costPerHour >= 20 { return Color.tokDanger }
-        if costPerHour >= 10 { return Color.tokWarning }
+        if costPerHour >= 20 { return theme.statusDanger }
+        if costPerHour >= 10 { return theme.statusWarning }
         if costPerHour >= 2  { return c.secondary }
-        return Color.tokSuccess
+        return theme.statusSuccess
     }
 
     /// Cache-hit color: green when the cache is doing its job (≥90%),
     /// amber when partial, red when something's wrong.
     private func cacheColor(_ rate: Double) -> Color {
-        if rate >= 0.90 { return Color.tokSuccess }
-        if rate >= 0.60 { return Color.tokWarning }
-        return Color.tokDanger
+        if rate >= 0.90 { return theme.statusSuccess }
+        if rate >= 0.60 { return theme.statusWarning }
+        return theme.statusDanger
     }
 
     private func contextColor(_ status: String) -> Color {
         switch status {
         case "critical":
-            return Color.tokDanger
+            return theme.statusDanger
         case "high":
-            return Color.tokWarning
+            return theme.statusWarning
         case "medium":
             return c.tertiary
         default:
@@ -260,7 +247,7 @@ struct SignalsRibbon: View {
     /// output is invisible thinking), amber past 80% (most of the cost isn't
     /// visible to the caller — worth questioning the routing choice).
     private func reasoningColor(_ share: Double) -> Color {
-        if share >= 0.80 { return Color.tokWarning }
+        if share >= 0.80 { return theme.statusWarning }
         if share >= 0.50 { return c.tertiary }
         return theme.backgroundMode.secondaryTextColor
     }
@@ -270,8 +257,8 @@ struct SignalsRibbon: View {
     /// At 90% you have ~30 min in the 5h block, which is roughly when "head
     /// up, plan your last thing" becomes "this is closing now".
     private func billingColor(_ elapsedPct: Double) -> Color {
-        if elapsedPct >= 90 { return Color.tokDanger }
-        if elapsedPct >= 75 { return Color.tokWarning }
+        if elapsedPct >= 90 { return theme.statusDanger }
+        if elapsedPct >= 75 { return theme.statusWarning }
         return c.secondary
     }
 
@@ -292,5 +279,42 @@ struct SignalsRibbon: View {
         if h > 0 && m > 0 { return "\(h)h \(m)m" }
         if h > 0 { return "\(h)h" }
         return "\(m)m"
+    }
+}
+
+/// Each reading keeps its intrinsic width; additional signals start a new row.
+private struct SignalFlowLayout: Layout {
+    private func arrangement(width: CGFloat, subviews: Subviews) -> (CGSize, [CGPoint]) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width {
+                x = 0
+                y += rowHeight + 8
+                rowHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            usedWidth = max(usedWidth, x + size.width)
+            x += size.width + 12
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), points)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let (size, _) = arrangement(width: proposal.width ?? .infinity, subviews: subviews)
+        return CGSize(width: proposal.width ?? size.width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (_, points) = arrangement(width: bounds.width, subviews: subviews)
+        for (subview, point) in zip(subviews, points) {
+            subview.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                          anchor: .topLeading, proposal: .unspecified)
+        }
     }
 }

@@ -1,23 +1,17 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
-
-<h1 align="center">@sriinnu/tokmeter-cli</h1>
-
-<p align="center"><strong>Token usage tracker CLI -- table and JSON output</strong></p>
-
----
+# CLI
 
 Command-line interface for tokmeter. Scans all local AI agent sessions and displays usage in formatted tables or JSON.
 
 ## Install
 
+This is a private workspace package. Install the public `@sriinnu/tokmeter` distribution.
+
 ```bash
 # Run directly
-npx @sriinnu/tokmeter-cli
+npx @sriinnu/tokmeter
 
 # Or install globally
-npm install -g @sriinnu/tokmeter-cli
+npm install -g @sriinnu/tokmeter
 tokmeter
 ```
 
@@ -36,7 +30,7 @@ tokmeter restore [--latest|--id]  # restore from ~/.cache/tokmeter/backups/
 tokmeter alias ...                # manage project display names, tags, hidden (see below)
 ```
 
-See the top-level README for the full cross-machine backup/restore workflow.
+See [backup and restore](../../docs/backup-restore.md) for the cross-machine workflow.
 
 ## Aliases
 
@@ -108,4 +102,4 @@ tokmeter --light                  # skip pricing (faster)
 
 ## License
 
-MIT
+AGPL-3.0-only — [license text](../../LICENSE). See [licenses and source](../../docs/licensing.md).

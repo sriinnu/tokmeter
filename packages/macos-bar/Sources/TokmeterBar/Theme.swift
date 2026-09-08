@@ -37,24 +37,27 @@ struct ThemeColors {
 
 // MARK: - Semantic status colors
 
-/// Status-tier colors shared across every theme. These encode meaning, not
-/// brand — red is "this needs your attention", amber is "approaching a
-/// limit", green is "things are working." Theme-tinted palettes still pick
-/// these for status signals; a future high-contrast/accessibility theme can
-/// promote them to ThemeColors if it needs to override.
-///
-/// Centralized here because they used to live as RGB triples in 5+ files
-/// (SignalsRibbon, HubPulseCard, AnomalyDetail, StatCards…). One source of
-/// truth means tuning the red once tunes it everywhere.
-extension Color {
-    /// Red — kosha anomaly direction, late billing window, overspend pace.
-    static let tokDanger = Color(red: 0.96, green: 0.42, blue: 0.42)
-    /// Amber — approaching a limit (cache <60%, billing >75% elapsed, etc).
-    static let tokWarning = Color(red: 0.95, green: 0.70, blue: 0.30)
-    /// Green — healthy (cache ≥90%, anomaly going down, low burn).
-    static let tokSuccess = Color(red: 0.13, green: 0.80, blue: 0.47)
-}
+/// Resolve from the selected theme, independently of the menu window's native
+/// appearance. MenuBarExtra can retain Dark Aqua while displaying light Glass.
+extension AppTheme {
+    var statusDanger: Color {
+        backgroundMode.isLight
+            ? Color(.sRGB, red: 0.35, green: 0.025, blue: 0.04)
+            : Color(.sRGB, red: 0.96, green: 0.42, blue: 0.42)
+    }
 
+    var statusWarning: Color {
+        backgroundMode.isLight
+            ? Color(.sRGB, red: 0.29, green: 0.13, blue: 0.005)
+            : Color(.sRGB, red: 0.95, green: 0.70, blue: 0.30)
+    }
+
+    var statusSuccess: Color {
+        backgroundMode.isLight
+            ? Color(.sRGB, red: 0.025, green: 0.205, blue: 0.10)
+            : Color(.sRGB, red: 0.13, green: 0.80, blue: 0.47)
+    }
+}
 
 // MARK: - Theme enum
 
@@ -80,9 +83,10 @@ enum AppTheme: String, CaseIterable, Identifiable {
     /// - HUD: even amber-rework couldn't carry it. Terminal owns the
     ///   instrument-panel space already.
     /// - Synthwave: costume that scrolling-grid couldn't save.
+    /// - Noise: yellow surfaces and white cards compete with usage colors.
     static var allCases: [AppTheme] = [
         .terminal, .paper, .nebula, .aurora,
-        .noise, .nocturne, .glass,
+        .nocturne, .glass,
     ]
 
     var id: String { rawValue }
@@ -113,7 +117,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .hud:       return "Tactical panel"
         case .terminal:  return "CRT phosphor retro"
         case .paper:     return "Editorial serif"
-        case .glass:     return "Translucent glass"
+        case .glass:     return "Frosted glass"
         case .aurora:    return "Northern lights, drifting"
         case .blueprint: return "Drafting paper, cyan grid"
         case .noise:     return "Neobrutalist canary yellow"
@@ -233,10 +237,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
                               valueDesign: .serif,     valueWeight: .bold,
                               labelDesign: .default,   bodyDesign: .default)
         case .glass:
-            // Light weights read as "glass" — airy, not heavy
-            return ThemeFonts(heroDesign: .rounded,    heroWeight: .medium,
-                              valueDesign: .rounded,   valueWeight: .semibold,
-                              labelDesign: .rounded,   bodyDesign: .rounded)
+            return ThemeFonts(heroDesign: .default,    heroWeight: .medium,
+                              valueDesign: .default,   valueWeight: .semibold,
+                              labelDesign: .default,   bodyDesign: .default)
         case .aurora:
             // Soft rounded — the bg is doing the heavy visual lifting
             return ThemeFonts(heroDesign: .rounded,    heroWeight: .semibold,

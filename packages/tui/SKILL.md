@@ -1,5 +1,7 @@
 # @sriinnu/tokmeter-tui
 
+Private workspace package. Use the public `@sriinnu/tokmeter` distribution.
+
 Interactive terminal UI for token usage tracking. Full-screen dashboard with charts, sparklines, and heatmaps.
 
 ## Capabilities
@@ -13,5 +15,9 @@ Interactive terminal UI for token usage tracking. Full-screen dashboard with cha
 ## Usage
 
 ```bash
-npx @sriinnu/tokmeter-tui
+npx -p @sriinnu/tokmeter tokmeter-tui
 ```
+
+## License
+
+AGPL-3.0-only; see [licenses and source](../../docs/licensing.md).

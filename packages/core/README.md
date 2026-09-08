@@ -1,25 +1,19 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
+# Core API
 
-<h1 align="center">@sriinnu/tokmeter-core</h1>
-
-<p align="center"><strong>Session parsers, aggregation, and pricing for 16+ AI coding agents</strong></p>
-
----
-
-The engine behind tokmeter. Scans local session files, parses token records from 16+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes a clean API for aggregation.
+The engine behind tokmeter. Scans local session files, parses token records from 16+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
 
 ## Install
 
+This is a private workspace package. Install the public `@sriinnu/tokmeter` distribution.
+
 ```bash
-npm install @sriinnu/tokmeter-core
+npm install @sriinnu/tokmeter
 ```
 
 ## Usage
 
 ```typescript
-import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter-core";
+import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
 const records = await core.scan();
@@ -88,4 +82,4 @@ immutability, and daemon model.
 
 ## License
 
-MIT
+MPL-2.0 — [license text](LICENSE). See [licenses and source](../../docs/licensing.md).

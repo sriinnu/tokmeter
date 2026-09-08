@@ -1,20 +1,6 @@
-<p align="center"><img src="./logo.svg" width="180" /></p>
+# @sriinnu/tokmeter
 
-<h1 align="center">@sriinnu/tokmeter</h1>
-
-<p align="center">
-  Token usage tracking for AI coding agents — parsers, CLI, and TUI
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/@sriinnu/tokmeter"><img src="https://img.shields.io/npm/v/@sriinnu/tokmeter?style=flat-square&color=4ECDC4&label=npm" alt="npm version" /></a>
-  <img src="https://img.shields.io/badge/license-MIT-2B9A8F?style=flat-square" alt="MIT License" />
-  <img src="https://img.shields.io/badge/node-%3E%3D18-0e4429?style=flat-square&logo=node.js" alt="node >= 18" />
-</p>
-
----
-
-**@sriinnu/tokmeter** is the unified package for tracking token consumption across 16+ AI coding agents. It bundles the core parsing/aggregation engine, the CLI, and the interactive TUI into a single install with subpath exports.
+`@sriinnu/tokmeter` bundles the core parsing/aggregation engine, the CLI, and the interactive TUI into a single install with subpath exports.
 
 Scans local session files from Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Amp, Roo Code, Kilo Code, and more. Breaks down usage by project, model, provider, and day. Computes real-time cost estimates powered by [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery).
 
@@ -173,4 +159,4 @@ Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, 
 
 ## License
 
-[MIT](https://opensource.org/licenses/MIT)
+AGPL-3.0-only. Core source retains MPL-2.0. License texts and the build source snapshot are included in `dist/licenses/`; see [licenses and source](https://github.com/sriinnu/tokmeter/blob/main/docs/licensing.md).

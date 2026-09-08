@@ -204,7 +204,9 @@ struct ModelsSection: View {
     /// Tied to the bar's own threshold via the shared helper so a mixed-color
     /// bar always pairs with a neutral $.
     private func costTint(for model: ModelUsage) -> Color {
-        dominantTierColor(
+        // Bright tier colors work as bars on cream, but wash out small numbers.
+        if theme.backgroundMode.isLight { return theme.backgroundMode.primaryTextColor }
+        return dominantTierColor(
             output: model.outputTokens,
             cacheRead: model.cacheReadTokens,
             cacheWrite: model.cacheWriteTokens,
@@ -502,10 +504,7 @@ struct SessionsSection: View {
                 .overlay(RoundedRectangle(cornerRadius: radius)
                     .strokeBorder(c.primary.opacity(0.35), lineWidth: 0.8))
         case .glassFrost:
-            RoundedRectangle(cornerRadius: radius)
-                .fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+            FrostedGlassPanel(cornerRadius: radius)
         default:
             RoundedRectangle(cornerRadius: radius).fill(Color.gray.opacity(0.10))
         }

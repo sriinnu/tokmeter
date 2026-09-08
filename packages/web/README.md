@@ -1,21 +1,15 @@
-<p align="center">
-  <img src="../../logo.svg" alt="tokmeter" width="80" />
-</p>
+# Web dashboard
 
-<h1 align="center">@sriinnu/tokmeter-web</h1>
-
-<p align="center"><strong>React + Plotly web dashboard for token usage visualization</strong></p>
-
----
-
-Rich browser-based dashboard with interactive charts. Built with React and Plotly.js.
+Browser dashboard for token and cost data. Built with React and Plotly.js.
 
 ## Setup
 
+This is a private workspace app, run from a source checkout.
+
 ```bash
-cd packages/web
+# From the repository root
 bun install
-bun run dev
+bun run dev:web
 ```
 
 Open http://localhost:3000
@@ -41,4 +35,4 @@ tokmeter --json > packages/web/public/data.json
 
 ## License
 
-MIT
+AGPL-3.0-only — [license text](../../LICENSE). See [licenses and source](../../docs/licensing.md).
