@@ -111,7 +111,8 @@ final class TokmeterLoader: ObservableObject {
     /// `tokmeter daemon start` spawn is in flight so concurrent poll ticks /
     /// fetches can't launch a stampede of starts. The daemon itself enforces
     /// a PID singleton on disk; this just stops the bar from spamming spawns.
-    var isStartingDaemon: Bool = false
+    @Published var isStartingDaemon: Bool = false
+    @Published var needsNodeSetup = false
 
     init(startPolling: Bool = true) {
         guard startPolling else { return }
@@ -227,6 +228,7 @@ final class TokmeterLoader: ObservableObject {
                 self.blockPct = quick.blockElapsedPct
                 self.isWarming = !quick.ready
                 self.lastError = nil
+                self.needsNodeSetup = false
                 if quick.ready {
                     self.hasFreshData = true
                 }
@@ -240,10 +242,10 @@ final class TokmeterLoader: ObservableObject {
             await handleDaemonOffline()
             return
         } catch {
-            // Network error or decode failure — the daemon may be mid-restart
-            // or warming. Surface a warming skeleton and try again next tick.
-            // Still no CLI scan: reads are daemon-only.
-            await handleDaemonOffline()
+            // A live service with incompatible/malformed data cannot be
+            // repaired by launching another copy. Keep the actual failure
+            // visible and retry the read on the normal poll cadence.
+            recordConnectionFailure(error)
             return
         }
 
@@ -486,20 +488,14 @@ final class TokmeterLoader: ObservableObject {
         cronInstallError = nil
         defer { isInstallingCron = false }
 
-        let npxCandidates = [
-            "/opt/homebrew/bin/npx",
-            "/usr/local/bin/npx",
-        ]
-        guard let npxPath = npxCandidates.first(where: {
-            FileManager.default.fileExists(atPath: $0)
-        }) else {
+        guard let toolchain = NodeToolchain.resolve() else {
             cronInstallError =
                 "No node toolchain found — run `tokmeter \(subcommand)` manually."
             return
         }
         do {
             _ = try await runProcess(
-                executable: npxPath,
+                executable: toolchain.npx,
                 arguments: ["-y", "@sriinnu/tokmeter", subcommand],
                 timeout: 30
             )

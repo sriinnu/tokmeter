@@ -12,12 +12,14 @@ Command-line interface for tokmeter. Scans all local AI agent sessions and displ
 
 ## Install
 
+This is a private workspace package. Install the public `@sriinnu/tokmeter` distribution.
+
 ```bash
 # Run directly
-npx @sriinnu/tokmeter-cli
+npx @sriinnu/tokmeter
 
 # Or install globally
-npm install -g @sriinnu/tokmeter-cli
+npm install -g @sriinnu/tokmeter
 tokmeter
 ```
 
@@ -108,4 +110,4 @@ tokmeter --light                  # skip pricing (faster)
 
 ## License
 
-MIT
+AGPL-3.0-only — [license text](../../LICENSE). See [licenses and source](../../docs/licensing.md).

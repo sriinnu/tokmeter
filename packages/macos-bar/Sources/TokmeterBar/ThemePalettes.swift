@@ -101,14 +101,14 @@ extension AppTheme {
             )
 
         case .glass:
-            // Cool neutral palette — slate, ice, sage. Reads as "Apple frost".
+            // Ink, steel, and teal on pale frosted glass.
             return ThemeColors(
-                primary:   Color(red: 0.420, green: 0.486, blue: 0.710),  // #6b7cb5 slate blue
-                secondary: Color(red: 0.596, green: 0.659, blue: 0.820),  // #98a8d1 ice blue
-                accent:    Color(red: 0.490, green: 0.765, blue: 0.910),  // #7dc3e8 bright ice
-                highlight: Color(red: 0.780, green: 0.647, blue: 0.537),  // #c7a589 warm beige
-                warm:      Color(red: 0.710, green: 0.643, blue: 0.757),  // #b5a4c1 lavender-slate
-                tertiary:  Color(red: 0.627, green: 0.773, blue: 0.706)   // #a0c5b4 sage
+                primary:   Color(red: 0.220, green: 0.380, blue: 0.550),
+                secondary: Color(red: 0.300, green: 0.430, blue: 0.570),
+                accent:    Color(red: 0.140, green: 0.420, blue: 0.570),
+                highlight: Color(red: 0.150, green: 0.290, blue: 0.400),
+                warm:      Color(red: 0.480, green: 0.530, blue: 0.670),
+                tertiary:  Color(red: 0.200, green: 0.450, blue: 0.400)
             )
 
         case .aurora:

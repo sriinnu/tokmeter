@@ -12,8 +12,10 @@ A full-screen terminal dashboard for exploring token usage. Built with [Ink](htt
 
 ## Install
 
+This is a private workspace package. Install the public `@sriinnu/tokmeter` distribution.
+
 ```bash
-npx @sriinnu/tokmeter-tui
+npx -p @sriinnu/tokmeter tokmeter-tui
 ```
 
 ## Views
@@ -35,4 +37,4 @@ npx @sriinnu/tokmeter-tui
 
 ## License
 
-MIT
+AGPL-3.0-only — [license text](../../LICENSE). See [licenses and source](../../docs/licensing.md).

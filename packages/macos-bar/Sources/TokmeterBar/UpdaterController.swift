@@ -28,12 +28,12 @@ final class UpdaterController: ObservableObject {
     /// for a frame when the popover first opens.
     @Published var canCheckForUpdates: Bool = true
 
-    init() {
+    init(startingUpdater: Bool = true) {
         // startingUpdater: true means Sparkle starts polling immediately.
         // updaterDelegate: nil — we accept all of Sparkle's defaults.
         // userDriverDelegate: nil — we use the default UI for prompts.
         self.updater = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: startingUpdater,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

@@ -104,16 +104,7 @@ struct CardBackground: View {
             }
 
         case .glassFrost:
-            ZStack {
-                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: radius).fill(role.opacity(0.08))
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(LinearGradient(
-                        colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
-                        startPoint: .top, endPoint: .bottom
-                    ), lineWidth: 1)
-            }
-            .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+            FrostedGlassPanel(cornerRadius: radius, tint: role)
 
         case .auroraGlass:
             // Thin material that lets the drifting bg show through, with a

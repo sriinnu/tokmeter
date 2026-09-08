@@ -6,7 +6,7 @@
 // exhaust RAM and panic the kernel.
 //
 // The only subprocesses the bar spawns are intentional one-shots:
-//   • `tokmeter daemon start`   — singleton auto-start (debounced, idempotent)
+//   • `drishti daemon start`   — singleton auto-start (debounced, idempotent)
 //   • `tokmeter update`         — user-triggered pricing refresh
 //   • `tokmeter install-cron`   — user-triggered cron install (in TokmeterLoader)
 // All of them are bounded, single invocations — never one-per-fetch.
@@ -15,36 +15,13 @@ import Foundation
 
 extension TokmeterLoader {
 
-    // ─── Node toolchain resolution ───────────────────────────────────
-
-    /// Resolve `npx` at known root-owned system paths. We deliberately DO NOT
-    /// shell out via `$SHELL -l -c` — that loads the user's dotfiles, a
-    /// code-execution path any malicious config can abuse. Exec directly with
-    /// a fixed argv: no user-writable PATH entries, no shell metacharacters.
-    private func resolveNpxPath() -> String? {
-        let npxCandidates = [
-            "/opt/homebrew/bin/npx",
-            "/usr/local/bin/npx",
-        ]
-        return npxCandidates.first(where: { FileManager.default.fileExists(atPath: $0) })
-    }
-
-    /// PATH for spawned subprocesses. A GUI-launched app inherits launchd's
-    /// minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so `/opt/homebrew/bin`
-    /// is absent — and `npx`'s shebang is `#!/usr/bin/env node`, which means
-    /// `env` searches PATH for `node` and fails (exit 127) when Homebrew node
-    /// isn't there. Result: the daemon never starts, the bar shows "warming"
-    /// forever. Prepend the well-known Homebrew/local bins so spawned scripts
-    /// can find their interpreter regardless of how the bar was launched.
-    private func subprocessEnvironment() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let prepend = ["/opt/homebrew/bin", "/usr/local/bin"]
-        let current = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        // Prepend only those that aren't already present, preserving order.
-        let parts = current.split(separator: ":").map(String.init)
-        let needed = prepend.filter { !parts.contains($0) }
-        env["PATH"] = (needed + parts).joined(separator: ":")
-        return env
+    func recordConnectionFailure(_ error: Error) {
+        needsNodeSetup = false
+        isWarming = false
+        hasFreshData = false
+        liveContextFillPct = nil
+        blockPct = nil
+        lastError = error.localizedDescription
     }
 
     // ─── Daemon offline handler (no CLI scan, ever) ──────────────────
@@ -56,6 +33,7 @@ extension TokmeterLoader {
     /// is still surfaced so the badges stay honest while the daemon warms.
     func handleDaemonOffline() async {
         self.isDaemonAlive = false
+        self.hasFreshData = false
         self.isWarming = true
         self.lastError = nil
         // Clear the live menubar-color inputs: with the daemon down we have no
@@ -68,7 +46,7 @@ extension TokmeterLoader {
         ensureDaemonStarted()
     }
 
-    /// Spawn `tokmeter daemon start` exactly once, detached. The daemon CLI
+    /// Spawn `drishti daemon start` exactly once, detached. The daemon CLI
     /// itself enforces a PID singleton (it no-ops with "already running" if a
     /// live daemon exists), so the worst case from a redundant call is a quick
     /// no-op child. We still debounce with `isStartingDaemon` so concurrent
@@ -77,31 +55,37 @@ extension TokmeterLoader {
     /// after forking the real daemon).
     func ensureDaemonStarted() {
         guard !isStartingDaemon else { return }
-        guard let npxPath = resolveNpxPath() else {
+        guard let toolchain = NodeToolchain.resolve() else {
             self.lastError =
-                "Daemon offline; no node toolchain found at /opt/homebrew or /usr/local."
+                "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
             self.isWarming = false
             self.hasFreshData = false
+            self.needsNodeSetup = true
             return
         }
+        needsNodeSetup = false
         isStartingDaemon = true
         Task { [weak self] in
-            defer { Task { @MainActor in self?.isStartingDaemon = false } }
+            guard let self else { return }
+            defer { self.isStartingDaemon = false }
             do {
+                let version = try await self.runProcess(executable: toolchain.node, arguments: ["--version"], timeout: 5)
+                guard let major = NodeToolchain.majorVersion(version), major >= 18 else {
+                    self.needsNodeSetup = true
+                    throw DaemonError.networkError("Node.js 18 or later is required. Update Node and choose Retry.")
+                }
                 // `daemon start` forks a detached child and returns fast; the
                 // child becomes the long-lived daemon. This invocation never
                 // scans — it just launches (or no-ops on) the singleton.
-                _ = try await self?.runProcess(
-                    executable: npxPath,
-                    arguments: ["-y", "@sriinnu/tokmeter", "daemon", "start"],
-                    timeout: 30
+                _ = try await self.runProcess(
+                    executable: toolchain.npx,
+                    arguments: NodeToolchain.daemonArguments(version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String),
+                    timeout: 120
                 )
             } catch {
-                await MainActor.run {
-                    self?.lastError =
-                        "Couldn't start daemon: \(error.localizedDescription)"
-                    self?.isWarming = false
-                }
+                self.lastError = "Couldn't start the usage service: \(error.localizedDescription)"
+                self.isWarming = false
+                self.hasFreshData = false
             }
         }
     }
@@ -109,12 +93,12 @@ extension TokmeterLoader {
     // ─── Pricing refresh via CLI (user-triggered, one-shot) ──────────
 
     func refreshPricingViaCLI() async {
-        guard let npxPath = resolveNpxPath() else {
+        guard let toolchain = NodeToolchain.resolve() else {
             pricingRefreshError = "No node toolchain found — run `tokmeter update` manually."
             return
         }
         do {
-            _ = try await runProcess(executable: npxPath,
+            _ = try await runProcess(executable: toolchain.npx,
                                      arguments: ["-y", "@sriinnu/tokmeter", "update"],
                                      timeout: 30)
             await loadData()
@@ -154,79 +138,10 @@ extension TokmeterLoader {
     // ─── Subprocess runner ───────────────────────────────────────────
 
     func runProcess(executable: String, arguments: [String], timeout: TimeInterval) async throws -> String {
-        let env = subprocessEnvironment()
-        return try await withCheckedThrowingContinuation { continuation in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: executable)
-            proc.arguments = arguments
-            // Augment PATH so a GUI-launched bar's spawned scripts can find
-            // node/bun even though launchd's PATH doesn't include Homebrew.
-            proc.environment = env
-
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            proc.standardOutput = outPipe
-            // Capture stderr instead of /dev/null'ing it — we need it to
-            // surface the real failure (e.g. "env: node: No such file or
-            // directory" from npx exit-127). Silent success on exit != 0 was
-            // the bug that left the bar stuck on "warming" forever.
-            proc.standardError = errPipe
-
-            // Double-resume guard: termination handler and timeout both race
-            // to resume the continuation. First caller wins. Boxed in a class
-            // so @Sendable closures capture a reference, not a mutable var.
-            final class ResumeGuard: @unchecked Sendable {
-                var resumed = false
-                let lock = NSLock()
-            }
-            let guardBox = ResumeGuard()
-            @Sendable func finish(_ result: Result<String, Error>) {
-                guardBox.lock.lock()
-                defer { guardBox.lock.unlock() }
-                guard !guardBox.resumed else { return }
-                guardBox.resumed = true
-                switch result {
-                case .success(let output): continuation.resume(returning: output)
-                case .failure(let error):  continuation.resume(throwing: error)
-                }
-            }
-
-            proc.terminationHandler = { p in
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                guard let output = String(data: outData, encoding: .utf8) else {
-                    finish(.failure(DaemonError.decodingError("non-UTF8 CLI output")))
-                    return
-                }
-                // Surface non-zero exit as a real failure with the first line
-                // of stderr (or a generic message if stderr is empty). Without
-                // this, exit-127 from the npx PATH gotcha was silently
-                // resolved as success and the bar showed "warming" forever.
-                if p.terminationStatus != 0 {
-                    let errStr = String(data: errData, encoding: .utf8) ?? ""
-                    let firstLine = errStr.split(separator: "\n", maxSplits: 1)
-                        .first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
-                    let msg = firstLine.isEmpty
-                        ? "exit \(p.terminationStatus)"
-                        : "exit \(p.terminationStatus): \(firstLine)"
-                    finish(.failure(DaemonError.networkError(msg)))
-                    return
-                }
-                finish(.success(output))
-            }
-
-            do {
-                try proc.run()
-            } catch {
-                finish(.failure(error))
-                return
-            }
-
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
-                guard proc.isRunning else { return }
-                proc.terminate()
-                finish(.failure(DaemonError.networkError("CLI timed out after \(Int(timeout))s")))
-            }
-        }
+        let toolchain = NodeToolchain(binDirectory: URL(fileURLWithPath: executable).deletingLastPathComponent().path)
+        return try await SubprocessRunner.run(
+            executable: executable, arguments: arguments,
+            environment: toolchain.environment(base: ProcessInfo.processInfo.environment), timeout: timeout
+        )
     }
 }

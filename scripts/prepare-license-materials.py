@@ -14,9 +14,9 @@ def source_files():
     # Explicit source/build inputs only: never sweep the working directory,
     # credentials, local usage, personal notes, or generated build trees.
     files = set()
-    for name in ("LICENSE", "README.md", "CHANGELOG.md", "package.json", "bun.lock",
+    for name in ("LICENSE", "README.md", "SKILL.md", "CHANGELOG.md", "package.json", "bun.lock",
                  "tsconfig.base.json", "biome.json", "vitest.config.ts",
-                 "docs/licensing.md"):
+                 "docs/licensing.md", "docs/assets/demo/snapshots.json"):
         path = ROOT / name
         if path.is_file():
             files.add(path)
@@ -35,7 +35,7 @@ def source_files():
                     ):
                         files.add(path)
         for pattern in ("package.json", "tsconfig*.json", "vite.config.*", "index.html",
-                        "LICENSE", "README.md", "Package.swift", "Package.resolved",
+                        "LICENSE", "README.md", "SKILL.md", "Package.swift", "Package.resolved",
                         "*.sh", "entitlements.plist", "AppIcon.icns"):
             files.update(path for path in package.glob(pattern) if path.is_file())
     for path in sorted(files):

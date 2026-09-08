@@ -6,14 +6,14 @@ Tokmeter's applications (CLI, TUI, web dashboard, daemon/MCP server, and macOS a
 
 ## Included materials
 
-The npm distributions include `dist/licenses/`. The macOS app includes `Contents/Resources/Licenses/`, accessible using **Licenses & source** in the popup footer. Each contains:
+The npm distributions include `dist/licenses/`. The macOS app includes `Contents/Resources/Licenses/`, accessible using **Licenses** in the popup footer. Each contains:
 
 - `AGPL-3.0-only.txt` — the application license.
 - `MPL-2.0.txt` — the core source license, including when the core is bundled in `@sriinnu/tokmeter`.
 - `tokmeter-source.tar.gz` — local source and build inputs collected when this artifact was packaged. The application and core source retain the licenses described above.
 - In the macOS app, `Sparkle.txt` — the complete notices supplied with the bundled Sparkle artifact, including its embedded third-party components.
 
-JavaScript dependencies are installed separately by the package manager; their notices reside in their respective installed packages. The source snapshot includes the dependency manifests and lockfile. Build tools and platform SDKs are obtained separately.
+JavaScript dependencies are installed separately by the package manager; their notices reside in their respective installed packages. The source snapshot includes the dependency manifests, lockfile, integration skills, and synthetic fixture used by native contrast tests. Build tools and platform SDKs are obtained separately.
 
 Extract the source archive, install Bun and Node.js, and run `bun install --frozen-lockfile` followed by `bun run build` from its root. For the native app, install Xcode on macOS and run `swift build -c release --package-path packages/macos-bar`. Use `bash packages/macos-bar/bundle.sh --no-install` for a local ad-hoc bundle. Apple distribution credentials are not needed for a local build and are never included.
 

@@ -12,14 +12,16 @@ The engine behind tokmeter. Scans local session files, parses token records from
 
 ## Install
 
+This is a private workspace package. Install the public `@sriinnu/tokmeter` distribution.
+
 ```bash
-npm install @sriinnu/tokmeter-core
+npm install @sriinnu/tokmeter
 ```
 
 ## Usage
 
 ```typescript
-import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter-core";
+import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter";
 
 const core = new TokmeterCore();
 const records = await core.scan();
@@ -88,4 +90,4 @@ immutability, and daemon model.
 
 ## License
 
-MIT
+MPL-2.0 — [license text](LICENSE). See [licenses and source](../../docs/licensing.md).

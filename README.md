@@ -32,13 +32,15 @@ npx @sriinnu/tokmeter --today --light
 
 ## Keep it in your macOS menu bar
 
-Requires macOS 14+ and the local daemon:
+Requires Apple silicon, macOS 14+, and Node.js 18+. For the published 1.10.0 build:
 
 1. Install the daemon: `npm install -g @sriinnu/drishti`
 2. Start it: `drishti daemon start`
 3. Download **TokmeterBar** from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases/latest), move it into Applications, and open it.
 
 The menu bar shows today's tokens. Open it for estimated API cost, any tool-reported cost, and today's models and projects. Expand **Usage details** for trends and other metrics. The [macOS guide](packages/macos-bar/README.md) covers building locally.
+
+macOS completion work is tracked in the [six-area checklist](docs/macos-completion.md), including fresh installation, sustained reliability, updates, accounting, accessibility, and the user trial.
 
 ## Understand the dollars
 
@@ -77,7 +79,7 @@ Use the surface that matches the job:
 | Need | Use | Notes |
 | --- | --- | --- |
 | Shell / CI automation | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract for scripts |
-| Convenience helpers without shelling out | `@sriinnu/tokmeter` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
+| Convenience helpers without shelling out | `@sriinnu/tokmeter/cli` imports | Exposes summary/project/model/stats helpers plus digest/cleanup/restore entrypoints |
 | Live in-session token/cost answers | `@sriinnu/drishti` | MCP + daemon + statusline + live tracker |
 
 ### Programmatic convenience helpers
@@ -89,7 +91,7 @@ import {
   loadTokmeterModels,
   loadTokmeterStats,
   lookupTokmeterPricing,
-} from "@sriinnu/tokmeter";
+} from "@sriinnu/tokmeter/cli";
 
 const summary = await loadTokmeterSummary({ month: true });
 const projects = await loadTokmeterProjects({ project: "tokmeter" });
@@ -121,12 +123,12 @@ tokmeter digest                   # weekly cost digest with optimization score
 tokmeter digest --period today    # today's digest
 tokmeter digest --period month    # monthly digest
 
-# Live & Daemon
-tokmeter live                     # TUI dashboard
-tokmeter statusline               # Statusline mode
-tokmeter daemon start             # Start aggregation daemon
-tokmeter daemon stop              # Stop daemon
-tokmeter daemon status            # Check daemon status
+# Live & Daemon (install @sriinnu/drishti)
+drishti live                     # TUI dashboard
+drishti statusline               # Statusline mode
+drishti daemon start             # Start aggregation daemon
+drishti daemon stop              # Stop daemon
+drishti daemon status            # Check daemon status
 
 # Pricing maintenance
 tokmeter update                   # Refresh kosha pricing on demand
@@ -141,9 +143,9 @@ tokmeter snapshot                 # non-destructive portable backup
 tokmeter restore --latest         # restore the most recent backup
 
 # Installer (all editors)
-tokmeter install-statusline       # Install statusline for ALL editors
-tokmeter install-mcp              # Install MCP for ALL editors
-tokmeter editors                  # List supported editors
+drishti install-statusline       # Install statusline for ALL editors
+drishti install-mcp              # Install MCP for ALL editors
+drishti editors                  # List supported editors
 
 # Filters
 tokmeter --project my-app         # specific project
@@ -300,13 +302,13 @@ The daemon aggregates token usage across **multiple AI coding assistants running
 
 ```bash
 # Start the daemon
-tokmeter daemon start
+drishti daemon start
 
 # Check status
-tokmeter daemon status
+drishti daemon status
 
 # Stop the daemon
-tokmeter daemon stop
+drishti daemon stop
 ```
 
 When multiple Claude Code, Codex, or OpenCode instances are running, the statusline shows **aggregated totals** across all of them in real-time via WebSocket.
@@ -323,7 +325,7 @@ freshness, immutability, and memory model.
 ```bash
 npx @sriinnu/drishti live
 # or
-tokmeter live
+drishti live
 ```
 
 Real-time terminal dashboard with 2-second refresh.
@@ -334,13 +336,13 @@ Install statusline and MCP across **all supported editors** at once:
 
 ```bash
 # Install statusline for Claude Code, OpenCode, Codex
-tokmeter install-statusline
+drishti install-statusline
 
 # Install MCP server for all editors
-tokmeter install-mcp
+drishti install-mcp
 
 # List supported editors
-tokmeter editors
+drishti editors
 ```
 
 Supported editors:
@@ -401,8 +403,9 @@ Export data: `tokmeter --json > packages/web/public/data.json`
 ## macOS Menu Bar
 
 A native SwiftUI menubar app that surfaces your live token spend without ever
-leaving the menubar. Reads from the daemon when it's running, falls back to
-the CLI on disk when it isn't.
+leaving the menubar. Reads from the local Drishti daemon and starts it when unavailable.
+The current source resolves Node.js 18+ and paired npx, starts the version-matched
+Drishti package, and shows prerequisite or retry controls if startup fails.
 
 The menu bar icon itself is a live health gauge: it tints **green → yellow → red**
 as your most-loaded session approaches its ceiling (worst-session-wins across every
@@ -435,10 +438,11 @@ in [`packages/core/src/signals.ts`](packages/core/src/signals.ts):
 | **Context pressure** | How much the latest request's input has grown over the session's early baseline (the "drag" cache reads add) - the lever behind when to `/compact`. |
 | **Live session pill** | The project + age of the most recent record when something's run in the last 5 min. |
 
-Seven themes (Terminal / Paper / Nebula / Aurora / Noise / Nocturne / Glass) and
+Six themes (Terminal / Paper / Nebula / Aurora / Nocturne / Glass) and
 a companion "Hub" full-window with project drilldown, command palette, and
-settings. Aurora uses a slow-drifting gradient - motion as identity. Noise is
-neobrutalist (canary yellow + sticky-note cards with hard offset shadows).
+settings. Glass uses light desktop frost with dark text and status colors.
+The popup fits collapsed content and scrolls when expanded details exceed the
+available height. See [popover validation](docs/macos/popover-usability.md).
 
 ## Supported Providers
 
@@ -640,7 +644,7 @@ bun run clean                  # Remove dist/, *.tsbuildinfo, .build/, *.app, *.
                                # plus any leaked tsc emit (.js/.d.ts) inside src/ dirs
 
 # Quality
-bun run test                   # Run tests (230 passing + 11 todo across the monorepo)
+bun run test                   # Run the monorepo test suite
 bun run lint                   # Lint
 bun run format                 # Format
 ```

@@ -45,7 +45,7 @@ struct ContextTelemetryPanel: View {
                     value: "\(pct(miss))%",
                     tokens: cache.inputTokens,
                     fill: miss,
-                    color: miss >= 0.35 ? Color.tokWarning : bg.secondaryTextColor,
+                    color: miss >= 0.35 ? theme.statusWarning : bg.secondaryTextColor,
                     icon: "tray",
                     theme: theme
                 )
@@ -109,7 +109,7 @@ struct ContextTelemetryPanel: View {
     /// so it stops duplicating MISS when WRITE is 0%. Warning tint past 45%.
     private var freshSummary: some View {
         let freshTokens = cache.freshInputTokens ?? cache.inputTokens + (cache.cacheWriteTokens ?? 0)
-        let tint = fresh >= 0.45 ? Color.tokWarning : c.tertiary
+        let tint = fresh >= 0.45 ? theme.statusWarning : c.tertiary
         return HStack(spacing: 6) {
             Image(systemName: "plus.rectangle.fill")
                 .font(.system(size: 9, weight: .semibold))
@@ -151,9 +151,9 @@ struct ContextTelemetryPanel: View {
     }
 
     private func cacheColor(_ rate: Double) -> Color {
-        if rate >= 0.90 { return Color.tokSuccess }
-        if rate >= 0.60 { return Color.tokWarning }
-        return Color.tokDanger
+        if rate >= 0.90 { return theme.statusSuccess }
+        if rate >= 0.60 { return theme.statusWarning }
+        return theme.statusDanger
     }
 }
 
@@ -276,7 +276,7 @@ private struct ProjectContextRow: View {
                 .help(project.project)
             Spacer(minLength: 4)
             mini("H", project.cacheHitRate, color: cacheColor(project.cacheHitRate))
-            mini("M", project.missRate, color: project.missRate >= 0.35 ? Color.tokWarning : bg.secondaryTextColor)
+            mini("M", project.missRate, color: project.missRate >= 0.35 ? theme.statusWarning : bg.secondaryTextColor)
             mini("D", project.dragShare, color: accent)
         }
         .padding(.vertical, 3)
@@ -305,17 +305,17 @@ private struct ProjectContextRow: View {
     }
 
     private func cacheColor(_ rate: Double) -> Color {
-        if rate >= 0.90 { return Color.tokSuccess }
-        if rate >= 0.60 { return Color.tokWarning }
-        return Color.tokDanger
+        if rate >= 0.90 { return theme.statusSuccess }
+        if rate >= 0.60 { return theme.statusWarning }
+        return theme.statusDanger
     }
 
     private var accent: Color {
         switch project.contextStatus {
         case "critical":
-            return Color.tokDanger
+            return theme.statusDanger
         case "high":
-            return Color.tokWarning
+            return theme.statusWarning
         case "medium":
             return theme.colors.tertiary
         default:
@@ -444,9 +444,9 @@ private struct ContextDragRow: View {
     private var accent: Color {
         switch pressure.status {
         case "critical":
-            return Color.tokDanger
+            return theme.statusDanger
         case "high":
-            return Color.tokWarning
+            return theme.statusWarning
         case "medium":
             return theme.colors.tertiary
         default:

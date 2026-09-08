@@ -279,9 +279,9 @@ struct ContextPressureStrip: View {
     private var accent: Color {
         switch pressure.status {
         case "critical":
-            return Color.tokDanger
+            return theme.statusDanger
         case "high":
-            return Color.tokWarning
+            return theme.statusWarning
         case "medium":
             return theme.colors.tertiary
         default:
@@ -348,8 +348,8 @@ struct BillingStrip: View {
     }
 
     private var accent: Color {
-        if window.elapsedPct >= 90 { return Color.tokDanger }
-        if window.elapsedPct >= 75 { return Color.tokWarning }
+        if window.elapsedPct >= 90 { return theme.statusDanger }
+        if window.elapsedPct >= 75 { return theme.statusWarning }
         return c.secondary
     }
 

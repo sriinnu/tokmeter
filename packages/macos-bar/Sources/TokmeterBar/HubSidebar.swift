@@ -162,10 +162,10 @@ struct HubSidebar: View {
                 Spacer(minLength: 0)
                 if let live = loader.statbarSignals?.liveSession {
                     HStack(spacing: 4) {
-                        PulseDot(color: .tokSuccess)
+                        PulseDot(color: theme.statusSuccess)
                         Text(Fmt.liveAge(live.ageSeconds))
                             .font(.system(size: 9, weight: .semibold, design: theme.fonts.bodyDesign))
-                            .foregroundColor(.tokSuccess)
+                            .foregroundColor(theme.statusSuccess)
                     }
                     .transition(.opacity)
                 }
@@ -198,7 +198,7 @@ struct HubSidebar: View {
                         miniPill(
                             icon: "bolt.horizontal.fill",
                             text: "\(Int((cache * 100).rounded()))%",
-                            tint: cache >= 0.9 ? .tokSuccess : (cache >= 0.6 ? .tokWarning : .tokDanger)
+                            tint: cache >= 0.9 ? theme.statusSuccess : (cache >= 0.6 ? theme.statusWarning : theme.statusDanger)
                         )
                     }
                 }
@@ -248,7 +248,7 @@ struct HubSidebar: View {
     private var footer: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(connection.color)
+                .fill(connection.color(theme: theme))
                 .frame(width: 6, height: 6)
             Text(connection.label)
                 .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
@@ -278,11 +278,11 @@ struct HubSidebar: View {
 enum ConnectionStatus {
     case live, warming, offline
 
-    var color: Color {
+    func color(theme: AppTheme) -> Color {
         switch self {
-        case .live: return .tokSuccess
-        case .warming: return .tokWarning
-        case .offline: return .tokDanger
+        case .live: return theme.statusSuccess
+        case .warming: return theme.statusWarning
+        case .offline: return theme.statusDanger
         }
     }
 
@@ -307,15 +307,15 @@ struct ConnectionDot: View {
         ZStack {
             if status.pulses {
                 Circle()
-                    .stroke(status.color.opacity(0.5), lineWidth: 1.5)
+                    .stroke(status.color(theme: theme).opacity(0.5), lineWidth: 1.5)
                     .frame(width: 14, height: 14)
                     .scaleEffect(pulse ? 1.6 : 1.0)
                     .opacity(pulse ? 0 : 0.8)
             }
             Circle()
-                .fill(status.color)
+                .fill(status.color(theme: theme))
                 .frame(width: 8, height: 8)
-                .shadow(color: status.color.opacity(0.6), radius: pulse ? 4 : 2)
+                .shadow(color: status.color(theme: theme).opacity(0.6), radius: pulse ? 4 : 2)
         }
         .help(status.label)
         .onAppear {

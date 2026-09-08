@@ -12,10 +12,12 @@ Rich browser-based dashboard with interactive charts. Built with React and Plotl
 
 ## Setup
 
+This is a private workspace app, run from a source checkout.
+
 ```bash
-cd packages/web
+# From the repository root
 bun install
-bun run dev
+bun run dev:web
 ```
 
 Open http://localhost:3000
@@ -41,4 +43,4 @@ tokmeter --json > packages/web/public/data.json
 
 ## License
 
-MIT
+AGPL-3.0-only — [license text](../../LICENSE). See [licenses and source](../../docs/licensing.md).

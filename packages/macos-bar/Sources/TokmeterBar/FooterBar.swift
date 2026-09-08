@@ -1,8 +1,6 @@
 // FooterBar.swift — bottom strip of the popover with status + controls.
 //
-// Two rows:
-//   1. Attribution ("Built by sriinnu · v0.4.0")
-//   2. Live heartbeat dot + Refresh + Settings + Update + Quit
+// App details and pricing status have separate lines above the controls.
 //
 // The live heartbeat already exists in the hero as a richer ECG. Here we
 // keep a compact dot-pulse to show the daemon is reachable even when the
@@ -40,82 +38,72 @@ struct FooterBar: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             attributionRow
+            pricingRow
             controlsRow
         }
     }
 
     private var attributionRow: some View {
-        HStack(spacing: 4) {
-            Text("Built by sriinnu")
-                .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
-                .onTapGesture {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/sriinnu")!)
-                }
-            Text("·")
-                .font(.system(size: 10))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+        HStack(spacing: 8) {
+            Button("by sriinnu") {
+                NSWorkspace.shared.open(URL(string: "https://github.com/sriinnu")!)
+            }
+            .buttonStyle(.plain)
+            .help("Built by sriinnu — open GitHub profile")
+            Spacer(minLength: 8)
             Text("v\(appVersion)")
-                .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                .monospacedDigit()
             if let resources = Bundle.main.resourceURL {
-                Button("Licenses & source") {
+                Text("·").opacity(0.5)
+                Button("Licenses") {
                     NSWorkspace.shared.open(resources.appendingPathComponent("Licenses"))
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 9, design: theme.fonts.bodyDesign))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
                 .help("Open license texts, third-party notices, and the source archive")
             }
-            Spacer()
-            // Amber pill when today's records contain models with no resolved
-            // pricing — silent $0 leaks would otherwise hide in the totals.
-            if let health = loader.healthStatus, !health.unpricedModels.isEmpty {
-                let count = health.unpricedModels.count
-                Text("⚠︎ \(count) unpriced")
-                    .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
-                    .foregroundColor(.orange)
-                    .help(
-                        "Models with token usage but no pricing: \(health.unpricedModels.joined(separator: ", ")). Run `tokmeter update` or check ~/.kosha/registry.json."
+        }
+        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+        .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+        .lineLimit(1)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var pricingRow: some View {
+        if loader.pricingMtime > 0 || !(loader.healthStatus?.unpricedModels.isEmpty ?? true)
+            || (loader.pricingAnomalies?.total ?? 0) > 0 {
+            HStack(spacing: 8) {
+                if loader.pricingMtime > 0 {
+                    TimelineView(.periodic(from: .now, by: 60)) { _ in
+                        Text("Pricing \(relativeTime(loader.pricingMtime))")
+                            .help("When model prices were last updated. Rates older than 24 hours may be stale.")
+                    }
+                } else {
+                    Text("Pricing")
+                }
+                Spacer(minLength: 0)
+                if let health = loader.healthStatus, !health.unpricedModels.isEmpty {
+                    Label("\(health.unpricedModels.count) unpriced", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(theme.statusWarning)
+                        .help("Models with usage but no price: \(health.unpricedModels.joined(separator: ", "))")
+                }
+                if let anomalies = loader.pricingAnomalies, anomalies.total > 0 {
+                    let collapsed = collapseAnomalies(anomalies.anomalies)
+                    AnomalyPill(
+                        text: "\(collapsed.count) \(collapsed.count == 1 ? "model" : "models") repriced",
+                        detailCount: anomalies.total,
+                        modelCount: collapsed.count,
+                        theme: theme,
+                        onTap: { showAnomalyPanel = true }
                     )
-            }
-            // Red pill when kosha logged a pricing anomaly in the last 24h.
-            // Catches rate-regression failures (wrong number, not null) — the
-            // worst class because every other defense makes the wrong number
-            // stickier, not less stuck.
-            //
-            // Kosha emits one anomaly per (model × pricing field). A single
-            // provider price update typically moves input + output + cacheRead
-            // together, so the raw count overstates events 2-3×. Collapse to
-            // one row per model in the pill; keep the per-field breakdown in
-            // the tooltip.
-            if let anomalies = loader.pricingAnomalies, anomalies.total > 0 {
-                let collapsed = collapseAnomalies(anomalies.anomalies)
-                let modelLabel = collapsed.count == 1 ? "model" : "models"
-                AnomalyPill(
-                    text: "⚠︎ \(collapsed.count) \(modelLabel) repriced",
-                    detailCount: anomalies.total,
-                    modelCount: collapsed.count,
-                    theme: theme,
-                    onTap: { showAnomalyPanel = true }
-                )
-            }
-            if loader.pricingMtime > 0 {
-                // TimelineView ticks every 60s so "2h ago" stays accurate while
-                // the popover is open — without it, the badge only refreshes on
-                // the loader's 30s data poll, which is fine for live data but
-                // makes a "1m ago" / "2m ago" / "3m ago" string look frozen.
-                TimelineView(.periodic(from: .now, by: 60)) { _ in
-                    Text("Pricing: \(relativeTime(loader.pricingMtime))")
-                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                        .foregroundColor(theme.backgroundMode.secondaryTextColor)
-                        .help(
-                            "Last kosha registry fetch — older than 24h means today's reprice may be using stale rates."
-                        )
                 }
             }
+            .font(.system(size: 10, design: theme.fonts.bodyDesign))
+            .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -247,20 +235,20 @@ struct LiveHeartbeat: View {
                 if isAlive {
                     // Expanding ring — fades as it scales outward
                     Circle()
-                        .stroke(Color.green.opacity(0.8 - 0.8 * Double(phase)), lineWidth: 1)
+                        .stroke(theme.statusSuccess.opacity(0.8 - 0.8 * Double(phase)), lineWidth: 1)
                         .frame(width: 7, height: 7)
                         .scaleEffect(1.0 + phase * 2.4)
                 }
                 Circle()
-                    .fill(isAlive ? Color.green : Color.red)
+                    .fill(isAlive ? theme.statusSuccess : theme.statusDanger)
                     .frame(width: 7, height: 7)
-                    .shadow(color: isAlive ? .green.opacity(0.6) : .clear, radius: 4)
+                    .shadow(color: isAlive ? theme.statusSuccess.opacity(0.6) : .clear, radius: 4)
                     .scaleEffect(isAlive ? (1.0 + phase * 0.3) : 1.0)
             }
             .frame(width: 24, height: 24)
             Text(isAlive ? "Live" : "Offline")
                 .font(.system(size: 9, weight: .semibold, design: theme.fonts.bodyDesign))
-                .foregroundColor(isAlive ? .green : .red.opacity(0.8))
+                .foregroundColor(theme.backgroundMode.isLight ? theme.backgroundMode.primaryTextColor : (isAlive ? theme.statusSuccess : theme.statusDanger.opacity(0.8)))
         }
         .accessibilityLabel(isAlive ? "Daemon running" : "Daemon offline")
     }

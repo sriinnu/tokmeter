@@ -81,6 +81,7 @@ struct HubView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(hubBackground)
         }
+        .environment(\.colorScheme, bg.isLight ? .light : .dark)
         .preferredColorScheme(bg.isLight ? .light : .dark)
     }
 
@@ -116,7 +117,7 @@ struct HubView: View {
     @ViewBuilder
     private var sidebarBackground: some View {
         if bg.usesMaterial {
-            Rectangle().fill(.thinMaterial)
+            Color.black.opacity(0.08)
         } else {
             LinearGradient(
                 colors: [
@@ -133,13 +134,7 @@ struct HubView: View {
     @ViewBuilder
     private var hubBackground: some View {
         if bg.usesMaterial {
-            ZStack {
-                Rectangle().fill(.regularMaterial)
-                LinearGradient(
-                    colors: bg.gradientColors(),
-                    startPoint: .top, endPoint: .bottom
-                )
-            }
+            FrostedGlassBackground()
         } else {
             LinearGradient(
                 colors: bg.gradientColors(),

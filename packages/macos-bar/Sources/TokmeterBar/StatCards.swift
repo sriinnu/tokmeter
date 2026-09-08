@@ -122,8 +122,8 @@ struct StatsGrid: View {
 
     /// Pace role color — amber when burning hot, green when easy day, neutral at par.
     private func paceRole(for multiple: Double) -> Color {
-        if multiple >= 1.25 { return Color.tokWarning }
-        if multiple <= 0.75 { return Color.tokSuccess }
+        if multiple >= 1.25 { return theme.statusWarning }
+        if multiple <= 0.75 { return theme.statusSuccess }
         return c.tertiary
     }
 
@@ -184,7 +184,7 @@ struct StatCard: View {
                 IconBadge(symbol: icon, role: role, cardMode: theme.cardMode)
                 Spacer(minLength: 0)
                 if let d = delta, !isWarming {
-                    DeltaPill(percent: d)
+                    DeltaPill(percent: d, theme: theme)
                 }
             }
             .padding(.horizontal, 10)
@@ -302,6 +302,7 @@ struct IconBadge: View {
 /// light and dark surfaces.
 struct DeltaPill: View {
     let percent: Double
+    let theme: AppTheme
 
     /// Signs-flipped detector: when the sign changes (e.g. trend reversed),
     /// we briefly scale the pill so the user's eye catches the shift.
@@ -309,7 +310,7 @@ struct DeltaPill: View {
 
     var body: some View {
         let positive = percent >= 0
-        let color: Color = positive ? Color.tokSuccess : Color.tokDanger
+        let color: Color = positive ? theme.statusSuccess : theme.statusDanger
         HStack(spacing: 2) {
             Image(systemName: positive ? "arrow.up" : "arrow.down")
                 .font(.system(size: 7, weight: .bold))
@@ -319,7 +320,10 @@ struct DeltaPill: View {
         .foregroundColor(color)
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
-        .background(Capsule().fill(color.opacity(0.18)))
+        .background {
+            Capsule().fill(Color.white.opacity(theme.backgroundMode.isLight ? 0.5 : 0))
+                .overlay(Capsule().fill(color.opacity(theme.backgroundMode.isLight ? 0.12 : 0.18)))
+        }
         .scaleEffect(pulseScale)
         // Bump scale → spring back on any sign change (positive flag toggles).
         .onChange(of: positive) { _, _ in
