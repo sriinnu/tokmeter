@@ -18,7 +18,7 @@ Some tools expose only an activity signal or a lifetime token total. Tokmeter do
 | Tool-reported cost | A numeric cost exposed by the local tool | That the provider actually charged that amount |
 | Unavailable | Missing rates, missing breakdown, skipped pricing, or absent provenance | That usage was free |
 
-An explicit zero from the tool or a known zero pricing rate is retained. Missing optional cache-read rates currently fall back to 10% of input; reasoning uses output rates unless a dedicated rate exists. These are estimation rules, not provider billing guarantees. Long-context tiers, service tiers, negotiated discounts, and other fees are not fully modeled by the current calculator.
+An explicit zero from the tool or a known zero pricing rate is retained. Missing optional cache-read rates currently fall back to 10% of input; reasoning uses output rates unless a dedicated rate exists. Cache writes made with the 1-hour TTL (Claude Code reports the split per response) are billed at the registry's `cacheWrite1hPerMillion` when present, else at 2× input for Claude models — Anthropic's published 1h rule — and at the ordinary write rate for other vendors. These are estimation rules, not provider billing guarantees. Long-context tiers, service tiers, negotiated discounts, and other fees are not fully modeled by the current calculator.
 
 Tokmeter uses kosha's catalog and optional `~/.tokmeter/pricing-overrides.json` overrides. A gateway's rate can be used when a usable origin rate is absent. This is another reason to read the result as an estimate.
 

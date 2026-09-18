@@ -124,7 +124,11 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 14 — claude-code records carry cacheWrite1hTokens (the 1h-TTL share of cache
 //      writes, billed at 2× input vs 1.25× for 5m). Cached records lack the
 //      field and were priced as if every write were 5m; rebuild.
-const CACHE_VERSION = 14;
+// 15 — claude-code dedup keeps the MAX usage across a response's lines, not
+//      the first: subagent transcripts open with placeholder usage from
+//      message_start and only the last line carries real output tokens.
+//      v13/v14 caches hold first-line values for subagent turns; rebuild.
+const CACHE_VERSION = 15;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

@@ -395,13 +395,14 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
 function findProjectTotal(totals: TodayTotals, projectName: string): ProjectTotal | null {
   if (!projectName) return null;
   const needle = projectName.toLowerCase();
+  // Segment boundary so "app" doesn't claim "-src-webapp".
+  const isLastSegment = (k: string) =>
+    k === needle || k.endsWith(`-${needle}`) || k.endsWith(`/${needle}`);
   let hit: ProjectTotal | null = null;
   for (const [key, v] of Object.entries(totals.projects)) {
     const k = key.toLowerCase();
-    if (k === needle || k.endsWith(needle) || k.includes(needle)) {
-      // Prefer the strongest match if multiple keys hit.
-      if (!hit || k.endsWith(needle)) hit = v;
-    }
+    if (isLastSegment(k)) return v;
+    if (!hit && (k.includes(`-${needle}-`) || k.includes(`/${needle}/`))) hit = v;
   }
   return hit;
 }

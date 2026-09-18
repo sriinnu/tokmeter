@@ -26,6 +26,7 @@ import {
   createServer as createHttpServer,
 } from "node:http";
 import { homedir, setPriority } from "node:os";
+import { join } from "node:path";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import {
   loadConfig,
@@ -513,17 +514,34 @@ function broadcast(): void {
  * a fresh tail is picked up by the daemon's own refresh cadence.
  */
 function sessionLedgerFor(transcriptPath: string) {
-  if (!transcriptPath || !_httpCore) return null;
+  if (!_httpCore || !isTranscriptPath(transcriptPath)) return null;
   const files = [transcriptPath];
-  const subagentDir = `${transcriptPath.replace(/\.jsonl$/, "")}/subagents`;
+  const subagentDir = `${transcriptPath.slice(0, -".jsonl".length)}/subagents`;
   try {
-    for (const f of readdirSync(subagentDir)) {
+    // Bounded: a real session has a handful of subagent runs; anything
+    // beyond this is not a transcript directory we want to walk per tick.
+    for (const f of readdirSync(subagentDir).slice(0, 256)) {
       if (f.endsWith(".jsonl")) files.push(`${subagentDir}/${f}`);
     }
   } catch {}
   const records = files.flatMap((f) => peekCachedRecords(f) ?? []);
-  if (records.length > 0) return computeSessionLedger(records, transcriptPath);
-  return computeSessionLedger(_httpCore.core.getRecords(), transcriptPath);
+  // No fallback to the recentRecords window: every record there came through
+  // the same cache, so an uncached transcript is absent from it too.
+  return records.length > 0 ? computeSessionLedger(records, transcriptPath) : null;
+}
+
+/**
+ * The WS transport and the HTTP GET are unauthenticated local endpoints and
+ * transcriptPath is client-supplied — only ever touch the filesystem for a
+ * `.jsonl` under a Claude Code projects dir (default or CLAUDE_CONFIG_DIR).
+ */
+function isTranscriptPath(p: string): boolean {
+  if (typeof p !== "string" || !p.endsWith(".jsonl") || p.includes("/../") || p.includes("\0")) {
+    return false;
+  }
+  const roots = [join(homedir(), ".claude", "projects")];
+  if (process.env.CLAUDE_CONFIG_DIR) roots.push(join(process.env.CLAUDE_CONFIG_DIR, "projects"));
+  return roots.some((root) => p.startsWith(`${root}/`));
 }
 
 /// A healthy client drains a broadcast instantly, so anything past this in its

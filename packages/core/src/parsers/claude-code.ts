@@ -184,8 +184,10 @@ export class ClaudeCodeParser implements SessionParser {
           }
         }
 
-        const apiCallId =
-          msg.message.id && msg.requestId ? `${msg.message.id}:${msg.requestId}` : undefined;
+        // message.id alone identifies the API response (a retry gets a new
+        // id; the corpus has no id shared by two requestIds). Some lines omit
+        // requestId, so keying on the pair would split one call in two.
+        const apiCallId = msg.message.id || undefined;
         // Older transcripts without ids fall back to timestamp + usage, which
         // still folds the consecutive duplicate lines those versions wrote.
         const usageKey =
@@ -193,14 +195,32 @@ export class ClaudeCodeParser implements SessionParser {
           (msg.timestamp
             ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
             : "");
+        const write1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
         if (usageKey && usageKey === lastUsageKey) {
-          // Same API response, later content block: no new spend, but its
-          // tool calls belong to the turn we already recorded.
-          if (lastAssistantRecord && toolCalls.length > 0) {
-            lastAssistantRecord.toolCalls = [
-              ...(lastAssistantRecord.toolCalls ?? []),
-              ...toolCalls,
-            ];
+          // Same API response, later content block. Main transcripts repeat
+          // the identical usage on every line, but subagent transcripts write
+          // the first line from message_start with placeholder usage
+          // (output_tokens 2..17) and only the last line carries the real
+          // counts — keeping the first line lost ~95% of subagent output.
+          // Usage is cumulative for the response, so the max per bucket is
+          // the true value. A record whose usage grew must be re-priced.
+          if (lastAssistantRecord) {
+            const rec = lastAssistantRecord;
+            const grow = (cur: number, next: number) => (next > cur ? next : cur);
+            const before = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+            rec.inputTokens = grow(rec.inputTokens, usage.input_tokens ?? 0);
+            rec.outputTokens = grow(rec.outputTokens, usage.output_tokens ?? 0);
+            rec.cacheReadTokens = grow(rec.cacheReadTokens, usage.cache_read_input_tokens ?? 0);
+            rec.cacheWriteTokens = grow(
+              rec.cacheWriteTokens,
+              usage.cache_creation_input_tokens ?? 0
+            );
+            if (write1h > (rec.cacheWrite1hTokens ?? 0)) rec.cacheWrite1hTokens = write1h;
+            const after = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+            if (after !== before && rec.usage?.cost !== "direct") rec.cost = 0;
+            if (toolCalls.length > 0) {
+              rec.toolCalls = [...(rec.toolCalls ?? []), ...toolCalls];
+            }
           }
           continue;
         }
@@ -217,9 +237,7 @@ export class ClaudeCodeParser implements SessionParser {
           outputTokens: usage.output_tokens ?? 0,
           cacheReadTokens: usage.cache_read_input_tokens ?? 0,
           cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-          ...(usage.cache_creation?.ephemeral_1h_input_tokens
-            ? { cacheWrite1hTokens: usage.cache_creation.ephemeral_1h_input_tokens }
-            : {}),
+          ...(write1h > 0 ? { cacheWrite1hTokens: write1h } : {}),
           cost: msg.costUSD ?? 0,
           usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
