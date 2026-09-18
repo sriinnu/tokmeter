@@ -62,6 +62,7 @@ import {
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
 import { RefreshCoordinator } from "./refresh-coordinator.js";
+import { computeSessionLedger } from "./session-ledger.js";
 import { SessionManager } from "./session.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
@@ -424,7 +425,8 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         msg.cost,
         msg.tokens,
         msg.durationMs,
-        msg.contextWindow
+        msg.contextWindow,
+        { transcriptPath: msg.session.transcriptPath }
       );
 
       if (session) {
@@ -481,11 +483,19 @@ function broadcast(): void {
       sessions: aggregated.sessions + 1,
     };
 
+    // Ledger totals ride the same round-trip. recentRecords is the bounded
+    // today window, so the filter is cheap even on every statusline tick.
+    const ledger =
+      session.transcriptPath && _httpCore
+        ? computeSessionLedger(_httpCore.core.getRecords(), session.transcriptPath)
+        : null;
+
     const msg: BroadcastMessage = {
       type: "broadcast",
       yourSession: {
         cost: session.cost,
         tokens: session.tokens,
+        ...(ledger ? { ledger } : {}),
       },
       aggregated: fullAggregated,
     };
@@ -920,6 +930,13 @@ function startHttpApi(): void {
           // Cheap to compute (single pass over records), so polled on the
           // same 30s cadence as everything else.
           json(res, core.getStatbarSignals());
+        } else if (pathname === "/api/session-ledger") {
+          // Cumulative totals for one transcript (main file + nested subagent
+          // runs), summed from the warm today window. Same numbers the WS
+          // broadcast hands the statusline; exposed over HTTP for the bar and
+          // for end-to-end checks.
+          const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
+          json(res, computeSessionLedger(core.getRecords(), transcript) ?? { error: "Not found" });
         } else if (pathname === "/api/models") {
           const providers = parseProviders(url);
           json(res, core.getModelCosts(providers ? { providers } : undefined));

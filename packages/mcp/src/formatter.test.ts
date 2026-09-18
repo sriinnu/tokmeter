@@ -3,10 +3,74 @@ import {
   formatBar,
   formatCost,
   formatDuration,
+  formatLineDelta,
   formatNumber,
   formatPercent,
+  formatResetIn,
+  formatTierBar,
   sparkline,
 } from "./formatter.js";
+
+describe("formatResetIn", () => {
+  const now = 1_700_000_000_000; // ms
+
+  it("should render hours and minutes", () => {
+    expect(formatResetIn(now / 1000 + 2 * 3600 + 10 * 60, now)).toBe("2h10m");
+  });
+
+  it("should drop zero minutes on the hour", () => {
+    expect(formatResetIn(now / 1000 + 3 * 3600, now)).toBe("3h");
+  });
+
+  it("should render minutes and seconds", () => {
+    expect(formatResetIn(now / 1000 + 45 * 60, now)).toBe("45m");
+    expect(formatResetIn(now / 1000 + 30, now)).toBe("30s");
+  });
+
+  it("should be empty once passed or invalid", () => {
+    expect(formatResetIn(now / 1000 - 1, now)).toBe("");
+    expect(formatResetIn(now / 1000, now)).toBe("");
+    expect(formatResetIn(Number.NaN, now)).toBe("");
+  });
+});
+
+describe("formatTierBar", () => {
+  it("should fill proportionally", () => {
+    expect(formatTierBar(0)).toEqual({ filled: "", empty: "────────" });
+    expect(formatTierBar(50)).toEqual({ filled: "━━━━", empty: "────" });
+    expect(formatTierBar(100)).toEqual({ filled: "━━━━━━━━", empty: "" });
+  });
+
+  it("should clamp out-of-range and invalid values", () => {
+    expect(formatTierBar(140)).toEqual({ filled: "━━━━━━━━", empty: "" });
+    expect(formatTierBar(-5)).toEqual({ filled: "", empty: "────────" });
+    expect(formatTierBar(Number.NaN)).toEqual({ filled: "", empty: "────────" });
+  });
+
+  it("should honor width", () => {
+    expect(formatTierBar(50, 4)).toEqual({ filled: "━━", empty: "──" });
+  });
+});
+
+describe("formatLineDelta", () => {
+  it("should render both sides", () => {
+    expect(formatLineDelta(142, 38)).toEqual({ added: "+142", removed: "−38" });
+  });
+
+  it("should omit a zero side", () => {
+    expect(formatLineDelta(12, 0)).toEqual({ added: "+12", removed: "" });
+    expect(formatLineDelta(0, 7)).toEqual({ added: "", removed: "−7" });
+  });
+
+  it("should be null when nothing changed", () => {
+    expect(formatLineDelta(0, 0)).toBeNull();
+    expect(formatLineDelta(Number.NaN, -3)).toBeNull();
+  });
+
+  it("should compact large counts", () => {
+    expect(formatLineDelta(15_200, 0)).toEqual({ added: "+15.2K", removed: "" });
+  });
+});
 
 describe("formatNumber", () => {
   it("should format millions", () => {

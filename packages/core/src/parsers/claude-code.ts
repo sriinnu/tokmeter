@@ -20,7 +20,11 @@ interface ClaudeContentBlock {
 interface ClaudeMessage {
   type: string;
   subtype?: string;
+  /** API request id — shared by every line written for one response. */
+  requestId?: string;
   message?: {
+    /** API message id — shared by every line written for one response. */
+    id?: string;
     model?: string;
     usage?: {
       input_tokens?: number;
@@ -128,9 +132,14 @@ export class ClaudeCodeParser implements SessionParser {
           : await readJsonlFile<ClaudeMessage>(file, readFault);
 
       const newRecords: TokenRecord[] = [];
-      // Dedup: using both usage values and a stable per-message discriminator so
-      // distinct consecutive assistant messages with identical usage are kept.
-      let lastUsageKey = "";
+      // Dedup: one record per API response. Claude Code writes an assistant
+      // turn as one line per content block (thinking, text, each tool_use),
+      // every line carrying the same message.id, requestId and usage — a turn
+      // with 8 parallel tool calls is 8 lines for ONE charge. Keying on
+      // timestamp (each line has its own) counted such a turn 8×. Seed from
+      // the cached tail so a turn whose lines straddle two append scans is
+      // still folded into one record.
+      let lastUsageKey = cacheResult.cachedRecords.at(-1)?.apiCallId ?? "";
       // Most recent assistant record, including cached tail records during
       // append-only scans. A compact_boundary can arrive after we cached the
       // assistant summarization call, so the boundary must be allowed to tag
@@ -159,13 +168,6 @@ export class ClaudeCodeParser implements SessionParser {
         if (msg.type !== "assistant" || !msg.message?.usage) continue;
 
         const usage = msg.message.usage;
-        const messageDiscriminator = msg.timestamp ?? "";
-        const usageKey = messageDiscriminator
-          ? `${messageDiscriminator}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
-          : "";
-        if (usageKey && usageKey === lastUsageKey) continue;
-        if (usageKey) lastUsageKey = usageKey;
-
         // Tool names on this assistant turn. Multiple tool_use blocks in one
         // message are common (parallel tool calls) — we keep them all and
         // split cost evenly downstream in the aggregator. Skip nil/empty so
@@ -176,6 +178,28 @@ export class ClaudeCodeParser implements SessionParser {
             toolCalls.push(block.name);
           }
         }
+
+        const apiCallId =
+          msg.message.id && msg.requestId ? `${msg.message.id}:${msg.requestId}` : undefined;
+        // Older transcripts without ids fall back to timestamp + usage, which
+        // still folds the consecutive duplicate lines those versions wrote.
+        const usageKey =
+          apiCallId ??
+          (msg.timestamp
+            ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
+            : "");
+        if (usageKey && usageKey === lastUsageKey) {
+          // Same API response, later content block: no new spend, but its
+          // tool calls belong to the turn we already recorded.
+          if (lastAssistantRecord && toolCalls.length > 0) {
+            lastAssistantRecord.toolCalls = [
+              ...(lastAssistantRecord.toolCalls ?? []),
+              ...toolCalls,
+            ];
+          }
+          continue;
+        }
+        if (usageKey) lastUsageKey = usageKey;
 
         const record = createRecord({
           timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
@@ -192,6 +216,7 @@ export class ClaudeCodeParser implements SessionParser {
           usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           isSubagent: isSubagent ? true : undefined,
+          apiCallId,
         });
         newRecords.push(record);
         lastAssistantRecord = record;

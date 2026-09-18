@@ -117,7 +117,11 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
  */
 // 11 — Codex per-response token_usage_record support and unknown model fallback.
 // 12 — Preserve explicit tool-reported zero cost instead of repricing it.
-const CACHE_VERSION = 12;
+// 13 — claude-code parser dedups on message.id+requestId (one record per API
+//      response). Timestamp-keyed dedup counted a turn once per content-block
+//      line — a parallel-tool-call turn N times. Cached records are inflated;
+//      rebuild.
+const CACHE_VERSION = 13;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

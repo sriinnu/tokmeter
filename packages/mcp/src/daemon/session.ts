@@ -67,7 +67,8 @@ export class SessionManager {
     cost: number,
     tokens: TokenUsage,
     durationMs?: number,
-    contextWindow?: ContextWindowInfo
+    contextWindow?: ContextWindowInfo,
+    info?: Pick<SessionInfo, "transcriptPath">
   ): Session | null {
     // Identity + numeric hygiene: the WS transport is unauthenticated, so a
     // malformed/hostile client could otherwise push a huge/negative/NaN cost or
@@ -98,7 +99,7 @@ export class SessionManager {
     if (!session) {
       // Auto-register if not found
       this.register({ provider, sessionId, model: "unknown" });
-      return this.update(provider, sessionId, safeCost, safeTokens, durationMs, safeContext);
+      return this.update(provider, sessionId, safeCost, safeTokens, durationMs, safeContext, info);
     }
 
     session.cost = safeCost;
@@ -106,6 +107,9 @@ export class SessionManager {
     // Keep the last-known context window if this update omits it (a session
     // that reported one shouldn't lose it on a later cost-only update).
     if (safeContext) session.contextWindow = safeContext;
+    if (typeof info?.transcriptPath === "string" && info.transcriptPath.length > 0) {
+      session.transcriptPath = info.transcriptPath;
+    }
     session.durationMs = nonNeg(durationMs ?? session.durationMs);
     session.lastUpdate = Date.now();
     session.connected = true;

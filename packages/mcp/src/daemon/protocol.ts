@@ -10,6 +10,8 @@ export interface SessionInfo {
   model: string; // Model being used
   project?: string; // Project name
   cwd?: string; // Working directory
+  /** Session transcript on disk, when the provider exposes it (Claude Code does). */
+  transcriptPath?: string;
 }
 
 export interface TokenUsage {
@@ -57,8 +59,19 @@ export interface BroadcastMessage {
   yourSession: {
     cost: number;
     tokens: TokenUsage;
+    /**
+     * Session-cumulative totals summed from the daemon's parsed transcript
+     * records. Present only when the session reported a transcriptPath and
+     * the warm core has records for it.
+     */
+    ledger?: SessionLedger;
   };
   aggregated: AggregatedStats;
+}
+
+export interface SessionLedger extends Required<TokenUsage> {
+  cost: number;
+  turns: number;
 }
 
 export interface AggregatedStats {
