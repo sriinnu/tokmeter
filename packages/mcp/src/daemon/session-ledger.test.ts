@@ -10,7 +10,6 @@ const rec = (sourceFile: string | undefined, over: Partial<Record<string, number
   cacheReadTokens: 100,
   cacheWriteTokens: 20,
   reasoningTokens: 3,
-  cost: 0.01,
   ...over,
 });
 
@@ -42,7 +41,7 @@ describe("computeSessionLedger", () => {
     const records = [
       rec(T),
       rec(T, { inputTokens: 20 }),
-      rec("/home/u/.claude/projects/-repo/abc-123/subagents/agent-1.jsonl", { cost: 0.5 }),
+      rec("/home/u/.claude/projects/-repo/abc-123/subagents/agent-1.jsonl"),
       rec("/home/u/.claude/projects/-repo/other.jsonl", { inputTokens: 9999 }),
       rec(undefined, { inputTokens: 9999 }),
     ];
@@ -52,7 +51,6 @@ describe("computeSessionLedger", () => {
       cacheReadTokens: 300,
       cacheWriteTokens: 60,
       reasoningTokens: 9,
-      cost: 0.52,
       turns: 3,
     });
   });

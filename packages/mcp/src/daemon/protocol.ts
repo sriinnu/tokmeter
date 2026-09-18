@@ -69,8 +69,8 @@ export interface BroadcastMessage {
   aggregated: AggregatedStats;
 }
 
+/** Tokens only — see session-ledger.ts for why there is no cost here. */
 export interface SessionLedger extends Required<TokenUsage> {
-  cost: number;
   turns: number;
 }
 

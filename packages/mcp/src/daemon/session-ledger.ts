@@ -8,13 +8,19 @@
  * gives the honest session burn: ledger-derived, never accumulated client-side.
  */
 
+/**
+ * Tokens only — deliberately no cost. Records read from the parser cache for
+ * days before today keep their frozen $0/day-of cost (scan-pipeline's frozen
+ * invariant), so summing record.cost across a midnight boundary would
+ * understate silently. Claude Code's own session cost is the honest figure
+ * for that; the bar already shows it.
+ */
 export interface SessionLedger {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
-  cost: number;
   /** Records folded in — a rough "API calls this session" count. */
   turns: number;
 }
@@ -26,7 +32,6 @@ interface LedgerRecord {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens?: number;
-  cost: number;
 }
 
 /**
@@ -54,7 +59,6 @@ export function computeSessionLedger(
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     reasoningTokens: 0,
-    cost: 0,
     turns: 0,
   };
   for (const r of records) {
@@ -64,7 +68,6 @@ export function computeSessionLedger(
     ledger.cacheReadTokens += r.cacheReadTokens;
     ledger.cacheWriteTokens += r.cacheWriteTokens;
     ledger.reasoningTokens += r.reasoningTokens ?? 0;
-    ledger.cost += r.cost;
     ledger.turns++;
   }
   return ledger.turns > 0 ? ledger : null;

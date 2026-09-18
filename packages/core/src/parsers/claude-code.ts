@@ -31,6 +31,11 @@ interface ClaudeMessage {
       output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      /** TTL split of cache_creation_input_tokens; 1h writes bill at a higher rate. */
+      cache_creation?: {
+        ephemeral_5m_input_tokens?: number;
+        ephemeral_1h_input_tokens?: number;
+      };
     };
     /** Content blocks — assistant turns mix `thinking`, `text`, `tool_use`. */
     content?: ClaudeContentBlock[];
@@ -212,6 +217,9 @@ export class ClaudeCodeParser implements SessionParser {
           outputTokens: usage.output_tokens ?? 0,
           cacheReadTokens: usage.cache_read_input_tokens ?? 0,
           cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+          ...(usage.cache_creation?.ephemeral_1h_input_tokens
+            ? { cacheWrite1hTokens: usage.cache_creation.ephemeral_1h_input_tokens }
+            : {}),
           cost: msg.costUSD ?? 0,
           usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,

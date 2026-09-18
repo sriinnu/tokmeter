@@ -14,6 +14,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -29,6 +30,7 @@ import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter
 import {
   loadConfig,
   localDateKey,
+  peekCachedRecords,
   pollAntigravityLiveStatus,
   refreshKoshaRegistry,
 } from "@sriinnu/tokmeter";
@@ -483,12 +485,9 @@ function broadcast(): void {
       sessions: aggregated.sessions + 1,
     };
 
-    // Ledger totals ride the same round-trip. recentRecords is the bounded
-    // today window, so the filter is cheap even on every statusline tick.
+    // Ledger totals ride the same round-trip.
     const ledger =
-      session.transcriptPath && _httpCore
-        ? computeSessionLedger(_httpCore.core.getRecords(), session.transcriptPath)
-        : null;
+      session.transcriptPath && _httpCore ? sessionLedgerFor(session.transcriptPath) : null;
 
     const msg: BroadcastMessage = {
       type: "broadcast",
@@ -502,6 +501,29 @@ function broadcast(): void {
 
     send(ws, msg);
   }
+}
+
+/**
+ * Whole-session ledger for a transcript: main file plus nested subagent runs.
+ *
+ * Source is the parser's per-file record cache, which holds every record of
+ * a file the daemon has parsed — so a session that started before midnight
+ * keeps yesterday's turns, unlike the today-only recentRecords window. Falls
+ * back to that window only when the file isn't cached yet. No parsing here:
+ * a fresh tail is picked up by the daemon's own refresh cadence.
+ */
+function sessionLedgerFor(transcriptPath: string) {
+  if (!transcriptPath || !_httpCore) return null;
+  const files = [transcriptPath];
+  const subagentDir = `${transcriptPath.replace(/\.jsonl$/, "")}/subagents`;
+  try {
+    for (const f of readdirSync(subagentDir)) {
+      if (f.endsWith(".jsonl")) files.push(`${subagentDir}/${f}`);
+    }
+  } catch {}
+  const records = files.flatMap((f) => peekCachedRecords(f) ?? []);
+  if (records.length > 0) return computeSessionLedger(records, transcriptPath);
+  return computeSessionLedger(_httpCore.core.getRecords(), transcriptPath);
 }
 
 /// A healthy client drains a broadcast instantly, so anything past this in its
@@ -936,7 +958,7 @@ function startHttpApi(): void {
           // broadcast hands the statusline; exposed over HTTP for the bar and
           // for end-to-end checks.
           const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
-          json(res, computeSessionLedger(core.getRecords(), transcript) ?? { error: "Not found" });
+          json(res, sessionLedgerFor(transcript) ?? { error: "Not found" });
         } else if (pathname === "/api/models") {
           const providers = parseProviders(url);
           json(res, core.getModelCosts(providers ? { providers } : undefined));

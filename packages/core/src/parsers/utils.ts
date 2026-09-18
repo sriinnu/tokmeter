@@ -121,7 +121,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      response). Timestamp-keyed dedup counted a turn once per content-block
 //      line — a parallel-tool-call turn N times. Cached records are inflated;
 //      rebuild.
-const CACHE_VERSION = 13;
+// 14 — claude-code records carry cacheWrite1hTokens (the 1h-TTL share of cache
+//      writes, billed at 2× input vs 1.25× for 5m). Cached records lack the
+//      field and were priced as if every write were 5m; rebuild.
+const CACHE_VERSION = 14;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -232,6 +235,16 @@ export function setCachedKoshaMtime(mtimeMs: number): void {
  * cache-set race that would otherwise let a concurrent writer's appended
  * bytes vanish on the next exact-match check).
  */
+/**
+ * Records last parsed for a file, straight from the in-memory cache — no stat,
+ * no freshness check, never touches disk. For hot-path readers (a statusline
+ * tick) that want "everything the daemon has parsed from this transcript"
+ * and can tolerate the tail being as stale as the daemon's refresh cadence.
+ */
+export function peekCachedRecords(path: string): TokenRecord[] | null {
+  return loadRecordCache().get(path)?.records ?? null;
+}
+
 export async function getCachedRecords(path: string): Promise<
   | { hit: true; records: TokenRecord[] }
   | {

@@ -129,6 +129,52 @@ describe("calculateCost", () => {
     expect(cost).toBe(0);
   });
 
+  // Claude Code caches with the 1h TTL exclusively. Anthropic bills 1h writes
+  // at 2× input; the registry's cacheWritePerMillion is the 5m (1.25×) rate.
+  it("bills the 1h-TTL share of cache writes at 2× input when no explicit 1h rate", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("test-anthropic", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheReadPerMillion: 0.25,
+      cacheWritePerMillion: 12.5,
+    });
+    // 1M cache writes, 600k of them 1h: 400k × $12.5/M + 600k × $20/M = $5 + $12 = $17
+    const cost = await pricing.calculateCost("test-anthropic", 0, 0, 0, 1_000_000, 0, 600_000);
+    expect(cost).toBeCloseTo(17, 6);
+  });
+
+  it("prefers an explicit cacheWrite1hPerMillion over the 2× fallback", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("test-anthropic-1h", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheWritePerMillion: 12.5,
+      cacheWrite1hPerMillion: 18,
+    });
+    // all 1M writes are 1h → 1M × $18/M
+    const cost = await pricing.calculateCost("test-anthropic-1h", 0, 0, 0, 1_000_000, 0, 1_000_000);
+    expect(cost).toBeCloseTo(18, 6);
+  });
+
+  it("leaves 5m-only writes and write-free providers unchanged", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("test-anthropic", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheWritePerMillion: 12.5,
+    });
+    // No 1h share → the old math, to the cent.
+    expect(await pricing.calculateCost("test-anthropic", 0, 0, 0, 1_000_000)).toBeCloseTo(12.5, 6);
+    // A 1h share can't exceed the total; clamp instead of inventing tokens.
+    expect(
+      await pricing.calculateCost("test-anthropic", 0, 0, 0, 1_000_000, 0, 5_000_000)
+    ).toBeCloseTo(20, 6);
+    // Providers without a write rate stay free even with a 1h share reported.
+    pricing.seedPricing("test-grok-style", { inputPerMillion: 3, outputPerMillion: 15 });
+    expect(await pricing.calculateCost("test-grok-style", 0, 0, 0, 100_000, 0, 100_000)).toBe(0);
+  });
+
   it("returns 0 for unknown model (no kosha hit)", async () => {
     const pricing = new PricingService();
     const cost = await pricing.calculateCost("totally-fake-model-xyz-9000", 1_000_000, 1_000_000);

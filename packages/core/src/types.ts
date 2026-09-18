@@ -99,6 +99,13 @@ export interface TokenRecord {
   cacheReadTokens: number;
   /** Cache write tokens. */
   cacheWriteTokens: number;
+  /**
+   * Portion of cacheWriteTokens written with the 1-hour TTL, when the
+   * provider breaks it out (Claude Code: usage.cache_creation.ephemeral_1h).
+   * Anthropic bills 1h writes at 2× input vs 1.25× for 5m, so the split
+   * changes the cost; the remainder of cacheWriteTokens is 5m.
+   */
+  cacheWrite1hTokens?: number;
   /** Reasoning/thinking tokens. */
   reasoningTokens: number;
   /** Calculated cost in USD (via kosha-discovery pricing). */

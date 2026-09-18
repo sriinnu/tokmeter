@@ -60,7 +60,14 @@ import type { ModelPricing } from "@sriinnu/kosha-discovery";
  * Full pricing shape used internally — alias of kosha's ModelPricing including
  * reasoning fields. Kosha results are spread into this shape after resolution.
  */
-type FullPricing = ModelPricing;
+type FullPricing = ModelPricing & {
+  /**
+   * 1-hour-TTL cache write rate. Not in kosha's ModelPricing yet — read when
+   * a registry entry or user override carries it; calculateCost falls back to
+   * 2× input (Anthropic's documented 1h ratio) otherwise.
+   */
+  cacheWrite1hPerMillion?: number;
+};
 
 // Date suffixes used by various providers for versioned model IDs.
 // Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
@@ -211,6 +218,7 @@ function loadUserOverrides(): Map<string, FullPricing> {
       };
       if (isNum(p.cacheReadPerMillion)) out.cacheReadPerMillion = p.cacheReadPerMillion;
       if (isNum(p.cacheWritePerMillion)) out.cacheWritePerMillion = p.cacheWritePerMillion;
+      if (isNum(p.cacheWrite1hPerMillion)) out.cacheWrite1hPerMillion = p.cacheWrite1hPerMillion;
       if (isNum(p.reasoningInputPerMillion))
         out.reasoningInputPerMillion = p.reasoningInputPerMillion;
       if (isNum(p.reasoningOutputPerMillion))
@@ -508,8 +516,9 @@ export class PricingService {
    * @param inputTokens      - Standard input tokens.
    * @param outputTokens     - Output tokens generated.
    * @param cacheReadTokens  - Tokens served from prompt cache.
-   * @param cacheWriteTokens - Tokens written to prompt cache.
+   * @param cacheWriteTokens - Tokens written to prompt cache (all TTLs).
    * @param reasoningTokens  - Thinking/reasoning tokens (input + output combined).
+   * @param cacheWrite1hTokens - Share of cacheWriteTokens written with the 1h TTL.
    * @returns Cost in USD, or 0 if no pricing is available.
    */
   async calculateCost(
@@ -518,7 +527,8 @@ export class PricingService {
     outputTokens: number,
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
-    reasoningTokens = 0
+    reasoningTokens = 0,
+    cacheWrite1hTokens = 0
   ): Promise<number> {
     const pricing = await this.getPricing(modelId);
     if (!pricing) return 0;
@@ -542,7 +552,19 @@ export class PricingService {
       // (1.25× input). OpenAI/Gemini don't charge for cache writes — caching is
       // free or implicit, only reads are discounted. We don't synthesize a
       // fallback because the wrong default would silently overcharge.
-      cost += cacheWriteTokens * perToken(pricing.cacheWritePerMillion);
+      //
+      // The registry's cacheWritePerMillion is the 5-minute-TTL rate. Writes
+      // the provider reports as 1-hour TTL bill at 2× input on Anthropic —
+      // Claude Code caches at 1h exclusively, so pricing them as 5m
+      // under-charged every one of its cache writes by 1.6×. Use an explicit
+      // 1h rate when the registry carries one; the 2× ratio is the
+      // documented fallback, same shape as the cache-read one above.
+      const write1h = Math.min(cacheWrite1hTokens, cacheWriteTokens);
+      cost += (cacheWriteTokens - write1h) * perToken(pricing.cacheWritePerMillion);
+      if (write1h) {
+        const rate1h = pricing.cacheWrite1hPerMillion ?? pricing.inputPerMillion * 2;
+        cost += write1h * perToken(rate1h);
+      }
     }
     if (reasoningTokens) {
       // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate
@@ -616,7 +638,7 @@ export class PricingService {
    * Round all pricing fields to 6 decimal places to eliminate float noise.
    * Returns null for invalid or negative rates (treat as unpriced).
    */
-  private roundPricing(p: ModelPricing): FullPricing | null {
+  private roundPricing(p: FullPricing): FullPricing | null {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
     // Guard: if any field is NaN or Infinity, bail — this model is unpriced.
     const allValues = [
@@ -624,6 +646,7 @@ export class PricingService {
       p.outputPerMillion,
       p.cacheReadPerMillion,
       p.cacheWritePerMillion,
+      p.cacheWrite1hPerMillion,
       p.reasoningInputPerMillion,
       p.reasoningOutputPerMillion,
     ];
@@ -638,6 +661,9 @@ export class PricingService {
         : {}),
       ...(p.cacheWritePerMillion !== undefined
         ? { cacheWritePerMillion: r(p.cacheWritePerMillion) }
+        : {}),
+      ...(p.cacheWrite1hPerMillion !== undefined
+        ? { cacheWrite1hPerMillion: r(p.cacheWrite1hPerMillion) }
         : {}),
       ...(p.reasoningInputPerMillion !== undefined
         ? { reasoningInputPerMillion: r(p.reasoningInputPerMillion) }

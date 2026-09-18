@@ -108,6 +108,39 @@ describe("ClaudeCodeParser — one record per API response", () => {
     expect(a?.outputTokens).toBe(500);
   });
 
+  it("records the 1h-TTL share of cache writes", async () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      requestId: "req_T",
+      timestamp: "2026-09-18T10:00:00.000Z",
+      message: {
+        id: "msg_T",
+        model: "claude-x",
+        usage: {
+          input_tokens: 2,
+          output_tokens: 50,
+          cache_read_input_tokens: 384_264,
+          cache_creation_input_tokens: 1_547,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_547 },
+        },
+        content: [{ type: "text" }],
+      },
+    });
+    writeFileSync(file, `${line}\n`);
+    const [record] = await new ClaudeCodeParser().scan(home);
+    expect(record.cacheWriteTokens).toBe(1_547);
+    expect(record.cacheWrite1hTokens).toBe(1_547);
+    // Older transcripts have no TTL split — the field stays absent, not 0.
+    expect((await scanLegacy()).cacheWrite1hTokens).toBeUndefined();
+
+    async function scanLegacy() {
+      clearRecordCache();
+      writeFileSync(file, `${turnB[0]}\n`);
+      const [r] = await new ClaudeCodeParser().scan(home);
+      return r;
+    }
+  });
+
   it("falls back to timestamp+usage dedup for transcripts without ids", async () => {
     const legacy = (ts: string, out: number) =>
       JSON.stringify({
