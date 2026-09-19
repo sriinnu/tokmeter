@@ -104,3 +104,66 @@ jobs:
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ======================================================================
+      # Publish the MCP server manifest to the official registry.
+      #
+      # Runs AFTER npm publish on purpose: the registry proves namespace
+      # ownership by fetching the published package and reading `mcpName`
+      # out of its package.json, so the version has to exist on npm first.
+      # Auth is the job's own OIDC token (`id-token: write` above) — it
+      # proves the io.github.sriinnu/* namespace, so there is no interactive
+      # login and no secret to rotate.
+      # ======================================================================
+      - name: Publish to the MCP registry
+        working-directory: packages/mcp
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) ASSET=mcp-publisher_linux_amd64.tar.gz ;;
+            aarch64|arm64) ASSET=mcp-publisher_linux_arm64.tar.gz ;;
+            *) echo "unsupported runner arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${ASSET}" \
+            -o /tmp/mcp-publisher.tar.gz
+          tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp mcp-publisher
+          chmod +x /tmp/mcp-publisher
+          # server.json pins its own version; fail loudly rather than
+          # registering a manifest that points at a different release.
+          node -e '
+            const fs = require("node:fs");
+            const srv = JSON.parse(fs.readFileSync("server.json", "utf8"));
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const tag = process.env.RELEASE_TAG.replace(/^v/, "");
+            const seen = [srv.version, srv.packages[0].version, pkg.version];
+            if (seen.some((v) => v !== tag)) {
+              throw new Error(`version mismatch: tag ${tag} vs ${seen.join(", ")}`);
+            }
+            if (pkg.mcpName !== srv.name) {
+              throw new Error(`mcpName ${pkg.mcpName} does not match server name ${srv.name}`);
+            }
+            if (srv.packages[0].identifier !== pkg.name) {
+              throw new Error(`server.json package ${srv.packages[0].identifier} is not ${pkg.name}`);
+            }
+          '
+          # npm's read API lags its own publish by tens of seconds, and the
+          # registry resolves the version before it will register anything.
+          # Wait for the version to be readable instead of racing it.
+          PKG_VERSION="${RELEASE_TAG#v}"
+          for attempt in $(seq 1 30); do
+            if npm view "${PKG_NAME}@${PKG_VERSION}" version >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "::error::${PKG_NAME}@${PKG_VERSION} did not appear on npm within 5 minutes" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          /tmp/mcp-publisher login github-oidc
+          /tmp/mcp-publisher publish
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PKG_NAME: "@sriinnu/drishti"

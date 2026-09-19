@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sriinnu/tokmeter",
+  "title": "Tokmeter — AI Agent Usage & Cost",
+  "description": "Shows what your AI coding agents actually cost — tokens and spend by project, model and day, across Claude Code, Codex and 14 more, read from local session files. No API keys, no telemetry.",
+  "websiteUrl": "https://github.com/sriinnu/tokmeter",
+  "repository": {
+    "url": "https://github.com/sriinnu/tokmeter",
+    "source": "github"
+  },
+  "version": "1.12.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@sriinnu/drishti",
+      "version": "1.12.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "serve",
+          "value": "serve",
+          "description": "Run the MCP server over stdio. The package's default command starts the live terminal UI instead, so this argument is required."
+        }
+      ]
+    }
+  ]
+}

@@ -7,6 +7,9 @@
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -311,16 +314,29 @@ const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for cust
  * @returns Configured McpServer ready to be connected to a transport.
  */
 export function createServer(): McpServer {
+  /**
+   * The published package version, read at runtime from the package.json that
+   * ships beside `dist/`. MCP clients show this in `initialize`'s
+   * `serverInfo.version`, and the registry refuses a manifest whose version
+   * disagrees with the release — a hand-maintained literal here drifted to
+   * 1.4.0 while the package was at 1.12.0. Falls back to "0.0.0" rather than
+   * throwing: an unreadable package.json must not take the server down.
+   */
+  function serverVersion(): string {
+    try {
+      const here = dirname(fileURLToPath(import.meta.url));
+      return JSON.parse(readFileSync(join(here, "..", "package.json"), "utf-8")).version ?? "0.0.0";
+    } catch {
+      return "0.0.0";
+    }
+  }
+
   const server = new McpServer({
-    name: "drishti",
-    // Keep in sync with packages/mcp/package.json `version`. MCP clients see
-    // this string in the `initialize` response's `serverInfo.version`, so
-    // drift here means clients can't tell which build they're talking to.
-    // The published package version is the source of truth; this constant
-    // shadows it because @modelcontextprotocol/sdk's McpServer takes a
-    // literal in the constructor — no runtime import-from-package.json that
-    // would survive bundling/cp into the meta package across all consumers.
-    version: "1.4.0",
+    // Matches `mcpName` in package.json and `name` in server.json — the MCP
+    // registry rejects a manifest whose name disagrees with the published
+    // package, and clients show this string, so all three say "tokmeter".
+    name: "tokmeter",
+    version: serverVersion(),
     description: "∞ — Token usage observatory for AI coding agents",
   });
 

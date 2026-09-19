@@ -59,6 +59,22 @@ if [[ -f "$BUNDLE" ]]; then
   echo "    bundle.sh  SHORT_VERSION=${VERSION}  BUILD_VERSION ${cur_build} -> ${new_build}"
 fi
 
+# 2b. packages/mcp/server.json — the MCP registry manifest. Both its own
+#     `version` and the npm package version inside `packages[]` must equal the
+#     release tag; the publish workflow refuses to register a mismatch.
+SERVER_JSON="packages/mcp/server.json"
+if [[ -f "$SERVER_JSON" ]]; then
+  VERSION="$VERSION" node -e '
+    const fs = require("node:fs");
+    const p = process.argv[1];
+    const j = JSON.parse(fs.readFileSync(p, "utf8"));
+    j.version = process.env.VERSION;
+    for (const pkg of j.packages ?? []) pkg.version = process.env.VERSION;
+    fs.writeFileSync(p, `${JSON.stringify(j, null, 2)}\n`);
+  ' "$SERVER_JSON"
+  echo "    server.json  version + package version -> ${VERSION}"
+fi
+
 # 3. README.md — release badge tracks the tag being cut.
 README="README.md"
 if [[ -f "$README" ]]; then
