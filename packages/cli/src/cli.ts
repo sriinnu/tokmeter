@@ -611,6 +611,8 @@ async function runRoutes(options: {
     output: 0,
     cacheRead: 0,
     cacheWrite: 0,
+    /** Subset of cacheWrite, not an extra bucket — see TokenBuckets. */
+    cacheWrite1h: 0,
     reasoning: 0,
   };
   let actualCost = 0;
@@ -619,6 +621,7 @@ async function runRoutes(options: {
     totals.output += r.outputTokens;
     totals.cacheRead += r.cacheReadTokens;
     totals.cacheWrite += r.cacheWriteTokens;
+    totals.cacheWrite1h += r.cacheWrite1hTokens ?? 0;
     totals.reasoning += r.reasoningTokens;
     actualCost += r.cost;
   }
@@ -659,7 +662,8 @@ async function runRoutes(options: {
         totals.output,
         totals.cacheRead,
         totals.cacheWrite,
-        totals.reasoning
+        totals.reasoning,
+        totals.cacheWrite1h
       ),
     }))
   );
