@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-19
+
+This release corrects how Claude Code usage is counted and priced. Reported
+costs will move — down for token counts, up for cache writes — and the two
+corrections do not cancel out. Historical days already sealed keep whatever
+they were sealed with unless you rescan; days with no surviving raw transcript
+cannot be corrected at all.
+
+### Added
+
+- Show this session's cumulative tokens in the statusline, summed from the
+  session's own transcript rather than the last API call, and expose the same
+  figures at `GET /api/session-ledger`.
+- Read the statusline from the fields Claude Code actually sends: subscription
+  rate-limit windows with their reset times, prompt-cache temperature and time
+  to cold, reasoning effort and extended-thinking state, the open pull request
+  for the branch, and the session's added/removed line counts. Session detail
+  and cross-agent totals are now separate lines.
+- Record the 1-hour share of cache writes per response, so cost reflects the
+  cache TTL a request actually used.
+
+### Changed
+
+- Treat one API response as one record. Claude Code writes an assistant turn as
+  a separate line per content block, so a turn with parallel tool calls was
+  previously counted once per line — on a sampled session, 252 records for 82
+  calls.
+- Price 1-hour cache writes at their own rate, which is higher than the
+  5-minute rate carried in the pricing registry. Where the registry has no
+  1-hour rate, Claude models fall back to twice the input rate, the published
+  ratio; other vendors keep their own write rate, so a session pointed at a
+  non-Anthropic endpoint is not overcharged.
+- Price the "what would today cost on model X" comparison at the same cache TTL
+  split as the actual spend, instead of quoting alternatives at the cheaper
+  5-minute rate.
+
+### Fixed
+
+- Keep the full output token count for subagent runs. Their transcripts open
+  with a placeholder usage record and only the final line carries the real
+  count, so nearly all subagent output was being discarded.
+- Restrict the session-ledger endpoint to transcript paths under a Claude Code
+  projects directory, and bound the directory scan it performs.
+- Drop a per-broadcast scan of the recent-records window that could never
+  return a result.
+- Match the statusline's project rollup on a whole path segment, so a project
+  no longer absorbs another whose name ends with the same letters.
+
 ## [1.11.0] - 2026-09-08
 
 ### Changed
