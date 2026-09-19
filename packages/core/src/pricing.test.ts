@@ -129,6 +129,81 @@ describe("calculateCost", () => {
     expect(cost).toBe(0);
   });
 
+  // Claude Code caches with the 1h TTL exclusively. Anthropic bills 1h writes
+  // at 2× input; the registry's cacheWritePerMillion is the 5m (1.25×) rate.
+  it("bills the 1h-TTL share of cache writes at 2× input for Claude models", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("claude-test", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheReadPerMillion: 0.25,
+      cacheWritePerMillion: 12.5,
+    });
+    // 1M cache writes, 600k of them 1h: 400k × $12.5/M + 600k × $20/M = $5 + $12 = $17
+    const cost = await pricing.calculateCost("claude-test", 0, 0, 0, 1_000_000, 0, 600_000);
+    expect(cost).toBeCloseTo(17, 6);
+  });
+
+  it("bills a non-Claude vendor's 1h share at its own write rate (2× is Anthropic's rule)", async () => {
+    const pricing = new PricingService();
+    // Claude Code pointed at another vendor via ANTHROPIC_BASE_URL still
+    // reports a 1h share; that vendor's 0.625× write rate must not become 2×.
+    pricing.seedPricing("other-vendor-m2", {
+      inputPerMillion: 1,
+      outputPerMillion: 4,
+      cacheWritePerMillion: 0.625,
+    });
+    const cost = await pricing.calculateCost("other-vendor-m2", 0, 0, 0, 1_000_000, 0, 1_000_000);
+    expect(cost).toBeCloseTo(0.625, 6);
+  });
+
+  it("honors an override that carries only cacheWrite1hPerMillion", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("claude-only-1h", {
+      inputPerMillion: 5,
+      outputPerMillion: 25,
+      cacheWrite1hPerMillion: 10,
+    });
+    // 1h share billed at $10/M; the 5m remainder has no rate and stays free.
+    const cost = await pricing.calculateCost("claude-only-1h", 0, 0, 0, 1_000_000, 0, 400_000);
+    expect(cost).toBeCloseTo(4, 6);
+  });
+
+  it("prefers an explicit cacheWrite1hPerMillion over the 2× fallback", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("claude-test-1h", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheWritePerMillion: 12.5,
+      cacheWrite1hPerMillion: 18,
+    });
+    // all 1M writes are 1h → 1M × $18/M
+    const cost = await pricing.calculateCost("claude-test-1h", 0, 0, 0, 1_000_000, 0, 1_000_000);
+    expect(cost).toBeCloseTo(18, 6);
+  });
+
+  it("leaves 5m-only writes and write-free providers unchanged", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("claude-test", {
+      inputPerMillion: 10,
+      outputPerMillion: 50,
+      cacheWritePerMillion: 12.5,
+    });
+    // No 1h share → the old math, to the cent.
+    expect(await pricing.calculateCost("claude-test", 0, 0, 0, 1_000_000)).toBeCloseTo(12.5, 6);
+    // A 1h share can't exceed the total; clamp instead of inventing tokens.
+    expect(
+      await pricing.calculateCost("claude-test", 0, 0, 0, 1_000_000, 0, 5_000_000)
+    ).toBeCloseTo(20, 6);
+    // A negative share can't refund anything.
+    expect(
+      await pricing.calculateCost("claude-test", 0, 0, 0, 1_000_000, 0, -5_000_000)
+    ).toBeCloseTo(12.5, 6);
+    // Providers without a write rate stay free even with a 1h share reported.
+    pricing.seedPricing("test-grok-style", { inputPerMillion: 3, outputPerMillion: 15 });
+    expect(await pricing.calculateCost("test-grok-style", 0, 0, 0, 100_000, 0, 100_000)).toBe(0);
+  });
+
   it("returns 0 for unknown model (no kosha hit)", async () => {
     const pricing = new PricingService();
     const cost = await pricing.calculateCost("totally-fake-model-xyz-9000", 1_000_000, 1_000_000);

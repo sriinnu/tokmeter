@@ -16,6 +16,17 @@ describe("SessionManager — lifecycle", () => {
     mgr = new SessionManager();
   });
 
+  test("update records the transcript path and keeps it on later updates that omit it", () => {
+    mgr.update("claude-code", "a", 0.1, tok(), 0, undefined, { transcriptPath: "/t/a.jsonl" });
+    expect(mgr.get("claude-code", "a")?.transcriptPath).toBe("/t/a.jsonl");
+
+    mgr.update("claude-code", "a", 0.2, tok());
+    expect(mgr.get("claude-code", "a")?.transcriptPath).toBe("/t/a.jsonl");
+
+    mgr.update("claude-code", "a", 0.3, tok(), 0, undefined, { transcriptPath: "" });
+    expect(mgr.get("claude-code", "a")?.transcriptPath).toBe("/t/a.jsonl");
+  });
+
   test("register creates a connected session; re-register reconnects, doesn't duplicate", () => {
     mgr.register({ provider: "claude-code", sessionId: "a", model: "claude-opus-4" });
     expect(mgr.getAll()).toHaveLength(1);

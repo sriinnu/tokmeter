@@ -32,6 +32,8 @@ export interface CrossToolComparison {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+    /** 1h-TTL share of cacheWrite — a subset of it, not an extra bucket. */
+    cacheWrite1h: number;
     reasoning: number;
   };
   projections: Array<{
@@ -51,19 +53,24 @@ export async function computeCrossToolComparison(
     output: today?.outputTokens ?? 0,
     cacheRead: today?.cacheReadTokens ?? 0,
     cacheWrite: today?.cacheWriteTokens ?? 0,
+    cacheWrite1h: today?.cacheWrite1hTokens ?? 0,
     reasoning: today?.reasoningTokens ?? 0,
   };
   const projections = await Promise.all(
     topModels.map(async (m) => ({
       model: m.model,
       provider: m.provider,
+      // Same TTL split the actual spend was billed at — otherwise every
+      // alternative looks cheaper than reality by the 1h uplift, and the
+      // model you already ran can appear to undercut itself.
       projectedCost: await pricing.calculateCost(
         m.model,
         totals.input,
         totals.output,
         totals.cacheRead,
         totals.cacheWrite,
-        totals.reasoning
+        totals.reasoning,
+        totals.cacheWrite1h
       ),
     }))
   );

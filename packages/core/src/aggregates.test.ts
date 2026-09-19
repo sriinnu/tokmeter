@@ -208,3 +208,25 @@ describe("JSON round-trip — aggregates serialize losslessly", () => {
     expect(restored).toEqual(days);
   });
 });
+
+describe("1h cache-write sub-bucket", () => {
+  test("accumulates per day but never enters any token total", () => {
+    const [day] = aggregateRecordsByDay([
+      r({ timestamp: ts("2026-09-18"), cacheWriteTokens: 1000, cacheWrite1hTokens: 600, cost: 1 }),
+      r({ timestamp: ts("2026-09-18"), cacheWriteTokens: 500, cacheWrite1hTokens: 500, cost: 1 }),
+    ]);
+    expect(day.cacheWriteTokens).toBe(1500);
+    expect(day.cacheWrite1hTokens).toBe(1100);
+    // The 1h share is a SUBSET of cacheWriteTokens — counting it again would
+    // inflate every "total tokens" readout by the cached prefix size.
+    expect(day.totalTokens).toBe(1500);
+  });
+
+  test("stays absent when no record reports a TTL split (days sealed before the field)", () => {
+    const [day] = aggregateRecordsByDay([
+      r({ timestamp: ts("2026-09-18"), cacheWriteTokens: 1000, cost: 1 }),
+    ]);
+    expect(day.cacheWrite1hTokens).toBeUndefined();
+    expect(day.totalTokens).toBe(1000);
+  });
+});

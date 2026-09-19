@@ -12,6 +12,7 @@ import type {
   BroadcastMessage,
   ContextWindowInfo,
   SessionInfo,
+  SessionLedger,
   TokenUsage,
 } from "./protocol.js";
 import { DAEMON_URL } from "./protocol.js";
@@ -23,6 +24,7 @@ export interface DaemonResponse {
   yourSession?: {
     cost: number;
     tokens: TokenUsage;
+    ledger?: SessionLedger;
   };
   aggregated?: AggregatedStats;
 }

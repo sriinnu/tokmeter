@@ -29,6 +29,15 @@ export interface TokenBuckets {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
+  /**
+   * The 1-hour-TTL share of `cacheWriteTokens` — a SUBSET, never its own
+   * bucket: it must stay out of every token total or the same tokens are
+   * counted twice. Carried so "what would today cost on model X" prices
+   * cache writes at the same TTL split the actual spend used. Absent on days
+   * sealed before the field existed, which read as 0 (all-5m) — the old
+   * behaviour, not a wrong one.
+   */
+  cacheWrite1hTokens?: number;
 }
 
 /** Per-model rollup within a single day. */
@@ -109,6 +118,8 @@ export interface DailyAggregate {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
+  /** 1h-TTL share of cacheWriteTokens — a subset of it, never added to totals. */
+  cacheWrite1hTokens?: number;
   totalTokens: number;
   recordCount: number;
   /** Earliest record timestamp on this day, epoch ms. */
@@ -148,6 +159,9 @@ function addBuckets(target: TokenBuckets, r: TokenRecord): void {
   target.cacheReadTokens += r.cacheReadTokens;
   target.cacheWriteTokens += r.cacheWriteTokens;
   target.reasoningTokens += r.reasoningTokens;
+  if (r.cacheWrite1hTokens) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + r.cacheWrite1hTokens;
+  }
 }
 
 /** Fresh 24-slot hourly cost curve, all zero. */

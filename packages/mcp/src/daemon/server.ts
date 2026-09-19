@@ -14,6 +14,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -25,10 +26,12 @@ import {
   createServer as createHttpServer,
 } from "node:http";
 import { homedir, setPriority } from "node:os";
+import { join } from "node:path";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import {
   loadConfig,
   localDateKey,
+  peekCachedRecords,
   pollAntigravityLiveStatus,
   refreshKoshaRegistry,
 } from "@sriinnu/tokmeter";
@@ -62,6 +65,7 @@ import {
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
 import { RefreshCoordinator } from "./refresh-coordinator.js";
+import { computeSessionLedger } from "./session-ledger.js";
 import { SessionManager } from "./session.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
@@ -424,7 +428,8 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         msg.cost,
         msg.tokens,
         msg.durationMs,
-        msg.contextWindow
+        msg.contextWindow,
+        { transcriptPath: msg.session.transcriptPath }
       );
 
       if (session) {
@@ -481,17 +486,62 @@ function broadcast(): void {
       sessions: aggregated.sessions + 1,
     };
 
+    // Ledger totals ride the same round-trip.
+    const ledger =
+      session.transcriptPath && _httpCore ? sessionLedgerFor(session.transcriptPath) : null;
+
     const msg: BroadcastMessage = {
       type: "broadcast",
       yourSession: {
         cost: session.cost,
         tokens: session.tokens,
+        ...(ledger ? { ledger } : {}),
       },
       aggregated: fullAggregated,
     };
 
     send(ws, msg);
   }
+}
+
+/**
+ * Whole-session ledger for a transcript: main file plus nested subagent runs.
+ *
+ * Source is the parser's per-file record cache, which holds every record of
+ * a file the daemon has parsed — so a session that started before midnight
+ * keeps yesterday's turns, unlike the today-only recentRecords window. Falls
+ * back to that window only when the file isn't cached yet. No parsing here:
+ * a fresh tail is picked up by the daemon's own refresh cadence.
+ */
+function sessionLedgerFor(transcriptPath: string) {
+  if (!_httpCore || !isTranscriptPath(transcriptPath)) return null;
+  const files = [transcriptPath];
+  const subagentDir = `${transcriptPath.slice(0, -".jsonl".length)}/subagents`;
+  try {
+    // Bounded: a real session has a handful of subagent runs; anything
+    // beyond this is not a transcript directory we want to walk per tick.
+    for (const f of readdirSync(subagentDir).slice(0, 256)) {
+      if (f.endsWith(".jsonl")) files.push(`${subagentDir}/${f}`);
+    }
+  } catch {}
+  const records = files.flatMap((f) => peekCachedRecords(f) ?? []);
+  // No fallback to the recentRecords window: every record there came through
+  // the same cache, so an uncached transcript is absent from it too.
+  return records.length > 0 ? computeSessionLedger(records, transcriptPath) : null;
+}
+
+/**
+ * The WS transport and the HTTP GET are unauthenticated local endpoints and
+ * transcriptPath is client-supplied — only ever touch the filesystem for a
+ * `.jsonl` under a Claude Code projects dir (default or CLAUDE_CONFIG_DIR).
+ */
+function isTranscriptPath(p: string): boolean {
+  if (typeof p !== "string" || !p.endsWith(".jsonl") || p.includes("/../") || p.includes("\0")) {
+    return false;
+  }
+  const roots = [join(homedir(), ".claude", "projects")];
+  if (process.env.CLAUDE_CONFIG_DIR) roots.push(join(process.env.CLAUDE_CONFIG_DIR, "projects"));
+  return roots.some((root) => p.startsWith(`${root}/`));
 }
 
 /// A healthy client drains a broadcast instantly, so anything past this in its
@@ -920,6 +970,13 @@ function startHttpApi(): void {
           // Cheap to compute (single pass over records), so polled on the
           // same 30s cadence as everything else.
           json(res, core.getStatbarSignals());
+        } else if (pathname === "/api/session-ledger") {
+          // Cumulative totals for one transcript (main file + nested subagent
+          // runs), summed from the warm today window. Same numbers the WS
+          // broadcast hands the statusline; exposed over HTTP for the bar and
+          // for end-to-end checks.
+          const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
+          json(res, sessionLedgerFor(transcript) ?? { error: "Not found" });
         } else if (pathname === "/api/models") {
           const providers = parseProviders(url);
           json(res, core.getModelCosts(providers ? { providers } : undefined));

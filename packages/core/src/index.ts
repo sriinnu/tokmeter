@@ -61,6 +61,7 @@ export {
 export {
   invalidateRecordCache,
   clearRecordCache,
+  peekCachedRecords,
 } from "./parsers/utils.js";
 export { invalidateHistorySnapshot } from "./history-snapshot.js";
 export {

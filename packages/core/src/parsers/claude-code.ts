@@ -20,13 +20,22 @@ interface ClaudeContentBlock {
 interface ClaudeMessage {
   type: string;
   subtype?: string;
+  /** API request id — shared by every line written for one response. */
+  requestId?: string;
   message?: {
+    /** API message id — shared by every line written for one response. */
+    id?: string;
     model?: string;
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      /** TTL split of cache_creation_input_tokens; 1h writes bill at a higher rate. */
+      cache_creation?: {
+        ephemeral_5m_input_tokens?: number;
+        ephemeral_1h_input_tokens?: number;
+      };
     };
     /** Content blocks — assistant turns mix `thinking`, `text`, `tool_use`. */
     content?: ClaudeContentBlock[];
@@ -128,9 +137,14 @@ export class ClaudeCodeParser implements SessionParser {
           : await readJsonlFile<ClaudeMessage>(file, readFault);
 
       const newRecords: TokenRecord[] = [];
-      // Dedup: using both usage values and a stable per-message discriminator so
-      // distinct consecutive assistant messages with identical usage are kept.
-      let lastUsageKey = "";
+      // Dedup: one record per API response. Claude Code writes an assistant
+      // turn as one line per content block (thinking, text, each tool_use),
+      // every line carrying the same message.id, requestId and usage — a turn
+      // with 8 parallel tool calls is 8 lines for ONE charge. Keying on
+      // timestamp (each line has its own) counted such a turn 8×. Seed from
+      // the cached tail so a turn whose lines straddle two append scans is
+      // still folded into one record.
+      let lastUsageKey = cacheResult.cachedRecords.at(-1)?.apiCallId ?? "";
       // Most recent assistant record, including cached tail records during
       // append-only scans. A compact_boundary can arrive after we cached the
       // assistant summarization call, so the boundary must be allowed to tag
@@ -159,13 +173,6 @@ export class ClaudeCodeParser implements SessionParser {
         if (msg.type !== "assistant" || !msg.message?.usage) continue;
 
         const usage = msg.message.usage;
-        const messageDiscriminator = msg.timestamp ?? "";
-        const usageKey = messageDiscriminator
-          ? `${messageDiscriminator}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
-          : "";
-        if (usageKey && usageKey === lastUsageKey) continue;
-        if (usageKey) lastUsageKey = usageKey;
-
         // Tool names on this assistant turn. Multiple tool_use blocks in one
         // message are common (parallel tool calls) — we keep them all and
         // split cost evenly downstream in the aggregator. Skip nil/empty so
@@ -176,6 +183,48 @@ export class ClaudeCodeParser implements SessionParser {
             toolCalls.push(block.name);
           }
         }
+
+        // message.id alone identifies the API response (a retry gets a new
+        // id; the corpus has no id shared by two requestIds). Some lines omit
+        // requestId, so keying on the pair would split one call in two.
+        const apiCallId = msg.message.id || undefined;
+        // Older transcripts without ids fall back to timestamp + usage, which
+        // still folds the consecutive duplicate lines those versions wrote.
+        const usageKey =
+          apiCallId ??
+          (msg.timestamp
+            ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
+            : "");
+        const write1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+        if (usageKey && usageKey === lastUsageKey) {
+          // Same API response, later content block. Main transcripts repeat
+          // the identical usage on every line, but subagent transcripts write
+          // the first line from message_start with placeholder usage
+          // (output_tokens 2..17) and only the last line carries the real
+          // counts — keeping the first line lost ~95% of subagent output.
+          // Usage is cumulative for the response, so the max per bucket is
+          // the true value. A record whose usage grew must be re-priced.
+          if (lastAssistantRecord) {
+            const rec = lastAssistantRecord;
+            const grow = (cur: number, next: number) => (next > cur ? next : cur);
+            const before = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+            rec.inputTokens = grow(rec.inputTokens, usage.input_tokens ?? 0);
+            rec.outputTokens = grow(rec.outputTokens, usage.output_tokens ?? 0);
+            rec.cacheReadTokens = grow(rec.cacheReadTokens, usage.cache_read_input_tokens ?? 0);
+            rec.cacheWriteTokens = grow(
+              rec.cacheWriteTokens,
+              usage.cache_creation_input_tokens ?? 0
+            );
+            if (write1h > (rec.cacheWrite1hTokens ?? 0)) rec.cacheWrite1hTokens = write1h;
+            const after = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+            if (after !== before && rec.usage?.cost !== "direct") rec.cost = 0;
+            if (toolCalls.length > 0) {
+              rec.toolCalls = [...(rec.toolCalls ?? []), ...toolCalls];
+            }
+          }
+          continue;
+        }
+        if (usageKey) lastUsageKey = usageKey;
 
         const record = createRecord({
           timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
@@ -188,10 +237,12 @@ export class ClaudeCodeParser implements SessionParser {
           outputTokens: usage.output_tokens ?? 0,
           cacheReadTokens: usage.cache_read_input_tokens ?? 0,
           cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+          ...(write1h > 0 ? { cacheWrite1hTokens: write1h } : {}),
           cost: msg.costUSD ?? 0,
           usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           isSubagent: isSubagent ? true : undefined,
+          apiCallId,
         });
         newRecords.push(record);
         lastAssistantRecord = record;

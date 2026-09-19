@@ -116,6 +116,45 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Relative time until a unix-seconds epoch: "2h10m", "45m", "30s".
+ * Empty once the moment has passed — callers drop the field rather than
+ * show a stale "0s".
+ */
+export function formatResetIn(epochSec: number, nowMs: number): string {
+  if (!Number.isFinite(epochSec)) return "";
+  const left = Math.floor(epochSec - nowMs / 1000);
+  if (left <= 0) return "";
+  const h = Math.floor(left / 3600);
+  const m = Math.floor((left % 3600) / 60);
+  if (h > 0) return `${h}h${m > 0 ? `${m}m` : ""}`;
+  if (m > 0) return `${m}m`;
+  return `${left}s`;
+}
+
+/**
+ * Track bar for a 0–100 percentage: { filled: "━━━━", empty: "────" }.
+ * Box-drawing lines, not shade blocks: terminals that rasterize ░▒▓ (Ghostty,
+ * kitty) turn the empty run into a solid slab that hides the segment bg.
+ * Clamped so >100% never throws.
+ */
+export function formatTierBar(pct: number, width = 8): { filled: string; empty: string } {
+  const p = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
+  const n = Math.round((p / 100) * width);
+  return { filled: "━".repeat(n), empty: "─".repeat(width - n) };
+}
+
+/** Session line delta: { added: "+142", removed: "−38" }; null when both are zero. */
+export function formatLineDelta(
+  added: number,
+  removed: number
+): { added: string; removed: string } | null {
+  const a = Number.isFinite(added) && added > 0 ? `+${formatNumber(added)}` : "";
+  const r = Number.isFinite(removed) && removed > 0 ? `−${formatNumber(removed)}` : "";
+  if (!a && !r) return null;
+  return { added: a, removed: r };
+}
+
+/**
  * Render a sparkline from an array of values.
  *
  * Maps each value to one of the Unicode block characters ▁▂▃▄▅▆▇█
@@ -174,6 +213,13 @@ function buildPalette(tc: ThemeColors) {
 
 /** Chalk color palette — driven by the active theme. */
 export const C = buildPalette(_theme.colors);
+
+/** Usage tier: calm below 50%, amber to 80%, red past it. */
+export function tierColor(pct: number): typeof C.accent {
+  if (pct > 80) return C.danger;
+  if (pct >= 50) return C.warn;
+  return C.accent;
+}
 
 // ─── Powerline Segment Helpers ──────────────────────────────────────
 

@@ -294,6 +294,10 @@ function addBuckets(target: TokenBuckets, r: TokenRecord): void {
   target.cacheReadTokens += r.cacheReadTokens;
   target.cacheWriteTokens += r.cacheWriteTokens;
   target.reasoningTokens += r.reasoningTokens;
+  // Subset of cacheWriteTokens — deliberately excluded from tokensTotal().
+  if (r.cacheWrite1hTokens) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + r.cacheWrite1hTokens;
+  }
 }
 
 function tokensTotal(b: TokenBuckets): number {

@@ -99,6 +99,13 @@ export interface TokenRecord {
   cacheReadTokens: number;
   /** Cache write tokens. */
   cacheWriteTokens: number;
+  /**
+   * Portion of cacheWriteTokens written with the 1-hour TTL, when the
+   * provider breaks it out (Claude Code: usage.cache_creation.ephemeral_1h).
+   * Anthropic bills 1h writes at 2× input vs 1.25× for 5m, so the split
+   * changes the cost; the remainder of cacheWriteTokens is 5m.
+   */
+  cacheWrite1hTokens?: number;
   /** Reasoning/thinking tokens. */
   reasoningTokens: number;
   /** Calculated cost in USD (via kosha-discovery pricing). */
@@ -141,6 +148,15 @@ export interface TokenRecord {
    * Empty array or undefined means "this turn was just text" (no tools).
    */
   toolCalls?: string[];
+  /**
+   * Identity of the API response this record came from, when the provider
+   * exposes one (Claude Code: `message.id:requestId`). Claude Code writes one
+   * JSONL line per content block, all carrying the same usage — this is the
+   * key that keeps a parallel-tool-call turn from being counted N times,
+   * including across the append-scan boundary when a turn's lines land in
+   * two different scans.
+   */
+  apiCallId?: string;
   /**
    * Whether this record came from a subagent JSONL (path contains
    * `/subagents/`). Claude Code's Task tool spawns subagents that write to a
