@@ -161,6 +161,12 @@ jobs:
             if (srv.packages[0].identifier !== pkg.name) {
               throw new Error(`server.json package ${srv.packages[0].identifier} is not ${pkg.name}`);
             }
+            // The registry caps description at 100 chars and rejects the
+            // whole manifest with a 422 — after npm has already published,
+            // so the release is half-done. Catch it before we get there.
+            if ((srv.description ?? "").length > 100) {
+              throw new Error(`server.json description is ${srv.description.length} chars; the registry allows 100`);
+            }
           '
           # npm's read API lags its own publish by tens of seconds, and the
           # registry resolves the version before it will register anything.
