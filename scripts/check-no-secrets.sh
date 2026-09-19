@@ -65,8 +65,28 @@ for pj in packages/*/package.json; do
   node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1])).private?0:1)' "$pj" && continue
   pkgdir="$(dirname "$pj")"
   name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).name)' "$pj")"
-  # Manifest of files that WOULD ship.
-  files="$(cd "$pkgdir" && npm pack --dry-run --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{JSON.parse(s)[0].files.forEach(f=>console.log(f.path))}catch(e){}})')"
+  # Manifest of files that WOULD ship. npm has shipped two shapes for
+  # `pack --dry-run --json`: an array, and an object keyed by package name.
+  # The old parser assumed the array and swallowed the failure, so on a newer
+  # npm this scanned ZERO files while still printing "clean" — a security gate
+  # that silently inspects nothing is worse than no gate. Handle both shapes,
+  # and fail closed if the manifest can't be read or comes back empty.
+  files="$(cd "$pkgdir" && npm pack --dry-run --json 2>/dev/null | node -e '
+    let s = "";
+    process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(s);
+      } catch {
+        process.exit(1);
+      }
+      const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+      const list = entry && entry.files;
+      if (!Array.isArray(list) || list.length === 0) process.exit(1);
+      for (const f of list) console.log(f.path);
+    });
+  ')" || fail "$name: could not read the npm pack manifest — refusing to publish unscanned."
+  [[ -n "$files" ]] || fail "$name: npm pack reported no files — refusing to publish unscanned."
   bad_names="$(echo "$files" | grep -nE "$NAME_RE" | grep -vE '\.env\.example$' || true)"
   [[ -z "$bad_names" ]] || { echo "$bad_names" >&2; fail "$name would publish secret-shaped file(s) (above)."; }
   # Content scan of the packed files.
