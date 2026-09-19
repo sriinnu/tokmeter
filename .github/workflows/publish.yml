@@ -5,10 +5,20 @@
 # Adapted from the standalone workflow used in runic, kosha-discovery, etc.
 # Extended for bun monorepo with multiple publishable packages.
 #
-# NPM_TOKEN SETUP (one-time):
-#   1. https://www.npmjs.com/settings/<user>/tokens → Granular Access Token
-#   2. Type: Automation, Scope: Read and write, select target packages
-#   3. Repo Settings > Secrets > Actions → NPM_TOKEN = <token>
+# AUTHENTICATION: npm Trusted Publishing (OIDC) — no token.
+#
+# The job's own OIDC identity proves it is this workflow in this repo, so
+# there is no NPM_TOKEN to store, rotate or leak, and it works with 2FA
+# required on writes. npm is removing token-based direct publishing in
+# January 2027, so this is also the path that keeps working.
+#
+# One-time setup, per package (@sriinnu/tokmeter and @sriinnu/drishti):
+#   npmjs.com → package → Settings → Trusted Publisher → GitHub Actions
+#     Organization or user: sriinnu
+#     Repository:           tokmeter
+#     Workflow filename:    publish.yml
+#
+# Requires npm >= 11.5.1 (installed below) and Node >= 22.14.
 #
 # To publish: bump versions → commit → create GitHub Release → workflow runs.
 # ============================================================================
@@ -88,6 +98,13 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Trusted Publishing authenticates via the job's OIDC token instead of
+      # an NPM_TOKEN. It needs npm >= 11.5.1, and Node 22 still ships npm 10.
+      - name: Upgrade npm for Trusted Publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       - name: Prepare and publish verified package artifacts
         run: |
           bash scripts/prepare-packages.sh "$RUNNER_TEMP/tokmeter-packages"
@@ -102,8 +119,6 @@ jobs:
             fi
             npm publish "$RUNNER_TEMP/tokmeter-packages/$package-$version.tgz" --provenance --access public
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # ======================================================================
       # Publish the MCP server manifest to the official registry.
