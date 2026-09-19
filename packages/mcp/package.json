@@ -1,6 +1,7 @@
 {
   "name": "@sriinnu/drishti",
-  "version": "1.11.0",
+  "version": "1.12.0",
+  "mcpName": "io.github.sriinnu/tokmeter",
   "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
   "type": "module",
   "bin": {
