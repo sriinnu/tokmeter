@@ -92,6 +92,17 @@ jobs:
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
 
+      # bundle.sh builds the in-app web dashboard with `bunx vite build`, so
+      # the runner needs Bun and the workspace's dependencies — without them
+      # bundling dies on `bunx: command not found`.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
       - name: Build release binary
         working-directory: packages/macos-bar
         run: swift build -c release
