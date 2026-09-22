@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — per-session ledger totals.
+ * Tokmeter daemon — per-session ledger totals.
  *
  * Claude Code's statusline payload carries no session-cumulative token counts,
  * only the last API call. The warm core, however, already parses this

@@ -32,10 +32,10 @@
     "dev:web": "cd packages/web && bun run dev",
     "build:web:preview": "cd packages/web && bun run preview",
 
-    "drishti": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts",
-    "drishti:live": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts live",
-    "drishti:serve": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts serve",
-    "drishti:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts statusline",
+    "mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts",
+    "mcp:live": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts live",
+    "mcp:serve": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts serve",
+    "mcp:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts statusline",
 
     "daemon:start": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon start",
     "daemon:stop": "cd packages/mcp && bun src/cli.ts daemon stop",

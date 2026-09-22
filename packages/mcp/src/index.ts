@@ -1,8 +1,8 @@
 /**
- * @sriinnu/drishti — Public API barrel export.
+ * @sriinnu/tokmeter-mcp — Public API barrel export.
  *
  * Re-exports the main building blocks so consumers can use:
- *   import { createServer, LiveTracker, formatCost } from "@sriinnu/drishti";
+ *   import { createServer, LiveTracker, formatCost } from "@sriinnu/tokmeter-mcp";
  */
 
 export { createServer, startServer } from "./server.js";

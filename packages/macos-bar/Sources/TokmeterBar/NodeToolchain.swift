@@ -80,10 +80,20 @@ struct NodeToolchain: Equatable {
         return environment
     }
 
-    /// Drishti owns the daemon and depends on Tokmeter. Installing Tokmeter
-    /// alone does not install Drishti, so it cannot bootstrap the daemon.
+    /// tokmeter-mcp owns the daemon and depends on Tokmeter. Installing Tokmeter
+    /// alone does not install tokmeter-mcp, so it cannot bootstrap the daemon.
     static func daemonArguments(version: String?) -> [String] {
-        let package = version.map { "@sriinnu/drishti@\($0)" } ?? "@sriinnu/drishti"
-        return ["--yes", package, "daemon", "start"]
+        guard let version else { return ["--yes", "@sriinnu/tokmeter-mcp", "daemon", "start"] }
+        return ["--yes", "\(daemonPackage(version: version))@\(version)", "daemon", "start"]
+    }
+
+    /// The daemon shipped as @sriinnu/drishti through 1.12.x and as
+    /// @sriinnu/tokmeter-mcp from 1.13.0; neither exists under the other's
+    /// versions, so a pinned bootstrap must pick the name that version had.
+    static func daemonPackage(version: String) -> String {
+        let parts = version.split(separator: ".").prefix(2).map { Int($0) ?? 0 }
+        let major = parts.first ?? 0
+        let minor = parts.count > 1 ? parts[1] : 0
+        return (major, minor) < (1, 13) ? "@sriinnu/drishti" : "@sriinnu/tokmeter-mcp"
     }
 }

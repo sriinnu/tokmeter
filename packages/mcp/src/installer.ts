@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — Installer for statusline and MCP across all AI coding agents.
+ * @sriinnu/tokmeter-mcp — Installer for statusline and MCP across all AI coding agents.
  *
  * Supports:
  *   - Claude Code (~/.claude/settings.json)
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { C } from "./formatter.js";
 
 // ─── CLI Command Resolution ────────────────────────────────────────────────
-// Prefer the local compiled dist (node). Fall back to npx @sriinnu/drishti.
+// Prefer the local compiled dist (node). Fall back to npx @sriinnu/tokmeter-mcp.
 // We always use node + dist/cli.js for installed commands because:
 //  1. node is always in PATH (bun may not be in Claude Code's subprocess env)
 //  2. dist/cli.js works without a TypeScript runtime
@@ -30,13 +30,18 @@ function cliCommand(subcommand: string): { command: string; args?: string[] } {
   if (IS_LOCAL) {
     return { command: "node", args: [LOCAL_DIST_CLI, subcommand] };
   }
-  return { command: "npx", args: ["-y", "@sriinnu/drishti", subcommand] };
+  return { command: "npx", args: ["-y", "@sriinnu/tokmeter-mcp", subcommand] };
 }
 
 function cliCommandString(subcommand: string): string {
   if (IS_LOCAL) return `node ${LOCAL_DIST_CLI} ${subcommand}`;
-  return `npx -y @sriinnu/drishti ${subcommand}`;
+  return `npx -y @sriinnu/tokmeter-mcp ${subcommand}`;
 }
+
+/** Key the MCP server is registered under in each editor's config. */
+const MCP_SERVER_NAME = "tokmeter";
+/** Keys earlier releases registered; removed on install and uninstall. */
+const LEGACY_MCP_SERVER_NAMES = ["drishti"];
 
 // ─── Editor Configurations ───────────────────────────────────────────────────
 
@@ -260,7 +265,7 @@ export function installMCP(editors?: string[]): void {
 
   console.log(C.title("\n【♾️】 Installing MCP Server\n"));
 
-  const serverName = "drishti";
+  const serverName = MCP_SERVER_NAME;
   let installed = 0;
   let skipped = 0;
 
@@ -274,7 +279,17 @@ export function installMCP(editors?: string[]): void {
     // Handle TOML-based configs (Codex)
     if (editor.configFormat === "toml") {
       const configPath = editor.configPath ?? editor.settingsPath;
-      const existingContent = existsSync(configPath) ? readFileSync(configPath, "utf-8") : null;
+      let existingContent = existsSync(configPath) ? readFileSync(configPath, "utf-8") : null;
+      const beforeMigration = existingContent;
+      for (const legacy of LEGACY_MCP_SERVER_NAMES) {
+        if (existingContent?.includes(`[mcp_servers.${legacy}]`)) {
+          existingContent = removeMcpFromToml(existingContent, legacy);
+        }
+      }
+      if (existingContent !== beforeMigration && existingContent !== null) {
+        writeFileSync(configPath, existingContent, "utf-8");
+        console.log(C.dim(`    removed legacy drishti entry from ${editor.name}`));
+      }
 
       // Check if already installed
       if (existingContent?.includes(`[mcp_servers.${serverName}]`)) {
@@ -307,7 +322,14 @@ export function installMCP(editors?: string[]): void {
     }
     const config = rawMcp ?? {};
 
-    const existingServers = (config[mcpKey] ?? {}) as Record<string, unknown>;
+    const existingServers = { ...((config[mcpKey] ?? {}) as Record<string, unknown>) };
+    const hadLegacy = LEGACY_MCP_SERVER_NAMES.some((legacy) => legacy in existingServers);
+    for (const legacy of LEGACY_MCP_SERVER_NAMES) delete existingServers[legacy];
+    if (hadLegacy) {
+      config[mcpKey] = existingServers;
+      writeJSON(mcpPath, config);
+      console.log(C.dim(`    removed legacy drishti entry from ${editor.name}`));
+    }
 
     // Check if already installed
     if (existingServers[serverName]) {
@@ -331,14 +353,7 @@ export function installMCP(editors?: string[]): void {
   console.log();
   console.log(C.dim(`Installed: ${installed}, Skipped: ${skipped}`));
   console.log(C.accent("\nRestart your editor(s) to activate the MCP server.\n"));
-  console.log(C.dim("MCP tools available:"));
-  console.log(C.dim("  • token_usage — Get token usage summary"));
-  console.log(C.dim("  • cost_breakdown — Cost breakdown by model/provider/project"));
-  console.log(C.dim("  • daily_trend — Daily usage trend with sparkline"));
-  console.log(C.dim("  • session_cost — Current session cost and burn rate"));
-  console.log(C.dim("  • budget_check — Check remaining budget"));
-  console.log(C.dim("  • compare_models — Compare cost-efficiency across models"));
-  console.log(C.dim("  • export_csv — Export usage data as CSV\n"));
+  console.log(C.dim("Start with tokmeter_pulse; tokmeter-mcp help lists every tool.\n"));
 }
 
 // ─── Uninstaller ────────────────────────────────────────────────────────────
@@ -388,13 +403,16 @@ export function uninstallMCP(editors?: string[]): void {
       }
 
       const content = readFileSync(configPath, "utf-8");
+      const names = [MCP_SERVER_NAME, ...LEGACY_MCP_SERVER_NAMES].filter((name) =>
+        content.includes(`[mcp_servers.${name}]`)
+      );
 
-      if (!content.includes("[mcp_servers.drishti]")) {
+      if (names.length === 0) {
         console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
         continue;
       }
 
-      const newContent = removeMcpFromToml(content, "drishti");
+      const newContent = names.reduce((acc, name) => removeMcpFromToml(acc, name), content);
       writeFileSync(configPath, newContent, "utf-8");
       console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
       continue;
@@ -406,12 +424,14 @@ export function uninstallMCP(editors?: string[]): void {
     const config = readJSON<Record<string, unknown>>(mcpPath);
 
     const servers = (config?.[mcpKey] ?? {}) as Record<string, unknown>;
-    if (!servers.drishti) {
+    const names = [MCP_SERVER_NAME, ...LEGACY_MCP_SERVER_NAMES].filter((name) => name in servers);
+    if (names.length === 0) {
       console.log(C.dim(`  ⊘ ${editor.name} — not installed`));
       continue;
     }
 
-    const { drishti: _drishti, ...remainingServers } = servers;
+    const remainingServers = { ...servers };
+    for (const name of names) delete remainingServers[name];
 
     if (Object.keys(remainingServers).length === 0) {
       delete config![mcpKey];

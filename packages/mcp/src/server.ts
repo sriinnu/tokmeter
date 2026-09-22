@@ -1,9 +1,9 @@
 /**
- * @sriinnu/drishti — MCP Server
+ * @sriinnu/tokmeter-mcp — MCP Server
  *
- * दृष्टि (Drishti) — "Vision" — Token usage observatory for AI coding agents.
+ * Tokmeter — token usage observatory for AI coding agents.
  *
- * Exposes 20 tools via the Model Context Protocol that let AI agents and CLIs
+ * Exposes 24 tools via the Model Context Protocol that let AI agents and CLIs
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
@@ -341,10 +341,10 @@ export function createServer(): McpServer {
   });
 
   // ────────────────────────────────────────────
-  // 1. drishti_pulse — Quick snapshot
+  // 1. tokmeter_pulse — Quick snapshot
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_pulse",
+    "tokmeter_pulse",
     "Get a quick pulse-check snapshot of token usage — total cost, tokens, active models, projects, and providers. " +
       "Use this as the default first tool to understand overall AI agent spending. Supports today/week/month/all scopes.",
     {
@@ -401,10 +401,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 2. drishti_models — Per-model breakdown
+  // 2. tokmeter_models — Per-model breakdown
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_models",
+    "tokmeter_models",
     "Detailed per-model cost and token breakdown with visual bar charts. " +
       "Shows every model used, its provider, total tokens, cost, and share of total spend. " +
       "Use this to identify which models are driving cost.",
@@ -459,10 +459,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 3. drishti_providers — Provider comparison
+  // 3. tokmeter_providers — Provider comparison
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_providers",
+    "tokmeter_providers",
     "Compare token usage across providers (Claude Code, Cursor, Codex, Gemini, etc.). " +
       "Shows cost, tokens, model count, and share for each provider. " +
       "Use this to understand which AI coding agents are most used and costly.",
@@ -509,10 +509,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 4. drishti_projects — Project breakdown
+  // 4. tokmeter_projects — Project breakdown
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_projects",
+    "tokmeter_projects",
     "Show per-project token usage breakdown — cost, tokens, active days, models used, and date range. " +
       "Use this to see which projects are consuming the most AI resources.",
     {
@@ -568,10 +568,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 5. drishti_timeline — Daily timeline
+  // 5. tokmeter_timeline — Daily timeline
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_timeline",
+    "tokmeter_timeline",
     "Show a day-by-day timeline of token usage with sparkline trends and daily cost/token breakdowns. " +
       "Use this to see patterns over time — spending spikes, quiet days, and usage trends.",
     {
@@ -635,10 +635,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 6. drishti_forecast — Cost projection
+  // 6. tokmeter_forecast — Cost projection
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_forecast",
+    "tokmeter_forecast",
     "Project future AI token costs based on historical burn rates. " +
       "Calculates daily/weekly/monthly averages and projects costs for the next 7, 30, and 90 days. " +
       "Also shows trend direction (accelerating, decelerating, or steady). Use this for budgeting.",
@@ -729,10 +729,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 7. drishti_search — Record search
+  // 7. tokmeter_search — Record search
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_search",
+    "tokmeter_search",
     "Flexible search across all token usage records with filtering by model, provider, project, date range, and cost thresholds. " +
       "Returns individual records sorted by timestamp. Use this to find specific usage events or investigate high-cost records.",
     {
@@ -830,10 +830,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 8. drishti_compare — Side-by-side comparison
+  // 8. tokmeter_compare — Side-by-side comparison
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_compare",
+    "tokmeter_compare",
     "Compare two or more models or providers side-by-side on cost, tokens, efficiency, and usage metrics. " +
       "Use this when the user wants to know which model or provider is cheaper, more efficient, or more heavily used.",
     {
@@ -997,10 +997,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 9. drishti_export — Export data
+  // 9. tokmeter_export — Export data
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_export",
+    "tokmeter_export",
     "Export token usage data as JSON, CSV, or Markdown. " +
       "Returns the full data payload in the requested format. " +
       "Use JSON for programmatic consumption, CSV for spreadsheets, Markdown for reports.",
@@ -1199,10 +1199,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 10. drishti_budget — Budget monitoring
+  // 10. tokmeter_budget — Budget monitoring
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_budget",
+    "tokmeter_budget",
     "Monitor spending against a budget with visual progress bars and alerts. " +
       "Set a daily, weekly, or monthly budget and see how close you are to the limit. " +
       "Shows projected overshoot/undershoot. Use this to stay within spending targets.",
@@ -1325,10 +1325,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 11. drishti_heatmap — Activity heatmap
+  // 11. tokmeter_heatmap — Activity heatmap
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_heatmap",
+    "tokmeter_heatmap",
     "Visualize activity patterns as a heatmap — see which hours of the day and days of the week have the heaviest usage. " +
       "Shows both cost and token intensity. Use this to understand work patterns and peak usage times.",
     {
@@ -1456,10 +1456,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 12. drishti_anomaly — Anomaly detection
+  // 12. tokmeter_anomaly — Anomaly detection
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_anomaly",
+    "tokmeter_anomaly",
     "Detect unusual spending patterns and anomalies in token usage. " +
       "Identifies days or sessions with cost spikes, sudden model switches, abnormally large requests, " +
       "and deviation from historical averages. Use this to catch runaway costs or unexpected usage.",
@@ -1651,10 +1651,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 13. drishti_efficiency — Cache & efficiency metrics
+  // 13. tokmeter_efficiency — Cache & efficiency metrics
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_efficiency",
+    "tokmeter_efficiency",
     "Analyze cache hit rates, reasoning token ratios, input/output efficiency, and cost-per-token metrics. " +
       "Shows how efficiently AI agents are using tokens — high cache rates mean less wasted compute. " +
       "Use this to optimize costs by identifying models or projects with poor cache utilization.",
@@ -1785,10 +1785,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 14. drishti_leaderboard — Rank models/providers
+  // 14. tokmeter_leaderboard — Rank models/providers
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_leaderboard",
+    "tokmeter_leaderboard",
     "Rank models and providers by various metrics: total cost, cost-efficiency (cost per 1M tokens), " +
       "total tokens, cache efficiency, reasoning usage, and output volume. " +
       "Use this to find the best value models or identify the heaviest hitters.",
@@ -1984,10 +1984,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 15. drishti_digest — Natural language summary
+  // 15. tokmeter_digest — Natural language summary
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_digest",
+    "tokmeter_digest",
     "Generate a concise natural language summary of token usage — like a daily/weekly briefing. " +
       "Highlights key stats, top spenders, notable trends, and actionable insights in prose form. " +
       "Use this when the user wants a quick narrative overview rather than tables.",
@@ -2119,10 +2119,10 @@ export function createServer(): McpServer {
   );
 
   // ────────────────────────────────────────────
-  // 16. drishti_streaks — Usage streaks & habits
+  // 16. tokmeter_streaks — Usage streaks & habits
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_streaks",
+    "tokmeter_streaks",
     "Analyze your AI coding habits — active day streaks, weekend vs weekday usage, session frequency, " +
       "and consistency metrics. Use this to understand how regularly and intensively you use AI coding agents.",
     {
@@ -2312,7 +2312,7 @@ export function createServer(): McpServer {
   // 17. cache_efficiency — Cache hit/miss analysis
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_cache_efficiency",
+    "tokmeter_cache_efficiency",
     "Analyze cache hit/miss patterns across sessions. Shows overall cache hit rate, dollar savings from caching, " +
       "cache write waste, and per-model breakdown. Use this to understand how effectively prompt caching is reducing your costs.",
     {
@@ -2514,7 +2514,7 @@ export function createServer(): McpServer {
   }
 
   server.tool(
-    "drishti_model_advisor",
+    "tokmeter_model_advisor",
     "Compare what you actually spent vs what cheaper models would have cost. " +
       "Shows current spending by model and estimates savings if you downgraded expensive models " +
       "(e.g., Opus → Sonnet, GPT-5 → GPT-4o). Includes a reference pricing table.",
@@ -2669,7 +2669,7 @@ export function createServer(): McpServer {
   // 19. budget_alert — Proactive budget monitoring
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_budget_alert",
+    "tokmeter_budget_alert",
     "Proactive budget monitoring with configurable daily/weekly/monthly thresholds. " +
       "Shows current spend, percentage of budget used, projected end-of-period spend, and " +
       "hours remaining until budget is exceeded. Gives green/yellow/red status indicators.",
@@ -2805,7 +2805,7 @@ export function createServer(): McpServer {
   // 20. cost_optimization_tips — Actionable recommendations
   // ────────────────────────────────────────────
   server.tool(
-    "drishti_cost_optimization_tips",
+    "tokmeter_cost_optimization_tips",
     "Analyze usage patterns and provide actionable cost optimization recommendations. " +
       "Generates tips based on actual data — cache efficiency, model selection, conversation length, " +
       "and spending distribution. Each tip includes category, severity, and estimated savings.",
@@ -2980,10 +2980,10 @@ export function createServer(): McpServer {
   // ─── Cleanup Tools ──────────────────────────────────────────
 
   server.tool(
-    "drishti_cleanup_preview",
+    "tokmeter_cleanup_preview",
     "Preview what session data would be deleted for the given filters. " +
       "Shows affected files, directories, database rows, total bytes, and per-project/provider breakdown. " +
-      "ALWAYS call this before drishti_cleanup_execute to understand the impact.",
+      "ALWAYS call this before tokmeter_cleanup_execute to understand the impact.",
     {
       project: ProjectFilter,
       providers: ProvidersArray,
@@ -3076,7 +3076,7 @@ export function createServer(): McpServer {
         }
 
         lines.push(
-          "  To execute: call drishti_cleanup_execute with the same filters and confirm='DELETE'"
+          "  To execute: call tokmeter_cleanup_execute with the same filters and confirm='DELETE'"
         );
 
         return {
@@ -3097,10 +3097,10 @@ export function createServer(): McpServer {
   );
 
   server.tool(
-    "drishti_cleanup_execute",
+    "tokmeter_cleanup_execute",
     "DESTRUCTIVE: Permanently delete session data matching the given filters. " +
       "Creates a backup by default before deleting. " +
-      "ALWAYS call drishti_cleanup_preview first. " +
+      "ALWAYS call tokmeter_cleanup_preview first. " +
       "Requires confirm='DELETE' as a safety guard.",
     {
       project: ProjectFilter,
@@ -3120,7 +3120,7 @@ export function createServer(): McpServer {
           content: [
             {
               type: "text",
-              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call drishti_cleanup_preview first to review what will be deleted.\n`,
+              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call tokmeter_cleanup_preview first to review what will be deleted.\n`,
             },
           ],
           isError: true,
@@ -3172,7 +3172,7 @@ export function createServer(): McpServer {
   );
 
   server.tool(
-    "drishti_backups",
+    "tokmeter_backups",
     "List available cleanup backups with metadata (date, size, providers, projects).",
     {},
     async () => {
@@ -3207,10 +3207,10 @@ export function createServer(): McpServer {
   );
 
   server.tool(
-    "drishti_restore",
+    "tokmeter_restore",
     "Restore session data from a cleanup backup. Requires confirm='RESTORE' as a safety guard.",
     {
-      backup_id: z.string().describe("Backup ID to restore (from drishti_backups)"),
+      backup_id: z.string().describe("Backup ID to restore (from tokmeter_backups)"),
       confirm: z.string().describe("Must be exactly 'RESTORE' to proceed"),
     },
     async (params) => {

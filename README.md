@@ -51,13 +51,13 @@ Requires Node.js 18+. Reading session files needs no provider credentials; prici
 npx @sriinnu/tokmeter --today
 
 # Install the CLI, and the daemon/MCP server
-npm install -g @sriinnu/tokmeter @sriinnu/drishti
+npm install -g @sriinnu/tokmeter @sriinnu/tokmeter-mcp
 ```
 
 | Package | Contents |
 | --- | --- |
 | [`@sriinnu/tokmeter`](packages/tokmeter/README.md) | Core API, CLI, and terminal UI |
-| [`@sriinnu/drishti`](packages/mcp/README.md) | MCP server, daemon, statusline, and live terminal UI |
+| [`@sriinnu/tokmeter-mcp`](packages/mcp/README.md) | MCP server, daemon, statusline, and live terminal UI |
 
 `packages/core`, `packages/cli`, and `packages/tui` are private workspace packages bundled into `@sriinnu/tokmeter`. `packages/web` is a separate private workspace app run from source.
 
@@ -103,18 +103,18 @@ Reuse one core scan when querying several breakdowns. See [integration guidance]
 ## Daemon, MCP, and statusline
 
 ```sh
-drishti daemon start
-drishti daemon status
-drishti serve             # MCP server over stdio
-drishti statusline        # one statusline tick
-drishti live              # live terminal UI
+tokmeter-mcp daemon start
+tokmeter-mcp daemon status
+tokmeter-mcp serve             # MCP server over stdio
+tokmeter-mcp statusline        # one statusline tick
+tokmeter-mcp live              # live terminal UI
 ```
 
-The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. The macOS app, statusline, and MCP server consume its shared state. Daemon commands belong to `@sriinnu/drishti`; install it for these surfaces.
+The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. The macOS app, statusline, and MCP server consume its shared state. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
 
-MCP tools use the `drishti_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [Drishti reference](packages/mcp/README.md) for names, configuration, and programmatic exports.
+MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP reference](packages/mcp/README.md) for names, configuration, and programmatic exports.
 
-`drishti editors` lists installer targets. `drishti install-mcp` and `drishti install-statusline` write editor configuration; inspect the generated settings for your editor. See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
+`tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
 ## Terminal and web interfaces
 
@@ -141,7 +141,7 @@ Open `http://localhost:3000`. See [web setup and data sources](packages/web/READ
 
 Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also required for the local daemon.
 
-Install `@sriinnu/drishti`, run `drishti daemon start`, then open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases).
+Install `@sriinnu/tokmeter-mcp`, run `tokmeter-mcp daemon start`, then open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases).
 
 The popup gives today's tokens and estimated API cost equal prominence, with models and projects below. Chart hover cards show exact daily tokens and cost. **Usage details** expands lifetime totals, trends, and signals. Six themes are selectable: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. The Hub provides larger breakdowns and settings. Settings → **Open web dashboard** starts its local server on demand; **Stop web dashboard** or quitting the app stops it.
 

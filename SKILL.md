@@ -30,7 +30,7 @@ The single most important choice is **one-shot versus repeated** reads.
 
 | Need | Use | Why |
 | --- | --- | --- |
-| Live or repeated answers inside an agent | **MCP server** (`@sriinnu/drishti`) | Reads the warm daemon; no corpus scan per question |
+| Live or repeated answers inside an agent | **MCP server** (`@sriinnu/tokmeter-mcp`) | Reads the warm daemon; no corpus scan per question |
 | Live or repeated answers from any language | **Daemon HTTP** on `127.0.0.1:9877` | Same warm state, plain JSON, no Node dependency |
 | One-shot report in a script or CI | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract, no code to write |
 | One reusable in-process scan (Node/Bun) | `@sriinnu/tokmeter` | Lowest-level API: scan, aggregate, price, cleanup, restore |
@@ -45,31 +45,31 @@ The single most important choice is **one-shot versus repeated** reads.
 ## MCP (preferred for agents)
 
 Published in the official MCP registry as **`io.github.sriinnu/tokmeter`**,
-shipped in the npm package `@sriinnu/drishti`. The default command starts a
+shipped in the npm package `@sriinnu/tokmeter-mcp`. The default command starts a
 terminal UI, so the MCP entry point is the `serve` subcommand:
 
 ```json
-{ "command": "npx", "args": ["-y", "@sriinnu/drishti", "serve"] }
+{ "command": "npx", "args": ["-y", "@sriinnu/tokmeter-mcp", "serve"] }
 ```
 
-Tools are prefixed `drishti_`. Start with `drishti_pulse`; it answers most
+Tools are prefixed `tokmeter_`. Start with `tokmeter_pulse`; it answers most
 "what am I spending" questions in one call.
 
 | Group | Tools |
 | --- | --- |
-| Overview | `drishti_pulse`, `drishti_digest`, `drishti_timeline`, `drishti_heatmap`, `drishti_streaks` |
-| Breakdowns | `drishti_models`, `drishti_providers`, `drishti_projects`, `drishti_search` |
-| Analysis | `drishti_compare`, `drishti_forecast`, `drishti_efficiency`, `drishti_leaderboard`, `drishti_anomaly`, `drishti_cache_efficiency` |
-| Advice | `drishti_model_advisor`, `drishti_cost_optimization_tips`, `drishti_budget`, `drishti_budget_alert` |
-| Data management | `drishti_export`, `drishti_backups`, `drishti_cleanup_preview`, `drishti_cleanup_execute`, `drishti_restore` |
+| Overview | `tokmeter_pulse`, `tokmeter_digest`, `tokmeter_timeline`, `tokmeter_heatmap`, `tokmeter_streaks` |
+| Breakdowns | `tokmeter_models`, `tokmeter_providers`, `tokmeter_projects`, `tokmeter_search` |
+| Analysis | `tokmeter_compare`, `tokmeter_forecast`, `tokmeter_efficiency`, `tokmeter_leaderboard`, `tokmeter_anomaly`, `tokmeter_cache_efficiency` |
+| Advice | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips`, `tokmeter_budget`, `tokmeter_budget_alert` |
+| Data management | `tokmeter_export`, `tokmeter_backups`, `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_restore` |
 
-`drishti_cleanup_execute` **deletes source session files**. Always run
-`drishti_cleanup_preview` first and get explicit human confirmation; back up
-with `drishti_backups` before destructive work.
+`tokmeter_cleanup_execute` **deletes source session files**. Always run
+`tokmeter_cleanup_preview` first and get explicit human confirmation; back up
+with `tokmeter_backups` before destructive work.
 
 ## Daemon HTTP
 
-Start it with `drishti daemon start`. Read-only JSON on `127.0.0.1:9877`
+Start it with `tokmeter-mcp daemon start`. Read-only JSON on `127.0.0.1:9877`
 (WebSocket on `9876` is for live session registration, not queries):
 
 | Endpoint | Returns |
@@ -140,7 +140,7 @@ const pricing = await lookupTokmeterPricing("claude-opus-5");
 
 ## Packages
 
-`@sriinnu/tokmeter` (core API, CLI, TUI) and `@sriinnu/drishti` (MCP server,
+`@sriinnu/tokmeter` (core API, CLI, TUI) and `@sriinnu/tokmeter-mcp` (MCP server,
 daemon, statusline) are the published surfaces. `packages/core`, `cli`, `tui`
 and `web` are private implementation packages — do not depend on them directly.
 

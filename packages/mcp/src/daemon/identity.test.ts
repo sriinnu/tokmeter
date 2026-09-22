@@ -87,6 +87,17 @@ describe("daemon process identity", () => {
       JSON.stringify({ name: "unrelated", bin: { drishti: "dist/cli.js" } })
     );
     expect(inspectDaemon(pidFile, ownerFile, () => legacy).state).toBe("unverified");
+    // The renamed package is recognised too, but only under its own bin key.
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@sriinnu/tokmeter-mcp", bin: { "tokmeter-mcp": "dist/cli.js" } })
+    );
+    expect(inspectDaemon(pidFile, ownerFile, () => legacy).state).toBe("verified");
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@sriinnu/tokmeter-mcp", bin: { drishti: "dist/cli.js" } })
+    );
+    expect(inspectDaemon(pidFile, ownerFile, () => legacy).state).toBe("unverified");
   });
 
   test("the bounded native query can identify this test process", () => {

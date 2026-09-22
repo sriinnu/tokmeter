@@ -1,4 +1,4 @@
-// DaemonClient.swift — HTTP client for the Drishti daemon REST API.
+// DaemonClient.swift — HTTP client for the Tokmeter daemon REST API.
 //
 // The daemon writes its bearer token to /tmp/drishti-daemon.token (mode 0600)
 // when started. This client reads the token once at init and includes it on
@@ -19,7 +19,7 @@ enum DaemonError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .daemonNotRunning:
-            return "Drishti daemon is not running. Start it with: drishti daemon start"
+            return "Tokmeter daemon is not running. Start it with: tokmeter-mcp daemon start"
         case .versionMismatch(let daemonMajor):
             return "Daemon API v\(daemonMajor) is incompatible with this app (expected v\(DaemonClient.expectedApiMajor)). Update either the daemon or this app."
         case .httpError(let code):
@@ -86,7 +86,7 @@ final class DaemonClient {
         let len = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
         guard len > 0 else { return false }
         let name = String(cString: nameBuf)
-        let nameOk = name == "node" || name == "bun" || name.hasPrefix("drishti")
+        let nameOk = name == "node" || name == "bun" || name.hasPrefix("drishti") || name.hasPrefix("tokmeter")
         guard nameOk else { return false }
 
         // Stale-PID-file defense: if the daemon crashed and the OS recycled

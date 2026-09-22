@@ -5,12 +5,12 @@ A native SwiftUI `MenuBarExtra` and companion Hub for local token usage and cost
 ## Start
 
 Install Node.js 18+ with npx, then open TokmeterBar from `/Applications`.
-The current source discovers paired Node/npx in common system and managed installations and starts the version-matched `@sriinnu/drishti` daemon when it is unavailable. The first download needs network access. Missing prerequisites and startup failures show an explanation and Retry control.
+The current source discovers paired Node/npx in common system and managed installations and starts the version-matched `@sriinnu/tokmeter-mcp` daemon when it is unavailable. The first download needs network access. Missing prerequisites and startup failures show an explanation and Retry control.
 
-For older 1.10.0 builds, install and start the daemon explicitly:
+For older 1.10.0 builds, install and start the daemon explicitly (it shipped as `@sriinnu/drishti` before 1.13.0):
 
 ```sh
-npm install -g @sriinnu/drishti
+npm install -g @sriinnu/drishti@1.10.0
 drishti daemon start
 open /Applications/TokmeterBar.app
 ```

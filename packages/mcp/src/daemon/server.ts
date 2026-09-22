@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — WebSocket server for cross-provider aggregation
+ * Tokmeter daemon — WebSocket server for cross-provider aggregation
  *
  * Provides real-time token/cost aggregation across multiple AI coding assistants.
  * Each provider's statusline connects, reports session data, and receives
@@ -275,7 +275,7 @@ export function startDaemon(): void {
       DAEMON_IDENTITY_FILE,
       JSON.stringify(captureDaemonIdentity(process.pid, evidence))
     );
-    console.log(`【♾️】 Drishti Daemon listening on ${DAEMON_URL}`);
+    console.log(`【♾️】 Tokmeter daemon listening on ${DAEMON_URL}`);
 
     // Write PID file (canonical + legacy /tmp shim for bar v1.4.0 compat).
     writeSecretFile(DAEMON_PID_FILE, String(process.pid));
@@ -1679,7 +1679,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
         try {
           kickstartAgent();
           await new Promise((r) => setTimeout(r, 800));
-          console.log("【♾️】 Drishti Daemon started via launchd");
+          console.log("【♾️】 Tokmeter daemon started via launchd");
           console.log(getDaemonStatus());
           break;
         } catch (err) {
@@ -1731,10 +1731,10 @@ export async function runDaemonCLI(command: string): Promise<void> {
         // Give the child a moment to write the PID file, then confirm.
         await new Promise((r) => setTimeout(r, 800));
         if (isDaemonRunning()) {
-          console.log("【♾️】 Drishti Daemon started (background)");
+          console.log("【♾️】 Tokmeter daemon started (background)");
           console.log(getDaemonStatus());
         } else {
-          console.log("【♾️】 Daemon starting… (check `drishti daemon status` in a moment)");
+          console.log("【♾️】 Daemon starting… (check `tokmeter-mcp daemon status` in a moment)");
         }
         process.exit(0);
       }
@@ -1748,7 +1748,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       if (isAgentLoaded()) {
         console.log(
           "Daemon is launchd-supervised — stopping it directly won't stick.\n" +
-            "    To stop it, run: drishti daemon uninstall-agent"
+            "    To stop it, run: tokmeter-mcp daemon uninstall-agent"
         );
         break;
       }
@@ -1781,7 +1781,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
         try {
           kickstartAgent();
           await new Promise((r) => setTimeout(r, 800));
-          console.log("【♾️】 Drishti Daemon restarted via launchd");
+          console.log("【♾️】 Tokmeter daemon restarted via launchd");
           console.log(getDaemonStatus());
           break;
         } catch (err) {
@@ -1830,7 +1830,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       if (isDaemonRunning()) {
         console.log(
           "A daemon is still running and wouldn't release port. Aborting install.\n" +
-            "    Stop it (drishti daemon stop) and retry install-agent."
+            "    Stop it (tokmeter-mcp daemon stop) and retry install-agent."
         );
         break;
       }
@@ -1870,7 +1870,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
 
     default:
       console.log(
-        "Usage: drishti daemon [start|stop|status|restart|install-agent|uninstall-agent]"
+        "Usage: tokmeter-mcp daemon [start|stop|status|restart|install-agent|uninstall-agent]"
       );
   }
 }

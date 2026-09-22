@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — Client for statusline integration
+ * Tokmeter daemon — Client for statusline integration
  *
  * Provides a simple sync interface for statusline hooks to:
  * 1. Report session data to the daemon

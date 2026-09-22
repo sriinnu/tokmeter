@@ -9,7 +9,7 @@
     -->
 
     <!--
-        Outgoing network access — required to talk to the Drishti daemon
+        Outgoing network access — required to talk to the Tokmeter daemon
         on http://127.0.0.1:9877 AND to fetch the Sparkle appcast.xml
         + downloading update zips.
     -->

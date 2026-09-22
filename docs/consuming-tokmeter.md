@@ -9,18 +9,18 @@ Use this guide when another AI project, CLI, service, or editor integration need
 | Local programmatic access in Node/Bun | `@sriinnu/tokmeter` | Lowest-level API with full scan, aggregation, filtering, cleanup, and pricing access |
 | Shell automation / CI / scripting | `npx @sriinnu/tokmeter --json` | Stable shell entrypoint that emits machine-readable JSON |
 | Convenience helpers without shelling out | `@sriinnu/tokmeter/cli` imports | Wraps the common summary/project/model/stats queries |
-| Live token telemetry from an AI agent | `@sriinnu/drishti` | MCP server, daemon, live tracker, and statusline surface |
+| Live token telemetry from an AI agent | `@sriinnu/tokmeter-mcp` | MCP server, daemon, live tracker, and statusline surface |
 | Human exploration | `npx -p @sriinnu/tokmeter tokmeter-tui` or the web workspace | Best for interactive/manual use, not for automation |
 
 ## Canonical published package names
 
-The published packages are `@sriinnu/tokmeter` and `@sriinnu/drishti`.
+The published packages are `@sriinnu/tokmeter` and `@sriinnu/tokmeter-mcp`.
 Use `@sriinnu/tokmeter` for the core API and `@sriinnu/tokmeter/cli` for convenience helpers.
 The core, CLI, TUI, and web workspace packages are private implementation packages.
 
 ## Recommended integration order
 
-1. If your tool can speak MCP, use `@sriinnu/drishti`.
+1. If your tool can speak MCP, use `@sriinnu/tokmeter-mcp`.
 2. If you need batch automation or CI checks, use `npx @sriinnu/tokmeter --json`.
 3. If you need embedded logic in Node/Bun code, use `@sriinnu/tokmeter` directly.
 4. If you want convenience wrappers around common queries, import from `@sriinnu/tokmeter/cli`.
@@ -106,7 +106,7 @@ Scan metadata describes the full refresh. Narrowed reports omit rolling live sig
 
 ## MCP / live integrations
 
-Use `@sriinnu/drishti` when an AI assistant should answer token/cost questions during a session.
+Use `@sriinnu/tokmeter-mcp` when an AI assistant should answer token/cost questions during a session.
 
 - MCP server: tool-based queries
 - daemon: cross-provider live aggregation
@@ -119,7 +119,7 @@ Use `@sriinnu/drishti` when an AI assistant should answer token/cost questions d
 - Pricing can be skipped with `light` / `--light` when speed matters more than dollar values.
 - CLI JSON is the safest shell-facing contract.
 - `TokmeterSummary` is the best high-level data contract for dashboards and downstream apps.
-- Drishti is the best surface for live, in-session AI integrations.
+- The MCP server (`@sriinnu/tokmeter-mcp`) is the best surface for live, in-session AI integrations.
 
 ## See also
 

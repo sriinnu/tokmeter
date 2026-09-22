@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * @sriinnu/drishti — CLI entry point.
+ * @sriinnu/tokmeter-mcp — CLI entry point.
  *
  * Subcommands:
- *   drishti                        Start live TUI dashboard (default)
- *   drishti live                   Start live TUI dashboard
- *   drishti serve|mcp              Start MCP server (stdio transport)
- *   drishti statusline|status      Statusline mode (stdin → stdout)
- *   drishti daemon start           Start cross-provider aggregation daemon
- *   drishti daemon stop            Stop the daemon
- *   drishti daemon status          Check daemon status
- *   drishti install-statusline     Install statusline hook for ALL editors
- *   drishti install-mcp            Install MCP server for ALL editors
- *   drishti install-hooks          Install guard hooks (Claude Code)
- *   drishti install-all|restore    Restore everything — statusline + MCP + hooks
- *   drishti uninstall-statusline   Remove statusline hook from all editors
- *   drishti uninstall-mcp          Remove MCP server from all editors
- *   drishti uninstall-hooks        Remove guard hooks (Claude Code)
- *   drishti editors                List all supported editors
- *   drishti help                   Show usage instructions
+ *   tokmeter-mcp                        Start live TUI dashboard (default)
+ *   tokmeter-mcp live                   Start live TUI dashboard
+ *   tokmeter-mcp serve|mcp              Start MCP server (stdio transport)
+ *   tokmeter-mcp statusline|status      Statusline mode (stdin → stdout)
+ *   tokmeter-mcp daemon start           Start cross-provider aggregation daemon
+ *   tokmeter-mcp daemon stop            Stop the daemon
+ *   tokmeter-mcp daemon status          Check daemon status
+ *   tokmeter-mcp install-statusline     Install statusline hook for ALL editors
+ *   tokmeter-mcp install-mcp            Install MCP server for ALL editors
+ *   tokmeter-mcp install-hooks          Install guard hooks (Claude Code)
+ *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP + hooks
+ *   tokmeter-mcp uninstall-statusline   Remove statusline hook from all editors
+ *   tokmeter-mcp uninstall-mcp          Remove MCP server from all editors
+ *   tokmeter-mcp uninstall-hooks        Remove guard hooks (Claude Code)
+ *   tokmeter-mcp editors                List all supported editors
+ *   tokmeter-mcp help                   Show usage instructions
  */
 
 // Process-level error handlers — statusline must fail silently since editors
@@ -197,10 +197,10 @@ function printHelp(): void {
   const a = C.accent;
 
   console.log(`
-${t("【♾️】 दृष्टि  @sriinnu/drishti")} ${d("— token observatory for AI coding agents")}
+${t("【♾️】 tokmeter  @sriinnu/tokmeter-mcp")} ${d("— token observatory for AI coding agents")}
 
 ${b("USAGE")}
-  ${a("drishti")} ${d("[command]")}
+  ${a("tokmeter-mcp")} ${d("[command]")}
 
 ${b("COMMANDS")}
   ${a("live")}              Start the live TUI dashboard ${d("(default)")}
@@ -226,37 +226,37 @@ ${b("DAEMON — Cross-Provider Aggregation")}
   open windows (Claude Code, Cursor, Codex, etc.)
 
   ${d("# Start the daemon")}
-  ${a("drishti daemon start")}
+  ${a("tokmeter-mcp daemon start")}
 
   ${d("# Check if running")}
-  ${a("drishti daemon status")}
+  ${a("tokmeter-mcp daemon status")}
 
   ${d("# Stop the daemon")}
-  ${a("drishti daemon stop")}
+  ${a("tokmeter-mcp daemon stop")}
 
 ${b("SUPPORTED EDITORS")}
   Claude Code, OpenCode, Codex, Cursor, Windsurf, Zed, VS Code Copilot
 
 ${b("INSTALL EXAMPLES")}
   ${d("# Install statusline for ALL editors")}
-  ${a("drishti install-statusline")}
+  ${a("tokmeter-mcp install-statusline")}
 
   ${d("# Install MCP for ALL editors")}
-  ${a("drishti install-mcp")}
+  ${a("tokmeter-mcp install-mcp")}
 
   ${d("# Install for specific editor(s)")}
-  ${a("drishti install-statusline claude opencode")}
+  ${a("tokmeter-mcp install-statusline claude opencode")}
 
 ${b("MCP TOOLS")}
-  When running as an MCP server, drishti exposes these tools:
+  When running as an MCP server, tokmeter-mcp exposes these tools:
 
-  ${a("token_usage")}         Get token usage summary (today / week / month / all-time)
-  ${a("cost_breakdown")}      Cost breakdown by model, provider, or project
-  ${a("daily_trend")}         Daily usage trend with sparkline
-  ${a("session_cost")}        Current session cost and burn rate
-  ${a("budget_check")}        Check remaining budget against a limit
-  ${a("compare_models")}      Compare cost-efficiency across models
-  ${a("export_csv")}          Export usage data as CSV
+  Start with ${a("tokmeter_pulse")}. Cleanup deletes files — preview first.
+
+  ${d("Overview   ")} ${a("tokmeter_pulse, tokmeter_digest, tokmeter_timeline, tokmeter_heatmap, tokmeter_streaks")}
+  ${d("Breakdowns ")} ${a("tokmeter_models, tokmeter_providers, tokmeter_projects, tokmeter_search")}
+  ${d("Analysis   ")} ${a("tokmeter_compare, tokmeter_forecast, tokmeter_efficiency, tokmeter_leaderboard, tokmeter_anomaly, tokmeter_cache_efficiency")}
+  ${d("Advice     ")} ${a("tokmeter_model_advisor, tokmeter_cost_optimization_tips, tokmeter_budget, tokmeter_budget_alert")}
+  ${d("Data       ")} ${a("tokmeter_export, tokmeter_backups, tokmeter_cleanup_preview, tokmeter_cleanup_execute, tokmeter_restore")}
 
 ${d("docs: https://github.com/sriinnu/tokmeter")}
 `);

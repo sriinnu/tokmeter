@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — Protocol types for cross-provider aggregation
+ * Tokmeter daemon — Protocol types for cross-provider aggregation
  */
 
 // ─── Message Types ─────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — Live file tracker.
+ * @sriinnu/tokmeter-mcp — Live file tracker.
  *
  * Polls TokmeterCore at a configurable interval and emits "update"
  * events whenever the record set changes. Computes session-level

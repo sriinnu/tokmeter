@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — Unicode typography engine
+ * @sriinnu/tokmeter-mcp — Unicode typography engine
  *
  * Three-register visual hierarchy for terminal statuslines.
  * No font configuration needed — all glyphs present in SF Mono,
