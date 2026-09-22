@@ -329,18 +329,22 @@ jobs:
             exit 0
           fi
 
-          # Branch protection on main requires signed commits + PRs, so we
-          # can't push directly. Open a PR instead — squash-merge from the
-          # GitHub UI produces a web-flow-signed (verified) commit that
-          # satisfies the rule. Auto-merge is enabled so the PR lands as
-          # soon as required checks pass.
+          # Main requires signed commits and PRs. A `git commit` here is
+          # unsigned, so its PR can never merge (v1.12.0's didn't). Commit
+          # through the contents API instead: GitHub signs API commits made
+          # with the workflow token, so the PR is mergeable as-is.
           BRANCH="release/appcast-${TAG}"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "${BRANCH}"
-          git add packages/macos-bar/appcast.xml
-          git commit -m "chore(appcast): add ${TAG} (build ${BUILD_NUM}) [skip ci]"
-          git push origin "${BRANCH}"
+          FILE=packages/macos-bar/appcast.xml
+          BASE_SHA=$(git rev-parse HEAD)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/heads/${BRANCH}" -f sha="${BASE_SHA}" >/dev/null
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/${FILE}" \
+            -f message="chore(appcast): add ${TAG} (build ${BUILD_NUM})" \
+            -f content="$(base64 < "${FILE}" | tr -d '\n')" \
+            -f sha="$(git rev-parse "HEAD:${FILE}")" \
+            -f branch="${BRANCH}" \
+            --jq '.commit.verification.verified' | grep -qx true \
+            || { echo "ERROR: appcast commit is not signed; its PR could not merge"; exit 1; }
 
           gh pr create \
             --title "chore(appcast): add ${TAG} entry" \
