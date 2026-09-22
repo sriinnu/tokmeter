@@ -250,13 +250,13 @@ ${b("INSTALL EXAMPLES")}
 ${b("MCP TOOLS")}
   When running as an MCP server, tokmeter-mcp exposes these tools:
 
-  ${a("token_usage")}         Get token usage summary (today / week / month / all-time)
-  ${a("cost_breakdown")}      Cost breakdown by model, provider, or project
-  ${a("daily_trend")}         Daily usage trend with sparkline
-  ${a("session_cost")}        Current session cost and burn rate
-  ${a("budget_check")}        Check remaining budget against a limit
-  ${a("compare_models")}      Compare cost-efficiency across models
-  ${a("export_csv")}          Export usage data as CSV
+  Start with ${a("tokmeter_pulse")}. Cleanup deletes files — preview first.
+
+  ${d("Overview   ")} ${a("tokmeter_pulse, tokmeter_digest, tokmeter_timeline, tokmeter_heatmap, tokmeter_streaks")}
+  ${d("Breakdowns ")} ${a("tokmeter_models, tokmeter_providers, tokmeter_projects, tokmeter_search")}
+  ${d("Analysis   ")} ${a("tokmeter_compare, tokmeter_forecast, tokmeter_efficiency, tokmeter_leaderboard, tokmeter_anomaly, tokmeter_cache_efficiency")}
+  ${d("Advice     ")} ${a("tokmeter_model_advisor, tokmeter_cost_optimization_tips, tokmeter_budget, tokmeter_budget_alert")}
+  ${d("Data       ")} ${a("tokmeter_export, tokmeter_backups, tokmeter_cleanup_preview, tokmeter_cleanup_execute, tokmeter_restore")}
 
 ${d("docs: https://github.com/sriinnu/tokmeter")}
 `);

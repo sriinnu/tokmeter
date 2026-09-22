@@ -2,7 +2,7 @@
   "name": "@sriinnu/tokmeter-mcp",
   "version": "1.12.0",
   "mcpName": "io.github.sriinnu/tokmeter",
-  "description": "दृष्टि — MCP server + live token observatory for AI coding agents",
+  "description": "Tokmeter MCP server, daemon and statusline — tokens and cost for AI coding agents from local session files",
   "type": "module",
   "bin": {
     "tokmeter-mcp": "dist/cli.js"

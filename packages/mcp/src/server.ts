@@ -3,7 +3,7 @@
  *
  * Tokmeter — token usage observatory for AI coding agents.
  *
- * Exposes 20 tools via the Model Context Protocol that let AI agents and CLIs
+ * Exposes 24 tools via the Model Context Protocol that let AI agents and CLIs
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
