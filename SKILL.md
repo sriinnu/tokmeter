@@ -1,41 +1,113 @@
 # tokmeter
 
-Use Tokmeter when another app, agent, or automation needs local token/cost telemetry from AI coding assistants.
+Use Tokmeter when an app, agent, or automation needs local token and cost
+telemetry for AI coding assistants — spend by project, model, provider and day,
+read from the session files those tools already write to disk. No hosted
+backend, no API keys, no telemetry leaving the machine.
 
-## Canonical package names
+## Read this before reporting a number
 
-The published packages are `@sriinnu/tokmeter` and `@sriinnu/drishti`.
-Use `@sriinnu/tokmeter` for the core API and `@sriinnu/tokmeter/cli` for convenience helpers.
-The core, CLI, TUI, and web workspace packages are private implementation packages.
+Tokmeter is an accounting tool, so a wrong number is worse than no number.
+Three things shape what its answers mean:
 
-## Choose the right surface
+- **Sealed days are frozen at the prices of the day they were sealed.** Cost
+  history is a ledger, not a re-computation. Updating a price list does not
+  restate yesterday. Only today reprices.
+- **Lifetime totals mix pricing eras** and can include days sealed by older
+  parsers. Prefer `today` / `week` / `month` scopes when a number will be shown
+  to a human as "what this costs". Say "lifetime, as recorded" rather than
+  "lifetime spend" if you must report it.
+- **Estimated cost is not a bill.** Where a tool reports its own cost, that is
+  used; otherwise cost is derived from token counts and a public price catalog.
+  Long-context tiers, negotiated rates and subscription plans are not modeled.
+  Report it as an estimate.
+
+`docs/how-the-numbers-work.md` is the authority on bucket semantics.
+
+## Pick the right surface
+
+The single most important choice is **one-shot versus repeated** reads.
 
 | Need | Use | Why |
 | --- | --- | --- |
-| Embedded programmatic access in Node/Bun | `@sriinnu/tokmeter` | Lowest-level API with scan, aggregation, pricing, cleanup, and restore support |
-| Shell / CI / script automation | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract without writing parser code |
-| Convenience wrappers around common queries | `@sriinnu/tokmeter/cli` imports | Exposes summary, project, model, daily, stats, pricing, digest, cleanup, and restore helpers |
-| Live token/cost answers inside an AI workflow | `@sriinnu/drishti` | MCP server, daemon, statusline, and live tracker APIs |
-| Human exploration | `npx -p @sriinnu/tokmeter tokmeter-tui` or the web workspace | Best for interactive/manual inspection |
+| Live or repeated answers inside an agent | **MCP server** (`@sriinnu/drishti`) | Reads the warm daemon; no corpus scan per question |
+| Live or repeated answers from any language | **Daemon HTTP** on `127.0.0.1:9877` | Same warm state, plain JSON, no Node dependency |
+| One-shot report in a script or CI | `npx @sriinnu/tokmeter --json` | Stable machine-readable contract, no code to write |
+| One reusable in-process scan (Node/Bun) | `@sriinnu/tokmeter` | Lowest-level API: scan, aggregate, price, cleanup, restore |
+| Convenience wrappers around common queries | `@sriinnu/tokmeter/cli` | summary, project, model, daily, stats, pricing, digest helpers |
+| Human exploration | `tokmeter-tui`, the macOS app, or the web dashboard | Interactive inspection |
 
-## Recommended integration order
+> **Do not call `TokmeterCore.scan()` in a loop, a poll, or a hot path.** A full
+> scan parses the whole corpus and is memory-heavy; repeating it has caused
+> machine-level memory exhaustion. Scan once and reuse the instance, or read the
+> daemon. Anything that runs more than once a minute should read the daemon.
 
-1. If your AI platform can speak MCP, use `@sriinnu/drishti`.
-2. If you need batch automation or CI checks, call `npx @sriinnu/tokmeter --json`.
-3. If you need one reusable in-process scan, use `@sriinnu/tokmeter`.
-4. If you want convenience helpers without shelling out, import from `@sriinnu/tokmeter/cli`.
+## MCP (preferred for agents)
 
-## Quick examples
+Published in the official MCP registry as **`io.github.sriinnu/tokmeter`**,
+shipped in the npm package `@sriinnu/drishti`. The default command starts a
+terminal UI, so the MCP entry point is the `serve` subcommand:
 
-### Shell / CI
+```json
+{ "command": "npx", "args": ["-y", "@sriinnu/drishti", "serve"] }
+```
+
+Tools are prefixed `drishti_`. Start with `drishti_pulse`; it answers most
+"what am I spending" questions in one call.
+
+| Group | Tools |
+| --- | --- |
+| Overview | `drishti_pulse`, `drishti_digest`, `drishti_timeline`, `drishti_heatmap`, `drishti_streaks` |
+| Breakdowns | `drishti_models`, `drishti_providers`, `drishti_projects`, `drishti_search` |
+| Analysis | `drishti_compare`, `drishti_forecast`, `drishti_efficiency`, `drishti_leaderboard`, `drishti_anomaly`, `drishti_cache_efficiency` |
+| Advice | `drishti_model_advisor`, `drishti_cost_optimization_tips`, `drishti_budget`, `drishti_budget_alert` |
+| Data management | `drishti_export`, `drishti_backups`, `drishti_cleanup_preview`, `drishti_cleanup_execute`, `drishti_restore` |
+
+`drishti_cleanup_execute` **deletes source session files**. Always run
+`drishti_cleanup_preview` first and get explicit human confirmation; back up
+with `drishti_backups` before destructive work.
+
+## Daemon HTTP
+
+Start it with `drishti daemon start`. Read-only JSON on `127.0.0.1:9877`
+(WebSocket on `9876` is for live session registration, not queries):
+
+| Endpoint | Returns |
+| --- | --- |
+| `/api/ready` | Whether the warm core has finished loading |
+| `/api/quick` | Lifetime totals plus live signals — cheapest poll |
+| `/api/today` | Today's cross-provider totals and per-project split |
+| `/api/summary` | The full `TokmeterSummary` contract |
+| `/api/stats`, `/api/daily`, `/api/models`, `/api/providers`, `/api/projects`, `/api/sessions` | Scoped aggregates |
+| `/api/statbar-signals` | Burn rate, cache hit, pace, billing window |
+
+An unknown path returns `{"error":"Not found","endpoints":[…]}`, so the live
+server documents itself. Check `/api/ready` before trusting a cold read.
+
+## Shell and CI
 
 ```bash
-npx @sriinnu/tokmeter --json
+npx @sriinnu/tokmeter --today --json
 npx @sriinnu/tokmeter models --json --project tokmeter
 npx @sriinnu/tokmeter digest --json --period week
 ```
 
-### Convenience methods
+Filters: `--project`, `--claude`, `--codex`, `--week`, `--month`,
+`--since YYYY-MM-DD --until YYYY-MM-DD`. `--light` skips pricing lookups when
+token counts alone are enough — use it when you do not need dollars.
+
+## In-process (Node / Bun)
+
+```ts
+import { TokmeterCore } from "@sriinnu/tokmeter";
+
+const core = new TokmeterCore();
+await core.scan();                    // once — never per request
+const summary = core.getSummary({ providers: ["claude-code", "codex"], week: true });
+const models = core.getModelCosts();
+```
+
+Convenience helpers, if you would rather not manage an instance:
 
 ```ts
 import {
@@ -46,38 +118,41 @@ import {
 } from "@sriinnu/tokmeter/cli";
 
 const summary = await loadTokmeterSummary({ month: true });
-const projects = await loadTokmeterProjects({ project: "command-relay" });
 const stats = await loadTokmeterStats({ week: true, light: true });
-const pricing = await lookupTokmeterPricing("claude-sonnet-4-20250514");
+const pricing = await lookupTokmeterPricing("claude-opus-5");
 ```
 
-### Direct core usage
+## Contract notes
 
-```ts
-import { TokmeterCore } from "@sriinnu/tokmeter";
+- `TokmeterSummary` is the high-level contract for downstream apps.
+- **`scan(options)` does not filter later getters.** Scope each report with
+  `getSummary(options)`; a no-argument getter after a filtered scan returns
+  everything.
+- Reports use **inclusive local calendar days**; `week` means today plus the
+  previous six. Timestamps are rejected — pass dates.
+- `summary.records` is a **rolling recent window of raw evidence**, not the
+  historical ledger. Sum aggregates, never `records`, for history.
+- An explicit zero from a tool is preserved as zero. A missing price surfaces
+  as unavailable rather than as `$0` — do not render unknown as free.
+- Cache reads, cache writes, input, output and reasoning are separate buckets.
+  Sub-buckets (such as the 1-hour share of cache writes) are **subsets** of
+  their parent and must never be added into a total.
 
-const core = new TokmeterCore();
-await core.scan();
-const summary = core.getSummary({ providers: ["codex", "claude-code"], since: "2026-04-01" });
-```
+## Packages
 
-## Integration notes
-
-- Tokmeter reads local session files; there is no hosted backend requirement.
-- `TokmeterSummary` is the high-level contract for downstream apps and dashboards.
-- Use `getSummary(options)` to scope aggregate reports; `scan(options)` alone does not filter subsequent no-argument getters. Reports use inclusive local calendar days (`week`: today plus six days); timestamps are rejected.
-- Summary `records` is recent raw evidence, not a complete historical ledger.
-- `light` / `--light` skips pricing lookups when token counts are enough.
-- `@sriinnu/drishti` is the preferred live surface for other AI assistants.
+`@sriinnu/tokmeter` (core API, CLI, TUI) and `@sriinnu/drishti` (MCP server,
+daemon, statusline) are the published surfaces. `packages/core`, `cli`, `tui`
+and `web` are private implementation packages — do not depend on them directly.
 
 ## References
 
-- `README.md`
-- `docs/consuming-tokmeter.md`
-- `packages/core/src/index.ts`
-- `packages/cli/src/index.ts`
-- `packages/mcp/src/index.ts`
+- `README.md` — overview and install
+- `docs/how-the-numbers-work.md` — bucket semantics and where estimates enter
+- `docs/consuming-tokmeter.md` — integration guidance
+- `docs/architecture.md` — daemon lifecycle, storage, refresh
+- `packages/core/src/index.ts`, `packages/mcp/src/index.ts` — exported surfaces
 
 ## Licenses
 
-Applications use AGPL-3.0-only; core source uses MPL-2.0. See [licenses and source](docs/licensing.md).
+Applications are AGPL-3.0-only; core source is MPL-2.0. See
+[licenses and source](docs/licensing.md).
