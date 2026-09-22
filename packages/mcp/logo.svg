@@ -176,6 +176,6 @@
   <path d="M 18 210 Q 50 195 80 210 Q 110 200 140 210 Q 170 196 200 210 Q 225 202 240 210" fill="none" stroke="#2D1B69" stroke-width="2" opacity="0.5"/>
 
   <!-- दृष्टि text at the bottom -->
-  <text x="128" y="230" text-anchor="middle" font-family="'Courier New', monospace" font-size="12" font-weight="bold" fill="#9B8CE8" letter-spacing="2" opacity="0.8">DRISHTI</text>
+  <text x="128" y="230" text-anchor="middle" font-family="'Courier New', monospace" font-size="12" font-weight="bold" fill="#9B8CE8" letter-spacing="2" opacity="0.8">TOKMETER</text>
   <text x="128" y="244" text-anchor="middle" font-family="serif" font-size="10" fill="#FFD93D" opacity="0.6">&#x0926;&#x0943;&#x0937;&#x094D;&#x091F;&#x093F;</text>
 </svg>

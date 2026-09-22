@@ -60,7 +60,17 @@ export function captureDaemonIdentity(pid: number, evidence: ProcessEvidence): D
   };
 }
 
-/** Compatibility for pre-identity releases: require the actual Drishti entrypoint. */
+/**
+ * Package name → bin key of every release line that ships the daemon. The
+ * package was published as @sriinnu/drishti before the tokmeter-mcp rename,
+ * and a daemon started by it is still ours.
+ */
+const DAEMON_PACKAGES: Record<string, string> = {
+  "@sriinnu/tokmeter-mcp": "tokmeter-mcp",
+  "@sriinnu/drishti": "drishti",
+};
+
+/** Compatibility for pre-identity releases: require an actual daemon entrypoint. */
 function isLegacyDaemon(command: string): boolean {
   const match = command.match(/^(?:.+\/(?:node|nodejs|bun)|node|nodejs|bun) (.+) daemon start$/);
   if (!match || !isAbsolute(match[1])) return false;
@@ -68,11 +78,9 @@ function isLegacyDaemon(command: string): boolean {
     const entrypoint = realpathSync(match[1]);
     const packageRoot = dirname(dirname(entrypoint));
     const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-    return (
-      manifest.name === "@sriinnu/drishti" &&
-      typeof manifest.bin?.drishti === "string" &&
-      resolve(packageRoot, manifest.bin.drishti) === entrypoint
-    );
+    const binKey = DAEMON_PACKAGES[manifest.name];
+    const bin = binKey ? manifest.bin?.[binKey] : undefined;
+    return typeof bin === "string" && resolve(packageRoot, bin) === entrypoint;
   } catch {
     return false;
   }

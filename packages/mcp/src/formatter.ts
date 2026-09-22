@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — Shared formatting utilities.
+ * @sriinnu/tokmeter-mcp — Shared formatting utilities.
  *
  * Provides number, cost, duration, and bar formatters with chalk colors.
  * Used by the MCP server, statusline, and live TUI dashboard.
@@ -9,7 +9,7 @@ import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tok
 import chalk, { type Chalk } from "chalk";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
-export const FALLBACK_STATUSLINE = "【♾️】 drishti";
+export const FALLBACK_STATUSLINE = "【♾️】 tokmeter";
 
 // Force color output even when stdout is not a TTY (Claude Code statusline runs
 // as a subprocess hook, so chalk's auto-detection picks level 0). ESM import

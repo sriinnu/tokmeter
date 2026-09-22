@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — Cross-provider aggregation
+ * Tokmeter daemon — Cross-provider aggregation
  */
 
 export * from "./protocol.js";

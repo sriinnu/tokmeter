@@ -4,7 +4,7 @@ import XCTest
 final class StartupTests: XCTestCase {
     func testDaemonBootstrapUsesPackageThatActuallyContainsDaemon() {
         XCTAssertEqual(NodeToolchain.daemonArguments(version: "1.10.0"),
-                       ["--yes", "@sriinnu/drishti@1.10.0", "daemon", "start"])
+                       ["--yes", "@sriinnu/tokmeter-mcp@1.10.0", "daemon", "start"])
     }
 
     func testNpxWithoutPairedNodeIsNotAnInstallation() {

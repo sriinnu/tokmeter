@@ -226,7 +226,7 @@ Commands:
                   (aliases: weekly, report)
 
 Live & Daemon:
-  live            Start live TUI dashboard (from drishti)
+  live            Start live TUI dashboard (from tokmeter-mcp)
   statusline      Statusline mode for Claude Code hooks
   daemon start    Start cross-provider aggregation daemon
   daemon stop     Stop the daemon
@@ -747,9 +747,9 @@ async function runRoutes(options: {
 // ---- Daemon-read fast path ----
 
 /**
- * HTTP base for the local drishti daemon: DAEMON_HOST:DAEMON_PORT+1
+ * HTTP base for the local tokmeter-mcp daemon: DAEMON_HOST:DAEMON_PORT+1
  * (9876 + 1 = 9877). Hardcoded to avoid a build-time subpath dependency on the
- * drishti package internals; the daemon's port is a stable protocol constant.
+ * tokmeter-mcp package internals; the daemon's port is a stable protocol constant.
  */
 const DAEMON_HTTP_BASE = "http://127.0.0.1:9877";
 
@@ -906,52 +906,52 @@ async function main() {
     process.exit(0);
   }
 
-  // Delegate to drishti for live/statusline/daemon commands
+  // Delegate to tokmeter-mcp for live/statusline/daemon commands
   if (args.command === "live") {
-    const { startLive } = await import("@sriinnu/drishti/live.js");
+    const { startLive } = await import("@sriinnu/tokmeter-mcp/live.js");
     await startLive();
     return;
   }
 
   if (args.command === "statusline") {
-    const { runStatusline } = await import("@sriinnu/drishti/statusline.js");
+    const { runStatusline } = await import("@sriinnu/tokmeter-mcp/statusline.js");
     await runStatusline();
     return;
   }
 
   if (args.command === "daemon") {
-    const { runDaemonCLI } = await import("@sriinnu/drishti/daemon/server.js");
+    const { runDaemonCLI } = await import("@sriinnu/tokmeter-mcp/daemon/server.js");
     runDaemonCLI(args.daemonCmd ?? "status");
     return;
   }
 
   // Installer commands
   if (args.command === "install-statusline") {
-    const { installStatusline } = await import("@sriinnu/drishti/installer.js");
+    const { installStatusline } = await import("@sriinnu/tokmeter-mcp/installer.js");
     installStatusline();
     return;
   }
 
   if (args.command === "install-mcp") {
-    const { installMCP } = await import("@sriinnu/drishti/installer.js");
+    const { installMCP } = await import("@sriinnu/tokmeter-mcp/installer.js");
     installMCP();
     return;
   }
 
   if (args.command === "uninstall-statusline") {
-    const { uninstallStatusline } = await import("@sriinnu/drishti/installer.js");
+    const { uninstallStatusline } = await import("@sriinnu/tokmeter-mcp/installer.js");
     uninstallStatusline();
     return;
   }
 
   if (args.command === "uninstall-mcp") {
-    const { uninstallMCP } = await import("@sriinnu/drishti/installer.js");
+    const { uninstallMCP } = await import("@sriinnu/tokmeter-mcp/installer.js");
     uninstallMCP();
     return;
   }
 
   if (args.command === "editors") {
-    const { listEditors } = await import("@sriinnu/drishti/installer.js");
+    const { listEditors } = await import("@sriinnu/tokmeter-mcp/installer.js");
     listEditors();
     return;
   }

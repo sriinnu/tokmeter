@@ -371,7 +371,7 @@ function LiveOperationsPanel({ liveData }: { liveData: LiveData }) {
         <div style={offlineCardStyle}>
           <div style={offlineTitleStyle}>
             {liveData.status === "connecting"
-              ? "Reconnecting to Drishti"
+              ? "Reconnecting to the daemon"
               : "Live daemon is offline"}
           </div>
           <div style={offlineBodyStyle}>

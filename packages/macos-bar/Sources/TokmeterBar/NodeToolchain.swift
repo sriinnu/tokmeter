@@ -80,10 +80,10 @@ struct NodeToolchain: Equatable {
         return environment
     }
 
-    /// Drishti owns the daemon and depends on Tokmeter. Installing Tokmeter
-    /// alone does not install Drishti, so it cannot bootstrap the daemon.
+    /// tokmeter-mcp owns the daemon and depends on Tokmeter. Installing Tokmeter
+    /// alone does not install tokmeter-mcp, so it cannot bootstrap the daemon.
     static func daemonArguments(version: String?) -> [String] {
-        let package = version.map { "@sriinnu/drishti@\($0)" } ?? "@sriinnu/drishti"
+        let package = version.map { "@sriinnu/tokmeter-mcp@\($0)" } ?? "@sriinnu/tokmeter-mcp"
         return ["--yes", package, "daemon", "start"]
     }
 }

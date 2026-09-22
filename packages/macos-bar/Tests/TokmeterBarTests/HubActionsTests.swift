@@ -53,11 +53,11 @@ final class HubActionsTests: XCTestCase {
         XCTAssertEqual(HubConfigStore(filePath: path).config.bar.refreshSeconds, 90)
     }
 
-    func testDaemonAndIntegrationCatalogUsesDrishtiEntrypoint() {
+    func testDaemonAndIntegrationCatalogUsesTokmeterMcpEntrypoint() {
         let groups = HubCommandCatalog.groups.filter { ["daemon", "install"].contains($0.id) }
         XCTAssertFalse(groups.isEmpty)
         for command in groups.flatMap(\.commands) {
-            XCTAssertTrue(command.example.hasPrefix("drishti "), command.id)
+            XCTAssertTrue(command.example.hasPrefix("tokmeter-mcp "), command.id)
         }
     }
 }

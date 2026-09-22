@@ -1,4 +1,4 @@
-// Models.swift — Data shapes returned by the Drishti daemon HTTP REST API.
+// Models.swift — Data shapes returned by the Tokmeter daemon HTTP REST API.
 //
 // These mirror the TypeScript types in @sriinnu/tokmeter-core. Keep them
 // in sync whenever the daemon API changes.

@@ -1,5 +1,5 @@
 /**
- * Drishti Daemon — Session management
+ * Tokmeter daemon — Session management
  */
 
 import type { AggregatedStats, ContextWindowInfo, SessionInfo, TokenUsage } from "./protocol.js";

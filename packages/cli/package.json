@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@sriinnu/tokmeter": "workspace:*",
-    "@sriinnu/drishti": "workspace:*",
+    "@sriinnu/tokmeter-mcp": "workspace:*",
     "cli-table3": "^0.6.5",
     "chalk": "^5.3.0"
   },

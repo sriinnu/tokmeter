@@ -20,8 +20,8 @@ for package in tokmeter mcp; do
         for(const section of ["dependencies","optionalDependencies","peerDependencies"])
           for(const [name,version] of Object.entries(p[section]??{}))
             if(version.startsWith("workspace:")) throw new Error(`Unresolved workspace dependency: ${name}`);
-        if(p.name === "@sriinnu/drishti" && p.dependencies?.["@sriinnu/tokmeter"] !== p.version)
-          throw new Error("Drishti must depend on the exact paired Tokmeter release");
+        if(p.name === "@sriinnu/tokmeter-mcp" && p.dependencies?.["@sriinnu/tokmeter"] !== p.version)
+          throw new Error("tokmeter-mcp must depend on the exact paired Tokmeter release");
         console.log(`Verified ${p.name}@${p.version}`);
       });'
 done

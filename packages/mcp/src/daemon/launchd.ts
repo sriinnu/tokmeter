@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — launchd supervision for the aggregation daemon (macOS).
+ * @sriinnu/tokmeter-mcp — launchd supervision for the aggregation daemon (macOS).
  *
  * The daemon is a long-lived singleton: everything (statusline, CLI, macOS
  * bar) reads it. If it dies — uncaught exception, OOM-kill at the heap cap, a

@@ -1,5 +1,5 @@
 /**
- * Live data hook — connects to the Drishti daemon WebSocket for real-time
+ * Live data hook — connects to the Tokmeter daemon WebSocket for real-time
  * cross-provider token/cost aggregation.
  *
  * Falls back gracefully when the daemon isn't running. Reconnects automatically
@@ -86,7 +86,7 @@ const MAX_BACKOFF_MS = 30_000;
 // ─── Hook ──────────────────────────────────────────────────────────────────
 
 /**
- * Connects to the Drishti daemon WebSocket for real-time aggregated stats.
+ * Connects to the Tokmeter daemon WebSocket for real-time aggregated stats.
  *
  * - Sends a register message on connect (identifies as the web dashboard).
  * - Listens for broadcast messages containing aggregated cross-provider data.

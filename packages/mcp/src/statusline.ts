@@ -1,5 +1,5 @@
 /**
- * @sriinnu/drishti — Claude Code statusline hook handler.
+ * @sriinnu/tokmeter-mcp — Claude Code statusline hook handler.
  *
  * Two-line instrument:
  *   line 1 — this session: project · model · context · git · cost, then
@@ -7,7 +7,7 @@
  *   line 2 — the world: subscription windows (5h / 7d), today's cross-provider
  *            spend, this repo's share, concurrent sessions, open PR.
  *
- * Cross-provider aggregation comes from the Drishti Daemon.
+ * Cross-provider aggregation comes from the Tokmeter daemon.
  */
 
 import { execSync } from "node:child_process";
@@ -184,7 +184,7 @@ const PULSE = ["○", "◐", "◑", "●", "◑", "◐", "○", "◌"];
  * The pill caps ◖ ◗ already frame the bar, so the mark carries no brackets of
  * its own. The dot is signal, not decoration: it pulses through PULSE when the
  * daemon answered this tick (the beat peaks as the violet bg peaks), and sits
- * as a static hollow ○ when drishti is unreachable.
+ * as a static hollow ○ when the daemon is unreachable.
  *
  * Width-stable: ♾️(2) + space(1) + dot(1) = 4 cells in every frame.
  */

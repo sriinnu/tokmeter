@@ -6,7 +6,7 @@
 // exhaust RAM and panic the kernel.
 //
 // The only subprocesses the bar spawns are intentional one-shots:
-//   • `drishti daemon start`   — singleton auto-start (debounced, idempotent)
+//   • `tokmeter-mcp daemon start`   — singleton auto-start (debounced, idempotent)
 //   • `tokmeter update`         — user-triggered pricing refresh
 //   • `tokmeter install-cron`   — user-triggered cron install (in TokmeterLoader)
 // All of them are bounded, single invocations — never one-per-fetch.
@@ -46,7 +46,7 @@ extension TokmeterLoader {
         ensureDaemonStarted()
     }
 
-    /// Spawn `drishti daemon start` exactly once, detached. The daemon CLI
+    /// Spawn `tokmeter-mcp daemon start` exactly once, detached. The daemon CLI
     /// itself enforces a PID singleton (it no-ops with "already running" if a
     /// live daemon exists), so the worst case from a redundant call is a quick
     /// no-op child. We still debounce with `isStartingDaemon` so concurrent

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The MCP server, daemon and statusline package is now
+  `@sriinnu/tokmeter-mcp`** (command `tokmeter-mcp`), replacing
+  `@sriinnu/drishti`. MCP tools are renamed `drishti_*` → `tokmeter_*`, and
+  editors register the server as `tokmeter`. `tokmeter-mcp install-mcp`
+  removes any old `drishti` entry so an editor never runs both.
+  `@sriinnu/drishti@1.12.0` stays on npm, so menubar apps that pin it keep
+  working until they update.
+- The daemon's wire protocol is unchanged — pidfile, token file and the
+  `X-Drishti-API` header keep their names, so old and new menubar apps and
+  daemons still find each other.
+
 ## [1.12.0] - 2026-09-19
 
 This release corrects how Claude Code usage is counted and priced. Reported

@@ -1,6 +1,6 @@
 // swift-tools-version:5.9
 //
-// TokmeterBar — macOS menubar companion for Drishti.
+// TokmeterBar — macOS menubar companion for the Tokmeter daemon.
 //
 // Quick start:
 //   swift build -c release        # build only
@@ -8,9 +8,9 @@
 //   ./bundle.sh --signed          # Developer ID signed (needs DEV_ID env)
 //   ./bundle.sh --release         # signed + notarized + appcast (full release)
 //
-// The resulting binary connects to the Drishti daemon's HTTP REST API on
+// The resulting binary connects to the Tokmeter daemon's HTTP REST API on
 // localhost:9877. The daemon must be running:
-//   drishti daemon start
+//   tokmeter-mcp daemon start
 //
 // Auto-updates are powered by Sparkle 2.x. See RELEASE.md for the full
 // release flow including notarization and appcast signing.
