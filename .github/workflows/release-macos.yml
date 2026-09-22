@@ -36,7 +36,12 @@ permissions:
 
 jobs:
   build-sign-notarize:
-    runs-on: macos-14
+    # macos-14's SDK predates SwiftUI 6, so `onGeometryChange` (used in
+    # ContentSizedScrollView and TokmeterBarView) does not resolve and this
+    # job has never once completed — every release since 1.3.0 built the app
+    # locally instead. Pinned to an explicit image rather than macos-latest:
+    # a release pipeline should not change toolchains underneath you.
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -86,6 +91,17 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+
+      # bundle.sh builds the in-app web dashboard with `bunx vite build`, so
+      # the runner needs Bun and the workspace's dependencies — without them
+      # bundling dies on `bunx: command not found`.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
 
       - name: Build release binary
         working-directory: packages/macos-bar
@@ -160,6 +176,46 @@ jobs:
             echo "ED_SIG=${ED_SIG}" >> "$GITHUB_ENV"
           fi
           rm -f /tmp/sparkle.key
+
+      # A wrong SPARKLE_PRIVATE_KEY cannot fail the build — sign_update happily
+      # signs with any key. It fails silently later, on every user's machine,
+      # when Sparkle rejects the signature and auto-update stops working. This
+      # has bitten before (a key in the Keychain that was not the release key).
+      #
+      # So verify the signature exactly the way the user's Sparkle will: Ed25519
+      # over the zip bytes against the SUPublicEDKey embedded in the app we just
+      # built. That round-trip catches a wrong private key, a wrong public key,
+      # and a zip mutated after signing. Comparing key strings would catch only
+      # the second.
+      - name: Verify the Sparkle signature against the app's own key
+        if: steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
+        working-directory: packages/macos-bar
+        run: |
+          set -euo pipefail
+          PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "${APP_NAME}.app/Contents/Info.plist")"
+          SUPUB="$PUBKEY" ED_SIG="$ED_SIG" ZIP="${APP_NAME}-${VERSION}.zip" node -e '
+            const crypto = require("node:crypto");
+            const fs = require("node:fs");
+            const pub = Buffer.from(process.env.SUPUB ?? "", "base64");
+            if (pub.length !== 32) {
+              throw new Error(`SUPublicEDKey decodes to ${pub.length} bytes, expected 32 — the app has no usable update key`);
+            }
+            // ED_SIG is the whole attribute string: sparkle:edSignature="…" length="…"
+            const found = /edSignature="([^"]+)"/.exec(process.env.ED_SIG ?? "");
+            if (!found) throw new Error("could not find edSignature in the signing output");
+            const sig = Buffer.from(found[1], "base64");
+            // Raw Ed25519 public keys need an SPKI wrapper for createPublicKey.
+            const der = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), pub]);
+            const key = crypto.createPublicKey({ key: der, format: "der", type: "spki" });
+            if (!crypto.verify(null, fs.readFileSync(process.env.ZIP), key, sig)) {
+              throw new Error(
+                "Sparkle signature does NOT validate against the SUPublicEDKey in this build. " +
+                  "SPARKLE_PRIVATE_KEY is not the key this app trusts — shipping it would break " +
+                  "auto-update for every existing user.",
+              );
+            }
+            console.log("Sparkle signature validates against the app'"'"'s SUPublicEDKey.");
+          '
 
       # PUBLISH IS OPT-IN (vars.CI_PUBLISH == 'true'), OFF BY DEFAULT.
       # The real release path is the local Titan-gated flow (bundle.sh --release
