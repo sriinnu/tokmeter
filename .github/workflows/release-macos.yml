@@ -33,6 +33,9 @@ env:
 
 permissions:
   contents: write
+  # The appcast step opens a PR rather than pushing to protected main;
+  # without this it fails with "Resource not accessible by integration".
+  pull-requests: write
 
 jobs:
   build-sign-notarize:
@@ -114,7 +117,12 @@ jobs:
           DEV_ID: "Developer ID Application: Srinivas Pendela (RSH5FK4MB6)"
           SUPUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
           CFBundleShortVersionString: ${{ env.VERSION }}
-          CFBundleVersion: ${{ github.run_number }}
+          # CFBundleVersion deliberately NOT set: bundle.sh's committed
+          # BUILD_VERSION is the single source of truth, and scripts/bump-version.sh
+          # advances it monotonically. github.run_number counts workflow runs and
+          # has no relationship to release history — using it stamped build 26 onto
+          # 1.12.0 when 1.11.0 had shipped as 48, which Sparkle reads as a
+          # downgrade and never offers.
         run: ./bundle.sh --signed --no-install
 
       - name: Bundle .app (unsigned)
@@ -122,7 +130,7 @@ jobs:
         working-directory: packages/macos-bar
         env:
           CFBundleShortVersionString: ${{ env.VERSION }}
-          CFBundleVersion: ${{ github.run_number }}
+          # See the signed step: bundle.sh owns BUILD_VERSION.
         run: ./bundle.sh --no-install
 
       - name: Notarize
@@ -251,7 +259,20 @@ jobs:
         run: |
           set -euo pipefail
           export PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
-          export BUILD_NUM="${{ github.run_number }}"
+          # Read the build number off the bundle we just signed, so the feed can
+          # never describe a build that does not exist.
+          export BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+            "packages/macos-bar/${APP_NAME}.app/Contents/Info.plist")"
+          # Sparkle ranks updates by build number, so a entry numbered at or below
+          # the newest one already published is never offered — silently, with no
+          # error anywhere. Refuse to write one.
+          PREV_BUILD="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
+            packages/macos-bar/appcast.xml | head -1 | tr -dc '0-9')"
+          if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
+            echo "::error::build ${BUILD_NUM} is not newer than the published ${PREV_BUILD}; Sparkle would never offer this update. Bump BUILD_VERSION in bundle.sh." >&2
+            exit 1
+          fi
+          echo "appcast build ${BUILD_NUM} (previous published: ${PREV_BUILD:-none})"
           export TAG="${{ github.event.release.tag_name }}"
           export ZIP_NAME="${APP_NAME}-${VERSION}.zip"
           export ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
