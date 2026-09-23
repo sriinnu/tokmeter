@@ -123,8 +123,14 @@ say "6/10 PR + squash-merge"
 run "git push -u origin '${branch}'"
 run "gh pr create --repo '${REPO}' --base main --head '${branch}' --title 'Release ${TAG}' --body 'Release ${TAG}. See CHANGELOG.md.'"
 # Right after PR creation CI hasn't registered yet, and `gh pr checks` reports
-# "no checks" as a failure; wait for them to appear before watching.
-checks_started() { ! gh pr checks "$branch" --repo "$REPO" 2>&1 | grep -q "no checks reported"; }
+# "no checks" as a failure; wait for them to appear before watching. Capture
+# the output first: under pipefail, `! gh … | grep -q` inverts gh's own
+# non-zero exit and reports "started" before any check exists (1.13.0).
+checks_started() {
+  local out
+  out="$(gh pr checks "$branch" --repo "$REPO" 2>&1)" || true
+  [[ -n "$out" && "$out" != *"no checks reported"* && "$out" != *"no pull requests found"* ]]
+}
 wait_for "CI checks to start" 300 checks_started
 run "gh pr checks '${branch}' --repo '${REPO}' --watch --fail-fast"
 confirm "Squash-merge the release PR to main?" || die "merge declined — nothing tagged or published."
