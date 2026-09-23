@@ -166,6 +166,19 @@ zip_attached() {
   gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | grep -qx "TokmeterBar-${VERSION}.zip"
 }
 wait_for "TokmeterBar-${VERSION}.zip on the release" 3600 zip_attached
+# The official MCP registry is the one listing that changes per release;
+# publish.yml registers it after npm. Cline, Glama and the rest read the repo
+# (README, llms-install.md, glama.json) and npm, so they track on their own.
+registry_listed() {
+  curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=tokmeter" \
+    | node -e '
+      let i = ""; process.stdin.on("data", d => i += d).on("end", () => {
+        const hit = JSON.parse(i).servers?.some(s =>
+          s.server?.name === "io.github.sriinnu/tokmeter" && s.server?.version === process.argv[1]);
+        process.exit(hit ? 0 : 1);
+      });' "$VERSION"
+}
+wait_for "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1800 registry_listed
 
 # ── 10. Homebrew cask ────────────────────────────────────────────────────────
 if [[ $SKIP_BREW -eq 0 ]]; then
