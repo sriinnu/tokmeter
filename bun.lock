@@ -11,7 +11,7 @@
     },
     "packages/cli": {
       "name": "@sriinnu/tokmeter-cli",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "bin": {
         "tokmeter": "dist/cli.js",
       },
@@ -28,7 +28,7 @@
     },
     "packages/core": {
       "name": "@sriinnu/tokmeter-core",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "dependencies": {
         "@sriinnu/kosha-discovery": "^1.6.2",
       },
@@ -40,7 +40,7 @@
     },
     "packages/mcp": {
       "name": "@sriinnu/tokmeter-mcp",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "bin": {
         "tokmeter-mcp": "dist/cli.js",
       },
@@ -62,7 +62,7 @@
     },
     "packages/tokmeter": {
       "name": "@sriinnu/tokmeter",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "bin": {
         "tokmeter": "dist/cli/cli.js",
         "tokmeter-tui": "dist/tui/index.js",
@@ -82,7 +82,7 @@
     },
     "packages/tui": {
       "name": "@sriinnu/tokmeter-tui",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "bin": {
         "tokmeter-tui": "dist/index.js",
       },
@@ -99,7 +99,7 @@
     },
     "packages/web": {
       "name": "@sriinnu/tokmeter-web",
-      "version": "1.12.0",
+      "version": "1.13.0",
       "dependencies": {
         "plotly.js": "^2.35.0",
         "react": "^18.3.0",

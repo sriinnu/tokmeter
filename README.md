@@ -8,7 +8,7 @@
 
 Tokmeter reads the session files your agents already write to disk and turns them into token and cost totals by project, model, provider, and day — across Claude Code, Codex, Gemini CLI, Cursor, and a dozen more. No API keys, no telemetry, no account. Your data never leaves the machine.
 
-[![release](https://img.shields.io/badge/release-v1.12.0-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
+[![release](https://img.shields.io/badge/release-v1.13.0-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
