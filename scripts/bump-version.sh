@@ -11,7 +11,8 @@
 #   - packages/macos-bar/bundle.sh SHORT_VERSION default (+ bumps BUILD_VERSION)
 #   - bun.lock                     workspace version metadata
 #   - README.md                    release badge version
-#   - CHANGELOG.md                 inserts a dated "## [X.Y.Z]" skeleton if absent
+#   - CHANGELOG.md                 promotes [Unreleased], else inserts a dated skeleton
+#   - packages/mcp/server.json     MCP registry manifest version
 #
 # The macOS bar BUILD_VERSION (CFBundleVersion) is monotonic — every run
 # advances it by one so Sparkle always sees a higher build. That means running
@@ -82,10 +83,18 @@ if [[ -f "$README" ]]; then
   echo "    README.md  release badge -> v${VERSION}"
 fi
 
-# 4. CHANGELOG.md — insert a dated skeleton entry directly above the newest
-#    existing release heading, but only if this version isn't already present.
+# 4. CHANGELOG.md — promote [Unreleased] to this version if it exists; else
+#    insert a dated skeleton above the newest release heading. Left alone if
+#    this version is already present.
 CHANGELOG="CHANGELOG.md"
-if [[ -f "$CHANGELOG" ]] && ! grep -q "## \[${VERSION}\]" "$CHANGELOG"; then
+if [[ -f "$CHANGELOG" ]] && grep -q "^## \[${VERSION}\]" "$CHANGELOG"; then
+  echo "    CHANGELOG.md  [${VERSION}] already present — left as-is"
+elif [[ -f "$CHANGELOG" ]] && grep -q "^## \[Unreleased\]" "$CHANGELOG"; then
+  # Notes already written under Unreleased become this release's section.
+  today="$(date +%F)"
+  perl -i -pe 'if (/^## \[Unreleased\]/ && !$done++) { $_ = "## ['"$VERSION"'] - '"$today"'\n" }' "$CHANGELOG"
+  echo "    CHANGELOG.md  [Unreleased] -> [${VERSION}] - ${today}"
+elif [[ -f "$CHANGELOG" ]]; then
   today="$(date +%F)"
   # Insert before the first "## [" heading.
   perl -i -pe '
@@ -96,7 +105,7 @@ if [[ -f "$CHANGELOG" ]] && ! grep -q "## \[${VERSION}\]" "$CHANGELOG"; then
   ' "$CHANGELOG"
   echo "    CHANGELOG.md  inserted [${VERSION}] - ${today} skeleton (fill it in)"
 else
-  echo "    CHANGELOG.md  [${VERSION}] already present — left as-is"
+  echo "    CHANGELOG.md  not found — skipped"
 fi
 
 echo "==> Version bump complete. Review the diff before committing."
