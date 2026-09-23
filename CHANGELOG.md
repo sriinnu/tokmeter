@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `llms-install.md` so agents such as Cline can install the MCP server
+  unaided, `glama.json` to claim the Glama listing, and a 400×400 logo for MCP
+  directories. Releases now wait until the official MCP registry lists the new
+  version.
+
 ### Changed
 
 - **The MCP server, daemon and statusline package is now
