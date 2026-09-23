@@ -127,9 +127,13 @@ run "gh pr create --repo '${REPO}' --base main --head '${branch}' --title 'Relea
 # the output first: under pipefail, `! gh … | grep -q` inverts gh's own
 # non-zero exit and reports "started" before any check exists (1.13.0).
 checks_started() {
+  # Started means gh listed at least one check row ("name<TAB>state<TAB>...").
+  # Anything else — no checks yet, no PR yet, or a gh auth/network error — is
+  # "not started", so wait_for keeps polling and times out loudly instead of
+  # printing a false ✓.
   local out
   out="$(gh pr checks "$branch" --repo "$REPO" 2>&1)" || true
-  [[ -n "$out" && "$out" != *"no checks reported"* && "$out" != *"no pull requests found"* ]]
+  printf '%s\n' "$out" | grep -qE $'^[^\t]+\t(pass|fail|pending|skipping|cancel)'
 }
 wait_for "CI checks to start" 300 checks_started
 run "gh pr checks '${branch}' --repo '${REPO}' --watch --fail-fast"
