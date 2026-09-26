@@ -39,6 +39,7 @@ permissions:
 
 jobs:
   build-sign-notarize:
+    environment: release
     # macos-14's SDK predates SwiftUI 6, so `onGeometryChange` (used in
     # ContentSizedScrollView and TokmeterBarView) does not resolve and this
     # job has never once completed — every release since 1.3.0 built the app
