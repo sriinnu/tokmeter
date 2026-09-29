@@ -1,3 +1,11 @@
+---
+name: tokmeter
+description: >-
+  Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 12 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
+license: AGPL-3.0-only
+compatibility: Node.js 18+. Reads local agent session files; no network or API key.
+---
+
 # tokmeter
 
 Use Tokmeter when an app, agent, or automation needs local token and cost
