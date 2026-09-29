@@ -39,6 +39,9 @@ permissions:
 
 jobs:
   build-sign-notarize:
+    # Required, not optional: the "release" environment only deploys from main
+    # and v* tags, and it holds the signing/notary secrets. Removing or renaming
+    # it lets any branch's run read them. Configured in Settings → Environments.
     environment: release
     # macos-14's SDK predates SwiftUI 6, so `onGeometryChange` (used in
     # ContentSizedScrollView and TokmeterBarView) does not resolve and this
