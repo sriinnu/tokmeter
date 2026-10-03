@@ -6,9 +6,9 @@
 
 **Every AI coding agent you run, on one ledger.**
 
-Tokmeter reads the session files your agents already write to disk and turns them into token and cost totals by project, model, provider, and day — across Claude Code, Codex, Gemini CLI, Cursor, and a dozen more. No API keys, no telemetry, no account. Your data never leaves the machine.
+Tokmeter reads the session files your agents already write to disk and turns them into token and cost totals by project, model, provider, and day — across Claude Code, Codex, Gemini CLI, Cursor, and twenty more (now including Muse, Cline, Augment, and Copilot CLI). An agent it has no built-in parser for can register a path and emit a simple usage line to show up too. No API keys, no telemetry, no account. Your data never leaves the machine.
 
-[![release](https://img.shields.io/badge/release-v1.13.0-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
+[![release](https://img.shields.io/badge/release-v1.14.0-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
@@ -60,6 +60,8 @@ npm install -g @sriinnu/tokmeter @sriinnu/tokmeter-mcp
 | [`@sriinnu/tokmeter-mcp`](packages/mcp/README.md) | MCP server, daemon, statusline, and live terminal UI |
 
 `packages/core`, `packages/cli`, and `packages/tui` are private workspace packages bundled into `@sriinnu/tokmeter`. `packages/web` is a separate private workspace app run from source.
+
+To keep the daemon always-on (so the menubar and statusline survive reboots), install the launchd agent once: `tokmeter-mcp daemon install-agent` (macOS). It auto-starts at login and respawns on crash.
 
 Claude Code and Codex are the primary validation targets. See [provider compatibility](docs/compatibility.md) for the other parsers and their known limits.
 

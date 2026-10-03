@@ -128,7 +128,7 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      the first: subagent transcripts open with placeholder usage from
 //      message_start and only the last line carries real output tokens.
 //      v13/v14 caches hold first-line values for subagent turns; rebuild.
-const CACHE_VERSION = 15;
+const CACHE_VERSION = 16;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

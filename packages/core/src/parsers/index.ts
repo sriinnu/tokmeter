@@ -5,15 +5,20 @@
 import type { ProviderId, SessionParser } from "../types.js";
 import { AmpParser } from "./amp.js";
 import { AntigravityParser } from "./antigravity.js";
+import { AugmentParser } from "./augment.js";
 import { ClaudeCodeParser } from "./claude-code.js";
+import { ClineParser } from "./cline.js";
 import { CodexDesktopParser } from "./codex-desktop.js";
 import { CodexParser } from "./codex.js";
+import { CopilotCliParser } from "./copilot-cli.js";
 import { CursorParser } from "./cursor.js";
+import { CustomSourceParser } from "./custom-source.js";
 import { DroidParser } from "./droid.js";
 import { GeminiParser } from "./gemini.js";
 import { KiloCliParser } from "./kilo-cli.js";
 import { KiloParser } from "./kilo.js";
 import { KimiParser } from "./kimi.js";
+import { MuseParser } from "./muse.js";
 import { MuxParser } from "./mux.js";
 import { OpenClawParser } from "./openclaw.js";
 import { OpenCodeParser } from "./opencode.js";
@@ -45,6 +50,11 @@ export const ALL_PARSERS: SessionParser[] = [
   new VSCodeCopilotParser(),
   new AntigravityParser(),
   new ZedParser(),
+  new MuseParser(),
+  new ClineParser(),
+  new AugmentParser(),
+  new CopilotCliParser(),
+  new CustomSourceParser(),
   new SyntheticParser(),
 ];
 

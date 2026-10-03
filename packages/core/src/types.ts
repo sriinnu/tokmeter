@@ -23,6 +23,17 @@ export type ProviderId =
   | "vscode-copilot"
   | "antigravity"
   | "zed"
+  | "muse"
+  | "cline"
+  | "augment"
+  | "copilot-cli"
+  // Agents with no native on-disk usage telemetry yet: they surface through a
+  // configured custom source (see CustomSourceParser) once they emit the
+  // canonical usage-line format. `custom` is the catch-all for any other
+  // registered path.
+  | "ribhu"
+  | "grok"
+  | "custom"
   | "synthetic";
 
 /** Where a record's usage facts came from. */

@@ -40,6 +40,9 @@
     "daemon:start": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon start",
     "daemon:stop": "cd packages/mcp && bun src/cli.ts daemon stop",
     "daemon:status": "cd packages/mcp && bun src/cli.ts daemon status",
+    "daemon:restart": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon restart",
+    "daemon:install-agent": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon install-agent",
+    "daemon:uninstall-agent": "cd packages/mcp && bun src/cli.ts daemon uninstall-agent",
 
     "install:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-statusline",
     "install:mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-mcp",

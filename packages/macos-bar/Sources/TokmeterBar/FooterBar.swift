@@ -121,6 +121,26 @@ struct FooterBar: View {
         HStack(spacing: 10) {
             LiveHeartbeat(isAlive: loader.isDaemonAlive, theme: theme, isVisible: isVisible)
 
+            // Daemon control: Start when it's down, Restart when it's live. The
+            // heartbeat dot + this button are the "start / restart / health"
+            // surface for the local usage service.
+            FooterIconButton(
+                systemImage: loader.daemonPhase == .live
+                    ? "arrow.triangle.2.circlepath"
+                    : "play.circle",
+                theme: theme,
+                help: loader.daemonPhase == .live
+                    ? "Restart the usage service"
+                    : "Start the usage service",
+                disabled: loader.isStartingDaemon
+            ) {
+                if loader.daemonPhase == .live {
+                    loader.restartDaemon()
+                } else {
+                    loader.startDaemonFromUI()
+                }
+            }
+
             Button(action: { Task { await loader.loadData() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")

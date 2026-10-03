@@ -91,6 +91,53 @@ extension TokmeterLoader {
         }
     }
 
+    /// User-triggered Start (the footer control). Mirrors the offline
+    /// auto-start but gives immediate warming feedback and refreshes once up.
+    func startDaemonFromUI() {
+        isWarming = true
+        ensureDaemonStarted()
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            await self?.loadData()
+        }
+    }
+
+    /// User-triggered Restart. Runs `daemon restart` — a launchd kickstart when
+    /// the agent supervises it, otherwise a clean stop+start — then refreshes.
+    func restartDaemon() {
+        guard !isStartingDaemon else { return }
+        let candidates = NodeToolchain.candidates()
+        guard !candidates.isEmpty else {
+            self.needsNodeSetup = true
+            self.lastError =
+                "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
+            return
+        }
+        needsNodeSetup = false
+        isStartingDaemon = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isStartingDaemon = false }
+            do {
+                guard let toolchain = await NodeToolchain.firstSupported(
+                    candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
+                    self.needsNodeSetup = true
+                    throw DaemonError.networkError("No working Node.js 18 or later was found. Update Node and choose Retry.")
+                }
+                _ = try await self.runProcess(
+                    executable: toolchain.npx,
+                    arguments: NodeToolchain.daemonArguments(
+                        version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                        subcommand: "restart"),
+                    timeout: 120
+                )
+                await self.loadData()
+            } catch {
+                self.lastError = "Couldn't restart the usage service: \(error.localizedDescription)"
+            }
+        }
+    }
+
     // ─── Pricing refresh via CLI (user-triggered, one-shot) ──────────
 
     func refreshPricingViaCLI() async {

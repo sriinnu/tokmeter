@@ -30,7 +30,11 @@ import {
 } from "./parsers/utils.js";
 import { enrichCosts, markPricingSkipped } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
-import { rebuildRecentWindow, refreshFromRelay } from "./relay-loader.js";
+import {
+  backfillProviderIntoRelay,
+  rebuildRecentWindow,
+  refreshFromRelay,
+} from "./relay-loader.js";
 import {
   type ScanContext,
   resolveTodayState,
@@ -375,6 +379,37 @@ export class TokmeterCore {
       lastScanAt: Date.now(),
       // The rebuild emits history AND provider warnings — replace both kinds
       // rather than stacking a fresh copy per rescan.
+      warnings: [
+        ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
+        ...warnings,
+      ],
+    };
+  }
+
+  /**
+   * Surgical backfill of ONE provider over the last `windowDays` sealed days.
+   * Adds only that provider's slice to each day, leaving every other provider
+   * untouched — the safe way to pick up a newly added parser or a freshly
+   * registered custom source on a machine where a full deep rescan would shrink
+   * days whose other providers' raw has aged out. Today is never touched.
+   */
+  async backfillProvider(
+    providerId: ProviderId,
+    windowDays: number,
+    now: number = Date.now()
+  ): Promise<void> {
+    const warnings: ScanWarning[] = [];
+    const relay = await backfillProviderIntoRelay(
+      this.ctx(),
+      providerId,
+      now,
+      warnings,
+      windowDays
+    );
+    this.aggregates = relay.aggregates;
+    this.scanMeta = {
+      ...this.scanMeta,
+      lastScanAt: Date.now(),
       warnings: [
         ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
         ...warnings,

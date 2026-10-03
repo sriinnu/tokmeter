@@ -131,6 +131,11 @@ struct HubCrossToolCard: View {
         case "kimi", "moonshot":             return "moon.fill"
         case "minimax":                       return "infinity"
         case "grok", "xai":                  return "x.circle.fill"
+        case "muse":                          return "music.note"
+        case "cline":                         return "chevron.left.forwardslash.chevron.right"
+        case "augment":                       return "a.square.fill"
+        case "copilot-cli":                  return "airplane"
+        case "ribhu":                         return "hammer.fill"
         default:                              return "waveform.circle"
         }
     }

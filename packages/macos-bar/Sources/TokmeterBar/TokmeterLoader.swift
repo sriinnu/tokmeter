@@ -114,6 +114,27 @@ final class TokmeterLoader: ObservableObject {
     @Published var isStartingDaemon: Bool = false
     @Published var needsNodeSetup = false
 
+    /// Coarse lifecycle phase for the daemon, so the UI can be honest instead of
+    /// showing a "WARMING" skeleton while the daemon is actually down. `warming`
+    /// means a start is genuinely in flight; `offline` means it's unreachable and
+    /// nothing is starting it (show a Start action, not a shimmer).
+    enum DaemonPhase { case live, warming, offline, needsNode }
+
+    var daemonPhase: DaemonPhase {
+        if needsNodeSetup { return .needsNode }
+        // The daemon PROCESS being up (isDaemonAlive) does not mean its first
+        // scan is done: /api/quick returns ready=false (and zero stats) during
+        // a cold scan, which sets isWarming. Treat alive-but-not-ready as
+        // .warming so the UI shows the skeleton instead of rendering genuine-
+        // looking zeros. Only a ready (or stale-data) daemon is .live.
+        if isDaemonAlive { return isWarming ? .warming : .live }
+        // Not reachable: a start genuinely in flight is .warming; otherwise
+        // stale cached data still shows (the STALE pill covers it), else offline.
+        if isStartingDaemon { return .warming }
+        if hasFreshData { return .live }
+        return .offline
+    }
+
     init(startPolling: Bool = true) {
         guard startPolling else { return }
         Task { await loadData() }

@@ -43,6 +43,26 @@ const MENUBAR_COLOR_SOURCES: readonly MenubarColorSource[] = ["off", "context", 
 export type WeekChartStyle = "line" | "bars" | "area";
 const WEEK_CHART_STYLES: readonly WeekChartStyle[] = ["line", "bars", "area"];
 
+/** Formats a custom source's files can be written in. */
+export type CustomSourceFormat = "tokmeter-usage-jsonl";
+
+/** A user-registered agent whose session files tokmeter should also read. */
+export interface CustomSource {
+  /** Directory to scan (recursively) for session files. `~` is expanded. */
+  path: string;
+  /** How the files are encoded. Only the canonical usage-line format for now. */
+  format: CustomSourceFormat;
+  /**
+   * Provider id to tag these records with. One of the custom-eligible ids
+   * ("ribhu", "grok", "custom"); anything else falls back to "custom".
+   */
+  provider?: string;
+  /** Human label for the UI (e.g. "Takumi"). Cosmetic. */
+  label?: string;
+  /** Set false to keep the entry but stop scanning it. Defaults to true. */
+  enabled?: boolean;
+}
+
 export interface UserConfig {
   version: 1;
   bar: {
@@ -100,6 +120,16 @@ export interface UserConfig {
    * hand to set this; no CLI verb for it yet.
    */
   providerPaths: Record<string, string[]>;
+  /**
+   * User-registered extra agents that tokmeter has no built-in parser for.
+   * Each points at a directory of session files written in the canonical
+   * usage-line format (see CustomSourceParser) — one JSON object per API
+   * response. This is the "enter a path and tokmeter picks it up" hatch: an
+   * agent you build (Takumi), a tool we don't ship a parser for yet (Grok), or
+   * anything that can emit the contract. A `backfill` then folds the last N
+   * days of that source into the relay via the normal grow-only deep rescan.
+   */
+  customSources: CustomSource[];
   /** Who last wrote the file. Restore merges prefer user-flagged sides. */
   modifiedBy: "user" | "tokmeter";
   /** ISO timestamp of the last write. */
@@ -117,6 +147,7 @@ export const DEFAULT_CONFIG: UserConfig = {
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
   providerPaths: {},
+  customSources: [],
   modifiedBy: "tokmeter",
   modifiedAt: new Date(0).toISOString(),
 };
@@ -221,6 +252,7 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
           : d.alerts.dailyCostThreshold,
     },
     providerPaths: normalizeProviderPaths(raw.providerPaths),
+    customSources: normalizeCustomSources(raw.customSources),
     modifiedBy: raw.modifiedBy === "user" ? "user" : "tokmeter",
     modifiedAt: typeof raw.modifiedAt === "string" ? raw.modifiedAt : new Date().toISOString(),
   };
@@ -238,6 +270,29 @@ function normalizeProviderPaths(raw: unknown): Record<string, string[]> {
     if (!Array.isArray(paths)) continue;
     const clean = paths.filter((p): p is string => typeof p === "string" && p.length > 0);
     if (clean.length > 0) out[providerId] = clean;
+  }
+  return out;
+}
+
+/**
+ * Drops malformed entries instead of rejecting the whole config. A source
+ * needs a non-empty `path` and a known `format`; everything else is optional.
+ */
+function normalizeCustomSources(raw: unknown): CustomSource[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CustomSource[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.path !== "string" || e.path.length === 0) continue;
+    if (e.format !== "tokmeter-usage-jsonl") continue;
+    out.push({
+      path: e.path,
+      format: "tokmeter-usage-jsonl",
+      provider: typeof e.provider === "string" ? e.provider : undefined,
+      label: typeof e.label === "string" ? e.label : undefined,
+      enabled: e.enabled !== false,
+    });
   }
   return out;
 }
