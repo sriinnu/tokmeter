@@ -83,8 +83,15 @@ struct NodeToolchain: Equatable {
     /// tokmeter-mcp owns the daemon and depends on Tokmeter. Installing Tokmeter
     /// alone does not install tokmeter-mcp, so it cannot bootstrap the daemon.
     static func daemonArguments(version: String?) -> [String] {
-        guard let version else { return ["--yes", "@sriinnu/tokmeter-mcp", "daemon", "start"] }
-        return ["--yes", "\(daemonPackage(version: version))@\(version)", "daemon", "start"]
+        daemonArguments(version: version, subcommand: "start")
+    }
+
+    /// Build the npx bootstrap args for a daemon subcommand (start / restart).
+    /// `restart` resolves to a launchd kickstart when the agent is loaded, else a
+    /// clean stop+start — the daemon CLI decides; we just invoke it.
+    static func daemonArguments(version: String?, subcommand: String) -> [String] {
+        guard let version else { return ["--yes", "@sriinnu/tokmeter-mcp", "daemon", subcommand] }
+        return ["--yes", "\(daemonPackage(version: version))@\(version)", "daemon", subcommand]
     }
 
     /// The daemon shipped as @sriinnu/drishti through 1.12.x and as

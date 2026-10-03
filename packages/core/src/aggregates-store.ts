@@ -430,7 +430,7 @@ function makeEmptyDay(date: string): DailyAggregate {
   };
 }
 
-function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
+export function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
   day.cost += r.cost;
   addBuckets(day, r);
   foldCostByHour(day, r);
@@ -517,7 +517,7 @@ function foldRecordIntoDay(day: DailyAggregate, r: TokenRecord): void {
   if (r.timestamp > provider.lastUsed) provider.lastUsed = r.timestamp;
 }
 
-function finalizeDay(day: DailyAggregate): DailyAggregate {
+export function finalizeDay(day: DailyAggregate): DailyAggregate {
   day.totalTokens = tokensTotal(day);
   for (const m of Object.values(day.models)) m.totalTokens = tokensTotal(m);
   for (const p of Object.values(day.projects)) {

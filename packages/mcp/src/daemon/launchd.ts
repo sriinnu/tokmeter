@@ -21,7 +21,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DAEMON_STATE_DIR } from "./protocol.js";
@@ -170,6 +177,49 @@ function findNode(): string | null {
  * Returns `heapEnforced=false` when the chosen runtime won't honor the cap, so
  * the caller can warn instead of silently shipping an uncapped daemon.
  */
+/**
+ * Map a versioned Homebrew Cellar runtime path to the stable symlink that
+ * points at it, when one exists and still resolves to the SAME binary. A plist
+ * that hardcodes `/opt/homebrew/Cellar/node/26.9.0/bin/node` is orphaned the
+ * moment `brew upgrade node` removes 26.9.0 — the daemon then never comes back
+ * after a reboot. Homebrew's `bin/node` (default formula) and `opt/<formula>`
+ * (keg-only, e.g. `node@22`) symlinks survive upgrades, so derive both from the
+ * Cellar path and prefer whichever resolves to this process's own binary. Only
+ * the Homebrew Cellar shape is rewritten; nvm/MacPorts/system node are left as
+ * they are (their paths are already stable or not an upgrade-fragile Cellar).
+ * Correctness-safe: an alias is accepted only on a byte-identical realpath
+ * match, so a dangling or wrong-formula symlink is skipped, not trusted.
+ */
+function stabilizeNodePath(execPath: string): string {
+  // Capture the Homebrew prefix + formula from a versioned Cellar path, e.g.
+  // /opt/homebrew/Cellar/node@22/22.1.0/bin/node → prefix=/opt/homebrew,
+  // formula=node@22. Only this shape is upgrade-fragile.
+  const m = execPath.match(/^(.*)\/Cellar\/(node(?:@[\w.]+)?)\/[^/]+\/bin\/node$/);
+  if (!m) return execPath;
+  const [, prefix, formula] = m;
+  let realExec: string;
+  try {
+    realExec = realpathSync(execPath);
+  } catch {
+    return execPath;
+  }
+  const aliases = [
+    `${prefix}/opt/${formula}/bin/node`, // keg-only stable link (node@22, …)
+    `${prefix}/bin/node`, // default-formula stable link
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+  ];
+  for (const alias of aliases) {
+    if (alias === execPath) continue;
+    try {
+      if (realpathSync(alias) === realExec) return alias;
+    } catch {
+      // alias missing or dangling — try the next
+    }
+  }
+  return execPath;
+}
+
 export function resolveLaunchTarget(opts?: { nodePath?: string; cliEntry?: string }): {
   nodePath: string;
   cliEntry: string;
@@ -185,8 +235,9 @@ export function resolveLaunchTarget(opts?: { nodePath?: string; cliEntry?: strin
   const runningUnderBun = /(^|\/)bun$/.test(execPath);
 
   if (!runningUnderBun) {
-    // Already node (or node-compatible): use it + the running entry directly.
-    return { nodePath: execPath, cliEntry: entry, heapEnforced: true };
+    // Already node (or node-compatible): use it + the running entry directly,
+    // but prefer a stable node symlink so a brew upgrade can't orphan the plist.
+    return { nodePath: stabilizeNodePath(execPath), cliEntry: entry, heapEnforced: true };
   }
 
   // Under bun: try to swap to node + the compiled dist entry so the heap cap

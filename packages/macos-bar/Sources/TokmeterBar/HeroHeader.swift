@@ -122,15 +122,34 @@ struct HeroHeader: View {
     /// Both headline values describe today; estimates remain separate from tool reports.
     private var valueRow: some View {
         HStack(alignment: .top, spacing: 16) {
-            if loader.isWarming {
+            switch loader.daemonPhase {
+            case .warming:
                 skeletonHero
-            } else {
+            case .offline, .needsNode:
+                offlineHero
+            case .live:
                 headline(Fmt.number(loader.todayTokens), label: "Tokens today", color: foreground)
                 headline(estimatedCostText, label: "Estimated API cost today", color: theme.costInk)
                     .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
             }
         }
         .padding(.top, 5)
+    }
+
+    /// Shown in place of the headline numbers when the daemon is down — a plain
+    /// statement plus where to fix it, instead of a shimmer that implies loading.
+    private var offlineHero: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(loader.daemonPhase == .needsNode ? "Node.js required" : "Usage service offline")
+                .font(.system(size: 18, weight: .semibold, design: theme.fonts.bodyDesign))
+                .foregroundColor(foreground)
+            Text(loader.daemonPhase == .needsNode
+                ? "Install Node 18+ to run the local service."
+                : "No live numbers — press ▶ Start below to bring it up.")
+                .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
+                .foregroundColor(foreground.opacity(0.8))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var estimatedCostText: String {
@@ -157,7 +176,7 @@ struct HeroHeader: View {
 
     @ViewBuilder
     private var tokenBreakdownRow: some View {
-        if !loader.isWarming {
+        if loader.daemonPhase == .live {
             VStack(alignment: .leading, spacing: 4) {
                 if let basis = loader.statbarSignals?.costBasisToday {
                     if basis.reportedRecords > 0 {
@@ -196,23 +215,46 @@ struct HeroHeader: View {
         default:         EmptyView()
         }
 
-        if loader.isWarming {
+        switch loader.daemonPhase {
+        case .warming:
             warmingPill
-        } else if loader.lastError != nil && loader.hasFreshData {
-            stalePill
-        } else if let live = loader.statbarSignals?.liveSession {
-            // Something is actively running RIGHT NOW. Replace the generic
-            // ECG with a concrete pointer — "claude-code · tokmeter · 4m" —
-            // so the bar tells you what's live, not just that "data exists."
-            liveSessionPill(live)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-        } else if loader.isDaemonAlive {
-            // No live session right now, but the daemon is alive — show the
-            // scrolling ECG as a passive "data is fresh" heartbeat.
-            EcgView(color: ecgColor, isVisible: isVisible)
-                .frame(width: 78, height: 14)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        case .offline, .needsNode:
+            // Honest: the daemon is down and nothing is starting it. No fake
+            // "WARMING" shimmer — a clear OFFLINE badge, with the footer's ▶
+            // Start control as the fix.
+            offlinePill
+        case .live:
+            if loader.lastError != nil && loader.hasFreshData {
+                stalePill
+            } else if let live = loader.statbarSignals?.liveSession {
+                // Something is actively running RIGHT NOW. Replace the generic
+                // ECG with a concrete pointer — "claude-code · tokmeter · 4m" —
+                // so the bar tells you what's live, not just that "data exists."
+                liveSessionPill(live)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            } else if loader.isDaemonAlive {
+                // No live session right now, but the daemon is alive — show the
+                // scrolling ECG as a passive "data is fresh" heartbeat.
+                EcgView(color: ecgColor, isVisible: isVisible)
+                    .frame(width: 78, height: 14)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
         }
+    }
+
+    /// Red OFFLINE badge — shown when the daemon is unreachable and no start is
+    /// in flight, so the header never claims "WARMING" over a dead service.
+    private var offlinePill: some View {
+        HStack(spacing: 4) {
+            Circle().fill(theme.statusDanger).frame(width: 6, height: 6)
+            Text(loader.daemonPhase == .needsNode ? "NODE?" : "OFFLINE")
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .tracking(1)
+                .foregroundColor(theme.statusDanger)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(theme.statusDanger.opacity(0.18)))
     }
 
     /// Live-session pill — green dot + compact session descriptor. Reads as

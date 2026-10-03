@@ -11,22 +11,38 @@ import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   DailyAccumulator,
+  finalizeDay,
+  foldRecordIntoDay,
   listDaysOnDisk,
   loadAggregates,
   migrateMonolithSnapshotIfNeeded,
   writeDayFile,
 } from "./aggregates-store.js";
-import { type DailyAggregate, aggregateRecordsByDay, shouldKeepSealedDay } from "./aggregates.js";
+import {
+  type DailyAggregate,
+  aggregateRecordsByDay,
+  isValidRecord,
+  recordFingerprint,
+  shouldKeepSealedDay,
+} from "./aggregates.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { getParsers } from "./parsers/index.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
-import type { ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface RelayState {
   aggregates: Map<string, DailyAggregate>;
   historySource: ScanMeta["historySource"];
 }
+
+/**
+ * Provider ids served by the single CustomSourceParser (providerId "custom").
+ * A surgical backfill of one of these must scan that parser, not a parser whose
+ * id equals the target (none exists). Mirrors CUSTOM_ELIGIBLE in
+ * parsers/custom-source.ts.
+ */
+const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>(["ribhu", "grok", "custom"]);
 
 /**
  * Refresh historical aggregates from the per-day relay store.
@@ -286,6 +302,106 @@ export async function rebuildRecentWindow(
       });
     }
   }
+  return { aggregates, historySource: "rebuilt" };
+}
+
+/**
+ * Surgical, provider-scoped additive backfill. Re-derives ONE provider's raw
+ * over the last `windowDays` sealed days and ADDS its contribution to each day
+ * — it never re-derives or touches the other providers already sealed in that
+ * day. This is the tool for picking up a NEWLY ADDED parser (or a freshly
+ * registered custom source) on a machine where the full deep rescan can't:
+ * when a day's OTHER providers' raw has aged out (e.g. codex pruned by a
+ * compaction job), re-deriving the whole day shrinks it and the grow-only guard
+ * rejects it, so the new provider never lands. Adding only the new provider's
+ * slice sidesteps that entirely and is grow-only by construction.
+ *
+ * Today is never touched (the live scan owns it). It is bounded by the NEW
+ * provider's own raw retention — a day whose provider raw has aged out simply
+ * contributes nothing. It is idempotent: a day that already carries this
+ * provider is skipped, so a re-run never double-counts (re-deriving an
+ * already-present provider would need a subtract we deliberately don't do;
+ * correcting one is a full-day rebuild, not this additive path).
+ */
+export async function backfillProviderIntoRelay(
+  ctx: ScanContext,
+  providerId: ProviderId,
+  referenceTimestamp: number,
+  warnings: ScanWarning[],
+  windowDays: number
+): Promise<RelayState> {
+  migrateV2IfNeeded(ctx.homeDir);
+  const floorMs = startOfLocalDay(referenceTimestamp - windowDays * 86_400_000);
+  const todayKey = localDateKey(referenceTimestamp);
+  const floorKey = localDateKey(floorMs);
+
+  // Custom-eligible ids (ribhu/grok/custom) are all emitted by the single
+  // CustomSourceParser, whose providerId is "custom". Scanning [providerId]
+  // for one of those would match no parser; scan the custom parser instead and
+  // let the per-record `r.provider === providerId` filter below pick the target.
+  const scanProviderId: ProviderId = CUSTOM_ELIGIBLE.has(providerId) ? "custom" : providerId;
+  const raw = await scanRawRecords(ctx, [scanProviderId], "history", warnings, floorMs);
+
+  // Keep only this provider's records that fall in the sealed window: on/after
+  // the floor day and strictly before today (a multi-day file can carry records
+  // outside the window; today belongs to the live scan). Validity + fingerprint
+  // dedup mirror the cold fold paths (aggregateRecordsByDay / DailyAccumulator)
+  // so a malformed or duplicated line can never poison an immutable sealed day.
+  const byDate = new Map<string, TokenRecord[]>();
+  const seenFingerprints = new Set<string>();
+  for (const r of raw) {
+    if (r.provider !== providerId) continue;
+    if (!isValidRecord(r)) continue;
+    const date = localDateKey(r.timestamp);
+    if (date < floorKey || date >= todayKey) continue;
+    const fp = recordFingerprint(r);
+    if (seenFingerprints.has(fp)) continue;
+    seenFingerprints.add(fp);
+    (byDate.get(date) ?? byDate.set(date, []).get(date)!).push(r);
+  }
+
+  const aggregates = loadAggregates(ctx.homeDir);
+  let added = 0;
+  let skipped = 0;
+  for (const [date, records] of byDate) {
+    const existing = aggregates.get(date);
+    if (existing) {
+      if (existing.providers[providerId]) {
+        skipped++;
+        continue; // already backfilled — additive re-run would double-count
+      }
+      for (const r of records) foldRecordIntoDay(existing, r);
+      finalizeDay(existing); // recompute totalTokens rollups after the fold
+      try {
+        writeDayFile(ctx.homeDir, existing);
+        added++;
+      } catch (error) {
+        warnings.push({
+          scope: "cache",
+          message: `Failed to persist day ${date} to relay: ${toErrorMessage(error)}`,
+        });
+      }
+    } else {
+      // No sealed day for this date yet — this provider is the only activity.
+      const fresh = aggregateRecordsByDay(records)[0];
+      if (!fresh) continue;
+      try {
+        writeDayFile(ctx.homeDir, fresh);
+        aggregates.set(date, fresh);
+        added++;
+      } catch (error) {
+        warnings.push({
+          scope: "cache",
+          message: `Failed to persist day ${date} to relay: ${toErrorMessage(error)}`,
+        });
+      }
+    }
+  }
+
+  warnings.push({
+    scope: "history",
+    message: `Provider backfill (${providerId}): added ${added} day(s), skipped ${skipped} already-present day(s), window ${windowDays}d.`,
+  });
   return { aggregates, historySource: "rebuilt" };
 }
 

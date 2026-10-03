@@ -16,7 +16,12 @@ Checked for the 1.10.0 release candidate on 2026-09-06. An implemented parser is
 | Zed | Fixture tested | Public-schema-based reader; not claimed as current live verification. |
 | VS Code Copilot | Fixture tested | Activity/model metadata; tokens and cost may not be exposed. |
 | Antigravity | Fixture tested | Local activity parsing; opaque data is not converted into invented tokens/cost. Optional live-credit path has separate tests, not live verification here. |
+| Muse (Meta) | Live numeric reconciliation (summed against raw JSONL — 203 responses exact) + fixture | Counts only `model_completed` events and ignores the `goal_usage_attribution` echo (else double-bills). `input_tokens` is OpenAI-style (cache-inclusive) — cached portion stripped. Project from `workspace_root`. |
+| Cline | Live data observed + fixture | `chat_usage` stream, Anthropic-style buckets. The kanban/hub log carries no model or workspace, so model is `unknown` and project falls back to `cline`; cost uses Cline's own figure when present. |
+| Augment (Auggie) | Live data observed + fixture | One record per exchange, keep-max across response nodes (placeholder + final pattern). No model id stored → tokens surface, cost pends a model. Project from `repository_root`. |
+| Copilot CLI | Live data observed + fixture | Authoritative per-model rollup from the `session.shutdown` event (distinct from the VS Code Copilot parser). `inputTokens` cache-inclusive → stripped. A session with no shutdown event (still open / crashed) contributes nothing — honest under-report, never a double. |
 | OpenCode, Amp, Droid, OpenClaw, Pi, Kimi, Kilo, Kilo CLI, Mux, Synthetic | Implemented; not individually validated in this candidate | Generic aggregation tests do not establish current parser compatibility. Treat as provisional until a local numeric sample is checked. |
+| Custom sources (Ribhu, Grok, any) | Dispatch + validity gate fixture tested | Agents with no built-in parser, registered via `customSources` in `~/.tokmeter/config.json` and emitting the canonical `tokmeter-usage-jsonl` format (one object per API response). Tagged `ribhu`/`grok`/`custom`; `model` is the resolved model so routed-per-response agents still price. See the SKILL for the line format. |
 
 ## Keeping this table current
 

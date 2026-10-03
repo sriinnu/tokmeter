@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Parsers for four more agents: Muse (Meta), Cline, Augment, and Copilot
+  CLI.** Muse is reconciled numerically against its raw JSONL.
+- **Custom sources** — register an agent tokmeter ships no parser for (one you
+  built, e.g. Ribhu, or Grok) under `customSources` in `~/.tokmeter/config.json`
+  and have it emit the canonical `tokmeter-usage-jsonl` line per API response.
+  New provider ids: `ribhu`, `grok`, `custom`.
+- **`tokmeter backfill`** — fold recent sealed days into the relay after adding
+  a parser or source. `backfill --<provider>` is surgical (adds only that
+  provider's slice, never re-deriving or shrinking the others); `backfill` with
+  no provider is the full grow-only deep rescan.
+- **Always-on daemon on macOS** — `tokmeter-mcp daemon install-agent` installs a
+  launchd LaunchAgent (auto-start at login, respawn on crash), plus
+  `daemon restart` and `daemon:install-agent` / `daemon:uninstall-agent`
+  scripts. The agent plist is pinned to a stable node path so a `brew upgrade`
+  can't orphan it.
+- **macOS menubar: Start / Restart daemon controls** and an honest offline
+  state — it no longer shows a "warming" skeleton (or zeros as if real) when the
+  daemon is actually down or still cold-scanning. Menubar glyphs for the new
+  agents.
+
 ## [1.13.0] - 2026-09-23
 
 ### Added

@@ -54,7 +54,10 @@ interface CliArgs extends ScanOptions {
     | "pricing-audit"
     | "routes"
     | "update"
-    | "refresh";
+    | "refresh"
+    | "backfill";
+  /** For `backfill`: how many recent sealed days to recompute into the relay. */
+  backfillDays?: number;
   /** Alias sub-command and its positional arguments. */
   aliasSub?: string;
   aliasRest?: string[];
@@ -192,6 +195,27 @@ function parseArgs(argv: string[]): CliArgs {
       case "--mux":
         args.providers = [...(args.providers || []), "mux" as ProviderId];
         break;
+      case "--muse":
+        args.providers = [...(args.providers || []), "muse" as ProviderId];
+        break;
+      case "--cline":
+        args.providers = [...(args.providers || []), "cline" as ProviderId];
+        break;
+      case "--augment":
+        args.providers = [...(args.providers || []), "augment" as ProviderId];
+        break;
+      case "--copilot-cli":
+        args.providers = [...(args.providers || []), "copilot-cli" as ProviderId];
+        break;
+      case "--ribhu":
+        args.providers = [...(args.providers || []), "ribhu" as ProviderId];
+        break;
+      case "--grok":
+        args.providers = [...(args.providers || []), "grok" as ProviderId];
+        break;
+      case "--custom":
+        args.providers = [...(args.providers || []), "custom" as ProviderId];
+        break;
       case "--synthetic":
         args.providers = [...(args.providers || []), "synthetic" as ProviderId];
         break;
@@ -204,6 +228,11 @@ function parseArgs(argv: string[]): CliArgs {
       case "--force":
         args.force = true;
         break;
+      case "--days": {
+        const n = Number(rest[++i]);
+        if (Number.isFinite(n)) args.backfillDays = Math.round(n);
+        break;
+      }
       case "--latest":
         args.restoreLatest = true;
         break;
@@ -345,6 +374,14 @@ Output:
       case "pricing-audit":
       case "routes":
         args.command = arg;
+        break;
+      case "backfill":
+        args.command = "backfill";
+        // Optional positional day count: `backfill 30`.
+        if (rest[i + 1] && !rest[i + 1].startsWith("-")) {
+          const n = Number(rest[++i]);
+          if (Number.isFinite(n)) args.backfillDays = Math.round(n);
+        }
         break;
       case "alias":
         args.command = "alias";
@@ -996,6 +1033,44 @@ async function main() {
       console.error(
         `Failed to refresh kosha: ${error instanceof Error ? error.message : String(error)}`
       );
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (args.command === "backfill") {
+    // Fold recent sealed days' raw into the relay so newly added parsers and
+    // freshly registered custom sources get their history picked up. Two modes:
+    //
+    //   tokmeter backfill --muse        → SURGICAL: add ONLY muse's slice to
+    //     each sealed day, never re-deriving (or shrinking) the other providers.
+    //     The safe tool when a day's other providers' raw has aged out.
+    //
+    //   tokmeter backfill               → FULL: re-derive every provider for the
+    //     window (grow-only; --force overrides, back up ~/.cache/tokmeter first).
+    //
+    // Either way today is untouched (the live scan owns it) and the reach is
+    // bounded by raw retention — a day whose raw has aged out can't be filled.
+    const days = args.backfillDays && args.backfillDays > 0 ? args.backfillDays : 30;
+    const selected = args.providers ?? [];
+    try {
+      if (selected.length > 0) {
+        for (const provider of selected) {
+          console.log(
+            `Backfilling ${provider} into the last ${days} sealed day(s) — additive, other providers untouched...`
+          );
+          await core.backfillProvider(provider, days, Date.now());
+        }
+        console.log(`Provider backfill complete (${selected.join(", ")}).`);
+      } else {
+        console.log(
+          `Backfilling ALL providers over the last ${days} day(s) (grow-only; only days whose raw still exists can change)...`
+        );
+        await core.rebuildRecentDays(days, Date.now(), args.force === true);
+        console.log(`Backfill complete. Recomputed up to ${days} recent day(s).`);
+      }
+    } catch (error) {
+      console.error(`Backfill failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
     return;

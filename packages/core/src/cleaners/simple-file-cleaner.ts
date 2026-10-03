@@ -2,7 +2,9 @@
  * @sriinnu/tokmeter-core — Simple file cleaner.
  *
  * Base cleaner for providers whose session data is a single file per session.
- * Covers: codex, gemini, amp, droid, pi, kimi, qwen, mux, cursor.
+ * Covers: codex, gemini, amp, droid, pi, kimi, qwen, mux, cursor, cline,
+ * augment, copilot-cli. (muse is omitted: its session.jsonl sits beside
+ * sidecar files in a per-session directory, so it needs a dir-aware cleaner.)
  */
 
 import { lstat, rm } from "node:fs/promises";
@@ -79,6 +81,9 @@ export function createSimpleFileCleaners(): SimpleFileCleaner[] {
     "qwen",
     "mux",
     "cursor",
+    "cline",
+    "augment",
+    "copilot-cli",
   ];
   return providers.map((id) => new SimpleFileCleaner(id));
 }

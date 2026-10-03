@@ -1,7 +1,7 @@
 ---
 name: tokmeter
 description: >-
-  Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 12 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
+  Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 16 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
 license: AGPL-3.0-only
 compatibility: Node.js 18+. Reads local agent session files; no network or API key.
 ---
@@ -77,8 +77,12 @@ with `tokmeter_backups` before destructive work.
 
 ## Daemon HTTP
 
-Start it with `tokmeter-mcp daemon start`. Read-only JSON on `127.0.0.1:9877`
-(WebSocket on `9876` is for live session registration, not queries):
+Start it with `tokmeter-mcp daemon start`; `daemon status`, `daemon stop`, and
+`daemon restart` manage it. On macOS, `tokmeter-mcp daemon install-agent`
+installs a launchd LaunchAgent (`RunAtLoad` + crash-respawn) so it auto-starts
+at login and survives reboots — the robust way to keep it always-on. Read-only
+JSON on `127.0.0.1:9877` (WebSocket on `9876` is for live session registration,
+not queries):
 
 | Endpoint | Returns |
 | --- | --- |
@@ -103,6 +107,49 @@ npx @sriinnu/tokmeter digest --json --period week
 Filters: `--project`, `--claude`, `--codex`, `--week`, `--month`,
 `--since YYYY-MM-DD --until YYYY-MM-DD`. `--light` skips pricing lookups when
 token counts alone are enough — use it when you do not need dollars.
+
+## Custom sources (agents with no built-in parser)
+
+For an agent tokmeter does not ship a parser for — one you built, or a tool not
+yet covered — register a directory in `~/.tokmeter/config.json` and have the
+agent emit one JSON object per API response in the canonical usage-line format:
+
+```json
+"customSources": [
+  { "path": "~/.ribhu/sessions", "format": "tokmeter-usage-jsonl", "provider": "ribhu" }
+]
+```
+
+Each line (snake_case or camelCase; token buckets flat or nested under `usage`):
+
+```json
+{"ts": 1790000001000, "id": "<response-id>", "model": "<resolved-model>",
+ "cwd": "/abs/project",
+ "usage": {"input_tokens": 1000, "output_tokens": 100, "cache_read_tokens": 10,
+           "cache_write_tokens": 0, "reasoning_tokens": 0}}
+```
+
+`provider` is the AGENT (`ribhu`, `grok`, or `custom`), never the routed vendor;
+`model` is the resolved model, so pricing works even when the agent routes
+across models per response. `input_tokens` is uncached (Anthropic-style).
+
+## Backfill (pick up newly added parsers / sources into history)
+
+A plain scan only reads today's raw plus the sealed relay; a new parser or
+custom source does not appear in already-sealed days until backfilled.
+
+```bash
+npx @sriinnu/tokmeter backfill --muse --days 30    # SURGICAL: add only this
+                                                   # provider's slice to each
+                                                   # sealed day; others untouched
+npx @sriinnu/tokmeter backfill --days 30           # FULL: re-derive all
+                                                   # providers (grow-only)
+```
+
+Surgical backfill is the safe tool when a day's *other* providers' raw has aged
+out (a full re-derive would shrink and be rejected, or lose them with `--force`).
+It is additive, idempotent (re-runs skip already-present provider days), never
+touches today, and is bounded by how far the target's own raw still exists.
 
 ## In-process (Node / Bun)
 

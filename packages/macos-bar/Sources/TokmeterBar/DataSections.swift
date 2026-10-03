@@ -45,7 +45,7 @@ struct ModelsSection: View {
                 modelTabPill
             }
 
-            if loader.isWarming {
+            if loader.daemonPhase == .warming {
                 ForEach(0..<3, id: \.self) { _ in
                     ShimmerBar(width: 280, height: 14, breathToggle: true)
                 }
@@ -278,7 +278,7 @@ struct WeekSection: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(label: "LAST 7 RECORDED DAYS", count: loader.recentDaily.count, theme: theme)
 
-            if loader.isWarming {
+            if loader.daemonPhase == .warming {
                 ShimmerBar(width: 340, height: 60, breathToggle: true)
             } else {
                 Chart(loader.recentDaily) { day in
@@ -413,7 +413,7 @@ struct SessionsSection: View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(label: "TODAY’S PROJECTS", count: loader.todayProjects.count, theme: theme)
 
-            if loader.isWarming {
+            if loader.daemonPhase == .warming {
                 ForEach(0..<5, id: \.self) { _ in
                     ShimmerBar(width: 340, height: 28, breathToggle: true)
                 }
