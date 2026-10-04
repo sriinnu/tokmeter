@@ -206,6 +206,19 @@ cat > "${CONTENTS}/Info.plist" <<PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 sriinnu. All rights reserved.</string>
+PLIST
+
+# Sparkle auto-update config is written ONLY when a public key is embedded.
+# Without SUPublicEDKey, Sparkle can validate no signature, so pointing the app
+# at the live appcast (SUFeedURL + SUEnableAutomaticChecks) only produces an
+# endless "improperly signed and could not be validated" nag and a bricked
+# updater. A keyless build (dev without a key) must therefore ship with no
+# auto-update config at all — it simply never checks. The signed/release guards
+# above guarantee a distributable build always reaches this branch with a key.
+if [[ -n "${SUPUBLIC_KEY}" ]]; then
+    cat >> "${CONTENTS}/Info.plist" <<PLIST
     <!-- Sparkle: where to fetch the appcast and how to verify updates -->
     <key>SUFeedURL</key>
     <string>${SUFEED_URL}</string>
@@ -215,15 +228,11 @@ cat > "${CONTENTS}/Info.plist" <<PLIST
     <true/>
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
-    <key>NSHumanReadableCopyright</key>
-    <string>© 2026 sriinnu. All rights reserved.</string>
-PLIST
-
-if [[ -n "${SUPUBLIC_KEY}" ]]; then
-    cat >> "${CONTENTS}/Info.plist" <<PLIST
     <key>SUPublicEDKey</key>
     <string>${SUPUBLIC_KEY}</string>
 PLIST
+else
+    echo "==> No SUPUBLIC_KEY: omitting Sparkle auto-update config (build will not self-update)"
 fi
 
 cat >> "${CONTENTS}/Info.plist" <<'PLIST'
