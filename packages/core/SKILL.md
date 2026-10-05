@@ -2,11 +2,11 @@
 
 Private workspace package. Use the public `@sriinnu/tokmeter` distribution.
 
-Core engine for token usage tracking. Provides session parsers for 16+ AI agent formats, token aggregation, and model pricing via kosha-discovery.
+Core engine for token usage tracking. Provides session parsers for 20+ AI agent formats, token aggregation, and model pricing via kosha-discovery.
 
 ## Capabilities
 
-- Parse session files from Claude Code, Codex, Cursor, Gemini, OpenCode, and 15 more providers (plus custom sources via `customSources`)
+- Parse session files from Claude Code, Codex, Cursor, Gemini, OpenCode, and 19 more providers (plus custom sources via `customSources`)
 - Aggregate tokens by project, model, provider, and time period
 - Enrich records with estimated API pricing (input, output, cache, reasoning tokens)
 - Pricing: user overrides, kosha direct/fuzzy lookup, registry manifest fallback, or unavailable

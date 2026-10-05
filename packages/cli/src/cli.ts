@@ -328,6 +328,13 @@ Other Filters:
   --kilocode      Only Kilo Code
   --kilo          Only Kilo CLI
   --mux           Only Mux
+  --muse          Only Muse
+  --cline         Only Cline
+  --augment       Only Augment
+  --copilot-cli   Only Copilot CLI
+  --ribhu         Only Ribhu (custom source)
+  --grok          Only Grok (custom source)
+  --custom        Only custom sources
   --synthetic     Only Synthetic
 
 Output:
