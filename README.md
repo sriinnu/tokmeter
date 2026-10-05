@@ -114,7 +114,7 @@ tokmeter-mcp live              # live terminal UI
 
 The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. The macOS app, statusline, and MCP server consume its shared state. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
 
-MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP reference](packages/mcp/README.md) for names, configuration, and programmatic exports.
+MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP tool reference](docs/mcp-tools.md) for all 24 tools grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
 
 `tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
@@ -150,6 +150,23 @@ The popup gives today's tokens and estimated API cost equal prominence, with mod
 See [macOS build and runtime details](packages/macos-bar/README.md), [first-use checks](docs/macos/first-use.md), and [popover validation](docs/macos/popover-usability.md). The [completion tracker](docs/macos-completion.md) records remaining fresh-machine, reliability, update, accounting, accessibility, and trial gates.
 
 The [synthetic walkthrough](docs/assets/demo/README.md) documents how the example images were generated; it is not a capture of a current local candidate.
+
+## Documentation
+
+- [MCP tool reference](docs/mcp-tools.md) — all 24 `tokmeter_` tools, grouped
+- [Consuming tokmeter](docs/consuming-tokmeter.md) — MCP, daemon HTTP, CLI, and in-process integration
+- [How the numbers work](docs/how-the-numbers-work.md) — bucket semantics and where estimates enter
+- [Backup, snapshot & restore](docs/backup-restore.md) — the confirmation/backup model and cross-machine restore
+- [Troubleshooting](docs/troubleshooting.md) — daemon, bar updates, "shrinking" history, performance
+- [Architecture](docs/architecture.md) — daemon lifecycle, storage, refresh
+
+## Privacy
+
+Everything runs on your machine. Tokmeter reads session files your agents
+already wrote, needs **no provider credentials**, sends **no telemetry**, and
+requires **no account**. The only outbound request is an optional fetch of a
+public model-price catalog, which `--light` skips entirely. Your usage data
+never leaves the device.
 
 ## License
 

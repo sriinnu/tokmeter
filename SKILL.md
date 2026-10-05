@@ -1,7 +1,7 @@
 ---
 name: tokmeter
 description: >-
-  Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 16 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
+  Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 20 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
 license: AGPL-3.0-only
 compatibility: Node.js 18+. Reads local agent session files; no network or API key.
 ---
@@ -92,9 +92,14 @@ not queries):
 | `/api/summary` | The full `TokmeterSummary` contract |
 | `/api/stats`, `/api/daily`, `/api/models`, `/api/providers`, `/api/projects`, `/api/sessions` | Scoped aggregates |
 | `/api/statbar-signals` | Burn rate, cache hit, pace, billing window |
+| `/api/health`, `/api/pricing-status`, `/api/cron-status` | Daemon, pricing-freshness, and cron health |
+| `/api/today-models`, `/api/cross-tool`, `/api/anomalies`, `/api/session-ledger` | Today's models, cross-tool projection, anomalies, and the per-session ledger |
+| `/api/backups`, `/api/themes` | Cleanup backups and available bar themes |
 
-An unknown path returns `{"error":"Not found","endpoints":[…]}`, so the live
-server documents itself. Check `/api/ready` before trusting a cold read.
+An unknown path returns `{"error":"Not found","endpoints":[…]}` listing the
+primary routes — a useful index, though a few specialized endpoints above aren't
+in it, so treat it as a starting point rather than the complete surface. Check
+`/api/ready` before trusting a cold read.
 
 ## Shell and CI
 
