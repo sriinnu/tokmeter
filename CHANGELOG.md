@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **macOS menubar no longer builds an un-updatable app.** A build without an
+  embedded Sparkle public key (a dev bundle, or one built with the key unset)
+  still pointed `SUFeedURL` at the live appcast, so it tried to auto-update with
+  no key to validate against and failed every time with "The update is
+  improperly signed and could not be validated." The whole Sparkle auto-update
+  block is now gated on the public key being present — a keyless build ships
+  with no auto-update config and simply never checks, instead of nagging
+  forever. Signed and release builds are unaffected; they always carry the key.
+- **macOS menubar popover is now dynamic-height.** The scroll area reserved its
+  full maximum height until its content measured itself, so at a low-content
+  moment (start of day, no active agent) the popover opened with a large empty
+  frosted gap above and below the content. It now hugs its content and only
+  caps + scrolls once the content would actually overflow.
+
 ## [1.14.0] - 2026-10-03
 
 ### Added
