@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# commit-msg hook — strip AI co-author / tool-attribution trailers.
+#
+# The work is the user's (see AGENTS.md: "No Co-Authored-By trailers, and no
+# tool attribution in commit messages"). This guards against any tool or session
+# re-introducing those lines, regardless of harness defaults.
+#
+# Removes, case-insensitively:
+#   - any "Co-Authored-By:" trailer line
+#   - any line containing "Generated with [Claude Code]" (incl. the 🤖 variant)
+# then trims resulting trailing blank lines.
+#
+# Fully local and reversible: delete this file to disable.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+awk '
+  tolower($0) ~ /^[[:space:]]*co-authored-by:/     { next }
+  tolower($0) ~ /generated with \[claude code\]/   { next }
+  { keep[++n] = $0 }
+  END {
+    last = n
+    while (last > 0 && keep[last] ~ /^[[:space:]]*$/) last--
+    for (i = 1; i <= last; i++) print keep[i]
+  }
+' "$msg_file" > "$msg_file.tmp" && mv "$msg_file.tmp" "$msg_file"

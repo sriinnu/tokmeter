@@ -10,6 +10,7 @@
     "packages/tokmeter"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "build": "bun run build:core && bun run build:mcp && bun run build:cli && bun run build:tui && bun run build:tokmeter && bun run build:web",
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
