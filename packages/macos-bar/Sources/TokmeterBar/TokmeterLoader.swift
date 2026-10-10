@@ -1,8 +1,9 @@
 // TokmeterLoader.swift — observable view model that fetches from the daemon.
 //
-// Refreshes every 30s via a Timer. Falls back to clear errors when the
+// Refreshes every bar.refreshSeconds (config.json, default 30s) via a Timer. Falls back to clear errors when the
 // daemon is offline so the user knows to start it.
 
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -112,6 +113,13 @@ final class TokmeterLoader: ObservableObject {
     /// fetches can't launch a stampede of starts. The daemon itself enforces
     /// a PID singleton on disk; this just stops the bar from spamming spawns.
     @Published var isStartingDaemon: Bool = false
+    /// Auto-start backoff state (see ensureDaemonStarted). Reset by the first
+    /// successful read.
+    var daemonStartAttempts = 0
+    var nextDaemonStartAllowedAt = Date.distantPast
+    /// Why the last auto-start failed; kept visible across offline ticks.
+    var daemonStartError: String?
+    static let daemonStartBackoffCap: TimeInterval = 300
     @Published var needsNodeSetup = false
 
     /// Coarse lifecycle phase for the daemon, so the UI can be honest instead of
@@ -148,6 +156,14 @@ final class TokmeterLoader: ObservableObject {
             }
             .store(in: &cancellables)
         startColorTimer()
+        // Today's figures roll over only when something reloads; at a
+        // 5-minute-plus refresh the hero kept yesterday's numbers well past
+        // midnight, and a Mac waking from sleep waited a full interval.
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in Task { await self?.reloadAfterChange() } }
+            .store(in: &cancellables)
     }
 
     func applyToday(from daily: [DailyData], now: Date = Date()) {
@@ -215,8 +231,39 @@ final class TokmeterLoader: ObservableObject {
         colorTimer?.invalidate()
     }
 
+    /// A reload requested mid-fetch. Poll ticks can skip an in-flight pass,
+    /// but a reload after a user action (pricing refresh, cron install) can't:
+    /// dropping it left the old prices or cron state up until the next tick,
+    /// which can be an hour away.
+    private var reloadPending = false
+
+    /// Refresh/Retry pressed by the user. Clears the auto-start backoff so a
+    /// press while the daemon is down retries the start now instead of being
+    /// swallowed for up to five minutes.
+    func userRefresh() async {
+        nextDaemonStartAllowedAt = .distantPast
+        daemonStartError = nil
+        await reloadAfterChange()
+    }
+
+    /// Reload after a mutation: runs now, or right after the in-flight pass.
+    func reloadAfterChange() async {
+        if fetchInFlight {
+            reloadPending = true
+            return
+        }
+        await loadData()
+    }
+
     func loadData() async {
         if fetchInFlight { return }
+        repeat {
+            reloadPending = false
+            await loadDataPass()
+        } while reloadPending
+    }
+
+    private func loadDataPass() async {
         fetchInFlight = true
         // The 30s poll re-renders the whole Hub. Apply the fetched @Published
         // values inside a non-animating transaction so the refresh is an instant
@@ -232,8 +279,10 @@ final class TokmeterLoader: ObservableObject {
             fetchInFlight = false
         }
 
-        // Update daemon liveness once per fetch — avoids sync I/O in the view body.
-        self.isDaemonAlive = client.isDaemonRunning
+        // Liveness is set from the HTTP result below (true on a /api/quick
+        // answer, false in handleDaemonOffline). Seeding it from the pidfile
+        // here flipped a healthy daemon with a reaped pidfile to OFFLINE for
+        // the duration of every request.
 
         // ─── Phase 1: fast quick endpoint ────────────────────────────
         // Always succeeds in <50ms (no scan triggered). Returns ready=false
@@ -249,6 +298,11 @@ final class TokmeterLoader: ObservableObject {
                 self.blockPct = quick.blockElapsedPct
                 self.isWarming = !quick.ready
                 self.lastError = nil
+                // HTTP answered, so the daemon is up whatever the pidfile says.
+                self.isDaemonAlive = true
+                self.daemonStartAttempts = 0
+                self.nextDaemonStartAllowedAt = .distantPast
+                self.daemonStartError = nil
                 self.needsNodeSetup = false
                 if quick.ready {
                     self.hasFreshData = true
@@ -411,10 +465,10 @@ final class TokmeterLoader: ObservableObject {
         pricingRefreshError = nil
         defer { isRefreshingPricing = false }
 
-        if client.isDaemonRunning {
+        if isDaemonAlive {
             do {
                 try await client.updatePricing()
-                await loadData()
+                await reloadAfterChange()
             } catch {
                 pricingRefreshError = error.localizedDescription
             }
@@ -430,7 +484,7 @@ final class TokmeterLoader: ObservableObject {
     /// off — there's no live progress bar because the daemon owns the work.
     func deepRescan() async {
         guard !isRescanning else { return }
-        guard client.isDaemonRunning else {
+        guard isDaemonAlive else {
             rescanError = "Daemon offline — start it first, then Deep Rescan."
             return
         }
@@ -454,7 +508,7 @@ final class TokmeterLoader: ObservableObject {
     /// Antigravity's language_server wasn't found running.
     func fetchAntigravityLiveNow() async {
         guard !isFetchingAntigravityLiveNow else { return }
-        guard client.isDaemonRunning else {
+        guard isDaemonAlive else {
             antigravityLiveFetchError = "Daemon offline — start it first."
             return
         }
@@ -521,7 +575,7 @@ final class TokmeterLoader: ObservableObject {
                 timeout: 30
             )
             // Refresh cronStatus from the daemon so the UI reflects the change.
-            await loadData()
+            await reloadAfterChange()
         } catch {
             cronInstallError =
                 "\(subcommand) failed: \(error.localizedDescription)"

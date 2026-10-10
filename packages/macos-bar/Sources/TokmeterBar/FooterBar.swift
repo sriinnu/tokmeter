@@ -141,7 +141,7 @@ struct FooterBar: View {
                 }
             }
 
-            Button(action: { Task { await loader.loadData() } }) {
+            Button(action: { Task { await loader.userRefresh() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
                         .rotationEffect(.degrees(refreshAngle))

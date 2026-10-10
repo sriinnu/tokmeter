@@ -168,7 +168,7 @@ struct HubSortPill: View {
                     .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
             }
             .foregroundColor(
-                isSelected ? .white : bg.primaryTextColor.opacity(0.75)
+                isSelected ? theme.onSelectedInk : bg.primaryTextColor.opacity(0.75)
             )
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -178,7 +178,7 @@ struct HubSortPill: View {
                         isSelected
                             ? AnyShapeStyle(
                                 LinearGradient(
-                                    colors: [c.primary, c.secondary],
+                                    colors: theme.selectedFill,
                                     startPoint: .leading, endPoint: .trailing
                                 )
                             )

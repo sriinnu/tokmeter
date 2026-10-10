@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **macOS menubar no longer deletes custom sources from config.json.** The bar
+  re-encoded only the fields its Swift struct modelled, so changing any bar
+  setting (chart style, refresh interval, colour source, budget) rewrote
+  `~/.tokmeter/config.json` without `customSources`, and that usage silently
+  dropped out of every total. Saves now merge over the file's raw JSON: keys
+  the bar doesn't model, today's and future ones, survive untouched.
+- **The menubar label no longer shows stale numbers while the daemon is down.**
+  It showed "?" only on an error, and the offline path clears the error, so a
+  daemon that died overnight left yesterday's token count up after midnight
+  (and "0 tok" on a cold launch). It now shows "?" when the daemon is
+  unreachable, "…" while it starts, and a number only from a live daemon.
+- **Daemon auto-start backs off.** `daemon start` exits as soon as it forks, so
+  a crash-looping daemon looked like a successful start and the bar spawned
+  node/npx on every poll tick, every 5s at the minimum refresh. Retries now
+  back off from 15s, doubling up to 5 minutes, and reset on the first
+  successful read. A failed start's reason stays on screen instead of
+  flickering with "warming". Start and Restart still run immediately.
+- **A reaped `/tmp` pidfile no longer reads as "daemon offline".** Liveness
+  now comes from the HTTP answer. Pricing refresh, rescan and Antigravity
+  fetch no longer report "offline" under a live heartbeat, and Refresh/Retry
+  skip the auto-start backoff.
+- **Settings shows the real refresh interval** instead of a hardcoded "30s".
+- **Reloads after a pricing refresh or cron install are no longer dropped**
+  when a poll is already in flight, and today's figures reload at midnight and
+  on wake instead of waiting up to a full refresh interval.
+- **Unit boundaries round correctly:** 999,950 tokens is "1.0M", not "1000.0K";
+  $999.60 is "$1.0K", not "$1000".
+- **Selected chips are readable on dark themes.** White ink over a gradient
+  ending in the theme's light data colour fell to about 1.3:1 on Terminal.
+  Dark themes now select in their light colours under dark ink (inverse video).
+- **Retired themes migrate.** A stored Synthwave, HUD, Daylight, Mint,
+  Blueprint or Noise preference kept rendering while the picker showed nothing
+  selected; it now maps to Terminal, Paper or Prism at launch.
+
 ## [1.14.1] - 2026-10-05
 
 ### Fixed

@@ -22,14 +22,14 @@ struct HubThemePickerCell: View {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(
                             LinearGradient(
-                                colors: [c.primary, c.secondary, c.warm],
+                                colors: candidate.selectedFill,
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
                         .frame(width: 34, height: 34)
                     Image(systemName: candidate.icon)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(candidate.onSelectedInk)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(candidate.displayName)

@@ -97,7 +97,7 @@ struct HubComingSoonView: View {
             RoundedRectangle(cornerRadius: 26)
                 .fill(
                     LinearGradient(
-                        colors: [c.primary, c.secondary, c.warm],
+                        colors: theme.selectedFill,
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                 )
@@ -106,7 +106,7 @@ struct HubComingSoonView: View {
 
             Image(systemName: icon)
                 .font(.system(size: 48, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(theme.onSelectedInk)
         }
     }
 

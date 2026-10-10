@@ -232,18 +232,83 @@ final class HubConfigStore: ObservableObject {
     }
 
     /// Publish the new settings only after their atomic disk write succeeds.
+    ///
+    /// The CLI owns config.json and its schema grows faster than this struct
+    /// (customSources landed in 1.14.0 with no Swift field). Encoding the
+    /// struct alone dropped every key Swift didn't model on each Hub save, so
+    /// the write merges the struct over the file's raw JSON instead: keys we
+    /// model win, keys we don't survive untouched.
     private func persist(_ cfg: HubUserConfig) {
         do {
             let url = URL(fileURLWithPath: storagePath)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(cfg).write(to: url, options: .atomic)
+            var onDisk: [String: Any] = [:]
+            if FileManager.default.fileExists(atPath: storagePath) {
+                // A file we can't parse (half-written CLI save, hand edit with
+                // a trailing comma) can't be merged, and writing the struct
+                // alone would drop its unknown keys — the bug this merge fixes.
+                guard let data = try? Data(contentsOf: url),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    saveError = "Settings weren't saved: config.json couldn't be read. Fix or remove it, then try again."
+                    return
+                }
+                onDisk = obj
+            }
+            try Self.mergedForWrite(cfg, over: onDisk).write(to: url, options: .atomic)
             config = cfg
             saveError = nil
         } catch {
             saveError = "Settings weren't saved: \(error.localizedDescription)"
+        }
+    }
+
+    /// Optional fields Swift models. JSONEncoder omits a nil optional, which
+    /// the merge would read as "unknown, keep the disk value" — so clearing
+    /// e.g. the budget would silently resurrect the old one. Each of these is
+    /// removed from the disk side first; the struct then re-adds it if set.
+    private static let modeledOptionalPaths: [[String]] = [
+        ["bar", "menubarColorSource"],
+        ["bar", "weekChartStyle"],
+        ["daemon", "antigravityLivePolling"],
+        ["alerts", "dailyCostThreshold"],
+        ["providerPaths"],
+    ]
+
+    /// Encode `cfg` and deep-merge it over the raw on-disk object. Exposed
+    /// (internal) for the round-trip test.
+    static func mergedForWrite(_ cfg: HubUserConfig, over onDisk: [String: Any]) throws -> Data {
+        let encoded = try JSONEncoder().encode(cfg)
+        guard let modeled = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+            return encoded
+        }
+        var base = onDisk
+        for path in modeledOptionalPaths { removeValue(at: path, in: &base) }
+        let merged = deepMerge(modeled, over: base)
+        return try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Nested objects merge key by key; anything else (scalars, arrays,
+    /// providerPaths' per-provider lists) is replaced wholesale by `top`.
+    private static func deepMerge(_ top: [String: Any], over base: [String: Any]) -> [String: Any] {
+        var out = base
+        for (key, value) in top {
+            if let child = value as? [String: Any], let baseChild = out[key] as? [String: Any], key != "providerPaths" {
+                out[key] = deepMerge(child, over: baseChild)
+            } else {
+                out[key] = value
+            }
+        }
+        return out
+    }
+
+    private static func removeValue(at path: [String], in obj: inout [String: Any]) {
+        guard let head = path.first else { return }
+        if path.count == 1 {
+            obj.removeValue(forKey: head)
+        } else if var child = obj[head] as? [String: Any] {
+            removeValue(at: Array(path.dropFirst()), in: &child)
+            obj[head] = child
         }
     }
 

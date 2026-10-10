@@ -117,7 +117,7 @@ struct HubSidebar: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [c.primary, c.secondary],
+                            colors: theme.selectedFill,
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         )
                     )
@@ -125,7 +125,7 @@ struct HubSidebar: View {
                     .shadow(color: c.primary.opacity(0.35), radius: 6, y: 2)
                 Image(systemName: "infinity")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onSelectedInk)
             }
             VStack(alignment: .leading, spacing: 0) {
                 Text("Tokmeter")
@@ -394,7 +394,7 @@ struct HubSidebarRow: View {
                             isSelected
                                 ? AnyShapeStyle(
                                     LinearGradient(
-                                        colors: [c.primary.opacity(0.9), c.secondary.opacity(0.9)],
+                                        colors: theme.selectedFill.map { $0.opacity(0.9) },
                                         startPoint: .topLeading, endPoint: .bottomTrailing
                                     )
                                 )
@@ -403,7 +403,7 @@ struct HubSidebarRow: View {
                         .frame(width: 30, height: 30)
                     Image(systemName: section.icon)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(isSelected ? .white : bg.primaryTextColor.opacity(0.7))
+                        .foregroundColor(isSelected ? theme.onSelectedInk : bg.primaryTextColor.opacity(0.7))
                         .scaleEffect(isSelected ? 1.0 : 0.92)
                 }
 

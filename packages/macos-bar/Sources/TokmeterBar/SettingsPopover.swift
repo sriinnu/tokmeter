@@ -33,7 +33,7 @@ struct SettingsPopover: View {
                 Text("Refresh interval")
                     .font(.system(size: 11, design: .rounded))
                 Spacer()
-                Text("30s")
+                Text(Fmt.interval(configStore.config.bar.refreshSeconds))
                     .font(.system(size: 11, design: .rounded))
                     .foregroundColor(.secondary)
             }

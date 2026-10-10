@@ -227,7 +227,7 @@ struct TokmeterBarView: View {
         if let error = loader.lastError, !loader.isWarming {
             ConnectionIssueView(error: error, needsNodeSetup: loader.needsNodeSetup,
                                 isRetrying: loader.isLoading || loader.isStartingDaemon) {
-                Task { await loader.loadData() }
+                Task { await loader.userRefresh() }
             }
             .padding(.bottom, 4)
             .transition(

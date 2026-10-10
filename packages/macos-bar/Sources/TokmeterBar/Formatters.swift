@@ -9,19 +9,30 @@ import Foundation
 enum Fmt {
     /// Compact number: 1_234 → "1.2K", 2_500_000 → "2.5M", 3e9 → "3.0B".
     /// Anything under 1K shows as-is so small counts stay legible.
+    /// Unit thresholds sit where the one-decimal rounding would roll over
+    /// (999_950 → "1000.0K"), so the next unit takes it: "1.0M".
     static func number(_ n: Int) -> String {
-        if n >= 1_000_000_000 { return String(format: "%.1fB", Double(n) / 1_000_000_000) }
-        if n >= 1_000_000     { return String(format: "%.1fM", Double(n) / 1_000_000) }
-        if n >= 1_000         { return String(format: "%.1fK", Double(n) / 1_000) }
+        if n >= 999_950_000 { return String(format: "%.1fB", Double(n) / 1_000_000_000) }
+        if n >= 999_950     { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000       { return String(format: "%.1fK", Double(n) / 1_000) }
         return "\(n)"
+    }
+
+    /// Refresh interval: 30 → "30s", 300 → "5m", 90 → "1m 30s".
+    static func interval(_ seconds: Int) -> String {
+        guard seconds >= 60 else { return "\(seconds)s" }
+        let m = seconds / 60, s = seconds % 60
+        return s == 0 ? "\(m)m" : "\(m)m \(s)s"
     }
 
     /// Currency: $9.99 / $120 / $1.2K / $48K. Decimals only when the number
     /// is small enough to need them; large numbers get integer-K shorthand.
+    /// Thresholds are the rounding boundaries, not the round numbers: 99.996
+    /// was "$100.00" and 999.6 was "$1000" when the unit was picked first.
     static func cost(_ cost: Double) -> String {
-        if cost >= 10_000 { return String(format: "$%.0fK", cost / 1000) }
-        if cost >= 1000   { return String(format: "$%.1fK", cost / 1000) }
-        if cost >= 100    { return String(format: "$%.0f", cost) }
+        if cost >= 9_950  { return String(format: "$%.0fK", cost / 1000) }
+        if cost >= 999.5  { return String(format: "$%.1fK", cost / 1000) }
+        if cost >= 99.995 { return String(format: "$%.0f", cost) }
         return String(format: "$%.2f", cost)
     }
 

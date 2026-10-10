@@ -268,8 +268,12 @@ final class DaemonClient {
         URL(string: path, relativeTo: baseURL)!.absoluteURL
     }
 
+    /// Writes need the bearer token. The pidfile no longer gates them on its
+    /// own: it gets reaped while the daemon serves, and the bar then showed a
+    /// live daemon whose Rescan said "offline". No pidfile and no token means
+    /// there's nothing to authenticate with, so that still reads as offline.
     private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
+        guard isDaemonRunning || !(bearerToken ?? "").isEmpty else { throw DaemonError.daemonNotRunning }
 
         let url = Self.requestURL(for: path)
         var req = URLRequest(url: url)
@@ -302,8 +306,15 @@ final class DaemonClient {
         }
     }
 
+    /// Reads don't require the pidfile. /tmp/drishti-daemon.pid gets reaped
+    /// while the daemon keeps serving, and gating on it reported a healthy
+    /// daemon as offline — which then triggered the auto-start path. The HTTP
+    /// answer is the liveness signal. Without a valid pidfile a response must
+    /// still carry the daemon's X-Drishti-API header. That's a sanity check
+    /// that tokmeter answered, not authentication: GETs send no secrets.
+    /// A refused connection maps to daemonNotRunning so the offline path runs.
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        guard isDaemonRunning else { throw DaemonError.daemonNotRunning }
+        let pidfileValid = isDaemonRunning
 
         let url = Self.requestURL(for: path)
         var req = URLRequest(url: url)
@@ -315,6 +326,9 @@ final class DaemonClient {
             let (data, response) = try await session.data(for: req)
             guard let http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
+            }
+            if !pidfileValid && http.value(forHTTPHeaderField: "X-Drishti-API") == nil {
+                throw DaemonError.daemonNotRunning
             }
 
             // API version check — header looks like "drishti-api/1" (we only
@@ -343,8 +357,19 @@ final class DaemonClient {
             }
         } catch let err as DaemonError {
             throw err
+        } catch let err as URLError where Self.meansNothingListening(err) {
+            throw DaemonError.daemonNotRunning
         } catch {
             throw DaemonError.networkError(error.localizedDescription)
         }
+    }
+
+    /// Connection-level failures that mean no daemon is on the port, as
+    /// opposed to a daemon that answered badly.
+    static func meansNothingListening(_ err: URLError) -> Bool {
+        // Only a refused connection. networkConnectionLost is a daemon that
+        // dropped mid-response (or a stale keep-alive), not an absent one;
+        // treating it as absent wiped good data and spawned a start.
+        err.code == .cannotConnectToHost
     }
 }
