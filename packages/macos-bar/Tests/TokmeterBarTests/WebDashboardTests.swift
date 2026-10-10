@@ -34,16 +34,20 @@ final class WebDashboardTests: XCTestCase {
         await controller.open()
         XCTAssertEqual(opened.count, 2)
 
-        // A second controller cannot open or stop the first controller's server.
-        var foreignOpens = 0
+        // A second controller whose preferred port is taken (in real life,
+        // the web package's vite dev server on 3000) moves to a free port.
+        // It never opens or stops the first controller's server.
+        var foreignOpened: [URL] = []
         let contender = WebDashboardController(resources: root, port: port,
-                                              openURL: { _ in foreignOpens += 1 }, resolveToolchain: { toolchain })
+                                              openURL: { foreignOpened.append($0) }, resolveToolchain: { toolchain })
         await contender.open()
-        XCTAssertFalse(contender.isRunning)
-        XCTAssertNotNil(contender.error)
-        XCTAssertEqual(foreignOpens, 0)
-        XCTAssertTrue(controller.isRunning)
+        XCTAssertTrue(contender.isRunning, contender.error ?? "Contender not running")
+        XCTAssertNotEqual(contender.url, controller.url)
+        XCTAssertEqual(foreignOpened, [contender.url])
         contender.stop()
+        XCTAssertTrue(controller.isRunning)
+        let (_, stillUp) = try await URLSession.shared.data(from: controller.url)
+        XCTAssertEqual((stillUp as? HTTPURLResponse)?.statusCode, 200)
 
         controller.stop()
         XCTAssertFalse(controller.isRunning)

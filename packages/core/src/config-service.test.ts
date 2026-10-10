@@ -94,3 +94,19 @@ describe("daemon.antigravityLivePolling", () => {
     expect(() => setConfigValue(config, "daemon.antigravityLivePolling", "sure")).toThrow();
   });
 });
+
+describe("bar.dashboardPort", () => {
+  it("defaults to 8888 when absent", () => {
+    writeConfig({ version: 1 });
+    expect(loadConfig(tmpDir).bar.dashboardPort).toBe(8888);
+  });
+
+  it("keeps a valid port and clamps out-of-range values into 1024–65535", () => {
+    writeConfig({ version: 1, bar: { dashboardPort: 9100 } });
+    expect(loadConfig(tmpDir).bar.dashboardPort).toBe(9100);
+    writeConfig({ version: 1, bar: { dashboardPort: 80 } });
+    expect(loadConfig(tmpDir).bar.dashboardPort).toBe(1024);
+    writeConfig({ version: 1, bar: { dashboardPort: "8080" } });
+    expect(loadConfig(tmpDir).bar.dashboardPort).toBe(8888);
+  });
+});

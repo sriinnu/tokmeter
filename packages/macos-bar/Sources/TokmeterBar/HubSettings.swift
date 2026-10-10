@@ -104,6 +104,12 @@ struct HubSettingsPanel: View {
                     suffix: "s",
                     theme: theme
                 )
+                HubPortRow(
+                    label: "Dashboard port",
+                    helpText: "Port for the web dashboard. If another server is using it, the next free port is used.",
+                    port: store.config.dashboardPort,
+                    theme: theme
+                ) { v in store.update { $0.bar.dashboardPort = v } }
                 HubStepperRow(
                     label: "Daemon scan",
                     helpText: "Seconds between daemon rescans of session logs. (Advisory — takes effect on next daemon start.)",

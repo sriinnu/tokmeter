@@ -58,6 +58,12 @@ struct SettingsPopover: View {
             }
             if let error = dashboard.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            } else if dashboard.isRunning {
+                Text(dashboard.notice ?? "Running at \(dashboard.url.absoluteString)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Button(action: openConfigFile) {

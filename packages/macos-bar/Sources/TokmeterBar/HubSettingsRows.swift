@@ -238,3 +238,57 @@ struct HubThresholdRow: View {
         }
     }
 }
+
+/// Free-form port entry. Saves on Return or when focus leaves; Escape and an
+/// out-of-range value revert to the stored port with an inline message.
+struct HubPortRow: View {
+    let label: String
+    let helpText: String
+    let port: Int
+    let theme: AppTheme
+    let onCommit: (Int) -> Void
+
+    @State private var text = ""
+    @State private var invalid = false
+    @FocusState private var focused: Bool
+
+    private var bg: BackgroundMode { theme.backgroundMode }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                    .foregroundColor(bg.primaryTextColor)
+                Text(invalid ? "Enter a port from 1024 to 65535." : helpText)
+                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                    .foregroundColor(invalid ? theme.statusDanger : bg.secondaryTextColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            TextField(label, text: $text)
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13, weight: .bold, design: theme.fonts.valueDesign).monospacedDigit())
+                .multilineTextAlignment(.trailing)
+                .frame(width: 72)
+                .focused($focused)
+                .onSubmit(commit)
+                .onExitCommand { text = String(port); invalid = false; focused = false }
+                .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+                .accessibilityLabel(label)
+        }
+        .onAppear { text = String(port) }
+        .onChange(of: port) { _, newPort in if !focused { text = String(newPort) } }
+    }
+
+    private func commit() {
+        guard let value = Int(text.trimmingCharacters(in: .whitespaces)), (1024...65535).contains(value) else {
+            invalid = true
+            text = String(port)
+            return
+        }
+        invalid = false
+        if value != port { onCommit(value) }
+    }
+}

@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now comes from the HTTP answer. Pricing refresh, rescan and Antigravity
   fetch no longer report "offline" under a live heartbeat, and Refresh/Retry
   skip the auto-start backoff.
+- **The web dashboard opens even when port 3000 is taken.** The bar's
+  dashboard was fixed at 3000, which the web package's own `vite` dev server
+  also binds, and failed with "Another server may be using it". It now
+  defaults to **8888**, is configurable (`bar.dashboardPort` in config.json,
+  `tokmeter config set bar.dashboardPort 9000`, or Hub › Settings), falls
+  back to the next free port with a note saying which, and restarts on the
+  new port when the setting changes.
 - **Settings shows the real refresh interval** instead of a hardcoded "30s".
 - **Reloads after a pricing refresh or cron install are no longer dropped**
   when a poll is already in flight, and today's figures reload at midnight and

@@ -63,4 +63,32 @@ final class HubConfigRoundTripTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         XCTAssertNotNil(raw["customSources"])
     }
+
+    /// bar.dashboardPort: default 8888, clamps like config-service.ts, and a
+    /// hand-edited non-integer falls back instead of failing the decode.
+    func testDashboardPortDefaultsClampsAndToleratesBadValues() throws {
+        XCTAssertEqual(HubUserConfig.defaults.dashboardPort, 8888)
+        var cfg = HubUserConfig.defaults
+        cfg.bar.dashboardPort = 80
+        XCTAssertEqual(cfg.dashboardPort, 1024)
+        cfg.bar.dashboardPort = 70000
+        XCTAssertEqual(cfg.dashboardPort, 65535)
+        cfg.bar.dashboardPort = nil
+        XCTAssertEqual(cfg.dashboardPort, 8888)
+    }
+
+    @MainActor
+    func testStringDashboardPortFallsBackToDefault() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("config.json")
+        let json = cliWrittenJSON.replacingOccurrences(
+            of: "\"futureBarKnob\": \"keep-me\"", with: "\"dashboardPort\": \"9000\"")
+        try Data(json.utf8).write(to: url)
+        let store = HubConfigStore(filePath: url.path)
+        XCTAssertEqual(store.config.dashboardPort, 8888)
+        // Other settings survive the lenient decode the bad port forced.
+        XCTAssertEqual(store.config.alerts.dailyCostThreshold, 25)
+    }
 }

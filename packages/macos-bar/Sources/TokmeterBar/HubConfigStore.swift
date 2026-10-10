@@ -89,6 +89,9 @@ struct HubUserConfig: Codable {
         /// Optional for the same decode-tolerance reason; nil means line.
         /// Use `chartStyle` to read.
         var weekChartStyle: WeekChartStyle?
+        /// Preferred web dashboard port (config-service.ts bar.dashboardPort).
+        /// Optional for decode tolerance; read through `dashboardPort`.
+        var dashboardPort: Int?
     }
     struct DaemonConfig: Codable {
         var scanIntervalSeconds: Int
@@ -133,9 +136,15 @@ struct HubUserConfig: Codable {
     /// 7-day chart style with the nil-safe default applied.
     var chartStyle: WeekChartStyle { bar.weekChartStyle ?? .line }
 
+    /// Dashboard port with the default applied. Values outside 1024…65535
+    /// clamp, matching clampPositiveInt in config-service.ts.
+    var dashboardPort: Int { min(65535, max(1024, bar.dashboardPort ?? Self.defaultDashboardPort)) }
+    static let defaultDashboardPort = 8888
+
     static let defaults = HubUserConfig(
         version: 1,
-        bar: .init(refreshSeconds: 30, menubarColorSource: .context, weekChartStyle: .line),
+        bar: .init(refreshSeconds: 30, menubarColorSource: .context, weekChartStyle: .line,
+                   dashboardPort: defaultDashboardPort),
         daemon: .init(scanIntervalSeconds: 60, antigravityLivePolling: false),
         cli: .init(defaultRange: .all, defaultSort: .cost),
         alerts: .init(dailyCostThreshold: nil),
@@ -270,6 +279,7 @@ final class HubConfigStore: ObservableObject {
     private static let modeledOptionalPaths: [[String]] = [
         ["bar", "menubarColorSource"],
         ["bar", "weekChartStyle"],
+        ["bar", "dashboardPort"],
         ["daemon", "antigravityLivePolling"],
         ["alerts", "dailyCostThreshold"],
         ["providerPaths"],
@@ -332,6 +342,9 @@ final class HubConfigStore: ObservableObject {
             if let ws = bar["weekChartStyle"] as? String,
                let style = WeekChartStyle(rawValue: ws) {
                 out.bar.weekChartStyle = style
+            }
+            if let port = bar["dashboardPort"] as? Int {
+                out.bar.dashboardPort = port
             }
         }
         if let daemon = raw["daemon"] as? [String: Any] {
