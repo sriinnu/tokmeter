@@ -53,6 +53,19 @@ function composerIdFromKey(key: string): string | undefined {
   return key.split(":")[1];
 }
 
+/** Where tokscale's Cursor CSV export cache lives. */
+function cursorCsvCacheDir(homeDir: string): string {
+  return expandHome("~/.config/tokscale/cursor-cache", homeDir);
+}
+
+/** Cursor's local state.vscdb candidates: auto-detected plus configured. */
+function cursorStateDbPaths(homeDir: string): string[] {
+  return [
+    ...vscodeFamilyUserDirs(["Cursor"], homeDir),
+    ...getConfiguredProviderPaths("cursor", homeDir).map((p) => expandHome(p, homeDir)),
+  ].map((userDir) => join(userDir, "globalStorage", "state.vscdb"));
+}
+
 export class CursorParser implements SessionParser {
   readonly providerId = "cursor" as const;
 
@@ -65,6 +78,11 @@ export class CursorParser implements SessionParser {
   // so an unchanged database is a stat() call, not a re-read.
   private readonly localCache = new Map<string, { mtimeMs: number; records: TokenRecord[] }>();
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [cursorCsvCacheDir(homeDir), ...cursorStateDbPaths(homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const fromCsv = await this.scanCsvCache(homeDir);
     if (fromCsv.length > 0) return fromCsv;
@@ -72,7 +90,7 @@ export class CursorParser implements SessionParser {
   }
 
   private async scanCsvCache(homeDir: string): Promise<TokenRecord[]> {
-    const cacheDir = expandHome("~/.config/tokscale/cursor-cache", homeDir);
+    const cacheDir = cursorCsvCacheDir(homeDir);
     const csvFiles = await findFiles(cacheDir, (f) => f.endsWith(".csv"), 1);
     const records: TokenRecord[] = [];
 
@@ -112,14 +130,7 @@ export class CursorParser implements SessionParser {
 
   private async scanLocalDatabase(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const userDirs = [
-      ...vscodeFamilyUserDirs(["Cursor"], homeDir),
-      ...getConfiguredProviderPaths("cursor", homeDir).map((p) => expandHome(p, homeDir)),
-    ];
-
-    for (const userDir of userDirs) {
-      const dbPath = join(userDir, "globalStorage", "state.vscdb");
-
+    for (const dbPath of cursorStateDbPaths(homeDir)) {
       let mtimeMs: number;
       try {
         mtimeMs = (await stat(dbPath)).mtimeMs;

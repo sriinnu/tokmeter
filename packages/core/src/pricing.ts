@@ -72,6 +72,26 @@ type FullPricing = ModelPricing & {
   cacheWrite1hPerMillion?: number;
 };
 
+/**
+ * Which resolution tier produced a model's price. Reported alongside the
+ * price (never used to compute cost) so the rates panel can say where a
+ * number came from.
+ */
+export type PricingSourceTier =
+  | "override"
+  | "kosha-exact"
+  | "kosha-fuzzy"
+  | "manifest"
+  | "seeded"
+  | "unpriced";
+
+export interface PricingSource {
+  tier: PricingSourceTier;
+  /** The registry id the price was taken from, when it differs from the
+   *  requested id (fuzzy or normalized-manifest matches). */
+  matchedId?: string;
+}
+
 // Date suffixes used by various providers for versioned model IDs.
 // Covers -20260402, -2026-04-02, -26-04-02, and -04-02. Providers are
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
@@ -188,6 +208,20 @@ function userOverridesPath(): string {
   return join(homedir(), ".tokmeter", "pricing-overrides.json");
 }
 
+/**
+ * Whether today's already-priced records must be repriced: the kosha
+ * registry was refreshed, or the pricing-overrides file was added, edited or
+ * removed, since today's costs were computed. Today only — callers never
+ * apply this to sealed days, which stay frozen at the prices they had.
+ */
+export function todayPricingStale(
+  current: { registryMtime: number; overridesMtime: number },
+  priced: { registryMtime: number; overridesMtime: number }
+): boolean {
+  const koshaChanged = current.registryMtime > 0 && current.registryMtime !== priced.registryMtime;
+  return koshaChanged || current.overridesMtime !== priced.overridesMtime;
+}
+
 /** mtime of the user-overrides file (0 if absent). */
 function userOverridesMtime(): number {
   try {
@@ -237,6 +271,8 @@ function loadUserOverrides(): Map<string, FullPricing> {
 /** Cached pricing lookup: modelId → FullPricing or null. */
 export class PricingService {
   private cache = new Map<string, FullPricing | null>();
+  /** Resolution tier per cached model id. Kept in step with `cache`. */
+  private sources = new Map<string, PricingSource>();
   private userOverrides = new Map<string, FullPricing>();
   private userOverridesMtime = 0;
   private registry: any = null;
@@ -261,6 +297,15 @@ export class PricingService {
   }
 
   /**
+   * mtime of ~/.tokmeter/pricing-overrides.json observed at the last init
+   * (0 when there is no overrides file). An override edit reprices today
+   * just like a kosha refresh; sealed days stay frozen.
+   */
+  getOverridesMtime(): number {
+    return this.userOverridesMtime;
+  }
+
+  /**
    * Initialize the kosha-discovery registry. Safe to call repeatedly — if the
    * registry file has been updated since the last init, the in-memory lookup
    * cache is cleared so the next `getPricing()` call returns fresh rates.
@@ -276,7 +321,10 @@ export class PricingService {
       return;
     }
     // Registry file or overrides changed (or first init) — drop stale lookups.
-    if (this.initialized) this.cache.clear();
+    if (this.initialized) {
+      this.cache.clear();
+      this.sources.clear();
+    }
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
       this.registry = await createKosha(this.cacheDir ? { cacheDir: this.cacheDir } : undefined);
@@ -299,6 +347,7 @@ export class PricingService {
    */
   seedPricing(modelId: string, pricing: FullPricing): void {
     this.cache.set(modelId, this.roundPricing(pricing));
+    this.sources.set(modelId, { tier: "seeded" });
   }
 
   /**
@@ -329,6 +378,7 @@ export class PricingService {
     const userOverride = this.userOverrides.get(modelId);
     if (userOverride) {
       this.cache.set(modelId, userOverride);
+      this.sources.set(modelId, { tier: "override" });
       return userOverride;
     }
 
@@ -348,6 +398,7 @@ export class PricingService {
         if (raw) {
           const p = this.roundPricing(raw);
           this.cache.set(modelId, p);
+          this.sources.set(modelId, p ? { tier: "kosha-exact" } : { tier: "unpriced" });
           return p;
         }
       } catch {
@@ -356,10 +407,11 @@ export class PricingService {
 
       // Tier 3: fuzzy search for long-tail models
       try {
-        const fuzzy = this.koshaFuzzySearch(modelId);
+        const fuzzy = this.koshaFuzzyMatch(modelId);
         if (fuzzy) {
-          this.cache.set(modelId, fuzzy);
-          return fuzzy;
+          this.cache.set(modelId, fuzzy.pricing);
+          this.sources.set(modelId, { tier: "kosha-fuzzy", matchedId: fuzzy.id });
+          return fuzzy.pricing;
         }
       } catch {
         // fuzzy search failed
@@ -375,12 +427,32 @@ export class PricingService {
     // today's spend was showing $0.00 in the bar.
     const fromManifest = this.lookupFromRegistryManifest(modelId);
     if (fromManifest) {
-      this.cache.set(modelId, fromManifest);
-      return fromManifest;
+      this.cache.set(modelId, fromManifest.pricing);
+      this.sources.set(
+        modelId,
+        fromManifest.matchedId && fromManifest.matchedId !== modelId
+          ? { tier: "manifest", matchedId: fromManifest.matchedId }
+          : { tier: "manifest" }
+      );
+      return fromManifest.pricing;
     }
 
     this.cache.set(modelId, null);
+    this.sources.set(modelId, { tier: "unpriced" });
     return null;
+  }
+
+  /**
+   * Price plus the tier that resolved it. Same lookup as `getPricing` (and
+   * the same cache), so the reported source always matches the price that
+   * `calculateCost` bills with.
+   */
+  async getPricingWithSource(
+    modelId: string
+  ): Promise<{ pricing: FullPricing | null; source: PricingSource }> {
+    const pricing = await this.getPricing(modelId);
+    const source = this.sources.get(modelId) ?? { tier: pricing ? "kosha-exact" : "unpriced" };
+    return { pricing, source };
   }
 
   /**
@@ -393,7 +465,9 @@ export class PricingService {
    * Cached so we don't re-read the file on every model lookup — the same
    * mtime-driven invalidation that drives the rest of pricing init applies.
    */
-  private lookupFromRegistryManifest(modelId: string): FullPricing | null {
+  private lookupFromRegistryManifest(
+    modelId: string
+  ): { pricing: FullPricing; matchedId?: string } | null {
     const manifestModels = this.loadRegistryManifest();
     if (!manifestModels) return null;
     const lower = modelId.toLowerCase();
@@ -425,7 +499,8 @@ export class PricingService {
     if (exactMatches.length > 0) {
       const winner = exactMatches.find(isDirect) ?? exactMatches[0];
       const eff = pickUsablePricing(winner);
-      return eff ? this.roundPricing(eff) : null;
+      const pricing = eff ? this.roundPricing(eff) : null;
+      return pricing ? { pricing, matchedId: winner.modelId } : null;
     }
 
     const normalizedMatches = manifestModels.filter((e) => {
@@ -435,7 +510,8 @@ export class PricingService {
     if (normalizedMatches.length > 0) {
       const winner = normalizedMatches.find(isDirect) ?? normalizedMatches[0];
       const eff = pickUsablePricing(winner);
-      return eff ? this.roundPricing(eff) : null;
+      const pricing = eff ? this.roundPricing(eff) : null;
+      return pricing ? { pricing, matchedId: winner.modelId } : null;
     }
 
     return null;
@@ -591,6 +667,7 @@ export class PricingService {
   /** Clear the in-memory pricing cache. */
   clearCache(): void {
     this.cache.clear();
+    this.sources.clear();
   }
 
   // ── Private ───────────────────────────────────────────────────────
@@ -605,7 +682,7 @@ export class PricingService {
    * - Shorter base IDs preferred (less decorated)
    * - Normalizes hyphens↔dots, strips date and "-latest" suffixes
    */
-  private koshaFuzzySearch(modelId: string): FullPricing | null {
+  private koshaFuzzyMatch(modelId: string): { pricing: FullPricing; id: string } | null {
     const normalized = modelId
       .toLowerCase()
       .replace(DATE_SUFFIX_RE, "")
@@ -642,7 +719,8 @@ export class PricingService {
       })[0];
 
     const eff = best ? pickUsablePricing(best) : null;
-    return eff ? this.roundPricing(eff) : null;
+    const pricing = eff ? this.roundPricing(eff) : null;
+    return best && pricing ? { pricing, id: best.id } : null;
   }
 
   /**

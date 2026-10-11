@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code status line — दृष्टि + चित्रगुप्त — colorful token observatory
+# Claude Code status line — tokmeter + chitragupta — colorful token observatory
 
 input=$(cat)
 
@@ -9,7 +9,7 @@ BOLD='\033[1m'
 DIM='\033[2m'
 
 # Brand colors
-PURPLE='\033[38;5;141m'     # दृष्टि purple
+PURPLE='\033[38;5;141m'     # tokmeter purple
 GOLD='\033[38;5;220m'       # Cost gold
 BLUE='\033[38;5;75m'        # Input blue
 RED='\033[38;5;210m'        # Output pink/red
@@ -113,7 +113,7 @@ else
   ctx_bar="${DIM}░░░░░░░░░░ 0%${RST}"
 fi
 
-# --- Today's cost from दृष्टि ---
+# --- Today's cost from tokmeter ---
 today_section=""
 # Derive the tokmeter repo root from this script's location so the path
 # is portable across machines (script lives at packages/mcp/scripts/).
@@ -157,7 +157,11 @@ if [ -f "$block_cache" ]; then
 fi
 # Refresh block calc every 60s in background
 if [ ! -f "$block_cache" ] || [ "$block_cache_age" -gt 60 ]; then
-  (bash "${HOME}/.claude/drishti-block.sh" > "$block_cache" 2>/dev/null) &
+  # tokmeter-block.sh is the current name; drishti-block.sh is the name
+  # earlier releases used, kept as a fallback for copies already in place.
+  block_script="${HOME}/.claude/tokmeter-block.sh"
+  [ -f "$block_script" ] || block_script="${HOME}/.claude/drishti-block.sh"
+  (bash "$block_script" > "$block_cache" 2>/dev/null) &
 fi
 if [ -f "$block_cache" ]; then
   block_active=$(jq -r '.active // false' "$block_cache" 2>/dev/null)

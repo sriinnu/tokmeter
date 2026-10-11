@@ -25,16 +25,19 @@ interface KiloUiMessage {
 export class KiloParser implements SessionParser {
   readonly providerId = "kilo" as const;
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
-    const records: TokenRecord[] = [];
-    const userDirs = [
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [
       ...vscodeFamilyUserDirs(["Code", "Code - Insiders"], homeDir),
       expandHome("~/.vscode-server/data/User", homeDir),
       ...getConfiguredProviderPaths("kilo", homeDir).map((p) => expandHome(p, homeDir)),
-    ];
+    ].map((userDir) => join(userDir, "globalStorage/kilocode.kilo-code/tasks"));
+  }
 
-    for (const userDir of userDirs) {
-      const dir = join(userDir, "globalStorage/kilocode.kilo-code/tasks");
+  async scan(homeDir: string): Promise<TokenRecord[]> {
+    const records: TokenRecord[] = [];
+
+    for (const dir of this.sessionRoots(homeDir)) {
       const jsonFiles = await findFiles(dir, (f) => f === "ui_messages.json", 3);
 
       for (const file of jsonFiles) {

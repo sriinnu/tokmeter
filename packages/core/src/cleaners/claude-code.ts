@@ -19,12 +19,27 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { CleanupResult, CleanupTarget, SessionCleaner } from "../types.js";
 
+/**
+ * The per-session side directories Claude Code keeps outside
+ * `~/.claude/projects`. Cleanup deletes (and backs up) entries here, so
+ * restore must allow writing back into exactly these directories.
+ */
+export function claudeSessionSideDirs(home: string) {
+  const claudeDir = join(home, ".claude");
+  return {
+    fileHistory: join(claudeDir, "file-history"),
+    tasks: join(claudeDir, "tasks"),
+    todos: join(claudeDir, "todos"),
+    sessionEnv: join(claudeDir, "session-env"),
+  };
+}
+
 export class ClaudeCodeCleaner implements SessionCleaner {
   readonly providerId = "claude-code" as const;
 
   async resolveTargets(sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]> {
     const home = homeDir || homedir();
-    const claudeDir = join(home, ".claude");
+    const side = claudeSessionSideDirs(home);
     const targets: CleanupTarget[] = [];
     const uuids = new Set<string>();
     const projectDirs = new Set<string>();
@@ -44,16 +59,16 @@ export class ClaudeCodeCleaner implements SessionCleaner {
       await this.addDirTarget(targets, join(projectDir, uuid), "subagents + tool-results");
 
       // 3. File history
-      await this.addDirTarget(targets, join(claudeDir, "file-history", uuid), "file history");
+      await this.addDirTarget(targets, join(side.fileHistory, uuid), "file history");
 
       // 4. Task state
-      await this.addDirTarget(targets, join(claudeDir, "tasks", uuid), "task state");
+      await this.addDirTarget(targets, join(side.tasks, uuid), "task state");
 
       // 5. Todo files (glob: {uuid}*.json)
-      await this.addTodoTargets(targets, claudeDir, uuid);
+      await this.addTodoTargets(targets, side.todos, uuid);
 
       // 6. Session env
-      await this.addDirTarget(targets, join(claudeDir, "session-env", uuid), "session env");
+      await this.addDirTarget(targets, join(side.sessionEnv, uuid), "session env");
 
       // 7. sessions-index.json entry
       const indexPath = join(projectDir, "sessions-index.json");
@@ -174,10 +189,9 @@ export class ClaudeCodeCleaner implements SessionCleaner {
 
   private async addTodoTargets(
     targets: CleanupTarget[],
-    claudeDir: string,
+    todosDir: string,
     uuid: string
   ): Promise<void> {
-    const todosDir = join(claudeDir, "todos");
     try {
       const entries = await readdir(todosDir);
       for (const entry of entries) {

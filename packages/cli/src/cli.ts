@@ -253,6 +253,11 @@ Commands:
   pricing         Show pricing for a model
   digest          Weekly cost digest with trends and tips
                   (aliases: weekly, report)
+  backfill        Add a newly supported provider or custom source to
+                  sealed history. --days N (default 30). With a provider
+                  flag (e.g. --muse), adds only that provider's slice;
+                  without one, re-derives every provider (grow-only;
+                  --force allows shrinking, back up ~/.cache/tokmeter first)
 
 Live & Daemon:
   live            Start live TUI dashboard (from tokmeter-mcp)
@@ -260,13 +265,16 @@ Live & Daemon:
   daemon start    Start cross-provider aggregation daemon
   daemon stop     Stop the daemon
   daemon status   Check daemon status
+  daemon restart  Restart the daemon
+  daemon install-agent    Keep it running via launchd (macOS)
+  daemon uninstall-agent  Remove the launchd agent
 
 Cleanup:
   cleanup         Delete session data by project/date/provider
   restore         Restore from a cleanup backup
   snapshot        Non-destructive backup (no deletion)
   --dry-run       Preview what would be deleted (no deletion)
-  --backup        Create tar.gz backup before deleting
+  --backup        No-op: cleanup always writes a tar.gz backup first
   --force         Skip confirmation prompt
   --id ID         Restore specific backup by ID
   --latest        Restore most recent backup

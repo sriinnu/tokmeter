@@ -558,6 +558,11 @@ export async function parseCodexFile(
 export class CodexParser implements SessionParser {
   readonly providerId = "codex" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return codexSessionDirs("codex", homeDir);
+  }
+
   /**
    * Collect every record. Thin wrapper over {@link scanStreaming} — for bounded
    * scopes (today, a date range) the set is small, so accumulating is fine. The
@@ -586,7 +591,7 @@ export class CodexParser implements SessionParser {
     // Sessions are in YYYY/MM/DD/ subdirectories — need depth 5
     const seenFiles = new Set<string>();
     let allFiles: string[] = [];
-    for (const dir of codexSessionDirs("codex", homeDir)) {
+    for (const dir of this.sessionRoots(homeDir)) {
       for (const f of await findFiles(dir, (f) => f.endsWith(".jsonl"), 5)) {
         if (seenFiles.has(f)) continue;
         seenFiles.add(f);

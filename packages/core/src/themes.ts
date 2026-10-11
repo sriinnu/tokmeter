@@ -76,7 +76,7 @@ export interface Theme {
 
 const defaultTheme: Theme = {
   id: "default",
-  name: "Drishti",
+  name: "Tokmeter",
   description: "Default purple/green theme — the original tokmeter look",
   variant: "dark",
   colors: {

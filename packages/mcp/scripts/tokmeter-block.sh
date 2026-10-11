@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# दृष्टि 5-hour billing block calculator
+# tokmeter 5-hour billing block calculator
 # Scans Claude Code JSONL files to find current billing block boundaries
 # Output: JSON with block_start, block_end, remaining_sec, block_cost, block_number
 

@@ -43,6 +43,11 @@ interface ClineUsageChunk {
 export class ClineParser implements SessionParser {
   readonly providerId = "cline" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.cline/apps/kanban/sessions", homeDir)];
+  }
+
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const out: TokenRecord[] = [];
     await this.scanStreaming(homeDir, opts, (records) => {
@@ -56,7 +61,7 @@ export class ClineParser implements SessionParser {
     _opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
-    const sessionsDir = expandHome("~/.cline/apps/kanban/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
 
     for (const file of files) {

@@ -25,8 +25,13 @@ interface MuxSessionUsage {
 export class MuxParser implements SessionParser {
   readonly providerId = "mux" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.mux/sessions", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const sessionsDir = expandHome("~/.mux/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f === "session-usage.json", 2);
     const records: TokenRecord[] = [];
 

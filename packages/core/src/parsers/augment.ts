@@ -68,8 +68,13 @@ function findRepoRoot(obj: unknown): string | undefined {
 export class AugmentParser implements SessionParser {
   readonly providerId = "augment" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.augment/sessions", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const sessionsDir = expandHome("~/.augment/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f.endsWith(".json"), 2);
     const records: TokenRecord[] = [];
 

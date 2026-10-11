@@ -48,6 +48,12 @@ interface CacheFile {
    * instead of trusting the frozen `cost` field on cached records.
    */
   koshaMtime?: number;
+  /**
+   * mtime of ~/.tokmeter/pricing-overrides.json when today's records were
+   * priced (0 = no overrides file). An override edit reprices today the same
+   * way a kosha refresh does. Optional: older caches read as 0.
+   */
+  overridesMtime?: number;
   stats: {
     files: number;
     records: number;
@@ -62,6 +68,7 @@ let recordCache: Map<string, RecordCacheEntry> | null = null;
 let cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
 let cacheCreatedAt: string | null = null;
 let cacheKoshaMtime = 0;
+let cacheOverridesMtime = 0;
 /** Set of paths touched in the current process so far — files we've actually
  *  observed live during a scan in this daemon lifetime. On save, paths in the
  *  cache that we've NOT touched recently AND that no longer exist on disk get
@@ -135,6 +142,7 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
   recordCache = new Map();
   cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
   cacheKoshaMtime = 0;
+  cacheOverridesMtime = 0;
   cacheTouchedPaths = new Set();
   cacheLastGcAtMs = 0;
   try {
@@ -154,6 +162,7 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
       }
       cacheCreatedAt = data.createdAt;
       cacheKoshaMtime = data.koshaMtime ?? 0;
+      cacheOverridesMtime = data.overridesMtime ?? 0;
       for (const [k, v] of Object.entries(data.files)) {
         recordCache.set(k, v);
       }
@@ -201,6 +210,7 @@ function saveRecordCache(): void {
       createdAt: cacheCreatedAt || new Date().toISOString(),
       lastScanAt: new Date().toISOString(),
       koshaMtime: cacheKoshaMtime,
+      overridesMtime: cacheOverridesMtime,
       stats: {
         ...cacheStats,
         files: recordCache.size,
@@ -225,6 +235,18 @@ export function getCachedKoshaMtime(): number {
 export function setCachedKoshaMtime(mtimeMs: number): void {
   loadRecordCache();
   cacheKoshaMtime = mtimeMs;
+}
+
+/** Pricing-overrides mtime associated with the currently-loaded cache, or 0. */
+export function getCachedOverridesMtime(): number {
+  loadRecordCache();
+  return cacheOverridesMtime;
+}
+
+/** Record the pricing-overrides mtime that today's cached costs were priced against. */
+export function setCachedOverridesMtime(mtimeMs: number): void {
+  loadRecordCache();
+  cacheOverridesMtime = mtimeMs;
 }
 
 /**

@@ -29,8 +29,13 @@ interface QwenMessage {
 export class QwenParser implements SessionParser {
   readonly providerId = "qwen" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.qwen/projects", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const projectsDir = expandHome("~/.qwen/projects", homeDir);
+    const [projectsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 3);
     const records: TokenRecord[] = [];
 

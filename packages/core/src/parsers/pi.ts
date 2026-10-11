@@ -36,8 +36,13 @@ interface PiMessage {
 export class PiParser implements SessionParser {
   readonly providerId = "pi" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.pi/agent/sessions", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const sessionsDir = expandHome("~/.pi/agent/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 3);
     const records: TokenRecord[] = [];
 

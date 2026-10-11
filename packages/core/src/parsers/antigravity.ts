@@ -161,15 +161,18 @@ function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
 export class AntigravityParser implements SessionParser {
   readonly providerId = "antigravity" as const;
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
-    const records: TokenRecord[] = [];
-    const userDirs = [
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [
       ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
       ...getConfiguredProviderPaths("antigravity", homeDir).map((p) => expandHome(p, homeDir)),
-    ];
+    ].map((userDir) => join(userDir, "globalStorage", "state.vscdb"));
+  }
 
-    for (const userDir of userDirs) {
-      const dbPath = join(userDir, "globalStorage", "state.vscdb");
+  async scan(homeDir: string): Promise<TokenRecord[]> {
+    const records: TokenRecord[] = [];
+
+    for (const dbPath of this.sessionRoots(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);

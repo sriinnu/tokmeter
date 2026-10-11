@@ -2,8 +2,9 @@
  * @sriinnu/tokmeter-mcp — Installer for statusline and MCP across all AI coding agents.
  *
  * Supports:
- *   - Claude Code (~/.claude/settings.json)
- *   - OpenCode (~/.config/opencode/settings.json)
+ *   - Claude Code (statusline in ~/.claude/settings.json; MCP via
+ *     `claude mcp add --scope user`, which stores it in ~/.claude.json)
+ *   - OpenCode (MCP in ~/.config/opencode/opencode.json under `mcp`)
  *   - Codex (~/.codex/settings.json)
  *   - Cursor (~/.cursor/mcp.json for MCP)
  *   - Windsurf (~/.windsurf/mcp.json for MCP)
@@ -11,6 +12,7 @@
  *   - VS Code Copilot (~/.vscode/settings.json)
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -52,6 +54,25 @@ interface EditorConfig {
   mcpKey?: string; // JSON key for MCP servers (default: "mcpServers", Zed uses "context_servers")
   configPath?: string; // For editors that use a different config file for MCP (e.g., Codex uses config.toml)
   configFormat?: "json" | "toml";
+  /**
+   * Register MCP through the editor's own CLI instead of editing a file.
+   * Claude Code reads MCP servers from ~/.claude.json (its live state file)
+   * and never from settings.json, so it goes through `claude mcp add`.
+   */
+  mcpVia?: "claude-cli";
+  /**
+   * Shape of the server entry written under `mcpKey`. Defaults to the common
+   * `{ command, args }`; OpenCode wants `{ type: "local", command: [...], enabled }`.
+   */
+  mcpEntry?: (cmd: { command: string; args?: string[] }) => Record<string, unknown>;
+  /**
+   * Where earlier tokmeter releases wrongly registered this editor's server.
+   * Our own entries (tokmeter + legacy names) are removed from these on
+   * install and uninstall; nothing else in the file is touched.
+   */
+  legacyMcpLocations?: { path: string; key: string }[];
+  /** A sibling config file that, if it exists instead of mcpPath, we must not shadow. */
+  mcpPathAlternate?: string;
   supportsStatusline: boolean;
   supportsMCP: boolean;
 }
@@ -60,12 +81,29 @@ const EDITORS: EditorConfig[] = [
   {
     name: "Claude Code",
     settingsPath: `${homedir()}/.claude/settings.json`,
+    mcpVia: "claude-cli",
     supportsStatusline: true,
     supportsMCP: true,
   },
   {
     name: "OpenCode",
     settingsPath: `${homedir()}/.config/opencode/settings.json`,
+    // https://opencode.ai/docs/config/ — global config is
+    // ~/.config/opencode/opencode.json; https://opencode.ai/docs/mcp-servers/
+    // — servers live under `mcp` as { type: "local", command: [...], enabled }.
+    mcpPath: `${homedir()}/.config/opencode/opencode.json`,
+    mcpPathAlternate: `${homedir()}/.config/opencode/opencode.jsonc`,
+    mcpKey: "mcp",
+    // Releases up to 1.14.1 wrote mcpServers.tokmeter into settings.json,
+    // which OpenCode doesn't read for MCP.
+    legacyMcpLocations: [
+      { path: `${homedir()}/.config/opencode/settings.json`, key: "mcpServers" },
+    ],
+    mcpEntry: (cmd) => ({
+      type: "local",
+      command: [cmd.command, ...(cmd.args ?? [])],
+      enabled: true,
+    }),
     supportsStatusline: true,
     supportsMCP: true,
   },
@@ -147,6 +185,29 @@ function wasCorrupt(filePath: string, editorName: string): boolean {
 function writeJSON<T>(path: string, data: T): void {
   ensureDir(path);
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+}
+
+/**
+ * Remove tokmeter's own entries (current + legacy names) from the places an
+ * earlier release wrongly registered them. Leaves a corrupt file untouched.
+ */
+function removeMisplacedEntries(editor: EditorConfig): void {
+  for (const loc of editor.legacyMcpLocations ?? []) {
+    const config = readJSON<Record<string, unknown>>(loc.path);
+    if (!config || _lastReadCorrupt) continue;
+    const servers = config[loc.key];
+    if (!servers || typeof servers !== "object") continue;
+    const names = [MCP_SERVER_NAME, ...LEGACY_MCP_SERVER_NAMES].filter(
+      (name) => name in (servers as Record<string, unknown>)
+    );
+    if (names.length === 0) continue;
+    const remaining = { ...(servers as Record<string, unknown>) };
+    for (const name of names) delete remaining[name];
+    if (Object.keys(remaining).length === 0) delete config[loc.key];
+    else config[loc.key] = remaining;
+    writeJSON(loc.path, config);
+    console.log(C.dim(`    removed misplaced ${names.join(", ")} entry from ${loc.path}`));
+  }
 }
 
 // ─── TOML Helpers (for Codex) ───────────────────────────────────────────────
@@ -258,6 +319,107 @@ export function installStatusline(editors?: string[]): void {
 
 // ─── MCP Installer ──────────────────────────────────────────────────────────
 
+// ─── Claude Code via its CLI ────────────────────────────────────────────────
+
+interface ClaudeCliResult {
+  /** Exit status; -1 when the binary could not be run at all. */
+  status: number;
+  output: string;
+  /** `claude` is not on PATH. */
+  missing: boolean;
+}
+
+/** Run `claude <args>` without a shell. Never throws. */
+function runClaude(args: string[]): ClaudeCliResult {
+  try {
+    const output = execFileSync("claude", args, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
+    return { status: 0, output: String(output ?? ""), missing: false };
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & {
+      status?: number | null;
+      stdout?: string | Buffer;
+      stderr?: string | Buffer;
+    };
+    if (e.code === "ENOENT") return { status: -1, output: "", missing: true };
+    const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+    return { status: typeof e.status === "number" ? e.status : 1, output, missing: false };
+  }
+}
+
+function claudeAddCommand(): string {
+  return `claude mcp add ${MCP_SERVER_NAME} --scope user -- ${cliCommandString("serve")}`;
+}
+
+/**
+ * Earlier releases wrote an mcpServers entry into ~/.claude/settings.json,
+ * which Claude Code never loads. Point it out; never edit the user's file.
+ */
+function noteInertClaudeSettingsEntries(editor: EditorConfig): void {
+  const settings = readJSON<Record<string, unknown>>(editor.settingsPath);
+  const servers = (settings?.mcpServers ?? {}) as Record<string, unknown>;
+  const inert = [MCP_SERVER_NAME, ...LEGACY_MCP_SERVER_NAMES].filter((name) => name in servers);
+  if (inert.length === 0) return;
+  console.log(
+    C.dim(
+      `    note: ${editor.settingsPath} has an mcpServers entry (${inert.join(", ")}) from an earlier tokmeter install. Claude Code doesn't load MCP servers from that file, so it does nothing and is safe to remove.`
+    )
+  );
+}
+
+type ClaudeInstallOutcome = "installed" | "already" | "manual" | "failed";
+
+function installClaudeCodeMCP(editor: EditorConfig): ClaudeInstallOutcome {
+  noteInertClaudeSettingsEntries(editor);
+  const existing = runClaude(["mcp", "get", MCP_SERVER_NAME]);
+  if (existing.missing) {
+    console.log(C.accent(`  ⊘ ${editor.name} — the claude CLI isn't on PATH. Run:`));
+    console.log(`    ${claudeAddCommand()}`);
+    return "manual";
+  }
+  if (existing.status === 0) {
+    console.log(C.accent(`  ✓ ${editor.name} — already installed`));
+    return "already";
+  }
+  const cmd = cliCommand("serve");
+  const added = runClaude([
+    "mcp",
+    "add",
+    MCP_SERVER_NAME,
+    "--scope",
+    "user",
+    "--",
+    cmd.command,
+    ...(cmd.args ?? []),
+  ]);
+  if (added.status === 0) {
+    console.log(C.success(`  ✓ ${editor.name} — installed (user scope, via claude mcp add)`));
+    return "installed";
+  }
+  console.log(C.danger(`  ✗ ${editor.name} — claude mcp add failed (exit ${added.status})`));
+  if (added.output) console.log(C.dim(`    ${added.output.split("\n").join("\n    ")}`));
+  console.log(C.dim(`    To add it by hand: ${claudeAddCommand()}`));
+  return "failed";
+}
+
+function uninstallClaudeCodeMCP(editor: EditorConfig): void {
+  noteInertClaudeSettingsEntries(editor);
+  const removed = runClaude(["mcp", "remove", MCP_SERVER_NAME, "--scope", "user"]);
+  if (removed.missing) {
+    console.log(C.accent(`  ⊘ ${editor.name} — the claude CLI isn't on PATH. Run:`));
+    console.log(`    claude mcp remove ${MCP_SERVER_NAME} --scope user`);
+    return;
+  }
+  if (removed.status === 0) {
+    console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
+  } else {
+    console.log(C.dim(`  ⊘ ${editor.name} — not installed (user scope)`));
+  }
+}
+
 export function installMCP(editors?: string[]): void {
   const targetEditors = editors
     ? EDITORS.filter((e) => editors.some((t) => e.name.toLowerCase().includes(t.toLowerCase())))
@@ -273,6 +435,13 @@ export function installMCP(editors?: string[]): void {
     if (!editor.supportsMCP) {
       console.log(C.dim(`  ⊘ ${editor.name} — MCP not supported`));
       skipped++;
+      continue;
+    }
+
+    if (editor.mcpVia === "claude-cli") {
+      const outcome = installClaudeCodeMCP(editor);
+      if (outcome === "installed") installed++;
+      else if (outcome === "manual" || outcome === "failed") skipped++;
       continue;
     }
 
@@ -311,8 +480,24 @@ export function installMCP(editors?: string[]): void {
 
     // Handle JSON-based configs (other editors)
     // Some editors use a separate mcp.json file
+    removeMisplacedEntries(editor);
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
     const mcpKey = editor.mcpKey ?? "mcpServers";
+
+    // JSONC (comments) can't be round-tripped by JSON.parse/stringify. If the
+    // user keeps their config in the .jsonc sibling, don't create a second
+    // file next to it — print the entry to add by hand instead.
+    if (editor.mcpPathAlternate && !existsSync(mcpPath) && existsSync(editor.mcpPathAlternate)) {
+      const entry = (editor.mcpEntry ?? ((c) => c))(cliCommand("mcp"));
+      console.log(
+        C.accent(
+          `  ⊘ ${editor.name} — ${editor.mcpPathAlternate} exists; add this under "${mcpKey}":`
+        )
+      );
+      console.log(`    "${serverName}": ${JSON.stringify(entry)}`);
+      skipped++;
+      continue;
+    }
 
     // For editors with separate MCP files, read that; otherwise read settings
     const rawMcp = readJSON<Record<string, unknown>>(mcpPath);
@@ -340,7 +525,7 @@ export function installMCP(editors?: string[]): void {
     // Add the MCP server under the correct key for this editor
     config[mcpKey] = {
       ...existingServers,
-      [serverName]: cliCommand("mcp"),
+      [serverName]: editor.mcpEntry ? editor.mcpEntry(cliCommand("mcp")) : cliCommand("mcp"),
     };
 
     writeJSON(mcpPath, config);
@@ -393,6 +578,11 @@ export function uninstallMCP(editors?: string[]): void {
   for (const editor of targetEditors) {
     if (!editor.supportsMCP) continue;
 
+    if (editor.mcpVia === "claude-cli") {
+      uninstallClaudeCodeMCP(editor);
+      continue;
+    }
+
     // Handle TOML-based configs (Codex)
     if (editor.configFormat === "toml") {
       const configPath = editor.configPath ?? editor.settingsPath;
@@ -419,6 +609,7 @@ export function uninstallMCP(editors?: string[]): void {
     }
 
     // Handle JSON-based configs (other editors)
+    removeMisplacedEntries(editor);
     const mcpPath = editor.mcpPath ?? editor.settingsPath;
     const mcpKey = editor.mcpKey ?? "mcpServers";
     const config = readJSON<Record<string, unknown>>(mcpPath);
@@ -587,7 +778,9 @@ export function listEditors(): void {
     const mcp = editor.supportsMCP ? C.success("✓ mcp") : C.dim("✗ mcp");
     console.log(`  ${C.accent(editor.name)} ${statusline} ${mcp}`);
     console.log(C.dim(`    ${editor.settingsPath}`));
-    if (editor.mcpPath) {
+    if (editor.mcpVia === "claude-cli") {
+      console.log(C.dim("    MCP: claude mcp add --scope user (stored in ~/.claude.json)"));
+    } else if (editor.mcpPath) {
       console.log(C.dim(`    ${editor.mcpPath}`));
     }
   }

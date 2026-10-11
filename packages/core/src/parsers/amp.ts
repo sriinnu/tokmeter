@@ -22,8 +22,13 @@ interface AmpMessage {
 export class AmpParser implements SessionParser {
   readonly providerId = "amp" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.local/share/amp/threads", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const threadsDir = expandHome("~/.local/share/amp/threads", homeDir);
+    const [threadsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(threadsDir, (f) => f.endsWith(".jsonl"), 2);
     const records: TokenRecord[] = [];
 

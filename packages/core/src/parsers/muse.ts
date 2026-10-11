@@ -59,6 +59,11 @@ interface MuseRecord {
 export class MuseParser implements SessionParser {
   readonly providerId = "muse" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.local/share/muse/sessions", homeDir)];
+  }
+
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const out: TokenRecord[] = [];
     await this.scanStreaming(homeDir, opts, (records) => {
@@ -72,7 +77,7 @@ export class MuseParser implements SessionParser {
     _opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
-    const sessionsDir = expandHome("~/.local/share/muse/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f.endsWith("session.jsonl"), 6);
 
     for (const file of files) {

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sriinnu/tokmeter",
   "title": "Tokmeter — AI Agent Usage & Cost",
-  "description": "Tokens and cost for Claude Code, Codex and 14 more AI coding agents, from local session files.",
+  "description": "Tokens and cost for Claude Code, Codex and 22 more AI coding agents, from local session files.",
   "websiteUrl": "https://github.com/sriinnu/tokmeter",
   "repository": {
     "url": "https://github.com/sriinnu/tokmeter",

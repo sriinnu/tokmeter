@@ -10,6 +10,9 @@
  *   tokmeter-mcp daemon start           Start cross-provider aggregation daemon
  *   tokmeter-mcp daemon stop            Stop the daemon
  *   tokmeter-mcp daemon status          Check daemon status
+ *   tokmeter-mcp daemon restart         Restart the daemon
+ *   tokmeter-mcp daemon install-agent   Install the launchd agent (macOS)
+ *   tokmeter-mcp daemon uninstall-agent Remove the launchd agent
  *   tokmeter-mcp install-statusline     Install statusline hook for ALL editors
  *   tokmeter-mcp install-mcp            Install MCP server for ALL editors
  *   tokmeter-mcp install-hooks          Install guard hooks (Claude Code)
@@ -24,13 +27,14 @@
 // Process-level error handlers — statusline must fail silently since editors
 // expect stdout output, not stderr crashes. Other commands can be noisy.
 // NOTE: import the constant from formatter so we don't drift two copies.
+import { isDaemonChildEnv } from "./daemon/compat-names.js";
 import { FALLBACK_STATUSLINE } from "./formatter.js";
 const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
 // The detached/launchd daemon child runs in the foreground with this env flag
 // set (see server.ts). It's a long-lived singleton, so its crash policy
 // differs from one-shot CLI commands: a recoverable throw must not silently
 // take it down (that's the "offline" class of bug).
-const isDaemonChild = process.argv[2] === "daemon" && process.env.__DRISHTI_DAEMON_CHILD__ === "1";
+const isDaemonChild = process.argv[2] === "daemon" && isDaemonChildEnv();
 
 process.on("unhandledRejection", (reason) => {
   if (isStatusline) {
@@ -210,6 +214,9 @@ ${b("COMMANDS")}
   ${a("daemon start")}      Start cross-provider aggregation daemon
   ${a("daemon stop")}       Stop the daemon
   ${a("daemon status")}     Check daemon status
+  ${a("daemon restart")}    Restart the daemon
+  ${a("daemon install-agent")} Keep it running: launchd agent, starts at login (macOS)
+  ${a("daemon uninstall-agent")} Remove the launchd agent
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
   ${a("install-hooks")}     Install guard hooks (Claude Code)

@@ -53,12 +53,20 @@ interface OpenCodeSessionRow {
 export class OpenCodeParser implements SessionParser {
   readonly providerId = "opencode" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [
+      expandHome("~/.local/share/opencode/opencode.db", homeDir),
+      expandHome("~/.local/share/opencode/storage/message", homeDir),
+    ];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
 
     // Try SQLite first (v1.2+) — via bun:sqlite or better-sqlite3, whichever
     // the runtime supports (see openReadonlySqlite in utils.ts)
-    const dbPath = expandHome("~/.local/share/opencode/opencode.db", homeDir);
+    const [dbPath, storageDir] = this.sessionRoots(homeDir);
     if (await fileExists(dbPath)) {
       const db = await openReadonlySqlite(dbPath);
       if (db) {
@@ -95,7 +103,6 @@ export class OpenCodeParser implements SessionParser {
     }
 
     // Legacy JSON format
-    const storageDir = expandHome("~/.local/share/opencode/storage/message", homeDir);
     const jsonFiles = await findFiles(storageDir, (f) => f.endsWith(".json"), 3);
 
     for (const file of jsonFiles) {
