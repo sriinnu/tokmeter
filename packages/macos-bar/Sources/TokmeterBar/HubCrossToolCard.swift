@@ -30,7 +30,9 @@ struct HubCrossToolCard: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if theme == .paper {
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "If today ran on…", theme: theme)
+                    } else if theme == .paper {
                         HubPaperTitle(text: "If today ran on…")
                     } else {
                         Text("If today ran on…")

@@ -119,7 +119,9 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private var brand: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            skinBrand
+        } else if theme == .paper {
             paperBrand
         } else {
             standardBrand
@@ -148,6 +150,75 @@ struct HubSidebar: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Tokmeter Hub, \(connection.label)")
+    }
+
+    /// Skins: the skin's name set as a nameplate in its hero face.
+    private var skinBrand: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TOKMETER")
+                    .font(theme.fonts.hero(size: 19))
+                    .tracking(1.2)
+                    .foregroundColor(bg.primaryTextColor)
+                    .lineLimit(1)
+                Text("HUB · \(theme.displayName.uppercased())")
+                    .font(theme.fonts.label(size: 9, weight: .heavy))
+                    .tracking(1.6)
+                    .foregroundColor(c.accent)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            ConnectionDot(status: connection, theme: theme)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Tokmeter Hub, \(connection.label)")
+    }
+
+    /// Skins: today's figures on the skin's own card, in its faces.
+    @ViewBuilder
+    private var skinTodayCard: some View {
+        let warming = loader.isWarming || !loader.hasFreshData
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                HubSkinLabel(text: "Today", theme: theme)
+                Spacer(minLength: 0)
+                if let live = loader.liveSession {
+                    HStack(spacing: 4) {
+                        PulseDot(color: theme.statusSuccess)
+                        HubSkinLabel(text: Fmt.liveAge(live.ageSeconds), theme: theme,
+                                     color: bg.primaryTextColor)
+                    }
+                }
+            }
+            if warming {
+                shimmerLine(width: 92, height: 22)
+                shimmerLine(width: 120, height: 11)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HubSkinFigure(value: Fmt.number(loader.todayTokens), size: 24, theme: theme)
+                    Text("tokens")
+                        .font(theme.fonts.body(size: 11))
+                        .foregroundColor(bg.secondaryTextColor)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HubSkinFigure(
+                        value: loader.statbarSignals?.costBasisToday.flatMap { basis in
+                            basis.estimatedRecords > 0 ? Fmt.cost(basis.estimatedCost) : nil
+                        } ?? "—",
+                        size: 22, theme: theme, money: true)
+                    Text("est. API cost")
+                        .font(theme.fonts.body(size: 10.5))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .help("Usage valued at model API rates. The overview's Today cost also includes tool reports.")
+                }
+                if !paperFacts.isEmpty {
+                    HubSkinLabel(text: paperFacts.joined(separator: " · "), theme: theme)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { if let skin = theme.skin { SkinCard(skin: skin, role: c.accent) } }
     }
 
     private var standardBrand: some View {
@@ -184,7 +255,9 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private var todayCard: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            skinTodayCard
+        } else if theme == .paper {
             paperTodayCard
         } else {
             standardTodayCard
@@ -200,7 +273,7 @@ struct HubSidebar: View {
             HStack(spacing: 6) {
                 Kicker(text: "Today", inverted: true)
                 Spacer(minLength: 0)
-                if let live = loader.statbarSignals?.liveSession {
+                if let live = loader.liveSession {
                     HStack(spacing: 4) {
                         PulseDot(color: theme.statusSuccess)
                         Kicker(text: "Live · " + Fmt.liveAge(live.ageSeconds), color: Broadsheet.ink)
@@ -269,7 +342,7 @@ struct HubSidebar: View {
                     .tracking(1.6)
                     .foregroundColor(bg.secondaryTextColor)
                 Spacer(minLength: 0)
-                if let live = loader.statbarSignals?.liveSession {
+                if let live = loader.liveSession {
                     HStack(spacing: 4) {
                         PulseDot(color: theme.statusSuccess)
                         Text(Fmt.liveAge(live.ageSeconds))
@@ -356,7 +429,10 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private func groupLabel(_ text: String) -> some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinLabel(text: text, theme: theme)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if theme == .paper {
             HubPaperLabel(text: text)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -376,7 +452,16 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private var footer: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(connection.color(theme: theme))
+                    .frame(width: 6, height: 6)
+                HubSkinLabel(text: connection.label, theme: theme, color: bg.primaryTextColor)
+                Spacer(minLength: 0)
+                HubSkinLabel(text: "v\(appVersion)", theme: theme)
+            }
+        } else if theme == .paper {
             HStack(spacing: 6) {
                 Circle()
                     .fill(connection.color(theme: theme))
@@ -511,11 +596,58 @@ struct HubSidebarRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            skinBody
+        } else if theme == .paper {
             paperBody
         } else {
             standardBody
         }
+    }
+
+    /// Skins: the section name in the skin's face. The selected row sits on
+    /// the skin's card with an accent bar; no icon tiles.
+    private var skinBody: some View {
+        Button(action: onTap) {
+            HStack(spacing: 9) {
+                Rectangle()
+                    .fill(isSelected ? c.accent : Color.clear)
+                    .frame(width: 3, height: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(section.title)
+                        .font(theme.fonts.label(size: 13, weight: isSelected ? .bold : .medium))
+                        .foregroundColor(bg.primaryTextColor.opacity(isSelected ? 1 : 0.82))
+                    if isSelected {
+                        Text(section.tagline)
+                            .font(theme.fonts.body(size: 9.5))
+                            .foregroundColor(bg.secondaryTextColor)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                if let badge {
+                    HubSkinLabel(text: badge, theme: theme, color: bg.primaryTextColor)
+                } else if hovered && !isSelected {
+                    HubSkinLabel(text: "⌘\(shortcutNumber)", theme: theme)
+                }
+            }
+            .padding(.vertical, 7)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if isSelected, let skin = theme.skin {
+                    SkinCard(skin: skin, role: c.accent)
+                } else if hovered {
+                    RoundedRectangle(cornerRadius: 4).fill(bg.primaryTextColor.opacity(0.05))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .keyboardShortcut(KeyEquivalent(Character("\(shortcutNumber)")), modifiers: .command)
+        .onHover { hovered = $0 }
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     /// Paper: a contents line. Serif title over a hairline; the selected

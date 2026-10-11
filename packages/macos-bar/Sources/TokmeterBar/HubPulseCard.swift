@@ -21,7 +21,9 @@ struct HubPulseCard: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 14) {
-                if theme == .paper {
+                if theme.skin != nil {
+                    HubSkinTitle(text: "Today's pulse", theme: theme)
+                } else if theme == .paper {
                     HubPaperTitle(text: "Today's pulse")
                 } else {
                     Text("Today's pulse")
@@ -48,8 +50,8 @@ struct HubPulseCard: View {
                             ? Fmt.costPerHour(signals.burnRate.costPerHour)
                             : "—",
                         sub: burnActive
-                            ? "\(signals.burnRate.recordsInWindow) record(s) · "
-                                + "\(signals.burnRate.windowMinutes)m"
+                            ? "\(Fmt.count(signals.burnRate.recordsInWindow, "record")) · "
+                                + "last \(signals.burnRate.windowMinutes) min"
                             : "no activity yet",
                         icon: "flame.fill",
                         accent: theme.burnRateColor(signals.burnRate.costPerHour),
@@ -105,9 +107,9 @@ struct HubPulseCard: View {
                             ? "\(Int(signals.subagentToday.share * 100))%"
                             : "—",
                         sub: subagentActive
-                            ? String(format: "$%.2f · %d turn(s)",
+                            ? String(format: "$%.2f · %@",
                                      signals.subagentToday.cost,
-                                     signals.subagentToday.records)
+                                     Fmt.count(signals.subagentToday.records, "turn"))
                             : "no subagent work",
                         icon: "person.2.fill",
                         accent: c.highlight,
@@ -160,10 +162,31 @@ struct PulseTile: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            skinBody
+        } else if theme == .paper {
             paperBody
         } else {
             standardBody
+        }
+    }
+
+    private var skinBody: some View {
+        HubCard(theme: theme, nested: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                HubSkinLabel(text: label, theme: theme)
+                HubSkinFigure(value: value, size: 20, theme: theme,
+                              money: value.hasPrefix("$"), active: active)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(sub)
+                    .font(theme.fonts.body(size: 10.5))
+                    .foregroundColor(theme.backgroundMode.secondaryTextColor.opacity(active ? 1 : 0.75))
+                    .lineLimit(2, reservesSpace: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -252,7 +275,7 @@ struct ContextPressureStrip: View {
         VStack(alignment: .leading, spacing: 7) {
             InkRule(weight: 1)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HubPaperLabel(text: "Context drag", color: Broadsheet.ink)
+                HubPaperLabel(text: "Context growth", color: Broadsheet.ink)
                 HubPaperLabel(text: pressure.status, color: paperAccent)
                 LeaderDots()
                 Text("\(pct(pressure.dragShare))%")
@@ -303,10 +326,12 @@ struct ContextPressureStrip: View {
     private var standardBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "memorychip.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(accent)
-                Text("Context drag")
+                if theme.skin == nil {
+                    Image(systemName: "memorychip.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(accent)
+                }
+                Text("Context growth")
                     .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
                 Text(pressure.status.uppercased())
@@ -407,8 +432,9 @@ struct BillingStrip: View {
         VStack(alignment: .leading, spacing: 7) {
             InkRule(weight: 1)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HubPaperLabel(text: "Claude billing window", color: Broadsheet.ink)
-                Text("block #\(window.blockNumber) · \(Int(window.elapsedPct))% elapsed")
+                HubPaperLabel(text: "5-hour limit window", color: Broadsheet.ink)
+                Text("\(Int(window.elapsedPct))% elapsed")
+                    .help("Block #\(window.blockNumber) of today's Claude 5-hour limit windows.")
                     .font(.system(size: 11, design: .serif))
                     .foregroundColor(Broadsheet.muted)
                 LeaderDots()
@@ -419,7 +445,7 @@ struct BillingStrip: View {
                     .font(Broadsheet.display(15, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(Broadsheet.ink)
-                Text("\(window.records) turn(s)")
+                Text(Fmt.count(window.records, "turn"))
                     .font(.system(size: 11, design: .serif))
                     .foregroundColor(Broadsheet.muted)
             }
@@ -437,13 +463,16 @@ struct BillingStrip: View {
     private var standardBody: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: "timer")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(accent)
-                Text("Claude billing window")
+                if theme.skin == nil {
+                    Image(systemName: "timer")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(accent)
+                }
+                Text("5-hour limit window")
                     .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
-                Text("block #\(window.blockNumber) · \(Int(window.elapsedPct))% elapsed")
+                Text("\(Int(window.elapsedPct))% elapsed")
+                    .help("Block #\(window.blockNumber) of today's Claude 5-hour limit windows.")
                     .font(.system(size: 11, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
                 Spacer()
@@ -455,7 +484,7 @@ struct BillingStrip: View {
                 Text(String(format: "$%.2f", window.cost))
                     .font(.system(size: 12, weight: .medium, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.primaryTextColor)
-                Text("· \(window.records) turn(s)")
+                Text("· " + Fmt.count(window.records, "turn"))
                     .font(.system(size: 11, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
             }

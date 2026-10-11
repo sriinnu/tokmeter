@@ -3,7 +3,7 @@
 // A brushed-black fascia with smoked VFD windows. Readouts are cyan
 // vacuum-fluorescent segments with their unlit "8" ghosts behind them; money
 // reads in amber, like a deck's warning lamps. The ratios (cache hit and
-// miss, context drag, thinking) are segment level meters, the settled days
+// miss, context growth, thinking) are segment level meters, the settled days
 // are a spectrum analyser with a peak-hold cap on the biggest day, and each
 // model sits on a tuner scale at its cost share.
 //
@@ -63,15 +63,15 @@ enum DeckSkin: SkinSpec {
 
     // MARK: - Optional hooks
 
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
         AnyView(CostSpectrum(days: days, theme: theme))
     }
 
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
         AnyView(TransportTabs(showToday: showToday))
     }
 
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
         AnyView(
             HStack(spacing: 8) {
                 Text(expanded ? "▼" : "▶")
@@ -89,7 +89,7 @@ enum DeckSkin: SkinSpec {
         )
     }
 
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
         AnyView(
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("NOTE")
@@ -152,10 +152,13 @@ enum DeckSkin: SkinSpec {
         /// session's project and age ride beside it.
         @ViewBuilder
         private var lamps: some View {
-            let stale = loader.lastError != nil && loader.hasFreshData
-            let live = loader.daemonPhase == .live && !stale
+            // Same truth as the footer lamp: LIVE needs the phase AND a
+            // daemon that answered; a held-over reading never counts.
+            let alive = loader.daemonPhase == .live && loader.isDaemonAlive
+            let stale = alive && loader.lastError != nil && loader.hasFreshData
+            let live = alive && !stale
             HStack(spacing: 6) {
-                if live, let session = loader.statbarSignals?.liveSession {
+                if live, let session = loader.liveSession {
                     Text("\(Fmt.projectBasename(session.project)) · \(Fmt.liveAge(session.ageSeconds))".uppercased())
                         .font(vfdFont(9))
                         .foregroundColor(legend)
@@ -163,14 +166,13 @@ enum DeckSkin: SkinSpec {
                         .truncationMode(.middle)
                         .help("Live: \(session.provider) · \(Fmt.shortModel(session.model)) · last call \(Fmt.cost(session.lastRecordCost))")
                 }
-                switch loader.daemonPhase {
-                case .live:
+                if alive {
                     Lamp(text: stale ? "Stale" : "Live", color: stale ? amber : lampRed, lit: true)
                         .help(stale ? "Showing the last good reading; the latest refresh failed." : "Usage service is live.")
-                case .warming:
+                } else if loader.daemonPhase == .warming {
                     Lamp(text: "Tuning", color: amber, lit: true)
-                case .offline, .needsNode:
-                    Lamp(text: "Live", color: lampRed, lit: false)
+                } else {
+                    Lamp(text: "Offline", color: lampRed, lit: false)
                         .help(loader.daemonPhase == .needsNode ? "Node.js is required." : "Usage service offline.")
                 }
             }
@@ -290,13 +292,13 @@ enum DeckSkin: SkinSpec {
                                          spoken: "Cache miss \(Int(miss))%"))
                     }
                 case "drag":
-                    out.append(Meter(id: "drag", label: "DRAG", pct: pct, color: item.alert, help: item.help,
-                                     spoken: "Context drag \(Int(pct))%"))
+                    out.append(Meter(id: "drag", label: "GROWTH", pct: pct, color: item.alert, help: item.help,
+                                     spoken: "Context growth \(Int(pct))%"))
                 case "think":
                     out.append(Meter(id: "think", label: "THINK", pct: pct, color: item.alert, help: item.help,
                                      spoken: "Thinking \(Int(pct))% of output"))
                 case "compact":
-                    out.append(Meter(id: "comp", label: "COMP", pct: pct, color: item.alert, help: item.help,
+                    out.append(Meter(id: "comp", label: "COMPACT", pct: pct, color: item.alert, help: item.help,
                                      spoken: "Compaction \(Int(pct))% of spend"))
                 default:
                     out.append(Meter(id: item.id, label: item.label.uppercased(), pct: pct, color: item.alert,
@@ -316,7 +318,7 @@ enum DeckSkin: SkinSpec {
                                 .font(vfdFont(10))
                                 .tracking(0.8)
                                 .foregroundColor(amber)
-                                .frame(width: 44, alignment: .leading)
+                                .frame(width: 66, alignment: .leading)
                             SegmentMeter(fraction: meter.pct / 100, lit: meter.color ?? cyan)
                                 .frame(height: 8)
                             Text("\(Int(meter.pct.rounded()))%")
@@ -534,7 +536,7 @@ enum DeckSkin: SkinSpec {
                 TunerScale(share: row.activityOnly ? nil : row.share)
                     .frame(height: 18)
                     .help(row.help)
-                Text(row.activityOnly ? "n/a" : Fmt.cost(row.model.cost))
+                Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
                     .font(vfdFont(11.5))
                     .foregroundColor(row.activityOnly ? legend : amber)
                     .frame(width: 58, alignment: .trailing)
@@ -542,7 +544,7 @@ enum DeckSkin: SkinSpec {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
                 ? "\(row.name): cost unavailable"
-                : "\(row.name): \(Fmt.cost(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model")
+                : "\(row.name): \(Fmt.money(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model")
         }
     }
 
@@ -584,8 +586,7 @@ enum DeckSkin: SkinSpec {
         let theme: AppTheme
 
         var body: some View {
-            VStack(spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(Fmt.projectBasename(project.project))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundColor(face)
@@ -596,15 +597,16 @@ enum DeckSkin: SkinSpec {
                         .font(vfdFont(11))
                         .foregroundColor(cyan)
                         .shadow(color: cyan.opacity(0.4), radius: 2)
-                    Text(Fmt.cost(project.totalCost))
+                    Text(Fmt.money(project.totalCost))
                         .font(vfdFont(12))
                         .foregroundColor(amber)
                         .frame(minWidth: 54, alignment: .trailing)
-                }
-                Pinstripe()
             }
+            // The chrome line sits on the row's lower edge (the shared row
+            // pads 6pt below), not as its own stacked line.
+            .overlay(alignment: .bottom) { Pinstripe().offset(y: 6) }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens today, \(Fmt.cost(project.totalCost))")
+            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens today, \(Fmt.money(project.totalCost))")
         }
     }
 
@@ -697,6 +699,8 @@ enum DeckSkin: SkinSpec {
                     .font(vfdFont(10))
                     .tracking(1)
                     .foregroundColor(lit ? color : legend)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(text)\(lit ? "" : ", off")")
@@ -835,13 +839,7 @@ extension DeckSkin {
 
         /// Local yyyy-MM-dd. The last recorded day is only "today" when its
         /// date says so; after a quiet day it's simply the latest entry.
-        private var todayKey: String {
-            let f = DateFormatter()
-            f.calendar = Calendar.current
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "yyyy-MM-dd"
-            return f.string(from: Date())
-        }
+        private var todayKey: String { LocalDay.todayKey() }
 
         var body: some View {
             let peak = max(days.map(\.cost).max() ?? 0, 0.0001)

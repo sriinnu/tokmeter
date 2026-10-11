@@ -16,7 +16,7 @@ import SwiftUI
 
 enum PassbookSkin: SkinSpec {
     static let displayName = "Passbook"
-    static let tagline = "Spend posted to a savings book"
+    static let tagline = "Spend posted to a ledger book"
     static let icon = "book.closed.fill"
 
     // MARK: Ink and stock
@@ -59,19 +59,19 @@ enum PassbookSkin: SkinSpec {
 
     // MARK: Optional hooks
 
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
         AnyView(Statement(days: days, theme: theme))
     }
 
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
         AnyView(IndexTabs(showToday: showToday))
     }
 
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
         AnyView(MemorandaLabel(expanded: expanded))
     }
 
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
         AnyView(
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("NOTE").font(PassbookSkin.columnHeadFont).tracking(1.2).foregroundColor(navy)
@@ -122,12 +122,12 @@ enum PassbookSkin: SkinSpec {
                     Text("TOKMETER")
                         .font(.system(size: 17, weight: .bold, design: .serif))
                         .tracking(3)
-                    Text("SAVINGS PASSBOOK · BOOK No. \(max(loader.allDaily.count, 1))")
+                    Text("SPEND LEDGER · \(Fmt.count(max(loader.allDaily.count, 1), "day").uppercased()) RECORDED")
                         .font(.system(size: 8, weight: .semibold, design: .serif))
                         .tracking(1.6)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                        .help("Book number = days of usage in your ledger.")
+                        .help("Days of usage recorded in your ledger. This book is a passbook-style view of what you spent.")
                 }
                 .foregroundColor(gilt)
                 .accessibilityElement(children: .combine)
@@ -174,7 +174,7 @@ enum PassbookSkin: SkinSpec {
             switch loader.daemonPhase {
             case .warming:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("POSTING…")
+                    Text("UPDATING…")
                         .font(PassbookSkin.print(26, weight: .bold))
                         .foregroundColor(muted)
                     Text("Reading today's entries")
@@ -184,7 +184,7 @@ enum PassbookSkin: SkinSpec {
                 .accessibilityElement(children: .combine)
             case .offline, .needsNode:
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(loader.daemonPhase == .needsNode ? "NODE.JS REQUIRED" : "BOOK CLOSED")
+                    Text(loader.daemonPhase == .needsNode ? "NODE.JS REQUIRED" : "SERVICE OFFLINE")
                         .font(PassbookSkin.print(22, weight: .bold))
                         .foregroundColor(ink)
                     Text(loader.daemonPhase == .needsNode
@@ -196,9 +196,20 @@ enum PassbookSkin: SkinSpec {
                 .accessibilityElement(children: .combine)
             case .live:
                 VStack(alignment: .leading, spacing: 2) {
-                    DotMatrixFigure(text: header.estimatedCostText, size: 44)
-                        .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
-                    Text("\(Fmt.number(loader.todayTokens)) TOKENS · EST. API COST")
+                    if header.estimatedCostText == "—" {
+                        // Nothing priced at API rates today: say so plainly
+                        // rather than printing a dash through the pin mask.
+                        Text("NO ESTIMATE")
+                            .font(PassbookSkin.print(26, weight: .bold))
+                            .foregroundColor(muted)
+                            .help("No usage today could be valued at model API rates.")
+                    } else {
+                        DotMatrixFigure(text: header.estimatedCostText, size: 44)
+                            .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
+                    }
+                    Text(header.estimatedCostText == "—"
+                         ? "\(Fmt.number(loader.todayTokens)) TOKENS TODAY"
+                         : "\(Fmt.number(loader.todayTokens)) TOKENS · EST. API COST")
                         .font(PassbookSkin.print(11, weight: .medium))
                         .foregroundColor(ink)
                         .lineLimit(1)
@@ -242,20 +253,20 @@ enum PassbookSkin: SkinSpec {
             Group {
                 switch loader.daemonPhase {
                 case .warming:
-                    label("POSTING", dot: gilt.opacity(0.6))
+                    label("UPDATING", dot: gilt.opacity(0.6))
                 case .offline, .needsNode:
-                    label(loader.daemonPhase == .needsNode ? "NODE?" : "CLOSED",
+                    label(loader.daemonPhase == .needsNode ? "NEEDS NODE" : "OFFLINE",
                           dot: Color(red: 0.96, green: 0.42, blue: 0.42))
                 case .live:
                     if loader.lastError != nil && loader.hasFreshData {
                         label("STALE", dot: Color(red: 0.95, green: 0.70, blue: 0.30))
                             .help(loader.lastError ?? "")
-                    } else if let live = loader.statbarSignals?.liveSession {
+                    } else if let live = loader.liveSession {
                         label("\(Fmt.projectBasename(live.project)) · \(Fmt.liveAge(live.ageSeconds))".uppercased(),
                               dot: Color(red: 0.42, green: 0.86, blue: 0.58))
                             .help("Live: \(live.provider) · \(Fmt.shortModel(live.model)) · last call \(Fmt.cost(live.lastRecordCost))")
                     } else {
-                        label(loader.isDaemonAlive ? "OPEN" : "CLOSED",
+                        label(loader.isDaemonAlive ? "LIVE" : "OFFLINE",
                               dot: loader.isDaemonAlive ? Color(red: 0.42, green: 0.86, blue: 0.58) : gilt.opacity(0.6))
                     }
                 }
@@ -342,7 +353,7 @@ enum PassbookSkin: SkinSpec {
         }
     }
 
-    // MARK: - Ledger: balance carried forward
+    // MARK: - Ledger: all-time totals, balance carried forward
 
     struct Ledger: View {
         let rows: [LedgerRowData]
@@ -352,11 +363,12 @@ enum PassbookSkin: SkinSpec {
             VStack(alignment: .leading, spacing: 0) {
                 Rectangle().fill(navy).frame(height: 2)
                 HStack(spacing: 8) {
-                    ColumnHead(text: "Balance carried forward")
+                    ColumnHead(text: "All-time totals")
                     Spacer(minLength: 0)
-                    ColumnHead(text: "Postings").frame(width: 62, alignment: .center)
-                    ColumnHead(text: "Balance").frame(width: 70, alignment: .trailing)
-                    ColumnHead(text: "Day chg").frame(width: 56, alignment: .trailing)
+                    ColumnHead(text: "Daily").frame(width: 62, alignment: .center)
+                    ColumnHead(text: "Total").frame(width: 70, alignment: .trailing)
+                    ColumnHead(text: "Change").frame(width: 56, alignment: .trailing)
+                        .help("Change since the previous recorded day.")
                 }
                 .frame(height: 22)
                 Rectangle().fill(navy).frame(height: 1)
@@ -480,16 +492,16 @@ enum PassbookSkin: SkinSpec {
                         .frame(maxHeight: .infinity)
                 }
                 .frame(height: 10)
-                Text(row.activityOnly ? "n/a" : Fmt.cost(row.model.cost))
+                Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
                     .font(PassbookSkin.print(12, weight: row.activityOnly ? .regular : .bold))
                     .foregroundColor(row.activityOnly ? muted : ink)
                     .frame(width: 62, alignment: .trailing)
             }
-            .frame(minHeight: 24)
-            .overlay(alignment: .bottom) { Rectangle().fill(ruling).frame(height: 1) }
+            .frame(minHeight: 20)
+            .overlay(alignment: .bottom) { Rectangle().fill(ruling).frame(height: 1).offset(y: 3) }
             .help(row.help)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.cost(row.model.cost))")
+            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.money(row.model.cost))")
         }
     }
 
@@ -513,18 +525,21 @@ enum PassbookSkin: SkinSpec {
                     .font(PassbookSkin.print(9.5))
                     .foregroundColor(muted)
                     .lineLimit(1)
-                Text(Fmt.cost(project.totalCost))
+                Text(Fmt.money(project.totalCost))
                     .font(PassbookSkin.print(12, weight: .bold))
                     .foregroundColor(ink)
                     .frame(width: 62, alignment: .trailing)
             }
             // The section wraps each row in 6pt vertical padding; the ruling
             // sits at the bottom of that padded line, like a printed form.
+            // The section pads each row 6pt top and bottom; give 3pt of each
+            // back so projects print at the models' line pitch (~28pt).
+            .padding(.vertical, -3)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(ruling).frame(height: 1).offset(y: 6)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens, \(Fmt.cost(project.totalCost)) today")
+            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens, \(Fmt.money(project.totalCost)) today")
         }
     }
 
@@ -613,14 +628,17 @@ private struct TellerStamp: View {
 
     var body: some View {
         let main: String = billing.map { remaining($0.remainingSec) } ?? PassbookDate.short()
-        let sub: String = billing == nil ? "POSTED" : "BLOCK LEFT"
+        let top: String = billing == nil ? "TELLER" : "5-HR LIMIT"
+        let sub: String = billing == nil ? "POSTED" : "LEFT"
         ZStack {
             Circle().strokeBorder(PassbookSkin.red, lineWidth: 2)
             Circle().strokeBorder(PassbookSkin.red, lineWidth: 1).padding(9)
             VStack(spacing: 1) {
-                Text("TELLER")
+                Text(top)
                     .font(.system(size: 6.5, weight: .bold, design: .serif))
-                    .tracking(1.6)
+                    .tracking(1.0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Text(main)
                     .font(PassbookSkin.print(13, weight: .heavy))
                     .lineLimit(1)
@@ -632,15 +650,15 @@ private struct TellerStamp: View {
             .foregroundColor(PassbookSkin.red)
             .padding(.horizontal, 12)
         }
-        .frame(width: 80, height: 80)
+        .frame(width: 72, height: 72)
         .rotationEffect(.degrees(-9))
         .opacity(0.9)
         .help(billing.map {
-            String(format: "Claude 5-hour billing window — block #%d, %.0f%% elapsed, %@ so far.",
+            String(format: "Claude 5-hour limit window (block #%d), %.0f%% elapsed, %@ so far.",
                    $0.blockNumber, $0.elapsedPct, Fmt.cost($0.cost))
         } ?? "Posted today.")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(billing == nil ? "Posted \(main)" : "Billing block: \(main) left")
+        .accessibilityLabel(billing == nil ? "Posted \(main)" : "5-hour limit window: \(main) left")
     }
 
     private func remaining(_ seconds: Int) -> String {
@@ -833,7 +851,7 @@ private struct MemorandaLabel: View {
                 .accessibilityHidden(true)
             ColumnHead(text: "Memoranda · usage details")
             Spacer(minLength: 4)
-            Text(expanded ? "CLOSE" : "OPEN")
+            Text(expanded ? "HIDE" : "SHOW")
                 .font(PassbookSkin.print(8.5, weight: .medium))
                 .foregroundColor(PassbookSkin.muted)
                 .accessibilityHidden(true)
@@ -858,12 +876,7 @@ private struct Statement: View {
     let theme: AppTheme
     @State private var hovered: String?
 
-    private var todayKey: String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
-    }
+    private var todayKey: String { LocalDay.todayKey() }
 
     var body: some View {
         let maxCost = max(days.map(\.cost).max() ?? 0, 0.0001)

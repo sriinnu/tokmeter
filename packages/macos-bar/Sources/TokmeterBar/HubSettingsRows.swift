@@ -71,7 +71,19 @@ struct HubStepButton: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            Button(action: action) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .heavy))
+                    .frame(width: 24, height: 22)
+                    .hubSkinKey(theme, filled: hovered && !disabled)
+                    .opacity(disabled ? 0.35 : 1)
+            }
+            .buttonStyle(.borderless)
+            .disabled(disabled)
+            .onHover { hovered = !disabled && $0 }
+            .accessibilityLabel(icon == "minus" ? "Decrease" : "Increase")
+        } else if theme == .paper {
             // Square ink key; inverted on hover.
             Button(action: action) {
                 Image(systemName: icon)

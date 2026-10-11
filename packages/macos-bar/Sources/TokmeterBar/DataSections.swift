@@ -18,12 +18,19 @@ import SwiftUI
 struct ModelsSection: View {
     @ObservedObject var loader: TokmeterLoader
     let theme: AppTheme
+    /// Opens the Rates panel ($ per million per model, and the price source).
+    var showRates: Binding<Bool>? = nil
 
     @State private var showToday: Bool = true
     @State private var showAllModels: Bool = false
 
     private var c: ThemeColors { theme.colors }
-    private var availableModels: [ModelUsage] { showToday ? loader.todayModels : loader.topModels }
+    /// Claude Code logs `<synthetic>` placeholder turns with no tokens and no
+    /// cost; they're not a model anyone chose, so they're left out of the list.
+    private var availableModels: [ModelUsage] {
+        (showToday ? loader.todayModels : loader.topModels)
+            .filter { !Fmt.isEmptySynthetic(model: $0.model, tokens: $0.tokens, cost: $0.cost) }
+    }
     private var activeModels: [ModelUsage] {
         if showAllModels { return availableModels }
         let ranked = Array(availableModels.prefix(5))
@@ -44,6 +51,9 @@ struct ModelsSection: View {
                     ruled: false
                 )
                 Spacer()
+                if let showRates {
+                    RatesButton(isPresented: showRates, theme: theme)
+                }
                 modelTabPill
             }
 
@@ -178,7 +188,7 @@ struct ModelsSection: View {
             }
             .frame(height: 8)
             .help(modelHelp(model, activityOnly: activityOnly))
-            Text(activityOnly ? "n/a" : Fmt.cost(model.cost))
+            Text(activityOnly ? "n/a" : Fmt.money(model.cost))
                 .font(activityOnly
                       ? .system(size: 10, design: .serif).italic()
                       : Broadsheet.display(12.5, weight: .bold).monospacedDigit())
@@ -193,7 +203,7 @@ struct ModelsSection: View {
             ? (model.tokens > 0
                 ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
                 : "This provider doesn't expose token counts or cost locally — only that you used it.")
-            : "\(model.tokens.formatted()) tokens · \(Fmt.cost(model.cost)) cost\n" + compositionTooltip(
+            : "\(model.tokens.formatted()) tokens · \(Fmt.money(model.cost)) cost\n" + compositionTooltip(
                 output: model.outputTokens,
                 cacheRead: model.cacheReadTokens,
                 cacheWrite: model.cacheWriteTokens,
@@ -259,7 +269,7 @@ struct ModelsSection: View {
                     ? (model.tokens > 0
                         ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
                         : "This provider doesn't expose token counts or cost locally — only that you used it.")
-                    : "\(model.tokens.formatted()) tokens · \(Fmt.cost(model.cost)) cost\n" + compositionTooltip(
+                    : "\(model.tokens.formatted()) tokens · \(Fmt.money(model.cost)) cost\n" + compositionTooltip(
                         output: model.outputTokens,
                         cacheRead: model.cacheReadTokens,
                         cacheWrite: model.cacheWriteTokens,
@@ -277,30 +287,12 @@ struct ModelsSection: View {
                     .foregroundColor(theme.backgroundMode.secondaryTextColor)
                     .frame(width: 56, alignment: .trailing)
             } else {
-                Text(Fmt.cost(model.cost))
+                Text(Fmt.money(model.cost))
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(costTint(for: model))
+                    .foregroundColor(theme.costInk)
                     .frame(width: 56, alignment: .trailing)
             }
         }
-    }
-
-    // MARK: - Cost tint (extension A)
-
-    /// Tint the $cost with the dominant tier color when the bar went solid.
-    /// Tied to the bar's own threshold via the shared helper so a mixed-color
-    /// bar always pairs with a neutral $.
-    private func costTint(for model: ModelUsage) -> Color {
-        // Bright tier colors work as bars on cream, but wash out small numbers.
-        if theme.backgroundMode.isLight { return theme.backgroundMode.primaryTextColor }
-        return dominantTierColor(
-            output: model.outputTokens,
-            cacheRead: model.cacheReadTokens,
-            cacheWrite: model.cacheWriteTokens,
-            input: model.inputTokens,
-            reasoning: model.reasoningTokens,
-            theme: theme
-        ) ?? c.highlight
     }
 
     // MARK: - Provider glyph (extension C)
@@ -421,10 +413,12 @@ struct WeekSection: View {
                         .interpolationMethod(.catmullRom)
                     }
 
-                    // Today is the still-accumulating last point — usually a
-                    // flat tail next to full days, so give it a marker + its
-                    // dollar reading or it reads as "no data for today".
-                    if day.date == loader.recentDaily.last?.date {
+                    // Today, when it's among the recorded days, is the still-
+                    // accumulating point — usually a flat tail next to full
+                    // days, so give it a marker + its dollar reading or it
+                    // reads as "no data for today". The last recorded day is
+                    // not necessarily today; after a quiet day it isn't.
+                    if LocalDay.isToday(day.date) {
                         PointMark(
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
@@ -563,9 +557,9 @@ struct SessionsSection: View {
                         .foregroundColor(theme.backgroundMode.secondaryTextColor)
                 }
                 Spacer()
-                Text(Fmt.cost(session.totalCost))
+                Text(Fmt.money(session.totalCost))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(c.highlight)
+                    .foregroundColor(theme.costInk)
             }
         }
 
@@ -580,7 +574,7 @@ struct SessionsSection: View {
                         .layoutPriority(1)
                         .help(session.project)
                     LeaderDots()
-                    Text(Fmt.cost(session.totalCost))
+                    Text(Fmt.money(session.totalCost))
                         .font(.system(size: 13, weight: .heavy, design: .serif))
                         .monospacedDigit()
                         .foregroundColor(Broadsheet.ink)

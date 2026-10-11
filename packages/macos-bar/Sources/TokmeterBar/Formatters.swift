@@ -36,6 +36,43 @@ enum Fmt {
         return String(format: "$%.2f", cost)
     }
 
+    /// A row's amount, the same everywhere a list shows money: dollars and
+    /// cents ("$144.00", "$92.21"), three decimals only below ten cents
+    /// ("$0.056") and "<$0.001" below a tenth of a cent. No K/M shorthand:
+    /// that's for totals (`cost`), where a missing cent doesn't matter.
+    static func money(_ cost: Double) -> String {
+        if cost <= 0 { return "$0.00" }
+        if cost < 0.001 { return "<$0.001" }
+        if cost < 0.10 { return String(format: "$%.3f", cost) }
+        if cost >= 100_000 { return Fmt.cost(cost) }
+        return "$" + (groupedCents.string(from: NSNumber(value: cost)) ?? String(format: "%.2f", cost))
+    }
+
+    /// "1,234.56": thousands grouped, always two decimals, in one fixed
+    /// locale so a row never flips to "1.234,56" beside "$0.40".
+    private static let groupedCents: NumberFormatter = {
+        let f = NumberFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        f.minimumFractionDigits = 2
+        f.maximumFractionDigits = 2
+        return f
+    }()
+
+    /// "1 record" / "3 records": a count with its noun agreeing, never
+    /// "record(s)".
+    static func count(_ n: Int, _ noun: String, plural: String? = nil) -> String {
+        "\(n) \(n == 1 ? noun : (plural ?? noun + "s"))"
+    }
+
+    /// True for Claude Code's `<synthetic>` placeholder turns (no tokens, no
+    /// cost): not a model anyone chose, so lists leave it out. A synthetic
+    /// row that does carry tokens or cost still shows, so totals reconcile.
+    static func isEmptySynthetic(model: String, tokens: Int, cost: Double) -> Bool {
+        model == "<synthetic>" && tokens == 0 && cost == 0
+    }
+
     /// Cost rate per hour: "$3.20/hr". Below one cent, drops to "—/hr" so a
     /// near-zero burn doesn't read as "$0.00/hr" — which the eye registers
     /// as "I'm not spending anything" instead of "I'm idle right now."

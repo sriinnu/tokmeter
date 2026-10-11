@@ -7,11 +7,11 @@ struct DailyUsageTooltip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(day.date)
+            Text(LocalDay.pretty(day.date))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
             Text("\(day.tokens.formatted()) tokens")
                 .foregroundColor(theme.backgroundMode.primaryTextColor)
-            Text("\(Fmt.cost(day.cost)) cost")
+            Text("\(Fmt.money(day.cost)) cost")
                 .foregroundColor(theme.costInk)
         }
         .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))

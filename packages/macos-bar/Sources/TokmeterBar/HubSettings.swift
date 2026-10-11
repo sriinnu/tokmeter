@@ -58,7 +58,12 @@ struct HubSettingsPanel: View {
 
     @ViewBuilder
     private var header: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Settings",
+                subtitle: "Saved edits take effect immediately. Settings are stored in ~/.tokmeter/config.json."
+            )
+        } else if theme == .paper {
             HubPaperPageHeader(
                 title: "Settings",
                 subtitle: "Saved edits take effect immediately. Settings are stored in ~/.tokmeter/config.json."
@@ -369,7 +374,7 @@ struct HubSettingsPanel: View {
 
     private var pricingFreshnessLine: String {
         guard loader.pricingMtime > 0 else {
-            return "Never fetched — kosha registry missing."
+            return "Never fetched — price catalog missing."
         }
         let seconds = Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0
         if seconds < 60 { return "Just fetched." }
@@ -587,7 +592,9 @@ struct HubSettingsSection<Content: View>: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
-                if theme == .paper {
+                if theme.skin != nil {
+                    HubSkinTitle(text: title, theme: theme)
+                } else if theme == .paper {
                     HubPaperTitle(text: title)
                 } else {
                 HStack(spacing: 8) {

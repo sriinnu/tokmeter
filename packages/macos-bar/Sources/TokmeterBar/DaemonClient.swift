@@ -36,12 +36,29 @@ final class DaemonClient {
     static let shared = DaemonClient()
 
     /// API version this client expects from the daemon. If the daemon's
-    /// X-Drishti-API header reports a different MAJOR version, we surface a
+    /// version header (X-Tokmeter-API, or X-Drishti-API from a daemon that
+    /// predates the rename) reports a different MAJOR version, we surface a
     /// clear "incompatible daemon" error instead of failing with a confusing
     /// JSON decode crash.
     static let expectedApiMajor = 1
 
+    /// The daemon's API version header. Daemons before the rename send only
+    /// `X-Drishti-API: drishti-api/N`; current ones send both, so the new name
+    /// wins and the old one is the fallback.
+    static func apiVersionHeader(from http: HTTPURLResponse) -> String? {
+        http.value(forHTTPHeaderField: "X-Tokmeter-API")
+            ?? http.value(forHTTPHeaderField: "X-Drishti-API")
+    }
+
+    /// MAJOR from a header value like "tokmeter-api/1" or "drishti-api/1".
+    static func apiMajor(fromHeader value: String) -> Int? {
+        value.split(separator: "/").last.flatMap { Int($0) }
+    }
+
     private static let baseURL = URL(string: "http://127.0.0.1:9877")!
+    // Legacy file names, kept for compatibility: the daemon still writes its
+    // pid and token shims here, and daemons from before the rename write only
+    // these. Changing them would orphan every installed bar/daemon pair.
     private let pidPath = "/tmp/drishti-daemon.pid"
     private let tokenPath = "/tmp/drishti-daemon.token"
     private let session: URLSession
@@ -86,6 +103,7 @@ final class DaemonClient {
         let len = proc_name(pid, &nameBuf, UInt32(nameBuf.count))
         guard len > 0 else { return false }
         let name = String(cString: nameBuf)
+        // "drishti" is the pre-rename binary name, kept for compatibility.
         let nameOk = name == "node" || name == "bun" || name.hasPrefix("drishti") || name.hasPrefix("tokmeter")
         guard nameOk else { return false }
 
@@ -310,10 +328,11 @@ final class DaemonClient {
     /// while the daemon keeps serving, and gating on it reported a healthy
     /// daemon as offline — which then triggered the auto-start path. The HTTP
     /// answer is the liveness signal. Without a valid pidfile a response must
-    /// still carry the daemon's X-Drishti-API header. That's a sanity check
+    /// still carry the daemon's API version header (X-Tokmeter-API, or the
+    /// legacy X-Drishti-API). That's a sanity check
     /// that tokmeter answered, not authentication: GETs send no secrets.
     /// A refused connection maps to daemonNotRunning so the offline path runs.
-    private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+    func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         let pidfileValid = isDaemonRunning
 
         let url = Self.requestURL(for: path)
@@ -327,16 +346,16 @@ final class DaemonClient {
             guard let http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
             }
-            if !pidfileValid && http.value(forHTTPHeaderField: "X-Drishti-API") == nil {
+            let apiHeader = Self.apiVersionHeader(from: http)
+            if !pidfileValid && apiHeader == nil {
                 throw DaemonError.daemonNotRunning
             }
 
-            // API version check — header looks like "drishti-api/1" (we only
-            // care about MAJOR for breakage). If absent, daemon is old/unknown
-            // and we proceed (best-effort) since adding the header is recent.
-            if let apiHeader = http.value(forHTTPHeaderField: "X-Drishti-API"),
-               let majorStr = apiHeader.split(separator: "/").last,
-               let major = Int(majorStr),
+            // API version check — header looks like "tokmeter-api/1" (or the
+            // legacy "drishti-api/1"); we only care about MAJOR for breakage.
+            // If absent, daemon is old/unknown and we proceed (best-effort).
+            if let apiHeader,
+               let major = Self.apiMajor(fromHeader: apiHeader),
                major != Self.expectedApiMajor {
                 throw DaemonError.versionMismatch(major)
             }

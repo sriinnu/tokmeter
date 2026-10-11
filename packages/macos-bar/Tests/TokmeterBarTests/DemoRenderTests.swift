@@ -27,6 +27,7 @@ final class DemoRenderTests: XCTestCase {
         let loader = TokmeterLoader(startPolling: false)
         loader.isWarming = false
         loader.hasFreshData = true
+        loader.isDaemonAlive = true
         loader.todayTokens = scene.tokens
         loader.statbarSignals = scene.signals
         loader.todayModels = scene.models.map(TokmeterLoader.toUsage)
@@ -92,6 +93,7 @@ final class DemoRenderTests: XCTestCase {
             let loader = TokmeterLoader(startPolling: false)
             loader.isWarming = false
             loader.hasFreshData = true
+            loader.isDaemonAlive = true
             loader.todayTokens = scene.tokens
             loader.statbarSignals = scene.signals
             loader.todayModels = scene.models.map(TokmeterLoader.toUsage)

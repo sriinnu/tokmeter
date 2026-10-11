@@ -73,7 +73,14 @@ struct HubOverviewPanel: View {
 
     @ViewBuilder
     private var header: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Overview",
+                subtitle: "Usage across your projects. Costs include estimates and tool reports.",
+                dateline: BroadsheetDateline.date() + " · "
+                    + BroadsheetDateline.edition(daysRecorded: loader.stats?.activeDays ?? 0)
+            )
+        } else if theme == .paper {
             HubPaperPageHeader(
                 title: "Overview",
                 subtitle: "Usage across your projects. Costs include estimates and tool reports.",
@@ -121,7 +128,10 @@ struct HubOverviewPanel: View {
                 theme: theme
             )
             HubKpiTile(
-                label: "Today",
+                // The sidebar's Today is the API estimate alone (as in the
+                // popover hero); this tile adds tool-reported cost, so it
+                // says so rather than showing a second, larger "Today".
+                label: "Today · est. + tool",
                 value: Fmt.cost(loader.todayCost),
                 icon: "sun.max.fill",
                 accent: c.accent,
@@ -143,7 +153,9 @@ struct HubOverviewPanel: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if theme == .paper {
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "Last 30 recorded days", theme: theme)
+                    } else if theme == .paper {
                         HubPaperTitle(text: "Last 30 recorded days")
                     } else {
                         Text("Last 30 recorded days")
@@ -171,7 +183,9 @@ struct HubOverviewPanel: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if theme == .paper {
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "365-day activity", theme: theme)
+                    } else if theme == .paper {
                         HubPaperTitle(text: "365-day activity")
                     } else {
                         Text("365-day activity")

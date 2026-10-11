@@ -2,8 +2,9 @@
 //
 // The pump answers the two questions a meter should: what did today cost,
 // and at what rate. The front window carries SALE (today's estimated API
-// cost), TOKENS (today's volume) and a BLENDED $ PER M (all known cost today
-// ÷ tokens today — an average across today's models, never a list price).
+// cost), TOKENS (today's volume) and EST. PAID $ PER M (today's cost, estimate
+// plus tool-reported, ÷ today's tokens — the same definition as the Rates
+// panel's "Est. paid today", an average across models, never a list price).
 // Models are grade plates filled to their cost share, the readings sit on
 // enamel plates, projects are fill-ups, and the all-time totals live on the
 // non-resettable totalizer. Enamel green housing, cream plates, amber for
@@ -44,15 +45,15 @@ enum PumpSkin: SkinSpec {
     static var costInk: Color { amber }
     static let cornerRadius: CGFloat = 6
 
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
         AnyView(HoseMeter(days: days, theme: theme))
     }
 
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
         AnyView(GradeTabs(showToday: showToday))
     }
 
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
         AnyView(
             HStack(spacing: 8) {
                 Text(expanded ? "▾" : "▸")
@@ -69,7 +70,7 @@ enum PumpSkin: SkinSpec {
         )
     }
 
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
         AnyView(
             Text(text.uppercased())
                 .font(plateFont(10.5))
@@ -102,7 +103,7 @@ enum PumpSkin: SkinSpec {
         }
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 headRow
                 ChromeStrip()
                 window
@@ -154,14 +155,14 @@ enum PumpSkin: SkinSpec {
             case .offline, .needsNode: return .outOfService
             case .live:
                 if loader.lastError != nil && loader.hasFreshData { return .stale }
-                return loader.statbarSignals?.liveSession != nil ? .pumping : .ready
+                return loader.liveSession != nil ? .pumping : .ready
             }
         }
 
         private var lampDetail: String {
             switch lampState {
             case .pumping:
-                if let live = loader.statbarSignals?.liveSession {
+                if let live = loader.liveSession {
                     return "Live: \(live.provider) · \(Fmt.shortModel(live.model)) in \(Fmt.projectBasename(live.project)) · last call \(Fmt.cost(live.lastRecordCost)), \(Fmt.liveAge(live.ageSeconds)) ago"
                 }
                 return "A session is running now."
@@ -191,12 +192,10 @@ enum PumpSkin: SkinSpec {
                               help: "Tokens recorded today across every tool.",
                               a11y: "Tokens today: \(Fmt.number(loader.todayTokens))")
                     plateRule
-                    windowRow(label: "Est. $ per M", size: 13, wheels: rateText, wheelSize: .small,
-                              note: "est. cost ÷ tokens today · not a list price",
-                              help: "SALE ÷ TOKENS above: today's estimated API cost per million of today's tokens. "
-                                  + "It blends every model and cache read you used today — a measure of your mix, "
-                                  + "not any model's list price. Tool-reported cost is not included.",
-                              a11y: "Estimated cost per million tokens today: \(rateText)")
+                    windowRow(label: "Est. paid $ per M", size: 13, wheels: rateText, wheelSize: .small,
+                              note: "today's cost ÷ today's tokens · not a list price",
+                              help: rateHelp,
+                              a11y: "Estimated paid per million tokens today: \(rateText)")
                 case .warming:
                     dashRow("Sale"); plateRule; dashRow("Tokens")
                     Text("Priming — reading today's sessions…")
@@ -218,7 +217,7 @@ enum PumpSkin: SkinSpec {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color(red: 0.984, green: 0.980, blue: 0.965))
@@ -238,7 +237,7 @@ enum PumpSkin: SkinSpec {
         }
 
         private var plateRule: some View {
-            Rectangle().fill(ink.opacity(0.3)).frame(height: 1).padding(.vertical, 7)
+            Rectangle().fill(ink.opacity(0.3)).frame(height: 1).padding(.vertical, 5)
         }
 
         private func windowRow(label: String, size: CGFloat, wheels: String, wheelSize: PumpWheels.Size,
@@ -274,14 +273,24 @@ enum PumpSkin: SkinSpec {
             .accessibilityLabel("\(label): no reading")
         }
 
-        /// Exactly SALE ÷ TOKENS: the estimate the window shows, per million
-        /// of the tokens it shows. "—" with no estimate or no tokens.
+        /// Today's cost (API estimate plus tool-reported) per million of
+        /// today's tokens: numerator and denominator cover the same records,
+        /// and it matches the Rates panel's "Est. paid today". "—" with no
+        /// cost or no tokens.
         private var rateText: String {
-            guard let basis = loader.statbarSignals?.costBasisToday,
-                  basis.estimatedRecords > 0,
-                  loader.todayTokens > 0 else { return "—" }
-            let rate = basis.estimatedCost / Double(loader.todayTokens) * 1_000_000
-            return rate < 10 ? String(format: "$%.3f", rate) : Fmt.cost(rate)
+            guard loader.todayCost > 0, loader.todayTokens > 0 else { return "—" }
+            let rate = loader.todayCost / Double(loader.todayTokens) * 1_000_000
+            return String(format: "$%.2f", rate)
+        }
+
+        private var rateHelp: String {
+            var text = "Today's cost (API estimate plus tool-reported) ÷ today's tokens, per million. "
+                + "It blends every model and cache read you used today — a measure of your mix, "
+                + "not any model's list price. SALE above is the API estimate alone."
+            if let basis = loader.statbarSignals?.costBasisToday, basis.unavailableRecords > 0 {
+                text += " Some of today's usage has no cost, so this average reads low."
+            }
+            return text
         }
 
         @ViewBuilder
@@ -364,7 +373,7 @@ enum PumpSkin: SkinSpec {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(flagged ? amber : cream)
@@ -388,10 +397,10 @@ enum PumpSkin: SkinSpec {
         var body: some View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("TOTALIZER · NON-RESETTABLE")
+                    Text("ALL-TIME TOTALS · NON-RESETTABLE")
                         .font(plateFont(11)).tracking(1.4).foregroundColor(creamDim)
                     Spacer()
-                    Text("DAY CHG")
+                    Text("DAY CHANGE")
                         .font(plateFont(10)).tracking(1.2).foregroundColor(creamDim)
                 }
                 ForEach(rows) { row in
@@ -453,13 +462,20 @@ enum PumpSkin: SkinSpec {
         let count: Int
         let theme: AppTheme
 
-        /// Pump names for the popover's sections; the plain name stays in
-        /// the accessibility label.
+        /// Pump's name for each section, with the plain title kept after it
+        /// ("GRADES · TODAY'S MODELS", "HOSE METER · LAST 30 RECORDED DAYS"),
+        /// so the count and period are never lost behind the metaphor.
         private var pumpLabel: String {
             let upper = label.uppercased()
-            if upper.contains("MODELS") { return "GRADES · MODELS" }
-            if upper.contains("PROJECTS") { return "FILL-UPS · PROJECTS" }
-            if upper.contains("RECORDED DAYS") { return "HOSE METER · DAYS" }
+            if upper.contains("MODELS") {
+                // The popover's models head shares its row with the $/M
+                // button and the All/Today keys, which already say which
+                // scope this is; keep the head short there so it fits.
+                let scoped = upper.hasPrefix("TODAY") || upper.hasPrefix("TOP")
+                return scoped ? "GRADES · MODELS" : "GRADES · \(upper)"
+            }
+            if upper.contains("PROJECTS") { return "FILL-UPS · \(upper)" }
+            if upper.contains("RECORDED DAYS") { return "HOSE METER · \(upper)" }
             return label
         }
 
@@ -470,7 +486,10 @@ enum PumpSkin: SkinSpec {
                     .tracking(1.5)
                     .foregroundColor(cream)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.8)
+                    // The title claims its room first; the chrome strip is
+                    // the part that gives way.
+                    .layoutPriority(2)
                 if count > 0 {
                     Text("\(count)")
                         .font(monoFont(10, weight: .semibold))
@@ -487,50 +506,54 @@ enum PumpSkin: SkinSpec {
         }
     }
 
-    // MARK: Model row — a grade plate filled to its cost share
+    // MARK: Model row — a grade plate with a level gauge along its foot
 
     struct ModelRow: View {
         let row: ModelRowData
         let theme: AppTheme
 
         var body: some View {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(row.name)
-                        .font(monoFont(12, weight: .semibold))
-                        .foregroundColor(ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let provider = row.provider {
-                        Text(provider).font(monoFont(9, weight: .regular)).foregroundColor(inkMuted).lineLimit(1)
+            VStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(row.name)
+                            .font(monoFont(12, weight: .semibold))
+                            .foregroundColor(ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if let provider = row.provider {
+                            Text(provider).font(monoFont(9, weight: .regular)).foregroundColor(inkMuted).lineLimit(1)
+                        }
                     }
+                    Spacer(minLength: 6)
+                    Text(row.activityOnly ? "N/A" : Fmt.money(row.model.cost))
+                        .font(row.activityOnly ? plateFont(12) : monoFont(13, weight: .semibold))
+                        .foregroundColor(row.activityOnly ? inkMuted : ink)
+                        .monospacedDigit()
                 }
-                Spacer(minLength: 6)
-                Text(row.activityOnly ? "N/A" : Fmt.cost(row.model.cost))
-                    .font(row.activityOnly ? plateFont(12) : monoFont(13, weight: .semibold))
-                    .foregroundColor(row.activityOnly ? inkMuted : ink)
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
+                // The share sits in its own strip under the text, so the
+                // fill never runs through a glyph.
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 5).fill(cream)
-                        Rectangle()
+                        Capsule().fill(housingDeep.opacity(0.16))
+                        Capsule()
                             .fill(gradeFill)
-                            .frame(width: safeDim(geo.size.width * CGFloat(row.share)))
+                            .frame(width: safeDim(geo.size.width * CGFloat(row.share), floor: row.share > 0 ? 4 : 0))
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(housingDeep, lineWidth: 1.5))
                 }
-            )
+                .frame(height: 4)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 5)
+            .padding(.bottom, 6)
+            .background(RoundedRectangle(cornerRadius: 5).fill(cream))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(housingDeep, lineWidth: 1.5))
             .animation(.spring(response: 0.6, dampingFraction: 0.8), value: row.share)
             .help(row.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
                 ? "\(row.name): cost unavailable"
-                : "\(row.name): \(Fmt.cost(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model's cost")
+                : "\(row.name): \(Fmt.money(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model's cost")
         }
     }
 
@@ -551,19 +574,22 @@ enum PumpSkin: SkinSpec {
                 Text("\(Fmt.number(project.totalTokens)) tok")
                     .font(monoFont(11, weight: .regular))
                     .foregroundColor(creamDim)
-                Text(Fmt.cost(project.totalCost))
+                Text(Fmt.money(project.totalCost))
                     .font(monoFont(12, weight: .semibold))
                     .foregroundColor(amber)
                     .frame(minWidth: 52, alignment: .trailing)
             }
-            .padding(.vertical, 3)
+            .padding(.bottom, 3)
             .overlay(alignment: .bottom) {
                 Line()
                     .stroke(cream.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .frame(height: 1)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens, \(Fmt.cost(project.totalCost)) today")
+            .accessibilityLabel("\(Fmt.projectBasename(project.project)): \(Fmt.number(project.totalTokens)) tokens, \(Fmt.money(project.totalCost)) today")
+            // The shared row adds 6pt above and below for card-style themes;
+            // a fill-up line is ruled, so take most of that back.
+            .padding(.vertical, -4)
         }
 
         private struct Line: Shape {
@@ -710,12 +736,7 @@ private struct HoseMeter: View {
     private var maxCost: Double { max(days.map(\.cost).max() ?? 0, 0.01) }
 
     /// Local YYYY-MM-DD; only a row dated today is "so far".
-    private var todayKey: String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
-    }
+    private var todayKey: String { LocalDay.todayKey() }
 
     private func dayLabel(_ date: String) -> String {
         let parse = DateFormatter()

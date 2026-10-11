@@ -84,7 +84,7 @@ struct SignalsRibbon: View {
                 value: Fmt.costPerHour(cph).replacingOccurrences(of: "/hr", with: ""),
                 alert: cph >= 10 ? theme.burnRateColor(cph) : nil,
                 help: "Burn rate over the last \(rate.windowMinutes) min — "
-                    + "\(rate.recordsInWindow) record(s).",
+                    + "\(Fmt.count(rate.recordsInWindow, "record")).",
                 burnRate: rate
             ))
         }
@@ -103,24 +103,25 @@ struct SignalsRibbon: View {
         if let pressure = signals.contextPressure, pressure.status != "none" {
             out.append(Item(
                 id: "drag", icon: "memorychip.fill", iconColor: contextColor(pressure.status),
-                chipText: "drag \(pct(pressure.dragShare))%",
-                label: "Ctx drag", value: "\(pct(pressure.dragShare))%", sub: pressure.status,
+                chipText: "context growth \(pct(pressure.dragShare))%",
+                label: "Context growth", value: "\(pct(pressure.dragShare))%", sub: pressure.status,
                 alert: ["critical", "high"].contains(pressure.status) ? contextColor(pressure.status) : nil,
                 help:
-                    "Context drag estimate: \(pressure.reason) "
+                    "Context growth (context drag) estimate: \(pressure.reason) "
                     + "\(pressure.dragTokens) estimated drag tokens across "
-                    + "\(pressure.turnCount) turn(s)."
+                    + "\(Fmt.count(pressure.turnCount, "turn"))."
             ))
         }
         if signals.compactionToday.events > 0 {
             out.append(Item(
                 id: "compact", icon: "rectangle.compress.vertical", iconColor: c.tertiary,
-                chipText: "comp \(Int(signals.compactionToday.share * 100))%",
-                label: "Compact", value: "\(Int(signals.compactionToday.share * 100))%",
-                sub: "\(signals.compactionToday.events) runs",
+                chipText: "compaction \(Int(signals.compactionToday.share * 100))%",
+                label: "Compaction", value: "\(Int(signals.compactionToday.share * 100))%",
+                sub: Fmt.count(signals.compactionToday.events, "run"),
                 help: String(
-                    format: "Compaction tax today: $%.2f across %d /compact run(s).",
-                    signals.compactionToday.cost, signals.compactionToday.events
+                    format: "Compaction tax today: $%.2f across %@.",
+                    signals.compactionToday.cost,
+                    Fmt.count(signals.compactionToday.events, "/compact run")
                 )
             ))
         }
@@ -128,36 +129,36 @@ struct SignalsRibbon: View {
             let share = signals.reasoningToday.share
             out.append(Item(
                 id: "think", icon: "brain", iconColor: reasoningColor(share),
-                chipText: "think \(Int(share * 100))%",
+                chipText: "thinking \(Int(share * 100))%",
                 label: "Thinking", value: "\(Int(share * 100))%", sub: "of output",
                 alert: share >= 0.80 ? theme.statusWarning : nil,
                 help: String(
                     format:
                         "Reasoning today: %d of %d output tokens were model reasoning "
-                        + "(%d record(s) reported it). Drop effort:low or pick a model "
+                        + "(%@ reported it). Drop effort:low or pick a model "
                         + "without hidden thinking to cut this on routine tasks.",
                     signals.reasoningToday.tokens,
                     signals.reasoningToday.outputTokens,
-                    signals.reasoningToday.records
+                    Fmt.count(signals.reasoningToday.records, "record")
                 )
             ))
         }
         if let billing = signals.billingWindow {
             out.append(Item(
                 id: "block", icon: "timer", iconColor: billingColor(billing.elapsedPct),
-                chipText: formatRemaining(billing.remainingSec) + " left",
-                label: "Block left", value: formatRemaining(billing.remainingSec),
-                sub: "#\(billing.blockNumber) · \(Fmt.cost(billing.cost))",
+                chipText: "5-hour window · " + formatRemaining(billing.remainingSec) + " left",
+                label: "5-hour window", value: formatRemaining(billing.remainingSec),
+                sub: "\(Fmt.cost(billing.cost)) this window",
                 alert: billing.elapsedPct >= 75 ? billingColor(billing.elapsedPct) : nil,
                 elapsed: max(0, min(1, billing.elapsedPct / 100)),
                 help: String(
                     format:
-                        "Claude 5-hour billing window — block #%d, %.0f%% elapsed. "
-                        + "$%.2f across %d turn(s) so far; window ends in %@.",
+                        "Claude 5-hour limit window (block #%d), %.0f%% elapsed. "
+                        + "$%.2f across %@ so far; the window ends in %@.",
                     billing.blockNumber,
                     billing.elapsedPct,
                     billing.cost,
-                    billing.records,
+                    Fmt.count(billing.records, "turn"),
                     formatRemainingLong(billing.remainingSec)
                 )
             ))
@@ -225,7 +226,7 @@ struct SignalsRibbon: View {
         }
         .help(
             "Burn rate over the last \(rate.windowMinutes) min — "
-            + "\(rate.recordsInWindow) record(s)."
+            + "\(Fmt.count(rate.recordsInWindow, "record"))."
         )
     }
 

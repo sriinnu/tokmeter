@@ -35,7 +35,13 @@ struct HubCard<Content: View>: View {
     }
 
     var body: some View {
-        if theme == .paper {
+        if let skin = theme.skin {
+            // A skin's own card, the same one its popover uses.
+            content()
+                .padding(nested ? 10 : 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(SkinCard(skin: skin, role: c.accent))
+        } else if theme == .paper {
             // Broadsheet: a section is ruled, not boxed.
             VStack(alignment: .leading, spacing: 0) {
                 InkRule(weight: nested ? 1 : 2)

@@ -103,7 +103,12 @@ struct HubProjectsList: View {
 
     @ViewBuilder
     private var header: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Projects",
+                subtitle: "\(projects.count) project\(projects.count == 1 ? "" : "s") — click one to drill in."
+            )
+        } else if theme == .paper {
             HubPaperPageHeader(
                 title: "Projects",
                 subtitle: "\(projects.count) project\(projects.count == 1 ? "" : "s") — click one to drill in."

@@ -218,15 +218,10 @@ struct YearHeatmap: View {
     }
 
     private func tooltipText(date: Date, cost: Double) -> String {
-        let formatter: DateFormatter = {
-            let f = DateFormatter()
-            f.dateFormat = "EEE, MMM d, yyyy"
-            return f
-        }()
-        let dateStr = formatter.string(from: date)
+        let dateStr = LocalDay.pretty(dateKey(date))
         let tokens = daily.first { $0.date == dateKey(date) }?.tokens ?? 0
         if cost <= 0 && tokens <= 0 { return "\(dateStr) — no activity" }
-        return "\(dateStr) — \(tokens.formatted()) tokens · \(Fmt.cost(cost)) cost"
+        return "\(dateStr) — \(tokens.formatted()) tokens · \(Fmt.money(cost)) cost"
     }
 }
 
@@ -300,7 +295,7 @@ private struct HeatmapCellTooltip: View {
                     .font(.system(size: 11, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
             } else {
-                row(label: "Cost", value: Fmt.cost(day.cost))
+                row(label: "Cost", value: Fmt.money(day.cost))
                 row(label: "Tokens", value: day.tokens.formatted())
             }
         }
@@ -337,17 +332,7 @@ private struct HeatmapCellTooltip: View {
         }
     }
 
-    private var prettyDate: String {
-        let s = day.date
-        guard s.count >= 10 else { return s }
-        let year = String(s.prefix(4))
-        let month = Int(s.dropFirst(5).prefix(2)) ?? 0
-        let dd = String(s.dropFirst(8).prefix(2))
-        let names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        let mn = (month >= 1 && month <= 12) ? names[month] : ""
-        return "\(mn) \(dd), \(year)"
-    }
+    private var prettyDate: String { LocalDay.pretty(day.date) }
 }
 
 /// Legend strip showing the color gradient from "no spend" → "peak day".

@@ -56,7 +56,12 @@ struct HubCommandsPanel: View {
 
     @ViewBuilder
     private var header: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Commands",
+                subtitle: "Every tokmeter command — click to copy, paste in your terminal."
+            )
+        } else if theme == .paper {
             HubPaperPageHeader(
                 title: "Commands",
                 subtitle: "Every tokmeter command — click to copy, paste in your terminal."
@@ -227,7 +232,9 @@ struct HubCommandGroupCard: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
-                if theme == .paper {
+                if theme.skin != nil {
+                    HubSkinTitle(text: group.title, count: "\(group.commands.count)", theme: theme)
+                } else if theme == .paper {
                     HubPaperTitle(text: group.title, count: "\(group.commands.count)")
                 } else {
                 HStack(spacing: 8) {

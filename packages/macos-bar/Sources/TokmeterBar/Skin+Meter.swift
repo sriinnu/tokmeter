@@ -2,13 +2,13 @@
 //
 // A brushed-aluminium faceplate under a glass dome. Today's tokens and
 // estimated cost turn on odometer drums (black wheels, red fractions). A
-// Ferraris disc in a recessed window spins at the live burn rate, calibrated
-// to one revolution per cent spent. The ratio signals are sub-dials, the
+// ribbon speedometer shows the last hour's burn rate, with amber and red
+// zones at the app's burn thresholds. The ratio signals are sub-dials, the
 // billing block is a clock dial, lifetime figures sit on a sealed
 // totalizer, and model and project rows are circuits and sub-meters.
 //
 // Every figure is a real reading. Drums show the formatted value's digits
-// (leading zeros pad the window, as a meter's would); "—" readings show
+// (unused wheels stay blank); "—" readings show
 // dashed wheels, never a made-up number. Colour means something: red marks
 // fractions and danger zones, the lamps report the service's state.
 
@@ -35,15 +35,15 @@ enum MeterSkin: SkinSpec {
     static var costInk: Color { Plate.ink }
     static let cornerRadius: CGFloat = 6
 
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
         AnyView(LoadProfile(days: days, style: style, theme: theme))
     }
 
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
         AnyView(NotchTabs(showToday: showToday))
     }
 
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
         AnyView(
             HStack(spacing: 8) {
                 // A small black knob; its pointer turns as the cover opens.
@@ -59,12 +59,12 @@ enum MeterSkin: SkinSpec {
                 .accessibilityHidden(true)
                 Engraved("Usage details", size: 8.5, color: Plate.ink)
                 Spacer(minLength: 0)
-                Engraved(expanded ? "Cover open" : "Cover closed", size: 7.5, color: Plate.muted)
+                Engraved(expanded ? "Shown" : "Hidden", size: 7.5, color: Plate.muted)
             }
         )
     }
 
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
         AnyView(
             Text(text)
                 .font(.system(size: 9.5, weight: .medium))
@@ -132,19 +132,22 @@ enum MeterSkin: SkinSpec {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("TOKMETER")
-                        .font(.system(size: 20, weight: .heavy).width(.expanded))
-                        .tracking(2.6)
+                        .font(.system(size: 18, weight: .semibold).width(.condensed))
+                        .tracking(3.2)
                         .foregroundColor(Plate.ink)
                         .shadow(color: .white.opacity(0.8), radius: 0, x: 0, y: 1)
                         .accessibilityAddTraits(.isHeader)
-                    Engraved("Single-phase token meter · Type TM-1", size: 7.5)
+                    Engraved("Token meter", size: 7.5)
                 }
                 Spacer(minLength: 6)
-                VStack(alignment: .trailing, spacing: 3) {
-                    Engraved("Kd 1¢ / rev", size: 8, mono: true)
-                        .help("Disc constant: the disc turns once for every cent spent at the current burn rate.")
-                    Engraved(String(format: "No. %06d", loader.allDaily.count), size: 8, mono: true)
-                        .help("Days recorded in the ledger.")
+                // The full history loads after the first poll; until then
+                // fall back to the recent days, and say nothing rather than
+                // "0 days" while neither has arrived.
+                if daysMetered > 0 {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Engraved("\(daysMetered) days metered", size: 8, mono: true)
+                            .help("Days recorded in the ledger.")
+                    }
                 }
             }
         }
@@ -172,37 +175,31 @@ enum MeterSkin: SkinSpec {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             case .live:
-                VStack(alignment: .leading, spacing: 10) {
-                    register(label: "Tokens\ntoday",
-                             reading: Reading(Fmt.number(loader.todayTokens)),
-                             unit: { Reading(Fmt.number(loader.todayTokens)).unit + " tok" },
-                             minCells: 4,
-                             a11y: "\(Fmt.number(loader.todayTokens)) tokens today")
-                    register(label: "Est. cost\ntoday",
-                             reading: Reading(header.estimatedCostText),
-                             unit: { (Reading(header.estimatedCostText).unit + " USD").trimmingCharacters(in: .whitespaces) },
-                             minCells: 5,
-                             a11y: "Estimated API cost today \(header.estimatedCostText)")
-                        .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
-                    DiscWindow(burn: loader.statbarSignals?.burnRate, isVisible: header.isVisible)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 14) {
+                        RegisterCell(caption: "Tokens today",
+                                     reading: Reading(Fmt.number(loader.todayTokens)),
+                                     currency: false,
+                                     a11y: "\(Fmt.number(loader.todayTokens)) tokens today")
+                        RegisterCell(caption: "Est. API cost today",
+                                     reading: Reading.money(estimatedCost),
+                                     currency: true,
+                                     a11y: "Estimated API cost today \(header.estimatedCostText)")
+                            .help("Usage valued at model API rates. Tool-reported costs are listed separately below.")
+                        Spacer(minLength: 0)
+                    }
+                    BurnGauge(burn: loader.statbarSignals?.burnRate, theme: header.theme)
                     breakdown
                 }
             }
         }
 
-        private func register(label: String, reading: Reading, unit: () -> String,
-                              minCells: Int, a11y: String) -> some View {
-            HStack(alignment: .center, spacing: 10) {
-                Engraved(label, size: 8.5)
-                    .frame(width: 70, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                DrumWindow(reading: reading, size: .large, minCells: minCells)
-                Spacer(minLength: 4)
-                Engraved(unit(), size: 9.5, color: Plate.ink)
-                    .lineLimit(1)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(a11y)
+        private var daysMetered: Int { max(loader.allDaily.count, loader.recentDaily.count) }
+
+        /// Today's API estimate as a number; nil when nothing was priced.
+        private var estimatedCost: Double? {
+            guard let basis = loader.statbarSignals?.costBasisToday, basis.estimatedRecords > 0 else { return nil }
+            return basis.estimatedCost
         }
 
         @ViewBuilder
@@ -243,7 +240,7 @@ enum MeterSkin: SkinSpec {
                     HStack(spacing: 5) {
                         if let lamp { Lamp(color: lamp, on: true, size: 6) }
                         Image(systemName: "tray.full.fill").font(.system(size: 9, weight: .semibold))
-                        Text("CACHE").font(.system(size: 8.5, weight: .bold).width(.expanded)).tracking(1.2)
+                        Text("CACHE").font(.system(size: 9, weight: .semibold)).tracking(0.6)
                     }
                     .foregroundColor(Color(white: 0.93))
                     .padding(.horizontal, 8)
@@ -252,7 +249,7 @@ enum MeterSkin: SkinSpec {
                 }
                 .buttonStyle(.plain)
                 .help(status == "critical" || status == "high"
-                      ? "Cache & context — context drag is \(status ?? "high"). Open the wallet."
+                      ? "Cache & context — context growth is \(status ?? "high"). Open the wallet."
                       : "Cache & context wallet — open it.")
                 .accessibilityLabel("Cache and context wallet")
             }
@@ -296,15 +293,15 @@ enum MeterSkin: SkinSpec {
         let items: [SignalsRibbon.Item]
         let theme: AppTheme
 
-        /// Burn already turns the disc on the face, so the dials carry the
-        /// ratios and the billing block.
+        /// Burn already has the speedometer on the face, so the dials carry
+        /// the ratios and the billing block.
         private var dials: [SignalsRibbon.Item] { items.filter { $0.id != "burn" } }
 
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 Groove()
                 HStack {
-                    Engraved("Sub-dials · today", size: 8)
+                    Engraved("Today's readings", size: 8)
                     Spacer()
                     if let burn = items.first(where: { $0.id == "burn" }) {
                         HStack(spacing: 4) {
@@ -339,9 +336,9 @@ enum MeterSkin: SkinSpec {
             VStack(alignment: .leading, spacing: 8) {
                 Groove()
                 HStack(alignment: .center) {
-                    Engraved("Totalizer · sealed", size: 8)
+                    Engraved("All-time totals · sealed", size: 8)
                     Spacer()
-                    Engraved("Day chg", size: 8, color: Plate.muted)
+                    Engraved("Day change", size: 8, color: Plate.muted)
                     LeadSeal()
                 }
                 ForEach(rows) { row in
@@ -403,16 +400,17 @@ enum MeterSkin: SkinSpec {
                     Engraved("n/a", size: 8.5, color: Plate.muted)
                         .frame(minWidth: 40, alignment: .trailing)
                 } else {
-                    DrumWindow(reading: Reading(Fmt.cost(row.model.cost)), size: .small, minCells: 3)
+                    DrumWindow(reading: Reading.money(row.model.cost), size: .small, minCells: 3, currency: true)
                 }
             }
-            .padding(.vertical, 5)
+            .padding(.vertical, 2)
+            .padding(.bottom, 2)
             .overlay(alignment: .bottom) { Hairline() }
             .help(row.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
                 ? "\(row.name), cost unavailable"
-                : "\(row.name), \(Fmt.cost(row.model.cost))")
+                : "\(row.name), \(Fmt.money(row.model.cost))")
         }
     }
 
@@ -435,12 +433,12 @@ enum MeterSkin: SkinSpec {
                         .foregroundColor(Plate.muted)
                 }
                 Spacer(minLength: 6)
-                DrumWindow(reading: Reading(Fmt.cost(project.totalCost)), size: .small, minCells: 3)
+                DrumWindow(reading: Reading.money(project.totalCost), size: .small, minCells: 3, currency: true)
             }
-            .padding(.bottom, 6)
+            .padding(.bottom, 4)
             .overlay(alignment: .bottom) { Hairline() }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(Fmt.projectBasename(project.project)), \(Fmt.number(project.totalTokens)) tokens, \(Fmt.cost(project.totalCost)) today")
+            .accessibilityLabel("\(Fmt.projectBasename(project.project)), \(Fmt.number(project.totalTokens)) tokens, \(Fmt.money(project.totalCost)) today")
         }
     }
 
@@ -467,6 +465,14 @@ private struct Reading {
     let fraction: String
     let unit: String
     var hasDigits: Bool { !(whole + fraction).isEmpty }
+
+    /// Money for the drums: always dollars and cents, never abbreviated
+    /// below $100k, so $347.21 can't read as 00347 next to 92.21.
+    static func money(_ value: Double?) -> Reading {
+        guard let value else { return Reading("—") }
+        if value >= 100_000 { return Reading(Fmt.cost(value)) }
+        return Reading(String(format: "%.2f", value))
+    }
 
     init(_ formatted: String) {
         let s = formatted.replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
@@ -513,6 +519,8 @@ private struct DrumWindow: View {
     let reading: Reading
     var size: DrumSize = .small
     var minCells: Int = 0
+    /// Money: a "$" printed on the plate before the wheels.
+    var currency = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -528,9 +536,11 @@ private struct DrumWindow: View {
             return (0..<max(minCells, 3)).map { Cell(id: "d\($0)", glyph: "–", red: false) }
         }
         let padCount = max(0, minCells - reading.whole.count - reading.fraction.count)
-        let whole = String(repeating: "0", count: padCount) + reading.whole
+        // Unused wheels stay blank rather than showing leading zeros, so
+        // 1.0M reads "1.0", not "001.0".
+        let whole = String(repeating: " ", count: padCount) + reading.whole
         var out: [Cell] = whole.reversed().enumerated().map { i, ch in
-            Cell(id: "w\(i)", glyph: String(ch), red: false)
+            Cell(id: "w\(i)", glyph: ch == " " ? "" : String(ch), red: false)
         }.reversed()
         if !reading.fraction.isEmpty { out.append(Cell(id: "pt", glyph: ".", red: false, point: true)) }
         out += reading.fraction.enumerated().map { i, ch in
@@ -541,6 +551,13 @@ private struct DrumWindow: View {
 
     var body: some View {
         HStack(spacing: size == .tiny ? 1 : 2) {
+            if currency {
+                Text("$")
+                    .font(.system(size: size.font * 0.8, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.85))
+                    .frame(height: size.cell.height)
+                    .padding(.horizontal, 1)
+            }
             ForEach(cells) { cell in
                 if cell.point {
                     // The meter's decimal point: a dot painted between wheels.
@@ -591,113 +608,6 @@ private struct DrumWindow: View {
     }
 }
 
-/// The Ferraris disc seen edge-on through its window, with the burn rate.
-/// It turns once per cent spent at the current rate, up to 3 rev/s, and
-/// stops when the popover is hidden, Reduce Motion is on, or nothing is
-/// burning.
-private struct DiscWindow: View {
-    let burn: BurnRate?
-    let isVisible: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var costPerHour: Double {
-        guard let burn, burn.recordsInWindow > 0 else { return 0 }
-        return burn.costPerHour
-    }
-    private static let maxRevsPerSecond = 3.0
-    private var revsPerSecond: Double {
-        min(costPerHour * 100 / 3600, Self.maxRevsPerSecond)
-    }
-    private var capped: Bool { costPerHour * 100 / 3600 > Self.maxRevsPerSecond }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isVisible || reduceMotion || revsPerSecond == 0)) { ctx in
-                let phase = revsPerSecond == 0 || reduceMotion || !isVisible
-                    ? 0.12
-                    : (ctx.date.timeIntervalSinceReferenceDate * revsPerSecond).truncatingRemainder(dividingBy: 1)
-                Canvas { gc, size in drawDisc(gc, size: size, phase: phase) }
-            }
-            .frame(height: 30)
-            .accessibilityHidden(true)
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(costPerHour > 0 ? Fmt.costPerHour(costPerHour).replacingOccurrences(of: "/hr", with: "") : "Idle")
-                    .font(.system(size: 16, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(white: 0.96))
-                    .contentTransition(.numericText())
-                Text(costPerHour > 0 ? (capped ? "PER HOUR · MAX" : "PER HOUR") : "NO LOAD")
-                    .font(.system(size: 7.5, weight: .bold).width(.expanded))
-                    .tracking(1.4)
-                    .foregroundColor(Color(red: 0.70, green: 0.72, blue: 0.75))
-            }
-            .fixedSize()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(MeterSkin.Plate.window)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.black, lineWidth: 1))
-        )
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.white.opacity(0.75)).frame(height: 1).padding(.horizontal, 4).offset(y: 1)
-        }
-        .help(burnHelp)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(costPerHour > 0
-            ? "Meter disc: burn rate \(Fmt.costPerHour(costPerHour).replacingOccurrences(of: "/hr", with: "")) per hour"
-            : "Meter disc idle: no spend in the last hour")
-    }
-
-    private var burnHelp: String {
-        guard let burn, burn.recordsInWindow > 0 else {
-            return "No spend recorded in the last hour, so the disc is still."
-        }
-        return "Burn rate over the last \(burn.windowMinutes) min — \(burn.recordsInWindow) record(s). "
-            + "The disc turns once per cent at this rate"
-            + (capped ? " (shown at its 3 rev/s maximum)." : ".")
-    }
-
-    private func drawDisc(_ gc: GraphicsContext, size: CGSize, phase: Double) {
-        let cx = size.width / 2, cy = size.height / 2
-        let rx = size.width / 2 - 2, ry: CGFloat = 8
-        // Rim (the disc's edge), then its top face.
-        gc.fill(Path(ellipseIn: CGRect(x: cx - rx, y: cy - ry + 2, width: rx * 2, height: ry * 2)),
-                with: .color(Color(red: 0.60, green: 0.63, blue: 0.65)))
-        gc.fill(Path(ellipseIn: CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)),
-                with: .linearGradient(Gradient(colors: [Color(red: 0.86, green: 0.88, blue: 0.90),
-                                                        Color(red: 0.72, green: 0.75, blue: 0.78)]),
-                                      startPoint: CGPoint(x: cx, y: cy - ry), endPoint: CGPoint(x: cx, y: cy + ry)))
-        // Graduations and the red index mark, on the near half of the rim.
-        let base = phase * 2 * .pi
-        for i in 0..<20 {
-            let theta = base + Double(i) * 2 * .pi / 20
-            let depth = cos(theta)
-            guard depth > 0 else { continue }
-            let x = cx + rx * CGFloat(sin(theta))
-            var tick = Path()
-            tick.move(to: CGPoint(x: x, y: cy - ry * 0.55))
-            tick.addLine(to: CGPoint(x: x, y: cy + ry * 0.9))
-            gc.stroke(tick, with: .color(Color(red: 0.42, green: 0.45, blue: 0.48).opacity(0.35 + 0.65 * depth)),
-                      lineWidth: 1)
-        }
-        let depth = cos(base)
-        if depth > 0 {
-            let x = cx + rx * CGFloat(sin(base))
-            let w = max(1.5, 8 * CGFloat(depth))
-            gc.fill(Path(CGRect(x: x - w / 2, y: cy - ry * 0.75, width: w, height: ry * 1.75)),
-                    with: .color(MeterSkin.Plate.red))
-        }
-        // Spindle shadow line across the window.
-        var axle = Path()
-        axle.move(to: CGPoint(x: cx, y: cy - ry - 4))
-        axle.addLine(to: CGPoint(x: cx, y: cy - ry + 1))
-        gc.stroke(axle, with: .color(.black.opacity(0.6)), lineWidth: 2)
-    }
-}
-
-/// One sub-dial: a 270° gauge for a ratio, or a clock for the billing block.
 private struct DialCell: View {
     let item: SignalsRibbon.Item
 
@@ -882,7 +792,7 @@ private struct LedgerLine: View {
                 DrumWindow(reading: Reading(row.value), size: .small, minCells: 3)
                     .modifier(SparklineUsageHover(days: row.sparkDays, theme: theme))
                 Text(unit)
-                    .font(.system(size: 9, weight: .bold).width(.expanded))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundColor(row.alert ?? MeterSkin.Plate.ink)
                     .lineLimit(1)
                 if row.alert != nil {
@@ -944,7 +854,7 @@ private struct StatusLamp: View {
                 return (MeterSkin.Plate.ledAmber, "Stale · last read failed",
                         "Showing the last good reading. \(loader.lastError ?? "")")
             }
-            if let live = loader.statbarSignals?.liveSession {
+            if let live = loader.liveSession {
                 return (MeterSkin.Plate.ledGreen,
                         "Live · \(Fmt.projectBasename(live.project)) · \(Fmt.liveAge(live.ageSeconds))",
                         "Live: \(live.provider) · \(Fmt.shortModel(live.model)) · last call \(Fmt.cost(live.lastRecordCost))")
@@ -988,8 +898,8 @@ private struct Engraved: View {
         Text(mono ? text : text.uppercased())
             .font(mono
                   ? .system(size: size, weight: .medium, design: .monospaced)
-                  : .system(size: size, weight: .bold).width(.expanded))
-            .tracking(mono ? 0.4 : size * 0.16)
+                  : .system(size: size, weight: .semibold))
+            .tracking(mono ? 0.4 : size * 0.08)
             .foregroundColor(color)
             .shadow(color: .white.opacity(0.7), radius: 0, x: 0, y: 1)
     }
@@ -1075,12 +985,8 @@ private struct LoadProfile: View {
 
     @State private var hovered: Int?
 
-    private static let todayKey: String = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
-    }()
+    /// Fresh on every read: a key computed once went stale at midnight.
+    private static var todayKey: String { LocalDay.todayKey() }
 
     private func weekday(_ date: String) -> String {
         let p = DateFormatter()
@@ -1119,21 +1025,26 @@ private struct LoadProfile: View {
                         }
                     }
                     // The stepped trace.
+                    // Starts at the first reading and ends on the last one: a
+                    // trace that dropped to the baseline at the edge read as
+                    // a crash to zero.
                     Path { p in
                         for (i, day) in days.enumerated() {
                             let x0 = CGFloat(i) * step, x1 = x0 + step
-                            if i == 0 { p.move(to: CGPoint(x: x0, y: h - 2)) }
-                            p.addLine(to: CGPoint(x: x0, y: y(day.cost)))
+                            if i == 0 {
+                                p.move(to: CGPoint(x: x0, y: y(day.cost)))
+                            } else {
+                                p.addLine(to: CGPoint(x: x0, y: y(day.cost)))
+                            }
                             p.addLine(to: CGPoint(x: x1, y: y(day.cost)))
                         }
-                        p.addLine(to: CGPoint(x: CGFloat(days.count) * step, y: h - 2))
                     }
                     .stroke(MeterSkin.Plate.ink, style: StrokeStyle(lineWidth: style == .line ? 1.6 : 1.2, lineJoin: .miter))
                     if lastIsToday, let last = days.last {
                         Rectangle().fill(MeterSkin.Plate.red)
                             .frame(width: step, height: 2.5)
                             .offset(x: CGFloat(days.count - 1) * step, y: y(last.cost) - 1.25)
-                        Text(Fmt.cost(last.cost) + " so far")
+                        Text(Fmt.money(last.cost) + " so far")
                             .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                             .foregroundColor(MeterSkin.Plate.redInk)
                             .fixedSize()
@@ -1176,7 +1087,7 @@ private struct LoadProfile: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Load profile, cost per recorded day: "
-            + days.map { "\($0.date) \(Fmt.cost($0.cost))" }.joined(separator: ", ")
+            + days.map { "\(LocalDay.pretty($0.date)) \(Fmt.money($0.cost))" }.joined(separator: ", ")
             + (lastIsToday ? ". Today is still accumulating." : ""))
     }
 }
@@ -1217,5 +1128,123 @@ private struct NotchTabs: View {
                 p.closeSubpath()
             }
         }
+    }
+}
+
+
+/// One register: an engraved caption over the drums, with the unit printed
+/// right after the digits ("476.2 M", "$351.44") instead of at the far edge.
+private struct RegisterCell: View {
+    let caption: String
+    let reading: Reading
+    let currency: Bool
+    let a11y: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Engraved(caption, size: 8)
+            HStack(alignment: .lastTextBaseline, spacing: 4) {
+                DrumWindow(reading: reading, size: .large, currency: currency)
+                if !reading.unit.isEmpty {
+                    Text(reading.unit)
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(MeterSkin.Plate.ink)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(a11y)
+    }
+}
+
+/// The burn rate as a ribbon speedometer: a horizontal scale from idle to
+/// $200/hr, a needle that sweeps right as spending picks up, and a red zone
+/// at the far end. The scale is stretched at the low end so ordinary
+/// hours are readable and a heavy hour still pins the red. Zones follow
+/// the app-wide burn thresholds ($10 amber, $20 red).
+private struct BurnGauge: View {
+    let burn: BurnRate?
+    let theme: AppTheme
+
+    private typealias Plate = MeterSkin.Plate
+    /// Scale stops: dollars per hour → position 0…1.
+    private static let stops: [(Double, Double)] = [
+        (0, 0), (5, 0.18), (10, 0.34), (20, 0.52), (50, 0.72), (100, 0.86), (200, 1),
+    ]
+    private static let labels: [Double] = [0, 10, 20, 50, 100, 200]
+
+    private var costPerHour: Double {
+        guard let burn, burn.recordsInWindow > 0 else { return 0 }
+        return burn.costPerHour
+    }
+
+    static func position(_ v: Double) -> Double {
+        let v = max(0, v)
+        for i in 1..<stops.count where v <= stops[i].0 {
+            let (a, pa) = stops[i - 1], (b, pb) = stops[i]
+            return pa + (v - a) / (b - a) * (pb - pa)
+        }
+        return 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Engraved("Burn rate · last hour", size: 8)
+                Spacer()
+                Text(costPerHour > 0 ? Fmt.costPerHour(costPerHour) : "Idle")
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundColor(costPerHour >= 20 ? Plate.redInk : Plate.ink)
+                    .contentTransition(.numericText())
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                let x = w * Self.position(costPerHour)
+                ZStack(alignment: .topLeading) {
+                    // The ribbon window and its zones.
+                    RoundedRectangle(cornerRadius: 3).fill(Plate.window)
+                    HStack(spacing: 0) {
+                        Rectangle().fill(Color.clear).frame(width: w * Self.position(10))
+                        Rectangle().fill(Plate.ledAmber.opacity(0.35)).frame(width: w * (Self.position(20) - Self.position(10)))
+                        Rectangle().fill(Plate.red.opacity(0.55))
+                    }
+                    .frame(height: 6)
+                    .padding(.top, 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    // Ticks: majors at the labels, minors between.
+                    ForEach(Array(stride(from: 0.0, through: 1.0, by: 0.05)), id: \.self) { p in
+                        Rectangle().fill(Color(white: 0.8).opacity(0.7))
+                            .frame(width: 1, height: 5)
+                            .offset(x: w * p - 0.5, y: 21)
+                    }
+                    ForEach(Self.labels, id: \.self) { v in
+                        let px = w * Self.position(v)
+                        Rectangle().fill(Color(white: 0.92)).frame(width: 1, height: 10).offset(x: px - 0.5, y: 16)
+                        Text(v == 200 ? "200+" : "\(Int(v))")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color(white: 0.85))
+                            .fixedSize()
+                            .position(x: min(max(px, 8), w - 12), y: 8)
+                    }
+                    // The needle.
+                    Rectangle()
+                        .fill(Plate.red)
+                        .frame(width: 2.5, height: 24)
+                        .shadow(color: Plate.red.opacity(0.6), radius: 2)
+                        .offset(x: x - 1.25, y: 4)
+                        .animation(.spring(response: 0.8, dampingFraction: 0.7), value: costPerHour)
+                }
+            }
+            .frame(height: 30)
+            Text(costPerHour > 0 ? "$ per hour, averaged over the last \(burn?.windowMinutes ?? 60) minutes"
+                                 : "nothing spent in the last hour")
+                .font(.system(size: 9))
+                .foregroundColor(Plate.muted)
+        }
+        .help(costPerHour > 0
+              ? "Burn rate over the last \(burn?.windowMinutes ?? 60) min — \(Fmt.count(burn?.recordsInWindow ?? 0, "record")). Amber from $10/hr, red from $20/hr."
+              : "No spend recorded in the last hour.")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(costPerHour > 0 ? "Burn rate \(Fmt.costPerHour(costPerHour))" : "Idle")
     }
 }

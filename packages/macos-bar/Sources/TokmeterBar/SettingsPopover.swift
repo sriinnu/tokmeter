@@ -217,7 +217,7 @@ struct SettingsPopover: View {
     /// older fetches. Single source of truth: pricingMtime.
     private var pricingFreshnessLine: String {
         guard loader.pricingMtime > 0 else {
-            return "Never fetched — kosha registry missing."
+            return "Never fetched — price catalog missing."
         }
         let seconds = Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0
         if seconds < 60 { return "Just fetched." }

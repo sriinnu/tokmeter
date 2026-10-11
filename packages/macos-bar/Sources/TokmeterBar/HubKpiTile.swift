@@ -17,7 +17,9 @@ struct HubKpiTile: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            skinBody
+        } else if theme == .paper {
             paperBody
         } else {
             standardBody
@@ -36,6 +38,19 @@ struct HubKpiTile: View {
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// Skins: the skin's label over a figure in its value face; money in
+    /// its cost ink. No icon pip — the skin's card carries the identity.
+    private var skinBody: some View {
+        HubCard(theme: theme) {
+            VStack(alignment: .leading, spacing: 6) {
+                HubSkinLabel(text: label, theme: theme)
+                HubSkinFigure(value: value, size: 26, theme: theme, money: value.hasPrefix("$"))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .combine)

@@ -79,7 +79,13 @@ struct HubProjectDetailView: View {
 
     @ViewBuilder
     private var header: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: project.project,
+                subtitle: "\(Fmt.cost(project.totalCost)) · \(Fmt.number(project.totalTokens)) tokens · "
+                    + "\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")"
+            )
+        } else if theme == .paper {
             HubPaperPageHeader(
                 title: project.project,
                 subtitle: "\(Fmt.cost(project.totalCost)) · \(Fmt.number(project.totalTokens)) tokens · "
@@ -146,7 +152,9 @@ struct HubProjectDetailView: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if theme == .paper {
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "Daily activity", theme: theme)
+                    } else if theme == .paper {
                         HubPaperTitle(text: "Daily activity")
                     } else {
                         Text("Daily activity")
@@ -205,7 +213,9 @@ struct HubProjectModelsList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if theme == .paper {
+            if theme.skin != nil {
+                HubSkinTitle(text: "Models", theme: theme)
+            } else if theme == .paper {
                 HubPaperTitle(text: "Models")
             } else {
                 Text("Models")
@@ -237,7 +247,7 @@ struct HubProjectModelsList: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 LeaderDots()
-                Text(Fmt.cost(m.cost))
+                Text(Fmt.money(m.cost))
                     .font(.system(size: 13, weight: .bold, design: .serif))
                     .monospacedDigit()
                     .foregroundColor(Broadsheet.ink)
@@ -255,7 +265,7 @@ struct HubProjectModelsList: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text(Fmt.cost(m.cost))
+                Text(Fmt.money(m.cost))
                     .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                     .foregroundColor(bg.primaryTextColor)
             }
@@ -287,7 +297,9 @@ struct HubProjectProvidersList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if theme == .paper {
+            if theme.skin != nil {
+                HubSkinTitle(text: "Providers", theme: theme)
+            } else if theme == .paper {
                 HubPaperTitle(text: "Providers")
             } else {
                 Text("Providers")
@@ -319,7 +331,7 @@ struct HubProjectProvidersList: View {
             Kicker(text: "\(p.models.count) model\(p.models.count == 1 ? "" : "s")", color: Broadsheet.muted)
             LeaderDots()
             Kicker(text: "\(Int(p.percentageOfTotal.rounded()))%", color: Broadsheet.muted)
-            Text(Fmt.cost(p.cost))
+            Text(Fmt.money(p.cost))
                 .font(.system(size: 13, weight: .bold, design: .serif))
                 .monospacedDigit()
                 .foregroundColor(Broadsheet.ink)
@@ -342,7 +354,7 @@ struct HubProjectProvidersList: View {
             Text("\(Int(p.percentageOfTotal.rounded()))%")
                 .font(.system(size: 10, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.secondaryTextColor)
-            Text(Fmt.cost(p.cost))
+            Text(Fmt.money(p.cost))
                 .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.primaryTextColor)
         }

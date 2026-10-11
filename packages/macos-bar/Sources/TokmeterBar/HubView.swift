@@ -83,6 +83,9 @@ struct HubView: View {
                 // A column rule, in ink.
                 Rectangle().fill(Broadsheet.ink).frame(width: 1)
                     .ignoresSafeArea()
+            } else if theme.skin != nil {
+                Rectangle().fill(bg.primaryTextColor.opacity(0.22)).frame(width: 1)
+                    .ignoresSafeArea()
             } else {
                 Divider()
                     .ignoresSafeArea()
@@ -131,6 +134,12 @@ struct HubView: View {
     private var sidebarBackground: some View {
         if theme == .paper {
             Broadsheet.stock
+        } else if theme.skin != nil {
+            // The skin's surface, a shade deeper: the sidebar is the fascia.
+            ZStack {
+                bg.surfaceColor
+                Color.black.opacity(bg.isLight ? 0.04 : 0.18)
+            }
         } else if bg.usesMaterial {
             Color.black.opacity(0.08)
         } else {
@@ -150,6 +159,8 @@ struct HubView: View {
     private var hubBackground: some View {
         if theme == .paper {
             Broadsheet.stock
+        } else if theme.skin != nil {
+            LinearGradient(colors: bg.gradientColors(), startPoint: .top, endPoint: .bottom)
         } else if bg.usesMaterial {
             // The root supplies one continuous material behind sidebar and detail.
             Color.clear

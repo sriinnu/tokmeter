@@ -40,18 +40,18 @@ enum RamsSkin: SkinSpec {
     static var costInk: Color { ink }
     static let cornerRadius: CGFloat = 10
 
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? {
         AnyView(WeekDots(days: days, theme: theme))
     }
 
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? {
         AnyView(HStack(spacing: 6) {
             RoundKey(label: "All", pressed: !showToday.wrappedValue) { showToday.wrappedValue = false }
             RoundKey(label: "Today", pressed: showToday.wrappedValue) { showToday.wrappedValue = true }
         })
     }
 
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? {
         AnyView(HStack(spacing: 8) {
             ZStack {
                 Circle().fill(expanded ? ink : face)
@@ -67,7 +67,7 @@ enum RamsSkin: SkinSpec {
         })
     }
 
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView? {
         AnyView(Text(text)
             .font(.system(size: 9.5))
             .foregroundColor(muted)
@@ -136,7 +136,7 @@ enum RamsSkin: SkinSpec {
                 case .needsNode: return (false, "Needs Node")
                 case .live:
                     if loader.lastError != nil && loader.hasFreshData { return (false, "Stale") }
-                    if let live = loader.statbarSignals?.liveSession {
+                    if let live = loader.liveSession {
                         return (true, "Live · \(Fmt.projectBasename(live.project))")
                     }
                     return (true, "Live")
@@ -484,12 +484,7 @@ enum RamsSkin: SkinSpec {
         private static let rows = 6
 
         /// Local yyyy-MM-dd, the format DailyUsage dates use.
-        private static var todayKey: String {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "yyyy-MM-dd"
-            return f.string(from: Date())
-        }
+        private static var todayKey: String { LocalDay.todayKey() }
 
         var body: some View {
             let maxCost = max(days.map(\.cost).max() ?? 0, 0.0001)
@@ -499,19 +494,18 @@ enum RamsSkin: SkinSpec {
                         let isToday = day.date == Self.todayKey
                         let lit = day.cost <= 0 ? 0 : max(1, Int((day.cost / maxCost * Double(Self.rows)).rounded()))
                         VStack(spacing: 3.5) {
-                            if isToday {
-                                Text(Fmt.cost(day.cost))
-                                    .font(mono(9.5, .medium))
-                                    .foregroundColor(ink)
-                                    .fixedSize()
-                            }
+                            Text(day.cost >= 1000 ? Fmt.cost(day.cost) : Fmt.money(day.cost))
+                                .font(mono(9, isToday ? .semibold : .regular))
+                                .foregroundColor(isToday ? ink : muted)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
                             ForEach(0..<Self.rows, id: \.self) { row in
                                 Circle()
                                     .fill(Self.rows - 1 - row < lit ? (isToday ? yellowDeep : ink) : unlit)
                                     .frame(width: 7, height: 7)
                             }
                             Text(weekday(day.date))
-                                .font(mono(9.5, isToday ? .semibold : .regular))
+                                .font(mono(9, isToday ? .semibold : .regular))
                                 .foregroundColor(isToday ? ink : muted)
                                 .padding(.top, 2)
                         }
@@ -519,7 +513,7 @@ enum RamsSkin: SkinSpec {
                         .contentShape(Rectangle())
                         .onHover { inside in hovered = inside ? day.date : (hovered == day.date ? nil : hovered) }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(day.date)\(isToday ? ", today so far" : ""): \(Fmt.cost(day.cost)), \(Fmt.number(day.tokens)) tokens")
+                        .accessibilityLabel("\(LocalDay.pretty(day.date))\(isToday ? ", today so far" : ""): \(Fmt.money(day.cost)), \(Fmt.number(day.tokens)) tokens")
                     }
                 }
             }
@@ -532,13 +526,13 @@ enum RamsSkin: SkinSpec {
             }
         }
 
-        /// "2026-09-07" → "M". Falls back to the day of month.
+        /// "2026-09-07" → "Mon". Falls back to the day of month.
         private func weekday(_ date: String) -> String {
             let f = DateFormatter()
             f.locale = Locale(identifier: "en_US_POSIX")
             f.dateFormat = "yyyy-MM-dd"
             guard let d = f.date(from: date) else { return String(date.suffix(2)) }
-            f.dateFormat = "EEEEE"
+            f.dateFormat = "EEE"
             return f.string(from: d)
         }
     }
@@ -569,10 +563,12 @@ enum RamsSkin: SkinSpec {
         let row: ModelRowData
         let theme: AppTheme
 
-        /// Ten perforations; lit share of the costliest model.
-        private var lit: Int {
+        /// Ten perforations, filled in proportion to the costliest model, in
+        /// tenths: $1.05 and $1.00 differ by a fraction of the last dot
+        /// instead of rounding to the same ten.
+        private var lit: Double {
             guard !row.activityOnly, row.share > 0 else { return 0 }
-            return max(1, Int((row.share * 10).rounded()))
+            return max(0.5, row.share * 10)
         }
 
         var body: some View {
@@ -594,14 +590,16 @@ enum RamsSkin: SkinSpec {
                     Spacer(minLength: 6)
                     HStack(spacing: 2.5) {
                         ForEach(0..<10, id: \.self) { i in
+                            let fill = max(0, min(1, lit - Double(i)))
                             Circle()
-                                .fill(i < lit ? ink : unlit)
+                                .fill(unlit)
+                                .overlay(Circle().fill(ink).opacity(fill))
                                 .frame(width: 4, height: 4)
                         }
                     }
                     .help(row.help)
                     .accessibilityHidden(true)
-                    Text(row.activityOnly ? "n/a" : Fmt.cost(row.model.cost))
+                    Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
                         .font(mono(14))
                         .foregroundColor(row.activityOnly ? muted : ink)
                         .frame(width: 64, alignment: .trailing)
@@ -611,7 +609,7 @@ enum RamsSkin: SkinSpec {
             }
             .help(row.help)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.cost(row.model.cost))")
+            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.money(row.model.cost))")
         }
     }
 
@@ -621,23 +619,28 @@ enum RamsSkin: SkinSpec {
 
         var body: some View {
             VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(Fmt.projectBasename(project.project))
-                            .font(.system(size: 13))
-                            .foregroundColor(ink)
-                            .lineLimit(1)
-                            .help(project.project)
-                        Text("\(Fmt.number(project.totalTokens)) tokens")
-                            .font(mono(10))
-                            .foregroundColor(muted)
-                    }
+                // One line, like a model row: name, tokens in legend mono,
+                // cost on the right.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(Fmt.projectBasename(project.project))
+                        .font(.system(size: 13))
+                        .foregroundColor(ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(project.project)
+                        .layoutPriority(1)
+                    Text("\(Fmt.number(project.totalTokens)) tok")
+                        .font(mono(10))
+                        .foregroundColor(muted)
+                        .lineLimit(1)
+                        .fixedSize()
                     Spacer(minLength: 6)
-                    Text(Fmt.cost(project.totalCost))
+                    Text(Fmt.money(project.totalCost))
                         .font(mono(14))
                         .foregroundColor(ink)
+                        .fixedSize()
                 }
-                hairline.padding(.top, 8)
+                hairline.padding(.top, 6)
             }
             .accessibilityElement(children: .combine)
         }

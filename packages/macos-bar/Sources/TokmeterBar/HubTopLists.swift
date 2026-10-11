@@ -15,7 +15,9 @@ struct HubTopProjectsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                if theme == .paper {
+                if theme.skin != nil {
+                    HubSkinTitle(text: "Top projects", theme: theme)
+                } else if theme == .paper {
                     HubPaperTitle(text: "Top projects")
                     Spacer()
                     HubPaperLabel(text: "by cost")
@@ -79,7 +81,7 @@ struct HubTopProjectRow: View {
                 Kicker(text: "\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")",
                        color: Broadsheet.muted)
                     .fixedSize()
-                Text(Fmt.cost(project.totalCost))
+                Text(Fmt.money(project.totalCost))
                     .font(.system(size: 13.5, weight: .bold, design: .serif))
                     .monospacedDigit()
                     .foregroundColor(Broadsheet.ink)
@@ -108,7 +110,7 @@ struct HubTopProjectRow: View {
             Text("\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")")
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
-            Text(Fmt.cost(project.totalCost))
+            Text(Fmt.money(project.totalCost))
                 .font(.system(size: 12, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.primaryTextColor)
                 .frame(minWidth: 60, alignment: .trailing)
@@ -131,8 +133,8 @@ struct HubTopProjectRow: View {
         let perDay = project.totalCost / Double(days)
         return String(
             format: "%@ — %@ across %d active day%@ (avg %@/day)",
-            project.project, Fmt.cost(project.totalCost), project.activeDays,
-            project.activeDays == 1 ? "" : "s", Fmt.cost(perDay)
+            project.project, Fmt.money(project.totalCost), project.activeDays,
+            project.activeDays == 1 ? "" : "s", Fmt.money(perDay)
         )
     }
 }
@@ -151,7 +153,9 @@ struct HubTopModelsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                if theme == .paper {
+                if theme.skin != nil {
+                    HubSkinTitle(text: "Top models", theme: theme)
+                } else if theme == .paper {
                     HubPaperTitle(text: "Top models")
                     Spacer()
                     HubPaperLabel(text: "by cost share")
@@ -213,7 +217,7 @@ struct HubTopModelRow: View {
                     .font(Broadsheet.kickerFont)
                     .foregroundColor(Broadsheet.muted)
                     .monospacedDigit()
-                Text(Fmt.cost(model.cost))
+                Text(Fmt.money(model.cost))
                     .font(.system(size: 13, weight: .bold, design: .serif))
                     .monospacedDigit()
                     .foregroundColor(Broadsheet.ink)
@@ -238,7 +242,7 @@ struct HubTopModelRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text(Fmt.cost(model.cost))
+                Text(Fmt.money(model.cost))
                     .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                     .foregroundColor(bg.primaryTextColor)
             }

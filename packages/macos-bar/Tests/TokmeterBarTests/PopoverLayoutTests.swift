@@ -132,9 +132,13 @@ private struct DisclosureFixture: View {
     @ObservedObject var model: DisclosureModel
     @ObservedObject var loader: TokmeterLoader
     var body: some View {
-        ContentSizedScrollView(maximumHeight: model.maximumHeight) {
-            UsageOverview(loader: loader, theme: .terminal, showUsageDetails: $model.expanded)
-                .padding(16)
+        // The production container: PanelStack with a tagged scroll area.
+        PanelStack(maxHeight: model.maximumHeight) {
+            ScrollView(.vertical, showsIndicators: true) {
+                UsageOverview(loader: loader, theme: .terminal, showUsageDetails: $model.expanded)
+                    .padding(16)
+            }
+            .panelScrollArea()
         }
         .frame(width: 400)
         .fixedSize(horizontal: false, vertical: true)
@@ -148,11 +152,13 @@ private final class HeightModel: ObservableObject {
 private struct LayoutFixture: View {
     @ObservedObject var model: HeightModel
     var body: some View {
-        VStack(spacing: 0) {
+        // 40 + up to 300 of scroll area + 20 = a 360pt cap.
+        PanelStack(maxHeight: 360) {
             Color.clear.frame(height: 40)
-            ContentSizedScrollView(maximumHeight: 300) {
+            ScrollView(.vertical) {
                 Color.blue.frame(height: model.height)
             }
+            .panelScrollArea()
             Color.clear.frame(height: 20)
         }
         .frame(width: 400)

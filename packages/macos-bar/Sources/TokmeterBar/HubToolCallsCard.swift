@@ -19,7 +19,9 @@ struct HubToolCallsCard: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if theme == .paper {
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "Today's tools", theme: theme)
+                    } else if theme == .paper {
                         HubPaperTitle(text: "Today's tools")
                     } else {
                         Text("Today's tools")
@@ -28,8 +30,10 @@ struct HubToolCallsCard: View {
                     }
                     Spacer()
                     Text(String(
-                        format: "$%.2f across %d call(s) in %d turn(s)",
-                        tools.totalCost, tools.callCount, tools.turnsWithTools
+                        format: "$%.2f across %@ in %@",
+                        tools.totalCost,
+                        Fmt.count(tools.callCount, "call"),
+                        Fmt.count(tools.turnsWithTools, "turn")
                     ))
                         .font(.system(size: 10, design: theme.fonts.bodyDesign))
                         .foregroundColor(bg.secondaryTextColor)

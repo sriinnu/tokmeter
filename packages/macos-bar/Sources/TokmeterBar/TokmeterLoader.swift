@@ -128,6 +128,14 @@ final class TokmeterLoader: ObservableObject {
     /// nothing is starting it (show a Start action, not a shimmer).
     enum DaemonPhase { case live, warming, offline, needsNode }
 
+    /// The live agent session, only while the daemon answers. The signals
+    /// survive going offline (the last reading stays on screen), so reading
+    /// `statbarSignals?.liveSession` directly kept a pulsing "live · 5s" badge
+    /// next to DAEMON OFFLINE.
+    var liveSession: LiveSession? {
+        isDaemonAlive ? statbarSignals?.liveSession : nil
+    }
+
     var daemonPhase: DaemonPhase {
         if needsNodeSetup { return .needsNode }
         // The daemon PROCESS being up (isDaemonAlive) does not mean its first
@@ -136,10 +144,12 @@ final class TokmeterLoader: ObservableObject {
         // .warming so the UI shows the skeleton instead of rendering genuine-
         // looking zeros. Only a ready (or stale-data) daemon is .live.
         if isDaemonAlive { return isWarming ? .warming : .live }
-        // Not reachable: a start genuinely in flight is .warming; otherwise
-        // stale cached data still shows (the STALE pill covers it), else offline.
+        // Not reachable: a start genuinely in flight is .warming, else
+        // offline. This used to return .live when hasFreshData was still set,
+        // so a hero could say LIVE while the footer (isDaemonAlive) said
+        // OFFLINE. Every offline path clears hasFreshData anyway; the lamps
+        // and the footer now read the same truth.
         if isStartingDaemon { return .warming }
-        if hasFreshData { return .live }
         return .offline
     }
 

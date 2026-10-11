@@ -29,13 +29,7 @@ struct StatsGrid: View {
     /// Local YYYY-MM-DD for "today". Used to drop the still-accumulating
     /// current day from trend math — comparing a half-day against yesterday's
     /// full day is what made a frozen lifetime total read as "↓93%" mid-day.
-    var todayKey: String {
-        let f = DateFormatter()
-        f.calendar = Calendar.current
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
-    }
+    var todayKey: String { LocalDay.todayKey() }
 
     /// `recentDaily` with today's partial day removed. The KPI cards are an
     /// all-time/settled-history view — "today" already lives in the hero — so

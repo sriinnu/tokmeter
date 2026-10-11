@@ -6,17 +6,23 @@ struct UsageOverview: View {
     let theme: AppTheme
     @State private var showAllSessions = false
     @Binding var showUsageDetails: Bool
+    var showRates: Binding<Bool>? = nil
 
-    init(loader: TokmeterLoader, theme: AppTheme, showUsageDetails: Binding<Bool> = .constant(false)) {
+    init(loader: TokmeterLoader, theme: AppTheme, showUsageDetails: Binding<Bool> = .constant(false),
+         showRates: Binding<Bool>? = nil) {
         self.loader = loader
         self.theme = theme
         _showUsageDetails = showUsageDetails
+        self.showRates = showRates
     }
 
     var body: some View {
+        // Built once per render: the label is both the disclosure's content
+        // and the signal that the style should omit its own chevron.
+        let customDisclosure = theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme)
         VStack(alignment: .leading, spacing: 16) {
             if !loader.topModels.isEmpty || !loader.todayModels.isEmpty || loader.isWarming {
-                ModelsSection(loader: loader, theme: theme)
+                ModelsSection(loader: loader, theme: theme, showRates: showRates)
             }
             if !loader.todayProjects.isEmpty || loader.isWarming {
                 SessionsSection(loader: loader, theme: theme, showAll: $showAllSessions)
@@ -25,11 +31,11 @@ struct UsageOverview: View {
                 "Model and project costs may combine estimates and tool reports.", theme: theme) {
                 custom
             } else {
-            Text("Model and project costs may combine estimates and tool reports.")
-                .font(theme == .paper
-                      ? .system(size: 10, design: .serif).italic()
-                      : .system(size: 9, design: theme.fonts.bodyDesign))
-                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                Text("Model and project costs may combine estimates and tool reports.")
+                    .font(theme == .paper
+                          ? .system(size: 10, design: .serif).italic()
+                          : .system(size: 9, design: theme.fonts.bodyDesign))
+                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
             }
             DisclosureGroup(isExpanded: $showUsageDetails) {
                 VStack(spacing: 14) {
@@ -41,7 +47,7 @@ struct UsageOverview: View {
                 }
                 .padding(.top, 10)
             } label: {
-                if let custom = theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme) {
+                if let custom = customDisclosure {
                     custom
                 } else if theme == .paper {
                     Kicker(text: "Usage details")
@@ -52,7 +58,7 @@ struct UsageOverview: View {
             }
             .disclosureGroupStyle(FullRowDisclosureStyle(
                 paper: theme == .paper,
-                customLabel: theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme) != nil))
+                customLabel: customDisclosure != nil))
             .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
             .tint(theme.backgroundMode.secondaryTextColor)
         }

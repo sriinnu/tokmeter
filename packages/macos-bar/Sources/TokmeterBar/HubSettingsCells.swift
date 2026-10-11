@@ -16,11 +16,64 @@ struct HubThemePickerCell: View {
     private var c: ThemeColors { candidate.colors }
 
     var body: some View {
-        if currentTheme == .paper {
+        if currentTheme.skin != nil {
+            skinBody
+        } else if currentTheme == .paper {
             paperBody
         } else {
             standardBody
         }
+    }
+
+    /// Skins: a swatch of the candidate's own surface and accent, its name in
+    /// the current skin's face; the theme in use sits on the skin's card.
+    private var skinBody: some View {
+        let host = currentTheme.backgroundMode
+        return Button(action: onTap) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(candidate.backgroundMode.surfaceColor)
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(host.primaryTextColor.opacity(0.35), lineWidth: 1)
+                    Image(systemName: candidate.icon)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(candidate.backgroundMode.primaryTextColor)
+                }
+                .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(candidate.displayName)
+                        .font(currentTheme.fonts.label(size: 13, weight: .bold))
+                        .foregroundColor(host.primaryTextColor)
+                    Text(candidate.tagline)
+                        .font(currentTheme.fonts.body(size: 10))
+                        .foregroundColor(host.secondaryTextColor)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if isSelected {
+                    Text("IN USE")
+                        .font(currentTheme.fonts.label(size: 9, weight: .heavy))
+                        .tracking(1.2)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .hubSkinKey(currentTheme, filled: true)
+                }
+            }
+            .padding(8)
+            .background {
+                if isSelected, let skin = currentTheme.skin {
+                    SkinCard(skin: skin, role: currentTheme.colors.accent)
+                } else if hovered {
+                    RoundedRectangle(cornerRadius: 6).fill(host.primaryTextColor.opacity(0.05))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovered = $0 }
+        .accessibilityLabel("\(candidate.displayName) theme")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     /// Paper: a listing line. Name in serif, tagline in italic, an ink tick
@@ -136,7 +189,16 @@ struct HubSettingsActionButton: View {
     }
 
     var body: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 9, weight: .heavy))
+                    Text(label)
+                }
+            }
+            .buttonStyle(HubSkinButtonStyle(theme: theme, primary: tint == .accent))
+        } else if theme == .paper {
             Button(action: action) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)

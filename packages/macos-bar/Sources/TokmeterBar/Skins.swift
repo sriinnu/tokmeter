@@ -47,26 +47,21 @@ protocol SkinSpec {
     static var costInk: Color { get }
     static var cornerRadius: CGFloat { get }
 
-    // Optional hooks: return nil to keep the shared view.
+    // Chart, tabs, disclosure and footnote: return nil to keep the shared
+    // view. Required, not defaulted, so a mistyped signature is a compile
+    // error instead of a silent fall-back to the generic look.
 
     /// The 7-day chart body (the section head stays shared). `days` is
     /// oldest→newest recorded days. The last one is NOT necessarily today:
     /// only a day whose date equals today's local date is still
     /// accumulating, so compare dates before marking anything "today".
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView?
+    @MainActor static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView?
     /// The All / Today switch in the models header.
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView?
+    @MainActor static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView?
     /// The "Usage details" disclosure row's label, chevron included.
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView?
+    @MainActor static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView?
     /// The cost-basis footnote under the projects.
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView?
-}
-
-extension SkinSpec {
-    static func weekChart(days: [DailyUsage], style: WeekChartStyle, theme: AppTheme) -> AnyView? { nil }
-    static func modelTabs(showToday: Binding<Bool>, theme: AppTheme) -> AnyView? { nil }
-    static func disclosureLabel(expanded: Bool, theme: AppTheme) -> AnyView? { nil }
-    static func footnote(_ text: String, theme: AppTheme) -> AnyView? { nil }
+    @MainActor static func footnote(_ text: String, theme: AppTheme) -> AnyView?
 }
 
 extension AppTheme {

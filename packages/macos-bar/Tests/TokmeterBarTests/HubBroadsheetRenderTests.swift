@@ -20,6 +20,7 @@ final class HubBroadsheetRenderTests: XCTestCase {
         let loader = TokmeterLoader(startPolling: false)
         loader.isWarming = false
         loader.hasFreshData = true
+        loader.isDaemonAlive = true
         loader.totalTokens = 143_800_000_000
         loader.totalCost = 85_000
         loader.todayTokens = 34_400_000
@@ -44,8 +45,13 @@ final class HubBroadsheetRenderTests: XCTestCase {
                        cost: 60 + Double(day * 31 % 17) * 9)
         }
         loader.recentDaily = Array(loader.allDaily.suffix(7))
-        for theme in AppTheme.allCases {
-            for section in HubSection.allCases {
+        // TOKMETER_HUB_QA_THEMES=meter,pump narrows the run; sections likewise.
+        let onlyThemes = ProcessInfo.processInfo.environment["TOKMETER_HUB_QA_THEMES"]?
+            .split(separator: ",").map(String.init)
+        let onlySections = ProcessInfo.processInfo.environment["TOKMETER_HUB_QA_SECTIONS"]?
+            .split(separator: ",").map(String.init)
+        for theme in AppTheme.allCases where onlyThemes?.contains(theme.rawValue) ?? true {
+            for section in HubSection.allCases where onlySections?.contains(section.rawValue) ?? true {
                 let suite = "TokmeterHubRender-\(UUID().uuidString)"
                 let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
                 preferences.set(theme.rawValue, forKey: "appTheme")

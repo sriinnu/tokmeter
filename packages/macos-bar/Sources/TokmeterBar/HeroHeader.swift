@@ -123,7 +123,7 @@ struct HeroHeader: View {
             .buttonStyle(.plain)
             .help(
                 pressured
-                    ? "Cache & context — context drag is \(status ?? "high"). Tap to open."
+                    ? "Cache & context — context growth is \(status ?? "high"). Tap to open."
                     : "Cache & context wallet — tap to open."
             )
         }
@@ -199,7 +199,11 @@ struct HeroHeader: View {
                         Text("No usage recorded today")
                     }
                 } else {
-                    Text("Cost breakdown unavailable")
+                    // The basis hasn't arrived but the rows may already carry
+                    // cost; never claim the breakdown doesn't exist.
+                    Text(loader.todayCost > 0
+                         ? "Estimate pending · \(Fmt.cost(loader.todayCost)) recorded today"
+                         : "Estimate pending")
                 }
             }
             .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
@@ -209,11 +213,14 @@ struct HeroHeader: View {
         }
     }
 
+    /// "Tool-reported cost $0.40": the value sits next to its own label. It
+    /// used to float at the far edge, under the estimated-cost column, where
+    /// it read as part of the estimate.
     func costLine(_ label: String, value: Double) -> some View {
-        HStack {
+        HStack(spacing: 6) {
             Text(label)
-            Spacer()
-            Text(Fmt.cost(value)).monospacedDigit()
+            Text(Fmt.money(value)).monospacedDigit().foregroundColor(theme.costInk)
+            Spacer(minLength: 0)
         }
     }
 
@@ -236,7 +243,7 @@ struct HeroHeader: View {
         case .live:
             if loader.lastError != nil && loader.hasFreshData {
                 stalePill
-            } else if let live = loader.statbarSignals?.liveSession {
+            } else if let live = loader.liveSession {
                 // Something is actively running RIGHT NOW. Replace the generic
                 // ECG with a concrete pointer — "claude-code · tokmeter · 4m" —
                 // so the bar tells you what's live, not just that "data exists."

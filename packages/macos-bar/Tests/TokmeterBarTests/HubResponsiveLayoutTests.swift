@@ -13,6 +13,7 @@ final class HubResponsiveLayoutTests: XCTestCase {
         let loader = TokmeterLoader(startPolling: false)
         loader.isWarming = false
         loader.hasFreshData = true
+        loader.isDaemonAlive = true
         loader.totalTokens = 117_500_000_000
         loader.totalCost = 74_000
         loader.todayTokens = 232_700_000
