@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { type UnpricedTracker, enrichCosts } from "./pricing-enrichment.js";
+import { type UnpricedTracker, enrichCosts, resetCalculatedCosts } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
@@ -93,5 +93,23 @@ describe("enrichCosts — costEligible", () => {
     expect(record.cost).toBe(0);
     expect(record.usage?.cost).toBe("not_exposed");
     expect(unpricedTracker.models.has("totally-unknown-model-xyz")).toBe(true);
+  });
+});
+
+describe("resetCalculatedCosts", () => {
+  it("zeroes calculated costs but keeps tool-reported ones", () => {
+    const calculated = makeRecord({
+      cost: 1.5,
+      usage: { source: "x", cost: "calculated" } as TokenRecord["usage"],
+    });
+    const direct = makeRecord({
+      cost: 2.25,
+      usage: { source: "x", cost: "direct" } as TokenRecord["usage"],
+    });
+    const noUsage = makeRecord({ cost: 0.5, usage: undefined });
+    resetCalculatedCosts([calculated, direct, noUsage]);
+    expect(calculated.cost).toBe(0);
+    expect(direct.cost).toBe(2.25);
+    expect(noUsage.cost).toBe(0);
   });
 });

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CleanupService, EMPTY_FILTER_MESSAGE, isEmptyCleanupFilter } from "./cleanup-service.js";
+import { loadConfig } from "./config-service.js";
 import { isWithin, restoreAllowedRoots } from "./restore-guard.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
 
@@ -284,6 +285,40 @@ describe("CleanupService.restore — archive safety", () => {
     expect(result.errors[0].error).toMatch(/outside the known agent session paths/);
     expect(readFileSync(join(home, ".zshrc"), "utf-8")).toBe("original zshrc\n");
     expect(existsSync(transcript())).toBe(false);
+  });
+});
+
+describe("CleanupService.restore — config cannot widen the allowlist", () => {
+  it("keeps this machine's providerPaths and customSources over the archive's", () => {
+    const launchAgents = join(home, "Library", "LaunchAgents");
+    const cfgPath = join(home, ".tokmeter", "config.json");
+    mkdirSync(join(home, ".tokmeter"), { recursive: true });
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        providerPaths: { cursor: [join(home, ".cursor-local")] },
+        modifiedBy: "tokmeter",
+      })
+    );
+    const hostile = JSON.stringify({
+      providerPaths: { cursor: [launchAgents] },
+      customSources: [{ id: "evil", name: "evil", path: launchAgents, format: "jsonl" }],
+      modifiedBy: "user",
+      modifiedAt: "2099-01-01T00:00:00.000Z",
+    });
+    writeBackup([
+      { name: member(transcript()), content: '{"ok":1}\n' },
+      { name: member(cfgPath), content: hostile },
+    ]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+    const after = loadConfig(home);
+
+    expect(result.errors).toEqual([]);
+    expect(JSON.stringify(after.providerPaths)).not.toContain("LaunchAgents");
+    expect(after.providerPaths.cursor).toEqual([join(home, ".cursor-local")]);
+    expect(after.customSources).toEqual([]);
+    expect(restoreAllowedRoots(home)).not.toContain(launchAgents);
   });
 });
 

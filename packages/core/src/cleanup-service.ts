@@ -501,7 +501,16 @@ export class CleanupService {
       // Same merge story for config.json — user-flagged edits on this machine
       // survive a restore from a snapshot that carries an older tokmeter default.
       const configAfterRestore: UserConfig = loadConfig(currentHome);
-      const mergedConfig = mergeConfigs(configBeforeRestore, configAfterRestore);
+      // providerPaths and customSources widen what a later restore may write
+      // to, so an archive never gets to set them: this machine's own values
+      // win even when the archive's config is newer. Otherwise a hostile
+      // snapshot could name ~/Library/LaunchAgents and the next restore
+      // would treat it as an allowed root.
+      const mergedConfig: UserConfig = {
+        ...mergeConfigs(configBeforeRestore, configAfterRestore),
+        providerPaths: configBeforeRestore.providerPaths,
+        customSources: configBeforeRestore.customSources,
+      };
       saveConfig(mergedConfig, currentHome);
 
       // Invalidate the history snapshot + summary so the next scan rebuilds

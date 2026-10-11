@@ -60,7 +60,7 @@ final class WebDashboardController: ObservableObject {
     /// port taken between this check and the child's bind fails the nonce
     /// probe below and reports an error, same as before.
     static func availablePort(preferred: Int) -> Int {
-        for candidate in preferred..<(preferred + 10) where canBind(candidate) { return candidate }
+        for candidate in preferred...min(preferred + 9, 65535) where canBind(candidate) { return candidate }
         return boundEphemeralPort() ?? preferred
     }
 

@@ -31,7 +31,7 @@ import {
   setCachedKoshaMtime,
   setCachedOverridesMtime,
 } from "./parsers/utils.js";
-import { enrichCosts, markPricingSkipped } from "./pricing-enrichment.js";
+import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
 import { PricingService, todayPricingStale } from "./pricing.js";
 import {
   backfillProviderIntoRelay,
@@ -175,7 +175,7 @@ export class TokmeterCore {
     // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (todayRecords.length > 0 && !this.skipPricing) {
-      if (koshaChanged) for (const r of todayRecords) r.cost = 0;
+      if (koshaChanged) resetCalculatedCosts(todayRecords);
       await enrichCosts(todayRecords, this.pricing, "today", todayWarnings, unpricedTracker);
       if (currentKoshaMtime > 0) setCachedKoshaMtime(currentKoshaMtime);
       setCachedOverridesMtime(currentOverridesMtime);
@@ -277,7 +277,7 @@ export class TokmeterCore {
     if (this.skipPricing) {
       markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
-      for (const r of today) r.cost = 0;
+      resetCalculatedCosts(today);
       await enrichCosts(today, this.pricing, "today", todayWarnings);
       const mtime = this.pricing.getRegistryMtime();
       if (mtime > 0) setCachedKoshaMtime(mtime);
