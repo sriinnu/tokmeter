@@ -693,7 +693,7 @@ private struct RatioDial: View {
                 gc.stroke(z, with: .color(MeterSkin.Plate.red), lineWidth: 3)
             }
             for i in 0...10 {
-                let a = angle(Double(i) / 10).radians
+                let a = CGFloat(angle(Double(i) / 10).radians)
                 let inner = arcR - (i % 5 == 0 ? 5 : 3)
                 var t = Path()
                 t.move(to: CGPoint(x: c.x + cos(a) * inner, y: c.y + sin(a) * inner))
@@ -726,7 +726,7 @@ private struct BlockDial: View {
             left.addArc(center: c, radius: r * 0.8, startAngle: angle(used), endAngle: angle(1), clockwise: false)
             gc.stroke(left, with: .color((alert ?? MeterSkin.Plate.ink).opacity(alert == nil ? 0.55 : 1)), lineWidth: 2.5)
             for i in 0..<20 {
-                let a = angle(Double(i) / 20).radians
+                let a = CGFloat(angle(Double(i) / 20).radians)
                 let major = i % 4 == 0
                 var t = Path()
                 t.move(to: CGPoint(x: c.x + cos(a) * (r - (major ? 6 : 3.5)), y: c.y + sin(a) * (r - (major ? 6 : 3.5))))
@@ -750,7 +750,7 @@ private enum DialFace {
     }
 
     static func needle(_ gc: GraphicsContext, center c: CGPoint, length: CGFloat, angle: Angle, color: Color) {
-        let a = angle.radians
+        let a = CGFloat(angle.radians)
         var n = Path()
         n.move(to: CGPoint(x: c.x - cos(a) * 4, y: c.y - sin(a) * 4))
         n.addLine(to: CGPoint(x: c.x + cos(a) * length, y: c.y + sin(a) * length))
