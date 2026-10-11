@@ -16,6 +16,9 @@
 msg_file="$1"
 [ -f "$msg_file" ] || exit 0
 
+# Global commit-msg hook first, if any (see chain-global.sh).
+"$(dirname "$0")/chain-global.sh" commit-msg "$@" || exit $?
+
 awk '
   tolower($0) ~ /^[[:space:]]*co-authored-by:/     { next }
   tolower($0) ~ /generated with \[claude code\]/   { next }

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Delegates to the global post-checkout hook; see chain-global.sh.
+exec "$(dirname "$0")/chain-global.sh" post-checkout "$@"
