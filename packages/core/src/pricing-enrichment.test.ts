@@ -97,16 +97,17 @@ describe("enrichCosts — costEligible", () => {
 });
 
 describe("resetCalculatedCosts", () => {
+  const withCost = (cost: number, kind: "calculated" | "direct" | undefined): TokenRecord => {
+    const base = makeRecord({ cost });
+    return kind && base.usage
+      ? { ...base, usage: { ...base.usage, cost: kind } }
+      : { ...base, usage: undefined };
+  };
+
   it("zeroes calculated costs but keeps tool-reported ones", () => {
-    const calculated = makeRecord({
-      cost: 1.5,
-      usage: { source: "x", cost: "calculated" } as TokenRecord["usage"],
-    });
-    const direct = makeRecord({
-      cost: 2.25,
-      usage: { source: "x", cost: "direct" } as TokenRecord["usage"],
-    });
-    const noUsage = makeRecord({ cost: 0.5, usage: undefined });
+    const calculated = withCost(1.5, "calculated");
+    const direct = withCost(2.25, "direct");
+    const noUsage = withCost(0.5, undefined);
     resetCalculatedCosts([calculated, direct, noUsage]);
     expect(calculated.cost).toBe(0);
     expect(direct.cost).toBe(2.25);
