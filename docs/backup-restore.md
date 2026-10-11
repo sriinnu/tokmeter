@@ -29,18 +29,53 @@ differs, paths are transparently remapped (e.g. `/home/alice/.claude/...` →
 `/Users/bob/.claude/...`) and the confirmation prompt shows
 `Source → Target → Mode` so you know exactly what will happen.
 
-**UUID collision handling**: if a restored session would overwrite a session
-that already exists locally (same UUID from working on both machines), the
-restored copy gets a freshly-minted UUID instead — propagated consistently
+**UUID collision handling** (cross-machine restores): if a restored session
+would overwrite a session that already exists locally (same UUID from working
+on both machines), the restored copy gets a freshly-minted UUID instead — propagated consistently
 across all seven associated paths (transcript, subagents, file-history, tasks,
 todos, session-env, and the project index entry). Local sessions with the
-same id stay put; the restored ones land alongside them with new ids.
+same id stay put; the restored ones land alongside them with new ids. A
+same-machine restore (same home directory) extracts the archive back to the
+original paths instead, replacing any file currently at the same path.
 
 **Caveat**: JSONL-based providers (Claude Code, Codex, OpenCode, Gemini, Kimi,
 Qwen, etc.) restore end-to-end. SQLite-backed providers (Cursor, VS Code,
 Roo/Kilo) are backed up at the row level but not re-injected on restore —
 their data shows up in tokmeter stats once re-indexed, but isn't written back
 into the editor's SQLite DB.
+
+## What restore will and won't write (next release)
+
+Snapshots are made to move between machines, so restore treats an archive as
+untrusted input:
+
+- **Entry types are checked first.** Only regular files and directories may
+  come out of a backup. Symlink, hardlink, device and fifo entries, and any
+  path with a `..` segment, are refused before anything is extracted.
+- **Extraction happens in a private temp directory** (mode 0700), never at
+  `/`. The extracted tree is checked again with `lstat`: no symlinks, regular
+  files only, no multiply-linked files. The temp directory is always removed.
+- **Files are copied into place only inside an allowlist.** The allowlist is
+  the session paths tokmeter's own scanner reads, plus the Claude Code side
+  directories (`file-history`, `tasks`, `todos`, `session-env`), tokmeter's
+  `aliases.json` and `config.json`, and the backup's own SQL-dump directory.
+  The scanner paths come from each provider's `sessionRoots`, the same
+  function its scan uses, including any `providerPaths` and custom sources in
+  `~/.tokmeter/config.json`. A configured path that is `$HOME` itself, or one
+  of its parents, is ignored.
+- **A cross-home remap must stay inside `$HOME`** and inside that allowlist.
+  Entries outside the source home are ignored, as before.
+- **All or nothing.** If any file fails a check, the restore stops before
+  anything is written and reports which entry was refused.
+- File modes (without setuid/setgid) and mtimes are kept, as `tar -x` kept
+  them. UUID re-minting on cross-home collisions works as described above.
+- A snapshot whose meta file records another machine's archive path restores
+  from the `<id>.tar.gz` that sits next to the meta file.
+
+If a restore you expect to work is refused, the error names the entry. Usually
+it's a file outside every provider's session path, such as a session directory
+you moved and pointed tokmeter at only on the old machine. Add that location
+under `providerPaths` in `~/.tokmeter/config.json`, then restore again.
 
 ## Confirmation and backup: where the gate lives
 
@@ -74,6 +109,15 @@ enforced **inside the server**, not left to the client:
   `confirm: "DELETE"`** — checked in the tool handler before `CleanupService`
   runs; any other value returns an error and deletes nothing.
 - **Backup is on by default** (`backup: true`); pass `backup: false` to opt out.
+  **(next release)** Over MCP the backup is mandatory: `backup: false` is
+  accepted for compatibility, but it's ignored and the result says so.
+- **(next release)** An **empty filter is refused**, in core, for every caller
+  (CLI, TUI, MCP, daemon HTTP). With no project, no providers and no date
+  range, a cleanup would match every session of every provider. Name at least
+  one of: `project`, `providers`, `since`/`until`, or a `today`/`week`/`month`
+  scope. Provider-only and date-only cleanups still work. The interactive
+  CLI's "all" choice is unaffected, because it passes the explicit list of
+  projects.
 - Always call **`tokmeter_cleanup_preview`** first; it reports the exact files,
   bytes, and per-project/provider breakdown that `execute` would delete.
 - `tokmeter_restore` has the same shape, guarded by `confirm: "RESTORE"`.

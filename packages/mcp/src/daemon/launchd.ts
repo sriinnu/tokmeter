@@ -15,7 +15,7 @@
  *   isAgentInstalled / isAgentLoaded — introspection
  *   kickstartAgent() — ask launchd to (re)start the managed daemon now
  *
- * launchd runs the daemon in the FOREGROUND (DAEMON_CHILD_FLAG set) so the
+ * launchd runs the daemon in the FOREGROUND (the daemon-child env flags set) so the
  * process launchd watches IS the daemon — not a parent that forks and exits,
  * which launchd would misread as a crash and respawn-storm.
  */
@@ -31,13 +31,18 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { daemonChildEnv } from "./compat-names.js";
 import { DAEMON_STATE_DIR } from "./protocol.js";
 
 /** Reverse-DNS label launchd keys the agent by. */
 export const AGENT_LABEL = "com.tokmeter.daemon";
 
-/** The env flag that tells the CLI entry to run the daemon in the foreground. */
-const DAEMON_CHILD_FLAG = "__DRISHTI_DAEMON_CHILD__";
+/**
+ * The env flags that tell the CLI entry to run the daemon in the foreground.
+ * Both spellings are written (see compat-names.ts), so a plist from this
+ * release still works under an older daemon and the reverse.
+ */
+const DAEMON_CHILD_ENV = daemonChildEnv();
 
 /** `~/Library/LaunchAgents/com.tokmeter.daemon.plist`. */
 export function agentPlistPath(): string {
@@ -109,8 +114,9 @@ ${argXml}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>${DAEMON_CHILD_FLAG}</key>
-    <string>1</string>
+${Object.entries(DAEMON_CHILD_ENV)
+  .map(([k, v]) => `    <key>${xmlEscape(k)}</key>\n    <string>${xmlEscape(v)}</string>`)
+  .join("\n")}
     <key>NODE_OPTIONS</key>
     <string>--max-old-space-size=${heapMb}</string>
   </dict>

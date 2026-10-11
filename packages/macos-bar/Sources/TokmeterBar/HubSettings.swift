@@ -56,7 +56,24 @@ struct HubSettingsPanel: View {
 
     // MARK: - Header
 
+    @ViewBuilder
     private var header: some View {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Settings",
+                subtitle: "Saved edits take effect immediately. Settings are stored in ~/.tokmeter/config.json."
+            )
+        } else if theme == .paper {
+            HubPaperPageHeader(
+                title: "Settings",
+                subtitle: "Saved edits take effect immediately. Settings are stored in ~/.tokmeter/config.json."
+            )
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Settings")
                 .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
@@ -71,7 +88,10 @@ struct HubSettingsPanel: View {
 
     private var themeSection: some View {
         HubSettingsSection(title: "Theme", icon: "paintpalette.fill", theme: theme) {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: theme == .paper
+                          ? [GridItem(.flexible(), spacing: 28), GridItem(.flexible())]
+                          : [GridItem(.flexible()), GridItem(.flexible())],
+                      spacing: theme == .paper ? 0 : 10) {
                 ForEach(AppTheme.allCases) { t in
                     HubThemePickerCell(
                         candidate: t,
@@ -104,6 +124,12 @@ struct HubSettingsPanel: View {
                     suffix: "s",
                     theme: theme
                 )
+                HubPortRow(
+                    label: "Dashboard port",
+                    helpText: "Port for the web dashboard. If another server is using it, the next free port is used.",
+                    port: store.config.dashboardPort,
+                    theme: theme
+                ) { v in store.update { $0.bar.dashboardPort = v } }
                 HubStepperRow(
                     label: "Daemon scan",
                     helpText: "Seconds between daemon rescans of session logs. (Advisory — takes effect on next daemon start.)",
@@ -188,12 +214,14 @@ struct HubSettingsPanel: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Deep rescan")
-                            .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                            .font(theme == .paper
+                        ? .system(size: 14, weight: .semibold, design: .serif)
+                        : .system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
                             .foregroundColor(bg.primaryTextColor)
                         Text(
                             "Rebuild the last 30 days from raw logs and backfill pace history. Rewrites those sealed days, runs in the background, and leaves older history untouched. The main panel's Refresh stays a quick, today-only read."
                         )
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                         .foregroundColor(bg.secondaryTextColor)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -206,10 +234,9 @@ struct HubSettingsPanel: View {
                             }
                             Text(loader.isRescanning ? "Starting…" : "Deep rescan")
                         }
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .modifier(HubBorderedButton(theme: theme))
                     .disabled(loader.isRescanning)
                     .confirmationDialog(
                         "Rebuild the last 30 days from raw logs?",
@@ -228,14 +255,14 @@ struct HubSettingsPanel: View {
                     Text(
                         "Rescan started — history is rebuilding in the background. Pace history fills in shortly."
                     )
-                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                     .foregroundColor(.green)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 if let err = loader.rescanError {
                     Text(err)
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                         .foregroundColor(.red)
                         .lineLimit(2)
                 }
@@ -257,7 +284,7 @@ struct HubSettingsPanel: View {
                 }
                 if let err = loader.pricingRefreshError ?? loader.cronInstallError {
                     Text(err)
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                         .foregroundColor(.red)
                         .lineLimit(3)
                 }
@@ -269,10 +296,12 @@ struct HubSettingsPanel: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Pricing data")
-                    .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                    .font(theme == .paper
+                        ? .system(size: 14, weight: .semibold, design: .serif)
+                        : .system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.primaryTextColor)
                 Text(pricingFreshnessLine)
-                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
             }
             Spacer()
@@ -287,10 +316,9 @@ struct HubSettingsPanel: View {
                             : (isPricingStale ? "Force refresh" : "Update now")
                     )
                 }
-                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .modifier(HubBorderedButton(theme: theme))
             .disabled(loader.isRefreshingPricing)
         }
     }
@@ -311,11 +339,13 @@ struct HubSettingsPanel: View {
                             ? "Daily auto-fetch installed"
                             : "Daily auto-fetch not installed"
                     )
-                    .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                    .font(theme == .paper
+                        ? .system(size: 14, weight: .semibold, design: .serif)
+                        : .system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.primaryTextColor)
                 }
                 Text(cronDetailLine(cron))
-                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                    .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
                     .lineLimit(2)
             }
@@ -335,17 +365,16 @@ struct HubSettingsPanel: View {
                     }
                     Text(cron.installed ? "Disable" : "Install")
                 }
-                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .modifier(HubBorderedButton(theme: theme))
             .disabled(loader.isInstallingCron)
         }
     }
 
     private var pricingFreshnessLine: String {
         guard loader.pricingMtime > 0 else {
-            return "Never fetched — kosha registry missing."
+            return "Never fetched — price catalog missing."
         }
         let seconds = Date().timeIntervalSince1970 - loader.pricingMtime / 1000.0
         if seconds < 60 { return "Just fetched." }
@@ -421,12 +450,14 @@ struct HubSettingsPanel: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Fetch now")
-                            .font(.system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
+                            .font(theme == .paper
+                        ? .system(size: 14, weight: .semibold, design: .serif)
+                        : .system(size: 13, weight: .medium, design: theme.fonts.bodyDesign))
                             .foregroundColor(bg.primaryTextColor)
                         Text(
                             "One-shot manual read — works whether or not the polling toggle above is on. Same underlying call, but a single explicit request instead of a standing background job."
                         )
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                         .foregroundColor(bg.secondaryTextColor)
                         .fixedSize(horizontal: false, vertical: true)
                     }
@@ -438,16 +469,15 @@ struct HubSettingsPanel: View {
                             }
                             Text(loader.isFetchingAntigravityLiveNow ? "Fetching…" : "Fetch now")
                         }
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .modifier(HubBorderedButton(theme: theme))
                     .disabled(loader.isFetchingAntigravityLiveNow)
                 }
 
                 if let err = loader.antigravityLiveFetchError {
                     Text(err)
-                        .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                        .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                         .foregroundColor(.red)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -493,10 +523,11 @@ struct HubSettingsPanel: View {
                 }
             }
             .padding(10)
-            .background(RoundedRectangle(cornerRadius: 8).fill(bg.secondaryTextColor.opacity(0.06)))
+            .background(RoundedRectangle(cornerRadius: theme == .paper ? 0 : 8)
+                .fill(bg.secondaryTextColor.opacity(0.06)))
         } else {
             Text("Not fetched yet — turn on polling above, or tap Fetch now.")
-                .font(.system(size: 11, design: theme.fonts.bodyDesign))
+                .font(.system(size: 11, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
         }
     }
@@ -561,6 +592,11 @@ struct HubSettingsSection<Content: View>: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
+                if theme.skin != nil {
+                    HubSkinTitle(text: title, theme: theme)
+                } else if theme == .paper {
+                    HubPaperTitle(text: title)
+                } else {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .semibold))
@@ -569,6 +605,7 @@ struct HubSettingsSection<Content: View>: View {
                         .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                         .foregroundColor(bg.primaryTextColor)
                     Spacer()
+                }
                 }
                 content()
             }

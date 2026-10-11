@@ -231,7 +231,7 @@ function barChart(value: number, max: number, width = 25): string {
   return "▓".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Render a दृष्टि section header with double-line borders. */
+/** Render a section header with double-line borders. */
 function header(title: string): string {
   return `\n═══════════════════════════════════════════════════════\n  【♾️】 ${title}\n═══════════════════════════════════════════════════════`;
 }
@@ -281,6 +281,32 @@ function noDataMessage(scope?: string): string {
   return `${header("NO DATA")}\n\n  No token usage records found for scope: ${scopeLabel(scope)}.\n  Make sure you have used an AI coding agent that tokmeter supports.\n`;
 }
 
+// ── MCP tool annotations ────────────────────────────────────
+// Hints clients use to decide what to auto-approve and what to confirm.
+// Every tool that only reads session data is readOnly and closed-world; the
+// two that change files on disk are marked destructive and non-idempotent
+// (a repeated cleanup can catch newly written sessions; a repeated cross-home
+// restore re-mints colliding UUIDs and duplicates sessions).
+
+/** Annotations for tools that only read local session data. */
+export const READ_ONLY_TOOL = { readOnlyHint: true, openWorldHint: false } as const;
+
+/** Annotations for tokmeter_cleanup_execute: deletes session files. */
+export const DESTRUCTIVE_CLEANUP_TOOL = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+/** Annotations for tokmeter_restore: overwrites session files with archived copies. */
+export const DESTRUCTIVE_RESTORE_TOOL = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
 // ── Zod schemas (reused across tools) ───────────────────────
 
 const ScopeEnum = z
@@ -304,7 +330,7 @@ const UntilDate = z.string().optional().describe("End date (YYYY-MM-DD) for cust
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Create and configure the दृष्टि MCP server with all 20 tools.
+ * Create and configure the tokmeter MCP server and register its tools.
  *
  * Each tool call uses {@link getCore} which caches the TokmeterCore instance
  * for 5 seconds to avoid rescanning the filesystem on rapid successive calls.
@@ -352,6 +378,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -414,6 +441,7 @@ export function createServer(): McpServer {
       providers: ProvidersArray,
       limit: z.number().optional().describe("Max models to show (default: 20)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -470,6 +498,7 @@ export function createServer(): McpServer {
       scope: ScopeEnum,
       project: ProjectFilter,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -520,6 +549,7 @@ export function createServer(): McpServer {
       providers: ProvidersArray,
       limit: z.number().optional().describe("Max projects to show (default: 20)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -580,6 +610,7 @@ export function createServer(): McpServer {
       providers: ProvidersArray,
       limit: z.number().optional().describe("Max days to show (default: 30, most recent first)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -647,6 +678,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -750,6 +782,7 @@ export function createServer(): McpServer {
         .describe("Sort by cost (desc), tokens (desc), or time (desc). Default: time"),
       limit: z.number().optional().describe("Max records to return (default: 25)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions({
         scope: params.scope,
@@ -847,6 +880,7 @@ export function createServer(): McpServer {
       scope: ScopeEnum,
       project: ProjectFilter,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core } = await getCore(opts);
@@ -1014,6 +1048,7 @@ export function createServer(): McpServer {
         .optional()
         .describe("Which data to export (default: all)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records: scopedRecords } = await getCore(opts);
@@ -1213,6 +1248,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       if (!params.daily_budget && !params.weekly_budget && !params.monthly_budget) {
         return {
@@ -1340,6 +1376,7 @@ export function createServer(): McpServer {
         .optional()
         .describe("Heatmap metric: cost, tokens, or records (default: cost)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { records } = await getCore(opts);
@@ -1472,6 +1509,7 @@ export function createServer(): McpServer {
         .optional()
         .describe("Anomaly detection sensitivity (default: medium)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records } = await getCore(opts);
@@ -1663,6 +1701,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records } = await getCore(opts);
@@ -1813,6 +1852,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       limit: z.number().optional().describe("Top N to show (default: 10)"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records } = await getCore(opts);
@@ -1996,6 +2036,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records } = await getCore(opts);
@@ -2130,6 +2171,7 @@ export function createServer(): McpServer {
       project: ProjectFilter,
       providers: ProvidersArray,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions(params);
       const { core, records } = await getCore(opts);
@@ -2323,6 +2365,7 @@ export function createServer(): McpServer {
       provider: z.string().optional().describe("Filter to a specific provider"),
       project: ProjectFilter,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions({
         scope: params.period,
@@ -2525,6 +2568,7 @@ export function createServer(): McpServer {
         .describe("Time period to analyze: today, week, or month"),
       project: ProjectFilter,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions({
         scope: params.period,
@@ -2678,6 +2722,7 @@ export function createServer(): McpServer {
       weekly_budget: z.number().optional().describe("Weekly budget in USD"),
       monthly_budget: z.number().optional().describe("Monthly budget in USD"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const now = new Date();
       const todayStr = now.toISOString().slice(0, 10);
@@ -2815,6 +2860,7 @@ export function createServer(): McpServer {
         .optional()
         .describe("Time period to analyze: today, week, or month"),
     },
+    READ_ONLY_TOOL,
     async (params) => {
       const opts = buildScanOptions({ scope: params.period });
       const { core, records } = await getCore(opts);
@@ -2991,6 +3037,7 @@ export function createServer(): McpServer {
       until: UntilDate,
       scope: ScopeEnum,
     },
+    READ_ONLY_TOOL,
     async (params) => {
       try {
         const { CleanupService } = await import("@sriinnu/tokmeter");
@@ -3099,7 +3146,9 @@ export function createServer(): McpServer {
   server.tool(
     "tokmeter_cleanup_execute",
     "DESTRUCTIVE: Permanently delete session data matching the given filters. " +
-      "Creates a backup by default before deleting. " +
+      "Always creates a tar.gz backup before deleting (restorable with tokmeter_restore). " +
+      "Requires at least one filter — a project, providers, or a date range (since/until or a today/week/month scope); " +
+      "an empty filter is refused because it would delete every session. " +
       "ALWAYS call tokmeter_cleanup_preview first. " +
       "Requires confirm='DELETE' as a safety guard.",
     {
@@ -3111,9 +3160,12 @@ export function createServer(): McpServer {
       backup: z
         .boolean()
         .default(true)
-        .describe("Create tar.gz backup before deleting (default: true)"),
+        .describe(
+          "Accepted for compatibility only: over MCP a tar.gz backup is always created before deleting, even when false"
+        ),
       confirm: z.string().describe("Must be exactly 'DELETE' to proceed with deletion"),
     },
+    DESTRUCTIVE_CLEANUP_TOOL,
     async (params) => {
       if (params.confirm !== "DELETE") {
         return {
@@ -3135,12 +3187,21 @@ export function createServer(): McpServer {
 
         const filter = buildCleanupFilter(params);
 
-        const result = await service.execute(filter, { backup: params.backup });
+        // Over MCP the backup is mandatory: an agent-initiated delete must
+        // always be undoable. `backup:false` is accepted (older clients send
+        // it) but never honoured.
+        const result = await service.execute(filter, { backup: true });
 
         // Invalidate cached core so next tool call rescans
         _cachedCore = null;
 
         const lines: string[] = [header("CLEANUP RESULT"), ""];
+        if (params.backup === false) {
+          lines.push(
+            "  ℹ️  backup:false was ignored — over MCP a backup is always created before deleting.",
+            ""
+          );
+        }
         lines.push(
           `  ✅ Deleted: ${result.deletedCount} targets`,
           `  💾 Freed: ${fmtNum(result.bytesFreed)} bytes`
@@ -3175,6 +3236,7 @@ export function createServer(): McpServer {
     "tokmeter_backups",
     "List available cleanup backups with metadata (date, size, providers, projects).",
     {},
+    READ_ONLY_TOOL,
     async () => {
       const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter");
       const core = new Core({ skipPricing: true });
@@ -3213,6 +3275,7 @@ export function createServer(): McpServer {
       backup_id: z.string().describe("Backup ID to restore (from tokmeter_backups)"),
       confirm: z.string().describe("Must be exactly 'RESTORE' to proceed"),
     },
+    DESTRUCTIVE_RESTORE_TOOL,
     async (params) => {
       if (params.confirm !== "RESTORE") {
         return {

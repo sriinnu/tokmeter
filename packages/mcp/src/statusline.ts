@@ -47,7 +47,7 @@ function getCacheDir(): string {
   try {
     uid = String(userInfo().uid);
   } catch {}
-  const dir = join(tmpdir(), `drishti-${uid}`);
+  const dir = join(tmpdir(), `tokmeter-${uid}`);
   if (!existsSync(dir)) {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });

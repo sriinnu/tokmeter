@@ -97,8 +97,13 @@ function decodeClaudeSlugDir(filePath: string): string | undefined {
 export class ClaudeCodeParser implements SessionParser {
   readonly providerId = "claude-code" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.claude/projects", homeDir)];
+  }
+
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
-    const projectsDir = expandHome("~/.claude/projects", homeDir);
+    const [projectsDir] = this.sessionRoots(homeDir);
     // Depth 5: main sessions live at `<slug>/<sessionId>.jsonl` (depth 2),
     // subagent runs at `<slug>/<sessionId>/subagents/agent-*.jsonl` (depth 4).
     // Previous depth 3 silently missed every subagent file — those costs

@@ -8,10 +8,14 @@ import SwiftUI
 /// border, and hover behavior stay consistent.
 struct HubCard<Content: View>: View {
     let theme: AppTheme
+    /// A card inside another card. On Paper it takes a hairline instead of
+    /// the 2pt section rule.
+    var nested = false
     let content: () -> Content
 
-    init(theme: AppTheme, @ViewBuilder content: @escaping () -> Content) {
+    init(theme: AppTheme, nested: Bool = false, @ViewBuilder content: @escaping () -> Content) {
         self.theme = theme
+        self.nested = nested
         self.content = content
     }
 
@@ -31,6 +35,28 @@ struct HubCard<Content: View>: View {
     }
 
     var body: some View {
+        if let skin = theme.skin {
+            // A skin's own card, the same one its popover uses.
+            content()
+                .padding(nested ? 10 : 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(SkinCard(skin: skin, role: c.accent))
+        } else if theme == .paper {
+            // Broadsheet: a section is ruled, not boxed.
+            VStack(alignment: .leading, spacing: 0) {
+                InkRule(weight: nested ? 1 : 2)
+                content()
+                    .padding(.top, nested ? 8 : 12)
+                    .padding(.bottom, nested ? 4 : 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         content()
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

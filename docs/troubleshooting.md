@@ -42,6 +42,11 @@ A bar that shows "offline" while the daemon is actually healthy is usually a
 stale `/tmp` pidfile; the daemon self-heals within ~10s, or `daemon restart`
 forces it.
 
+If the daemon is running but not answering (the bar stays on "?" and
+`curl http://127.0.0.1:9877/api/ready` times out), restart it with
+`tokmeter-mcp daemon restart`. Under the LaunchAgent that is the same as
+`launchctl kickstart -k gui/$(id -u)/com.tokmeter.daemon`.
+
 ## Numbers look wrong
 
 ### "My history is shrinking / tokens are disappearing"
@@ -67,7 +72,8 @@ showing a number to a human.
 ### Pricing shows as stale
 
 The price catalog ("kosha") refreshes on a schedule. Only **today** reprices
-when the catalog updates; past days stay frozen by design. Force a refresh from
+when the catalog updates (from the next release, also when
+`~/.tokmeter/pricing-overrides.json` changes); past days stay frozen by design. Force a refresh from
 the bar's settings or re-run the daily refresh.
 
 ## Performance

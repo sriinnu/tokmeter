@@ -29,20 +29,14 @@ struct StatsGrid: View {
     /// Local YYYY-MM-DD for "today". Used to drop the still-accumulating
     /// current day from trend math — comparing a half-day against yesterday's
     /// full day is what made a frozen lifetime total read as "↓93%" mid-day.
-    private var todayKey: String {
-        let f = DateFormatter()
-        f.calendar = Calendar.current
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
-    }
+    var todayKey: String { LocalDay.todayKey() }
 
     /// `recentDaily` with today's partial day removed. The KPI cards are an
     /// all-time/settled-history view — "today" already lives in the hero — so
     /// their delta and sparkline must describe COMPLETE days only. A lifetime
     /// cumulative can never actually shrink; pairing it with a partial-day
     /// dip was a pure display artifact (the depletion the user kept seeing).
-    private var settledDaily: [DailyUsage] {
+    var settledDaily: [DailyUsage] {
         let complete = loader.recentDaily.filter { $0.date < todayKey }
         // Fall back to the raw series only if we have no settled days yet
         // (brand-new user), so the sparkline doesn't vanish on day one.
@@ -50,6 +44,16 @@ struct StatsGrid: View {
     }
 
     var body: some View {
+        if let skin = theme.skin {
+            SkinLedger(skin: skin, rows: ledgerRows, theme: theme)
+        } else if theme == .paper {
+            paperLedger
+        } else {
+            cards
+        }
+    }
+
+    private var cards: some View {
         HStack(spacing: 8) {
             StatCard(
                 icon: "square.stack.3d.up.fill",
@@ -135,7 +139,7 @@ struct StatsGrid: View {
     /// trend — never a half-day-vs-full-day comparison — so it can't make a
     /// frozen lifetime total look like it's depleting. Returns nil when there
     /// aren't two settled days or the prior day is near-zero.
-    private func recordedDayTrend(metric: RecordedDayTrend.Metric, extract: (DailyUsage) -> Double) -> RecordedDayTrend? {
+    func recordedDayTrend(metric: RecordedDayTrend.Metric, extract: (DailyUsage) -> Double) -> RecordedDayTrend? {
         let days = settledDaily.filter { $0.date < todayKey }
         guard days.count >= 2 else { return nil }
         let latest = extract(days[days.count - 1])
@@ -181,7 +185,9 @@ struct StatCard: View {
         VStack(alignment: .leading, spacing: 0) {
             // Top row: icon badge + delta pill
             HStack(alignment: .top, spacing: 0) {
-                IconBadge(symbol: icon, role: role, cardMode: theme.cardMode)
+                if theme != .paper {
+                    IconBadge(symbol: icon, role: role, cardMode: theme.cardMode)
+                }
                 Spacer(minLength: 0)
                 if let d = delta, !isWarming {
                     DeltaPill(trend: d, theme: theme)
@@ -197,8 +203,10 @@ struct StatCard: View {
                     ShimmerBar(width: 52, height: 18, breathToggle: true)
                 } else {
                     Text(value)
-                        .font(theme.fonts.value(size: 22))
-                        .foregroundColor(role)
+                        .font(theme == .paper
+                              ? theme.fonts.value(size: 22).monospacedDigit()
+                              : theme.fonts.value(size: 22))
+                        .foregroundColor(theme == .paper ? Broadsheet.ink : role)
                         .contentTransition(.numericText())
                         .animation(.spring(response: 0.55, dampingFraction: 0.70), value: value)
                         .lineLimit(1)
@@ -331,17 +339,23 @@ struct DeltaPill: View {
         let positive = trend.percent >= 0
         let color = trend.color(theme: theme)
         HStack(spacing: 2) {
-            Image(systemName: positive ? "arrow.up" : "arrow.down")
-                .font(.system(size: 7, weight: .bold))
+            if theme == .paper {
+                Text(positive ? "▲" : "▼").font(.system(size: 8, weight: .bold))
+            } else {
+                Image(systemName: positive ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 7, weight: .bold))
+            }
             Text(String(format: "%.1f%%", abs(trend.percent)))
                 .font(.system(size: 9, weight: .semibold, design: .rounded))
         }
         .foregroundColor(color)
-        .padding(.horizontal, 5)
+        .padding(.horizontal, theme == .paper ? 0 : 5)
         .padding(.vertical, 2)
         .background {
-            Capsule().fill(Color.white.opacity(theme.backgroundMode.isLight ? 0.5 : 0))
-                .overlay(Capsule().fill(color.opacity(theme.backgroundMode.isLight ? 0.12 : 0.18)))
+            if theme != .paper {
+                Capsule().fill(Color.white.opacity(theme.backgroundMode.isLight ? 0.5 : 0))
+                    .overlay(Capsule().fill(color.opacity(theme.backgroundMode.isLight ? 0.12 : 0.18)))
+            }
         }
         .help(trend.description)
         .accessibilityElement(children: .ignore)
@@ -367,6 +381,8 @@ struct InlineSparkline: View {
     let color: Color
     /// 0 → 1 draw-in progress. Parent animates this with a spring.
     let progress: CGFloat
+    /// Paper: a bare ink line — no wash under it, no glow on the end bead.
+    var flat = false
 
     var body: some View {
         GeometryReader { geo in
@@ -397,7 +413,7 @@ struct InlineSparkline: View {
                         p.closeSubpath()
                     }
                     .fill(LinearGradient(
-                        colors: [color.opacity(0.25), color.opacity(0.0)],
+                        colors: [color.opacity(flat ? 0 : 0.25), color.opacity(0.0)],
                         startPoint: .top, endPoint: .bottom
                     ))
                     .mask(
@@ -413,8 +429,8 @@ struct InlineSparkline: View {
                         }
                     }
                     .trim(from: 0, to: progress)
-                    .stroke(color.opacity(0.85),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .stroke(color.opacity(flat ? 1 : 0.85),
+                            style: StrokeStyle(lineWidth: flat ? 1 : 1.5, lineCap: .round, lineJoin: .round))
                     // End dot — a colored bead at the latest value. Fades in with
                     // the line's progress so it "catches up" to the pen stroke.
                     // Signals which end of the sparkline is "now."
@@ -423,7 +439,7 @@ struct InlineSparkline: View {
                         .frame(width: 4, height: 4)
                         .position(point(values.count - 1, values.last!))
                         .opacity(Double(progress))
-                        .shadow(color: color.opacity(0.6), radius: 2)
+                        .shadow(color: color.opacity(flat ? 0 : 0.6), radius: 2)
                 }
             }
         }

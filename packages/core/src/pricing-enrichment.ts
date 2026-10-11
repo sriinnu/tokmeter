@@ -43,6 +43,19 @@ export function toErrorMessage(error: unknown): string {
 }
 
 /**
+ * Clear the cost of records so enrichCosts re-derives it from current prices.
+ *
+ * Skips tool-reported ("direct") costs: enrichCosts never re-derives those,
+ * so zeroing one would silently turn a real figure (Cursor CSV, Roo, Kilo,
+ * OpenClaw, Claude Code costUSD) into $0 on every reprice.
+ */
+export function resetCalculatedCosts(records: TokenRecord[]): void {
+  for (const r of records) {
+    if (r.usage?.cost !== "direct") r.cost = 0;
+  }
+}
+
+/**
  * Enrich records that lack a cost with pricing data from kosha-discovery.
  *
  * Only processes records where `cost === 0`. Each record's cost is

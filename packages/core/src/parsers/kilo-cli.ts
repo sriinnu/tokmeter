@@ -45,8 +45,13 @@ interface KiloSessionRow {
 export class KiloCliParser implements SessionParser {
   readonly providerId = "kilo-cli" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.local/share/kilo/kilo.db", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const dbPath = expandHome("~/.local/share/kilo/kilo.db", homeDir);
+    const [dbPath] = this.sessionRoots(homeDir);
 
     if (!(await fileExists(dbPath))) return [];
 

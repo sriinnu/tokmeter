@@ -37,6 +37,7 @@ struct HeroBackground: View {
         case .blueprintTechnical: blueprint
         case .noiseBrutal:       noise
         case .mintEditorial:     mint
+        case .skin:              Color.clear // the skin's Hero paints its own
         }
     }
 

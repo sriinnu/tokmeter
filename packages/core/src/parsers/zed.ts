@@ -113,15 +113,18 @@ function resolveProject(
 export class ZedParser implements SessionParser {
   readonly providerId = "zed" as const;
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
-    const records: TokenRecord[] = [];
-    const appDirs = [
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [
       ...APP_DIR_CANDIDATES.map((d) => expandHome(`~/${d}`, homeDir)),
       ...getConfiguredProviderPaths("zed", homeDir).map((p) => expandHome(p, homeDir)),
-    ];
+    ].map((appDir) => join(appDir, "threads", "threads.db"));
+  }
 
-    for (const appDir of appDirs) {
-      const dbPath = join(appDir, "threads", "threads.db");
+  async scan(homeDir: string): Promise<TokenRecord[]> {
+    const records: TokenRecord[] = [];
+
+    for (const dbPath of this.sessionRoots(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);

@@ -18,7 +18,7 @@ Some tools expose only an activity signal or a lifetime token total. Tokmeter do
 | Tool-reported cost | A numeric cost exposed by the local tool | That the provider actually charged that amount |
 | Unavailable | Missing rates, missing breakdown, skipped pricing, or absent provenance | That usage was free |
 
-An explicit zero from the tool or a known zero pricing rate is retained. Missing optional cache-read rates currently fall back to 10% of input; reasoning uses output rates unless a dedicated rate exists. Cache writes made with the 1-hour TTL (Claude Code reports the split per response) are billed at the registry's `cacheWrite1hPerMillion` when present, else at 2× input for Claude models — Anthropic's published 1h rule — and at the ordinary write rate for other vendors. These are estimation rules, not provider billing guarantees. Long-context tiers, service tiers, negotiated discounts, and other fees are not fully modeled by the current calculator.
+An explicit zero from the tool or a known zero pricing rate is retained. Missing optional cache-read rates currently fall back to 10% of input; reasoning uses output rates unless a dedicated rate exists. Cache writes made with the 1-hour TTL (Claude Code reports the split per response) are billed at the registry's `cacheWrite1hPerMillion` when present, else at 2× input when the model id contains `claude` — Anthropic's published 1h rule — and at the ordinary write rate otherwise. Anthropic models logged without `claude` in the id (for example `fable-5-1`) therefore currently get the ordinary write rate for their 1-hour writes, which understates those writes. These are estimation rules, not provider billing guarantees. Long-context tiers, service tiers, negotiated discounts, and other fees are not fully modeled by the current calculator.
 
 Tokmeter uses kosha's catalog and optional `~/.tokmeter/pricing-overrides.json` overrides. A gateway's rate can be used when a usable origin rate is absent. This is another reason to read the result as an estimate.
 
@@ -26,7 +26,7 @@ Today exposes cost provenance in `/api/statbar-signals`: the estimated and repor
 
 ## History and corrections
 
-Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.
+Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. Only today is repriced when the price catalog updates; from the next release, editing `~/.tokmeter/pricing-overrides.json` also reprices today. Completed days keep the cost they were sealed with. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.
 
 ## Invariants
 

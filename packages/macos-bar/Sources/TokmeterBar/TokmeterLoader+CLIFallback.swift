@@ -34,8 +34,11 @@ extension TokmeterLoader {
     func handleDaemonOffline() async {
         self.isDaemonAlive = false
         self.hasFreshData = false
-        self.isWarming = true
-        self.lastError = nil
+        // Keep a failed start's reason on screen. Clearing it every tick made
+        // the UI flicker between the error and "warming" while nothing was
+        // actually starting; the banner only renders when not warming.
+        self.lastError = daemonStartError
+        self.isWarming = daemonStartError == nil
         // Clear the live menubar-color inputs: with the daemon down we have no
         // fresh reading, and both ride the daemon's /api/quick — leaving them
         // would keep the menubar showing a stale color/% (a "live" lie) until
@@ -53,8 +56,21 @@ extension TokmeterLoader {
     /// poll ticks / fetches can't fork a burst of starts. The flag clears when
     /// the start subprocess returns (the detached child exits immediately
     /// after forking the real daemon).
-    func ensureDaemonStarted() {
+    ///
+    /// Backoff: `daemon start` exits 0 as soon as it forks, so a daemon that
+    /// crash-loops (or can't bind its port) looked like a success and the bar
+    /// spawned node/npx on every poll tick — every 5s at the minimum refresh,
+    /// forever. Each attempt now pushes the next one out (15s doubling, capped
+    /// at 5 min) until a read succeeds and loadData() resets the counter.
+    /// `force` is for explicit user actions, which always run immediately.
+    func ensureDaemonStarted(force: Bool = false) {
         guard !isStartingDaemon else { return }
+        if force {
+            daemonStartAttempts = 0
+            daemonStartError = nil
+        } else if Date() < nextDaemonStartAllowedAt {
+            return
+        }
         let candidates = NodeToolchain.candidates()
         guard !candidates.isEmpty else {
             self.lastError =
@@ -66,6 +82,9 @@ extension TokmeterLoader {
         }
         needsNodeSetup = false
         isStartingDaemon = true
+        daemonStartAttempts += 1
+        let backoff = min(Self.daemonStartBackoffCap, 15 * pow(2, Double(daemonStartAttempts - 1)))
+        nextDaemonStartAllowedAt = Date().addingTimeInterval(backoff)
         Task { [weak self] in
             guard let self else { return }
             defer { self.isStartingDaemon = false }
@@ -84,7 +103,9 @@ extension TokmeterLoader {
                     timeout: 120
                 )
             } catch {
-                self.lastError = "Couldn't start the usage service: \(error.localizedDescription)"
+                let message = "Couldn't start the usage service: \(error.localizedDescription)"
+                self.daemonStartError = message
+                self.lastError = message
                 self.isWarming = false
                 self.hasFreshData = false
             }
@@ -95,10 +116,10 @@ extension TokmeterLoader {
     /// auto-start but gives immediate warming feedback and refreshes once up.
     func startDaemonFromUI() {
         isWarming = true
-        ensureDaemonStarted()
+        ensureDaemonStarted(force: true)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_400_000_000)
-            await self?.loadData()
+            await self?.reloadAfterChange()
         }
     }
 
@@ -106,6 +127,8 @@ extension TokmeterLoader {
     /// the agent supervises it, otherwise a clean stop+start — then refreshes.
     func restartDaemon() {
         guard !isStartingDaemon else { return }
+        daemonStartAttempts = 0
+        daemonStartError = nil
         let candidates = NodeToolchain.candidates()
         guard !candidates.isEmpty else {
             self.needsNodeSetup = true
@@ -131,7 +154,7 @@ extension TokmeterLoader {
                         subcommand: "restart"),
                     timeout: 120
                 )
-                await self.loadData()
+                await self.reloadAfterChange()
             } catch {
                 self.lastError = "Couldn't restart the usage service: \(error.localizedDescription)"
             }
@@ -149,7 +172,7 @@ extension TokmeterLoader {
             _ = try await runProcess(executable: toolchain.npx,
                                      arguments: ["-y", "@sriinnu/tokmeter", "update"],
                                      timeout: 30)
-            await loadData()
+            await reloadAfterChange()
         } catch {
             pricingRefreshError = "Pricing update failed: \(error.localizedDescription)"
         }

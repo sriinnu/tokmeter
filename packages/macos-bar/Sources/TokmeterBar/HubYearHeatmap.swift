@@ -155,8 +155,11 @@ struct YearHeatmap: View {
             // aspectRatio(1) makes the cell square at whatever width the equal
             // column slot gives it — so the grid self-sizes its height. A fixed
             // corner radius reads fine across the cell-size range.
-            RoundedRectangle(cornerRadius: 3)
-                .fill(intensity > 0 ? c.accent.opacity(intensity) : bg.secondaryTextColor.opacity(0.08))
+            // Paper prints the year in ink: square cells, density by tint.
+            RoundedRectangle(cornerRadius: theme == .paper ? 0 : 3)
+                .fill(intensity > 0
+                    ? (theme == .paper ? Broadsheet.ink : c.accent).opacity(intensity)
+                    : (theme == .paper ? Broadsheet.ink.opacity(0.06) : bg.secondaryTextColor.opacity(0.08)))
                 .aspectRatio(1, contentMode: .fit)
                 .scaleEffect(isHovered ? 1.15 : 1.0)
                 .animation(.spring(response: 0.28, dampingFraction: 0.65), value: isHovered)
@@ -215,15 +218,10 @@ struct YearHeatmap: View {
     }
 
     private func tooltipText(date: Date, cost: Double) -> String {
-        let formatter: DateFormatter = {
-            let f = DateFormatter()
-            f.dateFormat = "EEE, MMM d, yyyy"
-            return f
-        }()
-        let dateStr = formatter.string(from: date)
+        let dateStr = LocalDay.pretty(dateKey(date))
         let tokens = daily.first { $0.date == dateKey(date) }?.tokens ?? 0
         if cost <= 0 && tokens <= 0 { return "\(dateStr) — no activity" }
-        return "\(dateStr) — \(tokens.formatted()) tokens · \(Fmt.cost(cost)) cost"
+        return "\(dateStr) — \(tokens.formatted()) tokens · \(Fmt.money(cost)) cost"
     }
 }
 
@@ -297,21 +295,26 @@ private struct HeatmapCellTooltip: View {
                     .font(.system(size: 11, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
             } else {
-                row(label: "Cost", value: Fmt.cost(day.cost))
+                row(label: "Cost", value: Fmt.money(day.cost))
                 row(label: "Tokens", value: day.tokens.formatted())
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(bg.surfaceColor)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(c.accent.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
-        )
+        .background {
+            if theme == .paper {
+                Rectangle().fill(Broadsheet.stock)
+                    .overlay(Rectangle().strokeBorder(Broadsheet.ink, lineWidth: 1))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(bg.surfaceColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(c.accent.opacity(0.35), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
+            }
+        }
         .fixedSize()
         .allowsHitTesting(false)
     }
@@ -329,17 +332,7 @@ private struct HeatmapCellTooltip: View {
         }
     }
 
-    private var prettyDate: String {
-        let s = day.date
-        guard s.count >= 10 else { return s }
-        let year = String(s.prefix(4))
-        let month = Int(s.dropFirst(5).prefix(2)) ?? 0
-        let dd = String(s.dropFirst(8).prefix(2))
-        let names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        let mn = (month >= 1 && month <= 12) ? names[month] : ""
-        return "\(mn) \(dd), \(year)"
-    }
+    private var prettyDate: String { LocalDay.pretty(day.date) }
 }
 
 /// Legend strip showing the color gradient from "no spend" → "peak day".
@@ -355,8 +348,10 @@ struct HeatmapLegend: View {
                 .font(.system(size: 9, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
             ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { intensity in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(intensity > 0 ? c.accent.opacity(0.15 + intensity * 0.85) : bg.secondaryTextColor.opacity(0.08))
+                RoundedRectangle(cornerRadius: theme == .paper ? 0 : 2)
+                    .fill(intensity > 0
+                        ? (theme == .paper ? Broadsheet.ink : c.accent).opacity(0.15 + intensity * 0.85)
+                        : (theme == .paper ? Broadsheet.ink.opacity(0.06) : bg.secondaryTextColor.opacity(0.08)))
                     .frame(width: 10, height: 10)
             }
             Text("more")

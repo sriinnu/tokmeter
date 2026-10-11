@@ -98,34 +98,6 @@ func compositionFill(
     return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
 }
 
-/// Dominant-tier color when one tier crosses TIER_DOMINANT_THRESHOLD,
-/// otherwise nil (caller falls back to neutral). Used by `$cost` text tint
-/// in the popover model rows.
-func dominantTierColor(
-    output: Int,
-    cacheRead: Int,
-    cacheWrite: Int,
-    input: Int,
-    reasoning: Int,
-    theme: AppTheme
-) -> Color? {
-    let raw: [(TokenTier, Int)] = [
-        (.output, output),
-        (.cacheRead, cacheRead),
-        (.cacheWrite, cacheWrite),
-        (.input, input),
-        (.reasoning, reasoning),
-    ]
-    let total = raw.reduce(0) { $0 + $1.1 }
-    guard total > 0 else { return nil }
-    let sorted = raw.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }
-    let dominantShare = Double(sorted[0].1) / Double(total)
-    if dominantShare >= TIER_DOMINANT_THRESHOLD {
-        return tierColor(sorted[0].0, theme: theme)
-    }
-    return nil
-}
-
 /// Per-tier composition tooltip string. "output 47% · cache-read 38% · …"
 func compositionTooltip(
     output: Int,

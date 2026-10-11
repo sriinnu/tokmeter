@@ -91,7 +91,10 @@ struct NodeToolchain: Equatable {
     /// clean stop+start — the daemon CLI decides; we just invoke it.
     static func daemonArguments(version: String?, subcommand: String) -> [String] {
         guard let version else { return ["--yes", "@sriinnu/tokmeter-mcp", "daemon", subcommand] }
-        return ["--yes", "\(daemonPackage(version: version))@\(version)", "daemon", subcommand]
+        // A local build labelled "1.14.1-dev" has no npm release of that name;
+        // pin the base version it was cut from.
+        let release = String(version.split(separator: "-", maxSplits: 1).first ?? Substring(version))
+        return ["--yes", "\(daemonPackage(version: release))@\(release)", "daemon", subcommand]
     }
 
     /// The daemon shipped as @sriinnu/drishti through 1.12.x and as

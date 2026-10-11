@@ -586,6 +586,12 @@ export interface SessionParser {
   /** Scan local session files and return token records. */
   scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]>;
   /**
+   * The files/directories this parser reads, resolved for `homeDir`. Scan uses
+   * the same function, so restore's path allowlist can't drift from what the
+   * scanner actually reads. Omitted by parsers that read nothing from disk.
+   */
+  sessionRoots?(homeDir: string): string[];
+  /**
    * Optional memory-bounded variant: parse file-by-file, handing each file's
    * records to `onFile` so a caller (the relay rebuild) can fold + release them
    * instead of holding the whole corpus. Parsers that omit this fall back to

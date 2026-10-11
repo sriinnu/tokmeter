@@ -71,13 +71,13 @@ struct ContextTelemetryPanel: View {
                     Image(systemName: "memorychip")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(bg.secondaryTextColor)
-                    Text("Context drag estimate unavailable")
+                    Text("Context growth estimate unavailable")
                         .font(.system(size: 10, design: theme.fonts.bodyDesign))
                         .foregroundColor(bg.secondaryTextColor)
                     Spacer()
                 }
                 .padding(.top, 2)
-                .help("Providers do not expose a true context_drag field; Tokmeter estimates it once session input growth is visible.")
+                .help("Providers do not report context growth directly; Tokmeter estimates it (context drag) once session input growth is visible.")
             }
 
             // No longer capped — the drawer is scrollable, so show every
@@ -86,12 +86,12 @@ struct ContextTelemetryPanel: View {
             if !projects.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("PROJECT PRESSURE")
+                        Text("PROJECT CONTEXT")
                             .font(.system(size: 8, weight: .bold, design: theme.fonts.labelDesign))
                             .tracking(0.9)
                             .foregroundColor(bg.secondaryTextColor)
                         Spacer()
-                        Text("hit / miss / drag")
+                        Text("hit / miss / growth")
                             .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
                             .foregroundColor(bg.secondaryTextColor)
                     }
@@ -161,7 +161,7 @@ struct ContextTelemetryPanel: View {
 /// panel that carries the full ContextTelemetryPanel readout. Designed to be
 /// dropped into an `.overlay` on the top-level popover VStack so it floats
 /// above the scroll content. Closes via the back chevron, the close glyph, or
-/// a tap on the scrim. The panel body scrolls so a long PROJECT PRESSURE list
+/// a tap on the scrim. The panel body scrolls so a long PROJECT CONTEXT list
 /// stays reachable within the popover's fixed height.
 struct CacheWalletDrawer: View {
     let signals: StatbarSignals
@@ -212,6 +212,7 @@ struct CacheWalletDrawer: View {
             }
             .buttonStyle(.plain)
             .help("Back")
+            .accessibilityLabel("Back to the popover")
 
             Image(systemName: "tray.full.fill")
                 .font(.system(size: 11, weight: .semibold))
@@ -227,7 +228,9 @@ struct CacheWalletDrawer: View {
                     .foregroundColor(bg.secondaryTextColor)
             }
             .buttonStyle(.plain)
-            .help("Close")
+            .help("Close (Esc)")
+            .accessibilityLabel("Close cache and context")
+            .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -277,13 +280,13 @@ private struct ProjectContextRow: View {
             Spacer(minLength: 4)
             mini("H", project.cacheHitRate, color: cacheColor(project.cacheHitRate))
             mini("M", project.missRate, color: project.missRate >= 0.35 ? theme.statusWarning : bg.secondaryTextColor)
-            mini("D", project.dragShare, color: accent)
+            mini("G", project.dragShare, color: accent)
         }
         .padding(.vertical, 3)
         .help(
             "\(project.project): \(Fmt.number(project.totalInputTokens)) input today, "
             + "\(Fmt.number(project.freshInputTokens)) fresh, "
-            + "\(Fmt.number(project.dragTokens)) estimated drag tokens."
+            + "\(Fmt.number(project.dragTokens)) estimated context-growth tokens."
         )
     }
 
@@ -389,7 +392,7 @@ private struct ContextDragRow: View {
                 Image(systemName: "memorychip.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(accent)
-                Text("Drag")
+                Text("Context growth")
                     .font(.system(size: 10, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
                 Text(pressure.status.uppercased())

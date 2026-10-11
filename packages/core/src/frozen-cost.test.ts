@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "vitest";
 import { localDateKey } from "./date-utils.js";
+import { todayPricingStale } from "./pricing.js";
 import { selectRecordsToPrice } from "./scan-pipeline.js";
 import type { TokenRecord } from "./types.js";
 
@@ -56,5 +57,47 @@ describe("frozen-cost gate — selectRecordsToPrice", () => {
     // yesterday-dated. Only the today line is priced; the yesterday line is frozen.
     const picked = selectRecordsToPrice([rec(REF - DAY + 1000, 0), today], "today", REF);
     expect(picked).toEqual([today]);
+  });
+});
+
+describe("today reprice trigger — todayPricingStale", () => {
+  const priced = { registryMtime: 1000, overridesMtime: 0 };
+
+  test("nothing changed → today keeps its prices", () => {
+    expect(todayPricingStale({ registryMtime: 1000, overridesMtime: 0 }, priced)).toBe(false);
+  });
+
+  test("kosha registry refreshed → reprice today", () => {
+    expect(todayPricingStale({ registryMtime: 2000, overridesMtime: 0 }, priced)).toBe(true);
+  });
+
+  test("pricing-overrides file added or edited → reprice today", () => {
+    expect(todayPricingStale({ registryMtime: 1000, overridesMtime: 5000 }, priced)).toBe(true);
+    expect(
+      todayPricingStale(
+        { registryMtime: 1000, overridesMtime: 6000 },
+        { registryMtime: 1000, overridesMtime: 5000 }
+      )
+    ).toBe(true);
+  });
+
+  test("pricing-overrides file removed → reprice today", () => {
+    expect(
+      todayPricingStale(
+        { registryMtime: 1000, overridesMtime: 0 },
+        { registryMtime: 1000, overridesMtime: 5000 }
+      )
+    ).toBe(true);
+  });
+
+  test("kosha unavailable (mtime 0) alone never forces a reprice", () => {
+    expect(todayPricingStale({ registryMtime: 0, overridesMtime: 0 }, priced)).toBe(false);
+  });
+
+  test("the trigger only reprices today — history stays frozen either way", () => {
+    // The trigger decides WHETHER to reprice; selectRecordsToPrice decides WHAT.
+    const all = [rec(REF - 2 * DAY, 1.5), rec(REF, 0)];
+    expect(todayPricingStale({ registryMtime: 1000, overridesMtime: 7000 }, priced)).toBe(true);
+    expect(selectRecordsToPrice(all, "today", REF)).toEqual([all[1]]);
   });
 });

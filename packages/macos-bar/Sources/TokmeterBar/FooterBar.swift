@@ -64,10 +64,19 @@ struct FooterBar: View {
                 .help("Open license texts, third-party notices, and the source archive")
             }
         }
-        .font(.system(size: 10, design: theme.fonts.bodyDesign))
-        .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+        .font(printFont)
+        .foregroundStyle(printColor)
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Small print follows the skin when there is one.
+    private var printFont: Font {
+        theme.skin?.footer.printFont ?? .system(size: 10, design: theme.fonts.bodyDesign)
+    }
+
+    private var printColor: Color {
+        theme.skin?.footer.printColor ?? theme.backgroundMode.secondaryTextColor
     }
 
     @ViewBuilder
@@ -100,8 +109,8 @@ struct FooterBar: View {
                     )
                 }
             }
-            .font(.system(size: 10, design: theme.fonts.bodyDesign))
-            .foregroundStyle(theme.backgroundMode.secondaryTextColor)
+            .font(printFont)
+            .foregroundStyle(printColor)
             .lineLimit(1)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -119,19 +128,27 @@ struct FooterBar: View {
 
     private var controlsRow: some View {
         HStack(spacing: 10) {
-            LiveHeartbeat(isAlive: loader.isDaemonAlive, theme: theme, isVisible: isVisible)
+            if let skin = theme.skin {
+                skin.footer.lamp(isAlive: loader.isDaemonAlive, isVisible: isVisible)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(loader.isDaemonAlive ? "Usage service live" : "Usage service offline")
+            } else {
+                LiveHeartbeat(isAlive: loader.isDaemonAlive, theme: theme, isVisible: isVisible)
+            }
 
             // Daemon control: Start when it's down, Restart when it's live. The
             // heartbeat dot + this button are the "start / restart / health"
             // surface for the local usage service.
             FooterIconButton(
+                // A bolt, not a circular arrow: next to Refresh (a circular
+                // arrow) the two read as the same button.
                 systemImage: loader.daemonPhase == .live
-                    ? "arrow.triangle.2.circlepath"
+                    ? "bolt.horizontal.circle"
                     : "play.circle",
                 theme: theme,
                 help: loader.daemonPhase == .live
-                    ? "Restart the usage service"
-                    : "Start the usage service",
+                    ? "Restart usage service"
+                    : "Start usage service",
                 disabled: loader.isStartingDaemon
             ) {
                 if loader.daemonPhase == .live {
@@ -141,15 +158,21 @@ struct FooterBar: View {
                 }
             }
 
-            Button(action: { Task { await loader.loadData() } }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                        .rotationEffect(.degrees(refreshAngle))
-                    Text(loader.isLoading ? "Refreshing…" : "Refresh")
+            Button(action: { Task { await loader.userRefresh() } }) {
+                if let skin = theme.skin {
+                    skin.footer.refreshKey(label: loader.isLoading ? "Refreshing…" : "Refresh",
+                                           angle: refreshAngle, busy: loader.isLoading)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .rotationEffect(.degrees(refreshAngle))
+                        Text(loader.isLoading ? "Refreshing…" : "Refresh")
+                    }
+                    .font(.system(size: 11, design: theme.fonts.bodyDesign))
                 }
-                .font(.system(size: 11, design: theme.fonts.bodyDesign))
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(loader.isLoading ? "Refreshing" : "Refresh")
             .foregroundColor(theme.backgroundMode.secondaryTextColor)
             .disabled(loader.isLoading)
             .keyboardShortcut("r", modifiers: [.command])
@@ -288,14 +311,19 @@ struct FooterIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12))
-                .foregroundColor(
-                    hovered ? theme.colors.accent : theme.backgroundMode.secondaryTextColor
-                )
-                .scaleEffect(hovered ? 1.10 : 1.0)
+            if let skin = theme.skin {
+                skin.footer.key(symbol: systemImage, hovered: hovered, disabled: disabled)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12))
+                    .foregroundColor(
+                        hovered ? theme.colors.accent : theme.backgroundMode.secondaryTextColor
+                    )
+                    .scaleEffect(hovered ? 1.10 : 1.0)
+            }
         }
         .buttonStyle(.borderless)
+        .accessibilityLabel(help)
         .disabled(disabled)
         .help(help)
         .onHover { hovered = !disabled && $0 }

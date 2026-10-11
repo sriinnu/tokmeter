@@ -8,8 +8,10 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,10 +19,11 @@ import {
   rmSync,
   rmdirSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
@@ -35,6 +38,15 @@ import { localDateKey } from "./date-utils.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { invalidateRecordCache } from "./parsers/utils.js";
 import { projectMatchKey } from "./project-name.js";
+import {
+  UnsafeArchiveError,
+  assertSafeEntries,
+  collectExtractedFiles,
+  isAllowedRestorePath,
+  isWithin,
+  listArchiveEntries,
+  restoreAllowedRoots,
+} from "./restore-guard.js";
 import { invalidateSummaryCache } from "./summary-cache.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
 import type {
@@ -49,6 +61,32 @@ import type {
   RestoreResult,
   TokenRecord,
 } from "./types.js";
+
+/** Error text for an execute() call whose filter would match everything. */
+export const EMPTY_FILTER_MESSAGE =
+  "Refusing to clean up with an empty filter: it would delete every session of every provider. " +
+  "Specify at least one of: a project (project/projects), providers, or a date range " +
+  "(since/until, or today/week/month).";
+
+/**
+ * True when a cleanup filter selects nothing — no project, no providers and no
+ * date bound — which every filter step treats as "match all". Blank strings
+ * and empty arrays count as absent.
+ */
+export function isEmptyCleanupFilter(filter: CleanupFilter | undefined | null): boolean {
+  if (!filter) return true;
+  const nonBlank = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  const hasProject =
+    nonBlank(filter.project) || (Array.isArray(filter.projects) && filter.projects.some(nonBlank));
+  const hasProviders = Array.isArray(filter.providers) && filter.providers.some(nonBlank);
+  const hasDate =
+    nonBlank(filter.since) ||
+    nonBlank(filter.until) ||
+    filter.today === true ||
+    filter.week === true ||
+    filter.month === true;
+  return !hasProject && !hasProviders && !hasDate;
+}
 
 const DEFAULT_BACKUP_DIR = join(process.env.HOME || homedir(), ".cache", "tokmeter", "backups");
 
@@ -132,6 +170,14 @@ export class CleanupService {
    * Execute cleanup: optionally backup, then delete, then invalidate cache.
    */
   async execute(filter: CleanupFilter, options: CleanupOptions = {}): Promise<CleanupResult> {
+    // An empty filter matches every record of every provider (an empty
+    // project string is "match all" in filterByProject), so executing it
+    // deletes every transcript on the machine. Refuse it here, in core, so
+    // every caller — CLI, TUI, MCP, daemon HTTP — gets the same guard.
+    if (isEmptyCleanupFilter(filter)) {
+      throw new Error(EMPTY_FILTER_MESSAGE);
+    }
+
     const { dryRun = false, backup = true, backupDir } = options;
 
     // Preview first
@@ -274,7 +320,16 @@ export class CleanupService {
     }
 
     const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
-    const archivePath = meta.path;
+    // A snapshot copied from another machine carries that machine's absolute
+    // archive path. When it doesn't point inside this backup dir, fall back to
+    // the archive that sits next to the meta file — the name createBackup
+    // always writes — instead of trusting a path from the sidecar.
+    const archivePath =
+      typeof meta.path === "string" &&
+      isWithin(meta.path, dir) &&
+      resolve(meta.path) !== resolve(dir)
+        ? meta.path
+        : join(dir, `${backupId}.tar.gz`);
 
     // Validate archive path is within backup directory. A plain startsWith on
     // the resolved paths is wrong — a sibling dir like `<dir>-evil` shares the
@@ -293,30 +348,35 @@ export class CleanupService {
     }
 
     try {
-      // Validate archive contents — reject if any entry contains ".." (path traversal)
-      const listing = execFileSync("tar", ["tzf", archivePath], {
-        timeout: 30_000,
-      }).toString();
-      const hasTraversal = listing.split("\n").some((entry) => entry.includes(".."));
-      if (hasTraversal) {
+      // The archive is untrusted input (snapshots are made to move between
+      // machines). Check member types and ".." before extracting anything:
+      // only regular files and directories may come out of a backup.
+      const entries = listArchiveEntries(archivePath);
+      assertSafeEntries(entries);
+      const listing = entries.map((e) => e.name).join("\n");
+
+      // Decide between same-home (paths restored verbatim) and cross-home
+      // (remap the source home subtree into this home). Source home comes
+      // from meta when the backup was created by a modern build; otherwise
+      // we sniff it from archive entries for legacy compat.
+      const currentHome = this.homeDir;
+      const sourceHome = meta.sourceHomeDir || sniffSourceHomeFromListing(listing);
+      if (sourceHome && (!isAbsolute(sourceHome) || sourceHome.split(/[\\/]+/).includes(".."))) {
         return {
           restoredCount: 0,
-          errors: [
-            {
-              file: archivePath,
-              error: "Archive contains path traversal entries — refusing to extract",
-            },
-          ],
+          errors: [{ file: metaPath, error: `Invalid source home "${sourceHome}" in backup` }],
         };
       }
 
-      // Decide between fast-path (same home) and sandbox-remap (different home).
-      // Source home comes from meta when the backup was created by a modern
-      // build; otherwise we sniff it from archive entries for legacy compat.
-      const currentHome = this.homeDir;
-      const sourceHome = meta.sourceHomeDir || sniffSourceHomeFromListing(listing);
-
       const sameHome = sourceHome && normaliseHome(sourceHome) === normaliseHome(currentHome);
+
+      // Everything restore may write: the session paths the scanner reads,
+      // the Claude Code side dirs the cleaner backs up, tokmeter's alias and
+      // config files, and this backup's own SQL dump dir.
+      const allowedRoots = restoreAllowedRoots(
+        currentHome,
+        join(dirname(archivePath), `${backupId}-sql-dumps`)
+      );
 
       let renamedCount = 0;
 
@@ -328,27 +388,31 @@ export class CleanupService {
       const aliasesBeforeRestore: AliasMap = loadAliases(currentHome);
       const configBeforeRestore: UserConfig = loadConfig(currentHome);
 
-      if (sameHome || !sourceHome) {
-        // Same machine (or can't infer) — extract straight to /. This is how
-        // restore has always behaved; preserves paths verbatim.
-        execFileSync("tar", ["xzf", archivePath, "-C", "/"], {
+      // Always extract into a private (0700) sandbox, validate the extracted
+      // tree with lstat, then copy each file into place only if its
+      // destination is allowlisted. Nothing touches the real tree until every
+      // file has passed — a bad archive restores nothing at all.
+      const sandbox = mkdtempSync(join(tmpdir(), "tokmeter-restore-"));
+      try {
+        chmodSync(sandbox, 0o700);
+        execFileSync("tar", ["-xzf", archivePath, "-C", sandbox], {
           timeout: 60_000,
         });
-      } else {
-        // Cross-home restore: extract into a sandbox, then walk + copy the
-        // source home subtree into the current user's home. On path conflicts
-        // we mint a fresh UUID for the colliding session so all 7 associated
-        // paths (transcript, subagents, file-history, tasks, todos, session-env)
-        // rename consistently — preserving both machines' work.
-        const sandbox = mkdtempSync(join(tmpdir(), "tokmeter-restore-"));
-        try {
-          execFileSync("tar", ["xzf", archivePath, "-C", sandbox], {
-            timeout: 60_000,
-          });
+        const sandboxFiles = collectExtractedFiles(sandbox);
 
-          // Archive entries had their leading "/" stripped; mirror that here.
+        // (source file in sandbox, destination before any UUID re-mint)
+        const plan: { src: string; rel: string }[] = [];
+        let destFor: (rel: string) => string;
+
+        if (sameHome || !sourceHome) {
+          // Same machine (or can't infer): archive paths are absolute paths
+          // with the leading "/" stripped, restored verbatim.
+          destFor = (rel) => resolve("/", rel);
+          for (const src of sandboxFiles) plan.push({ src, rel: relative(sandbox, src) });
+        } else {
+          // Cross-home: only the source home subtree is remapped into this
+          // home; anything else in the archive is ignored.
           const sourceHomeInSandbox = join(sandbox, sourceHome.replace(/^\/+/, ""));
-
           if (!existsSync(sourceHomeInSandbox)) {
             return {
               restoredCount: 0,
@@ -360,40 +424,68 @@ export class CleanupService {
               ],
             };
           }
+          destFor = (rel) => join(currentHome, rel);
+          for (const src of sandboxFiles) {
+            if (!isWithin(src, sourceHomeInSandbox)) continue;
+            plan.push({ src, rel: relative(sourceHomeInSandbox, src) });
+          }
+        }
 
-          const sandboxFiles = walkFiles(sourceHomeInSandbox);
+        const assertAllowed = (dest: string, rel: string) => {
+          const insideHome = sameHome || !sourceHome || isWithin(dest, currentHome);
+          if (!insideHome || !isAllowedRestorePath(dest, allowedRoots)) {
+            throw new UnsafeArchiveError(
+              `Archive entry "${rel}" would restore outside the known agent session paths — refusing to restore anything`
+            );
+          }
+        };
+        for (const p of plan) assertAllowed(destFor(p.rel), p.rel);
 
-          // Pass 1: detect UUIDs in paths that would collide on the target.
-          // Build a stable old→new map so every associated path renames the same way.
-          const uuidMap = new Map<string, string>();
-          for (const filePath of sandboxFiles) {
-            const rel = relative(sourceHomeInSandbox, filePath);
-            const target = join(currentHome, rel);
-            if (!existsSync(target)) continue;
-            const matches = rel.match(UUID_RE) || [];
-            for (const raw of matches) {
+        // Cross-home only — pass 1: detect UUIDs in paths that would collide
+        // on the target. Build a stable old→new map so every associated path
+        // (transcript, subagents, file-history, tasks, todos, session-env)
+        // renames the same way, preserving both machines' work.
+        const uuidMap = new Map<string, string>();
+        if (!(sameHome || !sourceHome)) {
+          for (const p of plan) {
+            if (!existsSync(destFor(p.rel))) continue;
+            for (const raw of p.rel.match(UUID_RE) || []) {
               const key = raw.toLowerCase();
               if (!uuidMap.has(key)) uuidMap.set(key, randomUUID());
             }
           }
           renamedCount = uuidMap.size;
-
-          // Pass 2: copy each file, rewriting any mapped UUID in its relative path.
-          for (const filePath of sandboxFiles) {
-            let rel = relative(sourceHomeInSandbox, filePath);
-            if (uuidMap.size > 0) {
-              rel = rel.replace(UUID_RE, (m) => uuidMap.get(m.toLowerCase()) || m);
-            }
-            const target = join(currentHome, rel);
-            mkdirSync(dirname(target), { recursive: true });
-            copyFileSync(filePath, target);
-          }
-        } finally {
-          // Always clean up the sandbox, even on partial failure.
-          try {
-            rmSync(sandbox, { recursive: true, force: true });
-          } catch {}
         }
+
+        const finalPlan = plan.map((p) => {
+          const rel =
+            uuidMap.size > 0
+              ? p.rel.replace(UUID_RE, (m) => uuidMap.get(m.toLowerCase()) || m)
+              : p.rel;
+          const dest = destFor(rel);
+          assertAllowed(dest, rel);
+          return { src: p.src, dest };
+        });
+
+        // Pass 2: copy into place, keeping the archived mode bits (minus any
+        // setuid/setgid/sticky) and mtime the way `tar -x` used to — mtime
+        // drives incremental scans, so a restored old file must not look new.
+        for (const { src, dest } of finalPlan) {
+          mkdirSync(dirname(dest), { recursive: true });
+          try {
+            // Replace a symlink at the destination rather than writing through it.
+            if (lstatSync(dest).isSymbolicLink()) rmSync(dest);
+          } catch {}
+          copyFileSync(src, dest);
+          const st = statSync(src);
+          chmodSync(dest, st.mode & 0o777);
+          utimesSync(dest, st.atime, st.mtime);
+        }
+      } finally {
+        // Always clean up the sandbox, even on partial failure.
+        try {
+          rmSync(sandbox, { recursive: true, force: true });
+        } catch {}
       }
 
       // Merge pre-restore aliases with the just-extracted ones so the user
@@ -409,7 +501,16 @@ export class CleanupService {
       // Same merge story for config.json — user-flagged edits on this machine
       // survive a restore from a snapshot that carries an older tokmeter default.
       const configAfterRestore: UserConfig = loadConfig(currentHome);
-      const mergedConfig = mergeConfigs(configBeforeRestore, configAfterRestore);
+      // providerPaths and customSources widen what a later restore may write
+      // to, so an archive never gets to set them: this machine's own values
+      // win even when the archive's config is newer. Otherwise a hostile
+      // snapshot could name ~/Library/LaunchAgents and the next restore
+      // would treat it as an allowed root.
+      const mergedConfig: UserConfig = {
+        ...mergeConfigs(configBeforeRestore, configAfterRestore),
+        providerPaths: configBeforeRestore.providerPaths,
+        customSources: configBeforeRestore.customSources,
+      };
       saveConfig(mergedConfig, currentHome);
 
       // Invalidate the history snapshot + summary so the next scan rebuilds
@@ -746,21 +847,4 @@ function sniffSourceHomeFromListing(listing: string): string {
     }
   }
   return "";
-}
-
-/**
- * Recursively collect every file path under root. Skips symlinks for safety.
- */
-function walkFiles(root: string): string[] {
-  const out: string[] = [];
-  const entries = readdirSync(root, { withFileTypes: true });
-  for (const e of entries) {
-    const full = join(root, e.name);
-    if (e.isDirectory()) {
-      out.push(...walkFiles(full));
-    } else if (e.isFile()) {
-      out.push(full);
-    }
-  }
-  return out;
 }

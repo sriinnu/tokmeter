@@ -37,6 +37,13 @@ import {
 } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  API_HEADER,
+  LEGACY_API_HEADER,
+  apiVersionHeaders,
+  daemonChildEnv,
+  isDaemonChildEnv,
+} from "./compat-names.js";
+import {
   captureDaemonIdentity,
   inspectDaemon,
   readProcessEvidence,
@@ -731,14 +738,16 @@ const MAX_BODY_BYTES = 1_048_576; // 1MB
 let _httpCoreReady = false;
 
 /**
- * API version sent on every response as `X-Drishti-API: drishti-api/N`.
+ * API version sent on every response as `X-Tokmeter-API: tokmeter-api/N`, and
+ * for bars that predate the rename also as `X-Drishti-API: drishti-api/N`
+ * (see compat-names.ts).
  * Native clients (TokmeterBar.app) check the MAJOR version on every request
  * and surface a clear "incompatible daemon" error if they disagree.
  *
  * Bump this whenever the response shape of any GET endpoint changes in a
  * non-backward-compatible way (renamed field, removed field, type change).
  */
-const DRISHTI_API_VERSION = 1;
+const API_VERSION = 1;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
 
 // Guards /api/rescan: the deep rebuild runs in the background, so concurrent
@@ -833,9 +842,12 @@ function startHttpApi(): void {
     res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.setHeader("Access-Control-Expose-Headers", `X-Drishti-API, ${SUMMARY_SOURCE_HEADER}`);
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      `${API_HEADER}, ${LEGACY_API_HEADER}, ${SUMMARY_SOURCE_HEADER}`
+    );
     res.setHeader("Content-Type", "application/json");
-    res.setHeader("X-Drishti-API", `drishti-api/${DRISHTI_API_VERSION}`);
+    for (const [name, value] of apiVersionHeaders(API_VERSION)) res.setHeader(name, value);
     // Hardening headers
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
@@ -876,7 +888,7 @@ function startHttpApi(): void {
           json(res, {
             ready: _httpCoreReady,
             warming: coreRefresh.busy,
-            apiVersion: DRISHTI_API_VERSION,
+            apiVersion: API_VERSION,
           });
           return;
         }
@@ -1002,6 +1014,15 @@ function startHttpApi(): void {
           });
         } else if (pathname === "/api/today-models") {
           json(res, core.getModelCosts({ today: true }));
+        } else if (pathname === "/api/rates") {
+          // Per-model rate card: list $/M per bucket exactly as billing uses
+          // it, which pricing tier resolved it (override / kosha exact /
+          // fuzzy → matched id / manifest / unpriced), and the effective $/M
+          // paid. `?scope=all` widens from today's models to every model with
+          // recorded usage. Unpriced models report null rates — never a guess.
+          const scope =
+            new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
+          json(res, await core.getModelRates(scope));
         } else if (pathname === "/api/cross-tool") {
           // Project today's token shape against the user's top lifetime
           // models. Surfaces "what would today have cost on model X" — the
@@ -1154,6 +1175,7 @@ function startHttpApi(): void {
               "/api/stats",
               "/api/statbar-signals",
               "/api/models",
+              "/api/rates",
               "/api/daily",
               "/api/providers",
               "/api/antigravity-live",
@@ -1647,8 +1669,6 @@ async function readBody(req: IncomingMessage): Promise<any> {
  * forks, prints a confirmation, and exits immediately so the terminal
  * isn't left hanging.
  */
-const DAEMON_CHILD_FLAG = "__DRISHTI_DAEMON_CHILD__";
-
 export async function runDaemonCLI(command: string): Promise<void> {
   if (
     ["stop", "restart", "install-agent"].includes(command) &&
@@ -1673,9 +1693,9 @@ export async function runDaemonCLI(command: string): Promise<void> {
       // rather than isAgentInstalled() (plist merely on disk) so a plist that
       // exists but isn't loaded falls through to the normal fork path below
       // instead of stranding the user offline on a kickstart that errors.
-      // The DAEMON_CHILD_FLAG guard lets launchd's OWN `daemon start` fall
+      // The daemon-child env guard lets launchd's OWN `daemon start` fall
       // through to the foreground path below.
-      if (process.env[DAEMON_CHILD_FLAG] !== "1" && isAgentLoaded()) {
+      if (!isDaemonChildEnv() && isAgentLoaded()) {
         try {
           kickstartAgent();
           await new Promise((r) => setTimeout(r, 800));
@@ -1690,7 +1710,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
 
       // If we ARE the detached child (or launchd's foreground process), run
       // the daemon in the foreground.
-      if (process.env[DAEMON_CHILD_FLAG] === "1") {
+      if (isDaemonChildEnv()) {
         startDaemon();
         process.on("SIGINT", () => {
           stopDaemon();
@@ -1721,7 +1741,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
           stdio: "ignore",
           env: {
             ...process.env,
-            [DAEMON_CHILD_FLAG]: "1",
+            ...daemonChildEnv(),
             NODE_OPTIONS:
               `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${DAEMON_HEAP_CAP_MB}`.trim(),
           },

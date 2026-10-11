@@ -15,6 +15,13 @@ struct HubTopProjectsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
+                if theme.skin != nil {
+                    HubSkinTitle(text: "Top projects", theme: theme)
+                } else if theme == .paper {
+                    HubPaperTitle(text: "Top projects")
+                    Spacer()
+                    HubPaperLabel(text: "by cost")
+                } else {
                 Text("Top projects")
                     .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
@@ -22,12 +29,13 @@ struct HubTopProjectsList: View {
                 Text("by cost")
                     .font(.system(size: 9, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
+                }
             }
 
             if projects.isEmpty {
                 HubEmptyState(icon: "folder", message: "No project data yet", theme: theme)
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: theme == .paper ? 0 : 6) {
                     ForEach(Array(projects.enumerated()), id: \.element.id) { idx, p in
                         HubTopProjectRow(rank: idx + 1, project: p, theme: theme)
                     }
@@ -48,6 +56,46 @@ struct HubTopProjectRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a numbered table line with dotted leaders to the figure.
+    private var paperBody: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(rank).")
+                    .font(.system(size: 12, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.muted)
+                    .frame(width: 20, alignment: .leading)
+                Text(project.project)
+                    .font(.system(size: 13.5, weight: .semibold, design: .serif))
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                LeaderDots()
+                Kicker(text: "\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")",
+                       color: Broadsheet.muted)
+                    .fixedSize()
+                Text(Fmt.money(project.totalCost))
+                    .font(.system(size: 13.5, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                    .frame(minWidth: 56, alignment: .trailing)
+            }
+            .padding(.vertical, 7)
+            .background(hovered ? Broadsheet.ink.opacity(0.05) : Color.clear)
+            InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.35))
+        }
+        .onHover { hovered = $0 }
+        .help(tooltip)
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 10) {
             Text("\(rank)")
                 .font(.system(size: 10, weight: .bold, design: theme.fonts.labelDesign))
@@ -62,7 +110,7 @@ struct HubTopProjectRow: View {
             Text("\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")")
                 .font(.system(size: 10, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
-            Text(Fmt.cost(project.totalCost))
+            Text(Fmt.money(project.totalCost))
                 .font(.system(size: 12, weight: .semibold, design: theme.fonts.valueDesign))
                 .foregroundColor(bg.primaryTextColor)
                 .frame(minWidth: 60, alignment: .trailing)
@@ -85,8 +133,8 @@ struct HubTopProjectRow: View {
         let perDay = project.totalCost / Double(days)
         return String(
             format: "%@ — %@ across %d active day%@ (avg %@/day)",
-            project.project, Fmt.cost(project.totalCost), project.activeDays,
-            project.activeDays == 1 ? "" : "s", Fmt.cost(perDay)
+            project.project, Fmt.money(project.totalCost), project.activeDays,
+            project.activeDays == 1 ? "" : "s", Fmt.money(perDay)
         )
     }
 }
@@ -105,6 +153,13 @@ struct HubTopModelsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
+                if theme.skin != nil {
+                    HubSkinTitle(text: "Top models", theme: theme)
+                } else if theme == .paper {
+                    HubPaperTitle(text: "Top models")
+                    Spacer()
+                    HubPaperLabel(text: "by cost share")
+                } else {
                 Text("Top models")
                     .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.primaryTextColor)
@@ -112,6 +167,7 @@ struct HubTopModelsList: View {
                 Text("by cost share")
                     .font(.system(size: 9, design: theme.fonts.bodyDesign))
                     .foregroundColor(bg.secondaryTextColor)
+                }
             }
 
             if models.isEmpty {
@@ -140,6 +196,44 @@ struct HubTopModelRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: name, leaders, figure; the share as a flat ink rule beneath.
+    private var paperBody: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(shortModelName(model.model))
+                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                LeaderDots()
+                Text("\(Int((shareOfTotal * 100).rounded()))%")
+                    .font(Broadsheet.kickerFont)
+                    .foregroundColor(Broadsheet.muted)
+                    .monospacedDigit()
+                Text(Fmt.money(model.cost))
+                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+            }
+            HubPaperMeter(fraction: shareOfTotal)
+                .help(compositionTooltip(
+                    output: model.outputTokens,
+                    cacheRead: model.cacheReadTokens,
+                    cacheWrite: model.cacheWriteTokens,
+                    input: model.inputTokens,
+                    reasoning: model.reasoningTokens
+                ))
+        }
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(shortModelName(model.model))
@@ -148,7 +242,7 @@ struct HubTopModelRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text(Fmt.cost(model.cost))
+                Text(Fmt.money(model.cost))
                     .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                     .foregroundColor(bg.primaryTextColor)
             }

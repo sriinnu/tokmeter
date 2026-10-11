@@ -24,10 +24,13 @@ enum BackgroundMode {
     case blueprintGrid    // Cream-paper bg with cyan grid lines (Blueprint)
     case noiseYellow      // Canary-yellow flat surface (Noise / neobrutalist)
     case mintPeach        // Warm peach surface (Mint / soft editorial)
+    case skin(Skin)       // A skin's own surface (Skins.swift)
 
     /// The base surface color painted as the popover's background.
     var surfaceColor: Color {
         switch self {
+        case .skin(let skin):
+            return skin.spec.surface
         case .dark:
             return Color(NSColor.windowBackgroundColor)
         case .darkGradient:
@@ -44,7 +47,7 @@ enum BackgroundMode {
         case .terminalBlack:
             return Color(red: 0.0, green: 0.02, blue: 0.01)
         case .paperWarm:
-            return Color(red: 0.962, green: 0.943, blue: 0.904)
+            return Broadsheet.stock
         case .glassBlur:
             return Color(red: 0.86, green: 0.92, blue: 0.96).opacity(0.42)
         case .auroraDrift:
@@ -61,6 +64,7 @@ enum BackgroundMode {
     /// Whether this surface is light (drives text color inversion).
     var isLight: Bool {
         switch self {
+        case .skin(let skin): return skin.spec.isLight
         case .lightCream, .paperWarm, .blueprintGrid, .noiseYellow, .mintPeach, .glassBlur: return true
         default: return false
         }
@@ -87,6 +91,8 @@ enum BackgroundMode {
     func gradientColors() -> [Color] {
         let base = surfaceColor
         switch self {
+        case .skin(let skin):
+            return skin.spec.gradient
         case .darkGradient:
             return [base, base.opacity(0.92)]
         case .deepIndigo:
@@ -100,7 +106,7 @@ enum BackgroundMode {
         case .terminalBlack:
             return [Color.black, Color(red: 0.01, green: 0.03, blue: 0.01)]
         case .paperWarm:
-            return [base, Color(red: 0.948, green: 0.926, blue: 0.885)]
+            return [base, base]   // newsprint is flat; no vignette
         case .glassBlur:
             return [base, base.opacity(0.55)]
         case .auroraDrift:
@@ -133,6 +139,7 @@ enum HeroMode {
     case blueprintTechnical // Hairline cyan frame, mono digits, drafting feel
     case noiseBrutal        // Heavy black sans on canary yellow, brutalist
     case mintEditorial      // Peach surface, lime accent, hairline underline
+    case skin(Skin)         // The skin draws its own hero (SkinHero)
 }
 
 // MARK: - Card style
@@ -151,6 +158,7 @@ enum CardMode {
     case blueprintFrame   // Blueprint: cyan hairline frame, no fill, mono
     case noiseStuck       // Noise: solid color + 2pt black border + hard offset shadow
     case mintHairline     // Mint: peach fill + 0.5pt black hairline, no shadow
+    case skin(Skin)       // The skin's own card (SkinCard)
 
     /// Corner radius — HUD/Terminal go sharper for readout feel.
     var cornerRadius: CGFloat {
@@ -164,6 +172,7 @@ enum CardMode {
         case .glossyDark: return 16
         case .noiseStuck: return 8
         case .mintHairline: return 14
+        case .skin(let skin): return skin.spec.cornerRadius
         default: return 12
         }
     }

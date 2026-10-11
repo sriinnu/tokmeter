@@ -27,6 +27,30 @@ final class DaemonClientURLTests: XCTestCase {
         }
     }
 
+    // The daemon sends both X-Tokmeter-API and the legacy X-Drishti-API; a
+    // daemon from before the rename sends only the legacy one.
+    private func response(_ headers: [String: String]) -> HTTPURLResponse {
+        HTTPURLResponse(url: URL(string: "http://127.0.0.1:9877/api/quick")!, statusCode: 200,
+                        httpVersion: "HTTP/1.1", headerFields: headers)!
+    }
+
+    func testApiVersionHeaderPrefersTheCurrentName() {
+        let both = response(["X-Tokmeter-API": "tokmeter-api/1", "X-Drishti-API": "drishti-api/9"])
+        XCTAssertEqual(DaemonClient.apiVersionHeader(from: both), "tokmeter-api/1")
+    }
+
+    func testApiVersionHeaderFallsBackToTheLegacyName() {
+        let legacy = response(["X-Drishti-API": "drishti-api/1"])
+        XCTAssertEqual(DaemonClient.apiVersionHeader(from: legacy), "drishti-api/1")
+        XCTAssertNil(DaemonClient.apiVersionHeader(from: response([:])))
+    }
+
+    func testApiMajorReadsEitherSpelling() {
+        XCTAssertEqual(DaemonClient.apiMajor(fromHeader: "tokmeter-api/1"), 1)
+        XCTAssertEqual(DaemonClient.apiMajor(fromHeader: "drishti-api/2"), 2)
+        XCTAssertNil(DaemonClient.apiMajor(fromHeader: "garbage"))
+    }
+
     func testPlainReadAndMutationRoutesKeepTheirPaths() {
         for path in ["/api/quick", "/api/sessions", "/api/update-pricing", "/api/rescan"] {
             XCTAssertEqual(DaemonClient.requestURL(for: path).absoluteString,

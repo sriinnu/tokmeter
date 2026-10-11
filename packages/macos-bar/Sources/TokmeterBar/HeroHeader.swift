@@ -33,6 +33,16 @@ struct HeroHeader: View {
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
+        if let skin = theme.skin {
+            SkinHero(skin: skin, header: self)
+        } else if theme == .paper {
+            paperMasthead
+        } else {
+            standardHero
+        }
+    }
+
+    var standardHero: some View {
         // The hero content dictates the height — background paints behind via
         // .background(), so HeroBackground's unbounded fills (Color.black,
         // LinearGradient, etc) don't stretch the hero vertically. Previously
@@ -82,7 +92,7 @@ struct HeroHeader: View {
     /// context drag is high/critical it tints to the warning/danger hue and
     /// breathes a touch so the user feels the pressure without opening it.
     @ViewBuilder
-    private var cacheWalletToggle: some View {
+    var cacheWalletToggle: some View {
         if let signals = loader.statbarSignals,
            ContextTelemetryPanel.hasContent(signals) {
             let status = signals.contextPressure?.status
@@ -113,7 +123,7 @@ struct HeroHeader: View {
             .buttonStyle(.plain)
             .help(
                 pressured
-                    ? "Cache & context — context drag is \(status ?? "high"). Tap to open."
+                    ? "Cache & context — context growth is \(status ?? "high"). Tap to open."
                     : "Cache & context wallet — tap to open."
             )
         }
@@ -138,7 +148,7 @@ struct HeroHeader: View {
 
     /// Shown in place of the headline numbers when the daemon is down — a plain
     /// statement plus where to fix it, instead of a shimmer that implies loading.
-    private var offlineHero: some View {
+    var offlineHero: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(loader.daemonPhase == .needsNode ? "Node.js required" : "Usage service offline")
                 .font(.system(size: 18, weight: .semibold, design: theme.fonts.bodyDesign))
@@ -152,7 +162,7 @@ struct HeroHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var estimatedCostText: String {
+    var estimatedCostText: String {
         guard let basis = loader.statbarSignals?.costBasisToday,
               basis.estimatedRecords > 0 else { return "—" }
         return Fmt.cost(basis.estimatedCost)
@@ -189,7 +199,11 @@ struct HeroHeader: View {
                         Text("No usage recorded today")
                     }
                 } else {
-                    Text("Cost breakdown unavailable")
+                    // The basis hasn't arrived but the rows may already carry
+                    // cost; never claim the breakdown doesn't exist.
+                    Text(loader.todayCost > 0
+                         ? "Estimate pending · \(Fmt.cost(loader.todayCost)) recorded today"
+                         : "Estimate pending")
                 }
             }
             .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
@@ -199,16 +213,19 @@ struct HeroHeader: View {
         }
     }
 
-    private func costLine(_ label: String, value: Double) -> some View {
-        HStack {
+    /// "Tool-reported cost $0.40": the value sits next to its own label. It
+    /// used to float at the far edge, under the estimated-cost column, where
+    /// it read as part of the estimate.
+    func costLine(_ label: String, value: Double) -> some View {
+        HStack(spacing: 6) {
             Text(label)
-            Spacer()
-            Text(Fmt.cost(value)).monospacedDigit()
+            Text(Fmt.money(value)).monospacedDigit().foregroundColor(theme.costInk)
+            Spacer(minLength: 0)
         }
     }
 
     @ViewBuilder
-    private var statusIndicator: some View {
+    var statusIndicator: some View {
         switch theme {
         case .hud:       operationalPill
         case .terminal:  terminalCursor
@@ -226,7 +243,7 @@ struct HeroHeader: View {
         case .live:
             if loader.lastError != nil && loader.hasFreshData {
                 stalePill
-            } else if let live = loader.statbarSignals?.liveSession {
+            } else if let live = loader.liveSession {
                 // Something is actively running RIGHT NOW. Replace the generic
                 // ECG with a concrete pointer — "claude-code · tokmeter · 4m" —
                 // so the bar tells you what's live, not just that "data exists."
@@ -260,7 +277,24 @@ struct HeroHeader: View {
     /// Live-session pill — green dot + compact session descriptor. Reads as
     /// "something is happening right now and here's what." Tooltip shows the
     /// model + last-record cost for the user who wants the detail.
+    @ViewBuilder
     private func liveSessionPill(_ live: LiveSession) -> some View {
+        if theme == .paper {
+            HStack(spacing: 4) {
+                Text("●").foregroundColor(theme.statusSuccess)
+                Text("\(Fmt.projectBasename(live.project)) · \(Fmt.liveAge(live.ageSeconds))".uppercased())
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+            }
+            .font(Broadsheet.kickerFont)
+            .tracking(1)
+            .help("Live: \(live.provider) · \(Fmt.shortModel(live.model)) · last call \(Fmt.cost(live.lastRecordCost))")
+        } else {
+            standardLivePill(live)
+        }
+    }
+
+    private func standardLivePill(_ live: LiveSession) -> some View {
         let dotColor = theme.statusSuccess
         let project = Fmt.projectBasename(live.project)
         return HStack(spacing: 5) {
@@ -299,7 +333,7 @@ struct HeroHeader: View {
         case .noise:    return Color.black.opacity(0.75)    // ink on canary yellow
         case .mint:     return c.highlight                  // brick-red on peach
         case .blueprint: return c.primary                   // technical blue on cream
-        default:        return Color.white.opacity(0.85)    // clean white on dark heroes
+        default:        return theme.skin.map { $0.spec.isLight ? Color.black.opacity(0.75) : Color.white.opacity(0.85) } ?? Color.white.opacity(0.85)    // clean white on dark heroes
         }
     }
 
@@ -350,7 +384,7 @@ struct HeroHeader: View {
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: breathToggle)
     }
 
-    private var skeletonHero: some View {
+    var skeletonHero: some View {
         HStack(spacing: 8) {
             ShimmerBar(width: 120, height: 30, breathToggle: breathToggle)
             ShimmerBar(width: 42, height: 10, breathToggle: breathToggle)
@@ -370,7 +404,11 @@ struct HeroHeader: View {
             return Color.black.opacity(0.92)
         case .hud, .terminal:   return c.secondary
         case .glass:            return Color(red: 0.14, green: 0.20, blue: 0.28)
-        default:                return Color.white
+        default:
+            // Skins: shared helpers (status, offline, cache key) must stay
+            // legible on light skins too.
+            if let skin = theme.skin, skin.spec.isLight { return Color.black.opacity(0.92) }
+            return Color.white
         }
     }
 
@@ -397,6 +435,7 @@ struct HeroHeader: View {
         case .blueprint: return Color.black.opacity(0.10)
         case .noise:     return Color.black.opacity(0.40)   // hard offset reads as "stuck on"
         case .mint:      return Color.black.opacity(0.06)   // hairline whisper
+        case .meter, .pump, .rams, .deck, .passbook: return Color.clear
         }
     }
 

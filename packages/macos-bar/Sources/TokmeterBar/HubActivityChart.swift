@@ -42,6 +42,22 @@ struct HubActivityChart: View {
     var body: some View {
         Chart {
             ForEach(daily) { d in
+                if theme == .paper {
+                    // Broadsheet chart: flat ink columns, square tops.
+                    BarMark(
+                        x: .value("Day", d.date),
+                        y: .value("Cost", d.cost)
+                    )
+                    .foregroundStyle(Broadsheet.ink.opacity(hoveredDate == d.date ? 1 : 0.82))
+                } else if theme.skin != nil {
+                    // Skins: flat columns in the skin's money ink.
+                    BarMark(
+                        x: .value("Day", d.date),
+                        y: .value("Cost", d.cost)
+                    )
+                    .foregroundStyle(theme.costInk.opacity(hoveredDate == d.date ? 1 : 0.78))
+                    .cornerRadius(min(theme.skin?.spec.cornerRadius ?? 0, 2))
+                } else {
                 BarMark(
                     x: .value("Day", d.date),
                     y: .value("Cost", d.cost)
@@ -53,8 +69,17 @@ struct HubActivityChart: View {
                     )
                 )
                 .cornerRadius(3)
+                }
             }
             ForEach(movingAvg) { p in
+                if theme == .paper {
+                    LineMark(
+                        x: .value("Day", p.date),
+                        y: .value("7 recorded days average", p.value)
+                    )
+                    .foregroundStyle(c.accent)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .butt, lineJoin: .miter))
+                } else {
                 LineMark(
                     x: .value("Day", p.date),
                     y: .value("7 recorded days average", p.value)
@@ -62,6 +87,7 @@ struct HubActivityChart: View {
                 .foregroundStyle(c.accent)
                 .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
                 .interpolationMethod(.catmullRom)
+                }
             }
             if let last = movingAvg.last {
                 PointMark(
@@ -69,7 +95,7 @@ struct HubActivityChart: View {
                     y: .value("7 recorded days average", last.value)
                 )
                 .foregroundStyle(c.accent)
-                .symbolSize(70)
+                .symbolSize(theme == .paper ? 30 : 70)
             }
             if let hd = hoveredDate, let v = byDate[hd] {
                 RuleMark(x: .value("Day", hd))
@@ -113,12 +139,20 @@ struct HubActivityChart: View {
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: hoveredDate)
         .chartXAxis {
-            AxisMarks(values: labelDays) { value in
-                AxisValueLabel {
-                    if let s = value.as(String.self) {
-                        Text(shortDate(s))
-                            .font(.system(size: 9, design: theme.fonts.bodyDesign))
-                            .foregroundColor(bg.secondaryTextColor)
+            // A categorical axis gives every bar a mark and allots its label
+            // only that bar's width (about 23pt for 30 days), so "Sep 05" was
+            // cut to "Se…". Thin the labels to about six and let each take the
+            // room it needs.
+            AxisMarks { value in
+                AxisValueLabel(collisionResolution: .disabled) {
+                    if let s = value.as(String.self), theme == .paper || shownLabels.contains(s) {
+                        // Paper sets the day only; the range sits in the card head.
+                        Text(theme == .paper ? String(s.suffix(2)) : shortDate(s))
+                            .font(theme == .paper
+                                ? .system(size: 8.5, weight: .heavy)
+                                : .system(size: 9, design: theme.fonts.bodyDesign))
+                            .foregroundColor(theme == .paper ? Broadsheet.muted : bg.secondaryTextColor)
+                            .fixedSize()
                     }
                 }
                 AxisTick().foregroundStyle(bg.secondaryTextColor.opacity(0.35))
@@ -126,17 +160,20 @@ struct HubActivityChart: View {
         }
         .chartYAxis {
             AxisMarks { value in
-                AxisGridLine().foregroundStyle(bg.secondaryTextColor.opacity(0.12))
+                AxisGridLine().foregroundStyle(theme == .paper
+                    ? Broadsheet.ink.opacity(0.18) : bg.secondaryTextColor.opacity(0.12))
                 AxisValueLabel {
                     if let d = value.as(Double.self) {
                         Text(Fmt.cost(d))
-                            .font(.system(size: 9, design: theme.fonts.bodyDesign))
-                            .foregroundColor(bg.secondaryTextColor)
+                            .font(.system(size: 9, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
+                            .foregroundColor(theme == .paper ? Broadsheet.muted : bg.secondaryTextColor)
                     }
                 }
             }
         }
     }
+
+    private var shownLabels: Set<String> { Set(labelDays) }
 
     private var labelDays: [String] {
         guard !daily.isEmpty else { return [] }
@@ -185,6 +222,44 @@ struct HubChartTooltip: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a boxed note, ink border, no shadow.
+    private var paperBody: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Kicker(text: prettyDate)
+            InkRule(weight: 0.5)
+            paperRow("Daily cost", Fmt.cost(daily))
+            paperRow("Tokens", tokens.formatted())
+            paperRow("7-day average", Fmt.cost(avg))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Rectangle().fill(Broadsheet.stock))
+        .overlay(Rectangle().strokeBorder(Broadsheet.ink, lineWidth: 1))
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private func paperRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.system(size: 10.5, design: .serif))
+                .foregroundColor(Broadsheet.muted)
+            LeaderDots()
+            Text(value)
+                .font(.system(size: 11.5, weight: .bold, design: .serif))
+                .monospacedDigit()
+                .foregroundColor(Broadsheet.ink)
+        }
+        .frame(minWidth: 170)
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(prettyDate)
                 .font(.system(size: 10, weight: .semibold, design: theme.fonts.labelDesign))
@@ -202,7 +277,7 @@ struct HubChartTooltip: View {
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.primaryTextColor)
             tooltipRow(
-                label: "7 recorded days avg",
+                label: "7-day average",
                 value: Fmt.cost(avg),
                 swatch: LinearGradient(
                     colors: [c.accent, c.accent],
@@ -224,15 +299,7 @@ struct HubChartTooltip: View {
         .fixedSize(horizontal: true, vertical: true)
     }
 
-    private var prettyDate: String {
-        guard date.count >= 10 else { return date }
-        let year = String(date.prefix(4))
-        let month = Int(date.dropFirst(5).prefix(2)) ?? 0
-        let day = String(date.dropFirst(8).prefix(2))
-        let monthName = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        return "\(monthName[safe: month] ?? "") \(day), \(year)"
-    }
+    private var prettyDate: String { LocalDay.pretty(date) }
 
     @ViewBuilder
     private func tooltipRow(label: String, value: String, swatch: LinearGradient) -> some View {
@@ -259,15 +326,33 @@ struct HubChartLegend: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            HStack(spacing: 12) {
+                HStack(spacing: 5) {
+                    Rectangle().fill(Broadsheet.ink).frame(width: 9, height: 9)
+                    HubPaperLabel(text: "Daily")
+                }
+                HStack(spacing: 5) {
+                    Rectangle().fill(c.accent).frame(width: 12, height: 1.5)
+                    HubPaperLabel(text: "7-day average")
+                        .help("Average of the last seven recorded days; dates with no usage are skipped, not counted as zero.")
+                }
+            }
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 10) {
             HStack(spacing: 5) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(
-                        LinearGradient(
+                    .fill(theme.skin != nil
+                          ? AnyShapeStyle(theme.costInk.opacity(0.78))
+                          : AnyShapeStyle(LinearGradient(
                             colors: [c.primary, c.secondary, c.warm],
                             startPoint: .bottom, endPoint: .top
-                        )
-                    )
+                          )))
                     .frame(width: 9, height: 9)
                 Text("Daily")
                     .font(.system(size: 9, weight: .medium, design: theme.fonts.labelDesign))
@@ -277,10 +362,10 @@ struct HubChartLegend: View {
                 Capsule()
                     .fill(c.accent)
                     .frame(width: 12, height: 2)
-                Text("7-record avg")
+                Text("7-day average")
                     .font(.system(size: 9, weight: .medium, design: theme.fonts.labelDesign))
                     .foregroundColor(bg.secondaryTextColor)
-                    .help("Trailing average of up to seven recorded days; missing dates are not filled.")
+                    .help("Average of the last seven recorded days; dates with no usage are skipped, not counted as zero.")
             }
         }
     }

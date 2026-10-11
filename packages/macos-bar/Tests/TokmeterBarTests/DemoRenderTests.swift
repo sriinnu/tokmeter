@@ -27,6 +27,7 @@ final class DemoRenderTests: XCTestCase {
         let loader = TokmeterLoader(startPolling: false)
         loader.isWarming = false
         loader.hasFreshData = true
+        loader.isDaemonAlive = true
         loader.todayTokens = scene.tokens
         loader.statbarSignals = scene.signals
         loader.todayModels = scene.models.map(TokmeterLoader.toUsage)
@@ -49,6 +50,16 @@ final class DemoRenderTests: XCTestCase {
             let tooltipBitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(tooltipImage.tiffRepresentation)))
             try XCTUnwrap(tooltipBitmap.representation(using: .png, properties: [:]))
                 .write(to: root.appendingPathComponent("\(theme.rawValue)-tooltips.png"))
+            // The settings sheet: presentationBackground doesn't reach an
+            // ImageRenderer, so paint the same surface behind it here.
+            let settings = SettingsPopover(theme: .constant(theme), loader: loader)
+                .background(theme.backgroundMode.surfaceColor)
+            let settingsRenderer = ImageRenderer(content: settings)
+            settingsRenderer.scale = 2
+            let settingsImage = try XCTUnwrap(settingsRenderer.nsImage)
+            let settingsBitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(settingsImage.tiffRepresentation)))
+            try XCTUnwrap(settingsBitmap.representation(using: .png, properties: [:]))
+                .write(to: root.appendingPathComponent("\(theme.rawValue)-settings.png"))
             for expanded in [false, true] {
                 let view = VStack(alignment: .leading, spacing: 0) {
                     HeroHeader(loader: loader, theme: theme, breathToggle: false,
@@ -82,6 +93,7 @@ final class DemoRenderTests: XCTestCase {
             let loader = TokmeterLoader(startPolling: false)
             loader.isWarming = false
             loader.hasFreshData = true
+            loader.isDaemonAlive = true
             loader.todayTokens = scene.tokens
             loader.statbarSignals = scene.signals
             loader.todayModels = scene.models.map(TokmeterLoader.toUsage)

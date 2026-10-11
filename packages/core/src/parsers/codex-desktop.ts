@@ -175,6 +175,11 @@ export async function hasJsonlTokenCoverage(
 export class CodexDesktopParser implements SessionParser {
   readonly providerId = "codex-desktop" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return candidateStateDbPaths(homeDir);
+  }
+
   // opts.modifiedSinceMs is deliberately NOT used to filter the SQL query.
   // TokmeterCore's refreshTodayAccumulator() REPLACES its whole "today"
   // state from whatever a scan returns — it never folds across calls (see

@@ -30,9 +30,15 @@ struct HubCrossToolCard: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("If today ran on…")
-                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                        .foregroundColor(bg.primaryTextColor)
+                    if theme.skin != nil {
+                        HubSkinTitle(text: "If today ran on…", theme: theme)
+                    } else if theme == .paper {
+                        HubPaperTitle(text: "If today ran on…")
+                    } else {
+                        Text("If today ran on…")
+                            .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                    }
                     Spacer()
                     Text(String(format: "actual today: $%.2f", actualCost))
                         .font(.system(size: 10, design: theme.fonts.bodyDesign))
@@ -48,7 +54,11 @@ struct HubCrossToolCard: View {
                 } else {
                     VStack(spacing: 5) {
                         ForEach(comparison.projections) { p in
-                            row(p)
+                            if theme == .paper {
+                                paperRow(p)
+                            } else {
+                                row(p)
+                            }
                         }
                     }
                 }
@@ -88,6 +98,39 @@ struct HubCrossToolCard: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
+        .help(tooltipFor(p, delta: delta))
+    }
+
+    /// Paper: model, leaders, projected cost, and the delta; colour only on
+    /// the delta, where it means cheaper or dearer.
+    private func paperRow(_ p: CrossToolProjection) -> some View {
+        let delta = p.projectedCost - actualCost
+        let deltaColor: Color =
+            delta < -0.005 ? theme.statusSuccess
+            : delta > 0.005 ? theme.statusDanger
+            : Broadsheet.muted
+        return VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(shortModel(p.model))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                LeaderDots()
+                Text(String(format: "$%.2f", p.projectedCost))
+                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                    .contentTransition(.numericText(value: p.projectedCost))
+                Text(deltaText(delta))
+                    .font(.system(size: 11, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(deltaColor)
+                    .frame(width: 60, alignment: .trailing)
+            }
+            .padding(.vertical, 5)
+            InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.3))
+        }
         .help(tooltipFor(p, delta: delta))
     }
 

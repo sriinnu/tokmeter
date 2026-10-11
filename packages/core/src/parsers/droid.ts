@@ -22,8 +22,13 @@ interface DroidMessage {
 export class DroidParser implements SessionParser {
   readonly providerId = "droid" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.factory/sessions", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const sessionsDir = expandHome("~/.factory/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
     const records: TokenRecord[] = [];
 

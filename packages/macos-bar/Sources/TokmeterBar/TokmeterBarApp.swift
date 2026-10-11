@@ -11,6 +11,10 @@ struct TokmeterBarApp: App {
     @StateObject private var updater = UpdaterController()
     @ObservedObject private var config = HubConfigStore.shared
 
+    init() {
+        AppTheme.migrateStoredPreference()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             TokmeterBarView(loader: loader, updater: updater)
@@ -37,15 +41,32 @@ struct TokmeterBarApp: App {
 
     /// Text shown next to the SF Symbol. For live context/block sources it
     /// shows the % (the "how close to the cliff" signal); otherwise the cost.
-    /// Falls back to "?" when the daemon is offline.
+    /// "?" when the daemon is unreachable and "…" while it starts or runs its
+    /// first scan. Only a live daemon gets a number: the loader keeps the last
+    /// fetched todayTokens through an outage, and before this the label kept
+    /// showing them (yesterday's count after midnight, "0 tok" on a cold
+    /// launch) because handleDaemonOffline clears lastError.
     private var costLabel: String {
-        if loader.lastError != nil {
-            return "?"
+        switch labelState {
+        case .unavailable: return "?"
+        case .starting: return "…"
+        case .live: break
         }
         if let pct = activePct {
             return "\(Int(pct.rounded()))%"
         }
         return "\(Fmt.number(loader.todayTokens)) tok"
+    }
+
+    private enum LabelState { case live, starting, unavailable }
+
+    private var labelState: LabelState {
+        if loader.lastError != nil { return .unavailable }
+        switch loader.daemonPhase {
+        case .live: return .live
+        case .warming: return .starting
+        case .offline, .needsNode: return .unavailable
+        }
     }
 
     /// The percentage for the selected live source, if it has data right now.
@@ -60,7 +81,7 @@ struct TokmeterBarApp: App {
     /// The health band for the selected source, or nil when there's nothing to
     /// color (source off, or no data for the selected signal).
     private var menubarBand: HealthBand? {
-        if loader.lastError != nil { return nil }
+        if labelState != .live { return nil }
         switch config.config.colorSource {
         case .off:
             return nil
@@ -82,8 +103,10 @@ struct TokmeterBarApp: App {
 
     /// VoiceOver-friendly description of the menu bar label.
     private var accessibilityLabel: String {
-        if loader.lastError != nil {
-            return "Tokmeter: daemon offline"
+        switch labelState {
+        case .unavailable: return "Tokmeter: daemon offline"
+        case .starting: return "Tokmeter: usage service starting"
+        case .live: break
         }
         let base = "Tokmeter: \(Fmt.number(loader.todayTokens)) tokens today"
         guard let band = menubarBand, let pct = activePct else { return base }

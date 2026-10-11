@@ -81,6 +81,12 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case blueprint
     case noise
     case mint
+    // Skins (Skins.swift): metaphor themes, one file each.
+    case meter
+    case pump
+    case rams
+    case deck
+    case passbook
 
     /// Order the picker shows. Hidden cases stay in the enum so persisted
     /// settings don't crash on decode.
@@ -91,15 +97,38 @@ enum AppTheme: String, CaseIterable, Identifiable {
     ///   instrument-panel space already.
     /// - Synthwave: costume that scrolling-grid couldn't save.
     /// - Noise: yellow surfaces and white cards compete with usage colors.
-    static var allCases: [AppTheme] = [
-        .terminal, .paper, .nebula, .aurora,
-        .nocturne, .glass,
+    static let allCases: [AppTheme] = [
+        .terminal, .paper, .meter, .pump, .rams, .deck, .passbook,
+        .nebula, .aurora, .nocturne, .glass,
     ]
+
+    /// The visible theme a retired one maps to. A stored hidden theme kept
+    /// rendering (its code paths still exist) while the picker showed nothing
+    /// selected, so users were stuck on a look they couldn't see or leave.
+    var pickerCase: AppTheme {
+        switch self {
+        case .daylight, .mint, .blueprint: return .paper
+        case .hud, .synthwave: return .terminal
+        case .noise: return .nebula
+        default: return self
+        }
+    }
+
+    /// Rewrite a stored hidden theme to its visible replacement. Run once at
+    /// launch, before any @AppStorage("appTheme") reader renders.
+    static func migrateStoredPreference(_ defaults: UserDefaults = .standard) {
+        guard let raw = defaults.string(forKey: "appTheme"),
+              let stored = AppTheme(rawValue: raw),
+              stored.pickerCase != stored else { return }
+        defaults.set(stored.pickerCase.rawValue, forKey: "appTheme")
+    }
 
     var id: String { rawValue }
 
     var displayName: String {
+        if let skin { return skin.spec.displayName }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.displayName
         case .nebula:    return "Prism"
         case .nocturne:  return "Carbon"
         case .daylight:  return "Daylight"
@@ -116,7 +145,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var tagline: String {
+        if let skin { return skin.spec.tagline }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.tagline
         case .nebula:    return "Iridescent edges, dark glass"
         case .nocturne:  return "Graphite, copper, precise type"
         case .daylight:  return "Cream daytime view"
@@ -133,7 +164,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var icon: String {
+        if let skin { return skin.spec.icon }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.icon
         case .nebula:    return "diamond.fill"
         case .nocturne:  return "square.stack.3d.up.fill"
         case .daylight:  return "sun.max.fill"
@@ -159,7 +192,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var backgroundMode: BackgroundMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .darkGradient
         case .nocturne:  return .deepIndigo
         case .daylight:  return .lightCream
@@ -176,7 +211,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var heroMode: HeroMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .nebulaGradient
         case .nocturne:  return .nocturneCalm
         case .daylight:  return .daylightSoft
@@ -193,7 +230,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var cardMode: CardMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .glossyDark
         case .nocturne:  return .flatDark
         case .daylight:  return .lightPaper
@@ -211,6 +250,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     /// Opaque monetary ink with contrast on each theme's light or dark surface.
     var costInk: Color {
+        if let skin { return skin.spec.costInk }
+        if self == .paper { return Broadsheet.ink }
         if self == .nocturne { return Color(.sRGB, red: 1.0, green: 0.72, blue: 0.51) }
         if self == .aurora { return Color(.sRGB, red: 1.0, green: 0.75, blue: 0.64) }
         return backgroundMode.isLight
@@ -218,9 +259,26 @@ enum AppTheme: String, CaseIterable, Identifiable {
             : Color(.sRGB, red: 1.0, green: 0.82, blue: 0.42)
     }
 
+    /// Fill for selected chips and icon tiles that carry text or a glyph.
+    /// Dark themes used to fade primary (dark) into secondary (their light
+    /// data colour) under white ink, so the light end failed contrast: about
+    /// 1.3:1 on Terminal's phosphor. Dark themes now select in their light
+    /// data colours under dark ink (inverse video, which suits Terminal);
+    /// light themes keep the dark ink fill under white.
+    var selectedFill: [Color] {
+        backgroundMode.isLight ? [colors.primary, colors.secondary] : [colors.secondary, colors.accent]
+    }
+
+    /// Text/glyph colour on `selectedFill`.
+    var onSelectedInk: Color {
+        backgroundMode.isLight ? .white : Color.black.opacity(0.85)
+    }
+
     /// Type personality for each role. The view reads this to pick fonts.
     var fonts: ThemeFonts {
+        if let skin { return skin.spec.fonts }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.fonts
         case .nebula:
             return ThemeFonts(heroDesign: .default, heroWeight: .bold,
                               valueDesign: .default, valueWeight: .bold,

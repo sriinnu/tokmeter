@@ -26,8 +26,13 @@ interface KimiStatusUpdate {
 export class KimiParser implements SessionParser {
   readonly providerId = "kimi" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.kimi/sessions", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const sessionsDir = expandHome("~/.kimi/sessions", homeDir);
+    const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f === "wire.jsonl", 4);
     const records: TokenRecord[] = [];
 

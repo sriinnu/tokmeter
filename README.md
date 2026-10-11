@@ -116,7 +116,7 @@ The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for
 
 MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP tool reference](docs/mcp-tools.md) for all 24 tools grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
 
-`tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
+`tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. For Claude Code, register the MCP server with `claude mcp add tokmeter --scope user -- npx -y @sriinnu/tokmeter-mcp serve` (in v1.14.1, `install-mcp` writes Claude Code's entry to `~/.claude/settings.json`, which Claude Code doesn't read; from the next release it uses `claude mcp add` itself). See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
 ## Terminal and web interfaces
 
@@ -128,7 +128,7 @@ tokmeter-tui
 npx -p @sriinnu/tokmeter tokmeter-tui
 ```
 
-The terminal UI supports overview, model, daily, and statistics views. See its [keys and commands](packages/tui/README.md).
+The terminal UI supports overview, model, daily, statistics, and cleanup views. See its [keys and commands](packages/tui/README.md).
 
 Run the web workspace from a source checkout:
 
@@ -145,7 +145,7 @@ Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also 
 
 Install `@sriinnu/tokmeter-mcp`, run `tokmeter-mcp daemon start`, then open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases).
 
-The popup gives today's tokens and estimated API cost equal prominence, with models and projects below. Chart hover cards show exact daily tokens and cost. **Usage details** expands lifetime totals, trends, and signals. Six themes are selectable: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. The Hub provides larger breakdowns and settings. Settings → **Open web dashboard** starts its local server on demand; **Stop web dashboard** or quitting the app stops it.
+The popup gives today's tokens and estimated API cost equal prominence, with models and projects below. Chart hover cards show exact daily tokens and cost. **Usage details** expands lifetime totals, trends, and signals. Themes: Terminal, Paper, Prism, Lagoon, Carbon, and Glass in v1.14.1; the next release adds Meter, Pump, Rams, Deck, and Passbook, a **$/M** button in the models header that shows each model's list price per million tokens (input, output, cache read, cache write) and where that price came from, and a configurable dashboard port. The Hub provides larger breakdowns and settings. Settings → **Open web dashboard** starts its local server on demand; **Stop web dashboard** or quitting the app stops it.
 
 See [macOS build and runtime details](packages/macos-bar/README.md), [first-use checks](docs/macos/first-use.md), and [popover validation](docs/macos/popover-usability.md). The [completion tracker](docs/macos-completion.md) records remaining fresh-machine, reliability, update, accounting, accessibility, and trial gates.
 

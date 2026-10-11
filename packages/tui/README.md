@@ -28,7 +28,7 @@ npx -p @sriinnu/tokmeter tokmeter-tui
 | `Tab` / left/right arrows | Switch views |
 | `r` | Refresh usage |
 | Up/down arrows / Space | Move through cleanup projects / select |
-| `q` / `Ctrl+C` | Quit |
+| `q` / `Esc` / `Ctrl+C` | Quit |
 
 ## License
 

@@ -43,12 +43,11 @@ struct TokmeterBarView: View {
     /// Drives the pricing-anomaly drill-in as a popover-wide overlay (not a
     /// .sheet — sheets from a MenuBarExtra popover have flaky event handling).
     @State private var showAnomalyPanel = false
+    /// Drives the Rates panel: list prices per model from kosha, with source.
+    @State private var showRates = false
     /// Top-anchored gradient ripple flashed briefly on theme change so the
     /// transition reads as deliberate, not a glitch.
     @State private var themeRipple: Bool = false
-    @State private var heroHeight: CGFloat = 110
-    @State private var errorHeight: CGFloat = 8
-    @State private var footerHeight: CGFloat = 80
 
     private var maximumPanelHeight: CGFloat {
         min(780, panelVisibility.screenHeight - 32)
@@ -58,7 +57,7 @@ struct TokmeterBarView: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        PanelStack(maxHeight: maximumPanelHeight) {
             HeroHeader(
                 loader: loader,
                 theme: theme,
@@ -67,22 +66,27 @@ struct TokmeterBarView: View {
                 showCachePanel: $showCachePanel
             )
             .cascadeIn(delay: 0.02)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heroHeight = $0 }
 
             errorBanner
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .cascadeIn(delay: 0.08)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { errorHeight = $0 }
 
-            ContentSizedScrollView(maximumHeight: max(80, maximumPanelHeight - heroHeight - errorHeight - footerHeight - 1)) {
-                UsageOverview(loader: loader, theme: theme, showUsageDetails: $usageDetailsExpanded)
+            // Natural height when it fits; PanelStack caps it and it scrolls.
+            ScrollView(.vertical, showsIndicators: true) {
+                UsageOverview(loader: loader, theme: theme, showUsageDetails: $usageDetailsExpanded,
+                              showRates: $showRates)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 10)
             }
+            .panelScrollArea()
 
-            Divider().opacity(0.3)
+            if let skin = theme.skin {
+                Rectangle().fill(skin.footer.ruleColor).frame(height: 1)
+            } else {
+                Divider().opacity(0.3)
+            }
 
             FooterBar(
                 loader: loader,
@@ -95,7 +99,6 @@ struct TokmeterBarView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .cascadeIn(delay: 0.46)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
         .frame(width: 400)
         .fixedSize(horizontal: false, vertical: true)
@@ -107,6 +110,13 @@ struct TokmeterBarView: View {
             if showCachePanel, let signals = loader.statbarSignals {
                 CacheWalletDrawer(signals: signals, theme: theme, isPresented: $showCachePanel)
                     .zIndex(10)
+            }
+        }
+        .overlay {
+            if showRates {
+                RatesPanel(theme: theme, isPresented: $showRates,
+                           refreshKey: "\(loader.todayTokens)|\(loader.todayCost)|\(loader.totalCost)|\(loader.pricingMtime)")
+                    .zIndex(11)
             }
         }
         // Pricing-anomaly drill-in — an in-popover overlay (NOT a .sheet, whose
@@ -227,7 +237,7 @@ struct TokmeterBarView: View {
         if let error = loader.lastError, !loader.isWarming {
             ConnectionIssueView(error: error, needsNodeSetup: loader.needsNodeSetup,
                                 isRetrying: loader.isLoading || loader.isStartingDaemon) {
-                Task { await loader.loadData() }
+                Task { await loader.userRefresh() }
             }
             .padding(.bottom, 4)
             .transition(

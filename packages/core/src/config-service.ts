@@ -80,6 +80,9 @@ export interface UserConfig {
     /** Rendering style for the popover's LAST 7 DAYS chart (Swift mirrors
      *  this in HubConfigStore.WeekChartStyle — keep raw values identical). */
     weekChartStyle: WeekChartStyle;
+    /** Preferred port for the bar's bundled web dashboard. If another
+     *  server holds it, the bar moves to the next free port. */
+    dashboardPort: number;
   };
   daemon: {
     /** Advisory: seconds between full rescans inside the daemon. */
@@ -142,7 +145,12 @@ export interface UserConfig {
  */
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
-  bar: { refreshSeconds: 30, menubarColorSource: "context", weekChartStyle: "line" },
+  bar: {
+    refreshSeconds: 30,
+    menubarColorSource: "context",
+    weekChartStyle: "line",
+    dashboardPort: 8888,
+  },
   daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
@@ -227,6 +235,7 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
       weekChartStyle: WEEK_CHART_STYLES.includes(raw.bar?.weekChartStyle as WeekChartStyle)
         ? (raw.bar?.weekChartStyle as WeekChartStyle)
         : d.bar.weekChartStyle,
+      dashboardPort: clampPositiveInt(raw.bar?.dashboardPort, d.bar.dashboardPort, 1024, 65535),
     },
     daemon: {
       scanIntervalSeconds: clampPositiveInt(
@@ -342,6 +351,13 @@ export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
     min: 5,
     max: 3600,
     description: "Seconds between menubar fetches from the daemon.",
+  },
+  {
+    path: "bar.dashboardPort",
+    type: "int",
+    min: 1024,
+    max: 65535,
+    description: "Preferred port for the menubar's web dashboard (next free port if taken).",
   },
   {
     path: "daemon.scanIntervalSeconds",

@@ -34,12 +34,17 @@ interface OpenClawMessage {
 export class OpenClawParser implements SessionParser {
   readonly providerId = "openclaw" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return ["~/.openclaw/agents", "~/.clawdbot", "~/.moltbot", "~/.moldbot"].map((p) =>
+      expandHome(p, homeDir)
+    );
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const paths = ["~/.openclaw/agents", "~/.clawdbot", "~/.moltbot", "~/.moldbot"];
 
-    for (const basePath of paths) {
-      const dir = expandHome(basePath, homeDir);
+    for (const dir of this.sessionRoots(homeDir)) {
       const sessionFiles = await findFiles(dir, (f) => f === "sessions.json", 4);
 
       for (const sf of sessionFiles) {

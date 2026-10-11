@@ -38,7 +38,7 @@ chalk.level = detectColorLevel() as typeof Chalk.prototype.level;
 
 // ─── Active Theme ──────────────────────────────────────────────────
 // Load once at module init from ~/.config/tokmeter/config.json.
-// Falls back to the default Drishti theme if no config exists.
+// Falls back to the default Tokmeter theme if no config exists.
 const _theme = loadUserTheme();
 const _nerdFont = isNerdFontEnabled();
 

@@ -53,6 +53,11 @@ interface CopilotEvent {
 export class CopilotCliParser implements SessionParser {
   readonly providerId = "copilot-cli" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.copilot/session-state", homeDir)];
+  }
+
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const out: TokenRecord[] = [];
     await this.scanStreaming(homeDir, opts, (records) => {
@@ -66,7 +71,7 @@ export class CopilotCliParser implements SessionParser {
     _opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
-    const stateDir = expandHome("~/.copilot/session-state", homeDir);
+    const [stateDir] = this.sessionRoots(homeDir);
     const files = await findFiles(stateDir, (f) => f.endsWith("events.jsonl"), 3);
 
     for (const file of files) {

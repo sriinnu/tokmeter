@@ -28,8 +28,13 @@ interface GeminiSession {
 export class GeminiParser implements SessionParser {
   readonly providerId = "gemini" as const;
 
+  /** Directories this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return [expandHome("~/.gemini/tmp", homeDir)];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const geminiDir = expandHome("~/.gemini/tmp", homeDir);
+    const [geminiDir] = this.sessionRoots(homeDir);
     const files = await findFiles(geminiDir, (f) => f.endsWith(".json"), 4);
     const records: TokenRecord[] = [];
 

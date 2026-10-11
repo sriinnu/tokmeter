@@ -23,13 +23,16 @@ import { type AliasMap, loadAliases } from "./alias-service.js";
 import { type CrossToolComparison, computeCrossToolComparison } from "./cross-tool.js";
 import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
 import { writeKoshaWishlist } from "./kosha-wishlist.js";
+import { type ModelRatesResponse, computeModelRates } from "./model-rates.js";
 import {
   getCachedKoshaMtime,
+  getCachedOverridesMtime,
   saveRecordCacheToDisk,
   setCachedKoshaMtime,
+  setCachedOverridesMtime,
 } from "./parsers/utils.js";
-import { enrichCosts, markPricingSkipped } from "./pricing-enrichment.js";
-import { PricingService } from "./pricing.js";
+import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
+import { PricingService, todayPricingStale } from "./pricing.js";
 import {
   backfillProviderIntoRelay,
   rebuildRecentWindow,
@@ -139,8 +142,16 @@ export class TokmeterCore {
       }
     }
     const currentKoshaMtime = this.pricing.getRegistryMtime();
+    const currentOverridesMtime = this.pricing.getOverridesMtime();
+    // A kosha refresh OR a pricing-overrides edit reprices today. Without the
+    // overrides half, the Rates panel showed a new override at once while
+    // today's already-priced records kept the old kosha price until midnight.
     const koshaChanged =
-      !this.skipPricing && currentKoshaMtime > 0 && currentKoshaMtime !== getCachedKoshaMtime();
+      !this.skipPricing &&
+      todayPricingStale(
+        { registryMtime: currentKoshaMtime, overridesMtime: currentOverridesMtime },
+        { registryMtime: getCachedKoshaMtime(), overridesMtime: getCachedOverridesMtime() }
+      );
 
     let historySource: ScanMeta["historySource"] = "snapshot";
     if (!isTodayOnlyScan) {
@@ -164,12 +175,11 @@ export class TokmeterCore {
     // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (todayRecords.length > 0 && !this.skipPricing) {
-      if (koshaChanged) for (const r of todayRecords) r.cost = 0;
+      if (koshaChanged) resetCalculatedCosts(todayRecords);
       await enrichCosts(todayRecords, this.pricing, "today", todayWarnings, unpricedTracker);
-      if (currentKoshaMtime > 0) {
-        setCachedKoshaMtime(currentKoshaMtime);
-        saveRecordCacheToDisk();
-      }
+      if (currentKoshaMtime > 0) setCachedKoshaMtime(currentKoshaMtime);
+      setCachedOverridesMtime(currentOverridesMtime);
+      saveRecordCacheToDisk();
     }
 
     // recentRecords accumulates FORWARD — it is never re-derived from a raw
@@ -251,7 +261,10 @@ export class TokmeterCore {
         /* enrichCosts re-warns if pricing stays unavailable */
       }
       const mtime = this.pricing.getRegistryMtime();
-      koshaChanged = mtime > 0 && mtime !== getCachedKoshaMtime();
+      koshaChanged = todayPricingStale(
+        { registryMtime: mtime, overridesMtime: this.pricing.getOverridesMtime() },
+        { registryMtime: getCachedKoshaMtime(), overridesMtime: getCachedOverridesMtime() }
+      );
     }
 
     const { today, stragglers } = await scanTodayRecordsWithStragglers(
@@ -264,13 +277,12 @@ export class TokmeterCore {
     if (this.skipPricing) {
       markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
-      for (const r of today) r.cost = 0;
+      resetCalculatedCosts(today);
       await enrichCosts(today, this.pricing, "today", todayWarnings);
       const mtime = this.pricing.getRegistryMtime();
-      if (mtime > 0) {
-        setCachedKoshaMtime(mtime);
-        saveRecordCacheToDisk();
-      }
+      if (mtime > 0) setCachedKoshaMtime(mtime);
+      setCachedOverridesMtime(this.pricing.getOverridesMtime());
+      saveRecordCacheToDisk();
     }
 
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
@@ -482,6 +494,17 @@ export class TokmeterCore {
 
   getProviderBreakdown() {
     return computeProviderBreakdownFromState(this.aggregates, this.todayAccumulator);
+  }
+
+  /**
+   * The rate card for each model with usage today ("today") or ever ("all"):
+   * list $/M per bucket as billing uses it, the pricing tier that resolved
+   * it, and the effective $/M actually paid.
+   */
+  async getModelRates(scope: "today" | "all" = "today"): Promise<ModelRatesResponse> {
+    const models = scope === "all" ? this.getModelCosts() : this.getModelCosts({ today: true });
+    if (!this.skipPricing) await this.pricing.init();
+    return computeModelRates(this.pricing, models, scope);
   }
 
   async getCrossToolComparison(): Promise<CrossToolComparison> {

@@ -54,7 +54,24 @@ struct HubCommandsPanel: View {
         }
     }
 
+    @ViewBuilder
     private var header: some View {
+        if theme.skin != nil {
+            HubSkinPageHeader(theme: theme,
+                title: "Commands",
+                subtitle: "Every tokmeter command — click to copy, paste in your terminal."
+            )
+        } else if theme == .paper {
+            HubPaperPageHeader(
+                title: "Commands",
+                subtitle: "Every tokmeter command — click to copy, paste in your terminal."
+            )
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Commands")
                 .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
@@ -143,6 +160,26 @@ struct HubGroupPill: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            // Paper: a tracked-capitals tab, inverted when selected.
+            Button(action: onTap) {
+                Text(label.uppercased())
+                    .font(Broadsheet.kickerFont)
+                    .tracking(Broadsheet.kickerTracking)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .hubPaperBox(filled: isSelected, lineWidth: isSelected || hovered ? 1 : 0.5)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .onHover { hovered = $0 }
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         Button(action: onTap) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
@@ -150,7 +187,7 @@ struct HubGroupPill: View {
                 Text(label)
                     .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))
             }
-            .foregroundColor(isSelected ? .white : bg.primaryTextColor.opacity(0.75))
+            .foregroundColor(isSelected ? theme.onSelectedInk : bg.primaryTextColor.opacity(0.75))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
@@ -159,7 +196,7 @@ struct HubGroupPill: View {
                         isSelected
                             ? AnyShapeStyle(
                                 LinearGradient(
-                                    colors: [c.primary, c.secondary],
+                                    colors: theme.selectedFill,
                                     startPoint: .leading, endPoint: .trailing
                                 )
                             )
@@ -195,6 +232,11 @@ struct HubCommandGroupCard: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
+                if theme.skin != nil {
+                    HubSkinTitle(text: group.title, count: "\(group.commands.count)", theme: theme)
+                } else if theme == .paper {
+                    HubPaperTitle(text: group.title, count: "\(group.commands.count)")
+                } else {
                 HStack(spacing: 8) {
                     Image(systemName: group.icon)
                         .font(.system(size: 12, weight: .semibold))
@@ -210,7 +252,8 @@ struct HubCommandGroupCard: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.gray.opacity(0.18)))
                 }
-                VStack(spacing: 5) {
+                }
+                VStack(spacing: theme == .paper ? 0 : 5) {
                     ForEach(group.commands) { cmd in
                         HubCommandRow(
                             command: cmd,
@@ -239,6 +282,58 @@ struct HubCommandRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a listings line. Command in mono, gloss in serif, the exact
+    /// invocation beneath, a hairline between entries.
+    private var paperBody: some View {
+        Button(action: onCopy) {
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(command.name)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(Broadsheet.ink)
+                            Text(command.description)
+                                .font(.system(size: 12, design: .serif))
+                                .foregroundColor(Broadsheet.ink2)
+                                .lineLimit(1)
+                        }
+                        Text(command.example)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundColor(Broadsheet.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    if isFlashed {
+                        Kicker(text: "Copied", inverted: true)
+                    } else {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Broadsheet.ink)
+                            .opacity(hovered ? 1 : 0.5)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .background(hovered ? Broadsheet.ink.opacity(0.05) : Color.clear)
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovered = $0 }
+        .help("Copy: \(command.example)")
+    }
+
+    private var standardBody: some View {
         Button(action: onCopy) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {

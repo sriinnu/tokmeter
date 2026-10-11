@@ -102,10 +102,22 @@ function toMillis(ts: number | string | undefined): number {
   return Date.now();
 }
 
+/** Custom sources this parser reads: enabled and in the canonical format. */
+function enabledSources(homeDir: string) {
+  return loadConfig(homeDir).customSources.filter(
+    (s) => s.enabled !== false && s.format === "tokmeter-usage-jsonl"
+  );
+}
+
 export class CustomSourceParser implements SessionParser {
   // A single parser serves every registered source; individual records carry
   // their own (custom-eligible) provider id.
   readonly providerId = "custom" as const;
+
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return enabledSources(homeDir).map((s) => expandHome(s.path, homeDir));
+  }
 
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const out: TokenRecord[] = [];
@@ -120,11 +132,7 @@ export class CustomSourceParser implements SessionParser {
     _opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
-    const sources = loadConfig(homeDir).customSources.filter(
-      (s) => s.enabled !== false && s.format === "tokmeter-usage-jsonl"
-    );
-
-    for (const source of sources) {
+    for (const source of enabledSources(homeDir)) {
       const provider = resolveProvider(source);
       const root = expandHome(source.path, homeDir);
       const files = await findFiles(root, (f) => f.endsWith(".jsonl") || f.endsWith(".json"), 6);

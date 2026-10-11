@@ -24,7 +24,15 @@ export {
   maybeBackgroundRefresh,
   refreshKoshaRegistry,
 } from "./pricing.js";
-export { CleanupService } from "./cleanup-service.js";
+export type { PricingSource, PricingSourceTier } from "./pricing.js";
+export { computeModelRates } from "./model-rates.js";
+export type { ModelRateCard, ModelRatesResponse, Rate } from "./model-rates.js";
+export {
+  CleanupService,
+  EMPTY_FILTER_MESSAGE,
+  isEmptyCleanupFilter,
+} from "./cleanup-service.js";
+export { UnsafeArchiveError } from "./restore-guard.js";
 export {
   ALL_PARSERS,
   ALL_PROVIDER_IDS,

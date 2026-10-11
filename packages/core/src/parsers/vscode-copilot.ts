@@ -108,17 +108,29 @@ function requestsToRecords(
   return records;
 }
 
+/** VS Code "User" dirs the parser walks: auto-detected plus configured. */
+function copilotUserDirs(homeDir: string): string[] {
+  return [
+    ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
+    ...getConfiguredProviderPaths("vscode-copilot", homeDir).map((p) => expandHome(p, homeDir)),
+  ];
+}
+
 export class VSCodeCopilotParser implements SessionParser {
   readonly providerId = "vscode-copilot" as const;
 
+  /** Paths this parser reads; restore validates archive paths against them. */
+  sessionRoots(homeDir: string): string[] {
+    return copilotUserDirs(homeDir).flatMap((userDir) => [
+      join(userDir, "workspaceStorage"),
+      join(userDir, "globalStorage", "emptyWindowChatSessions"),
+    ]);
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const userDirs = [
-      ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
-      ...getConfiguredProviderPaths("vscode-copilot", homeDir).map((p) => expandHome(p, homeDir)),
-    ];
 
-    for (const userDir of userDirs) {
+    for (const userDir of copilotUserDirs(homeDir)) {
       const workspaceStorageDir = join(userDir, "workspaceStorage");
       const sessionFiles = await findFiles(workspaceStorageDir, (f) => f.endsWith(".json"), 3);
 

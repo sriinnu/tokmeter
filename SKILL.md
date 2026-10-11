@@ -3,7 +3,7 @@ name: tokmeter
 description: >-
   Report token usage and estimated cost for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI and 20 more) by project, model, provider and day, read locally from the session files those agents write. Use when the user asks what they spent, which model or project costs most, how usage is trending, or wants a budget check; also when building an app or automation that needs that telemetry.
 license: AGPL-3.0-only
-compatibility: Node.js 18+. Reads local agent session files; no network or API key.
+compatibility: Node.js 18+. Reads local agent session files; no API key. The only network use is an optional public price-catalog fetch, which --light skips.
 ---
 
 # tokmeter
@@ -95,6 +95,7 @@ not queries):
 | `/api/health`, `/api/pricing-status`, `/api/cron-status` | Daemon, pricing-freshness, and cron health |
 | `/api/today-models`, `/api/cross-tool`, `/api/anomalies`, `/api/session-ledger` | Today's models, cross-tool projection, anomalies, and the per-session ledger |
 | `/api/backups`, `/api/themes` | Cleanup backups and available bar themes |
+| `/api/rates` (`?scope=all`) | Per-model list price per million tokens (input, output, cache read/write), the price source, and the effective rate. Added after v1.14.1 |
 
 An unknown path returns `{"error":"Not found","endpoints":[…]}` listing the
 primary routes — a useful index, though a few specialized endpoints above aren't
