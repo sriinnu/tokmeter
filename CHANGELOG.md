@@ -200,6 +200,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry is removed. If you keep an `opencode.jsonc`, the installer prints the
   entry to add by hand rather than creating a second file.
 
+- **Repricing today kept tool-reported costs.** When today's records were
+  repriced (a new price catalog, or an edited `pricing-overrides.json`), costs
+  reported by the tool itself (Cursor CSV, Roo, Kilo, OpenClaw, Claude Code
+  `costUSD`) were reset to $0 and never restored. Only estimated costs are
+  recomputed now. Completed days were never affected.
+- **A restored config can't widen restore.** `config.json` is part of a backup,
+  so an archive could set `providerPaths` or `customSources` to a folder such
+  as `~/Library/LaunchAgents`, and the next restore would accept it. Restore
+  now keeps this machine's values for both.
+- **macOS app:** the dashboard port search no longer crashes when
+  `bar.dashboardPort` is set within 10 of 65535.
+
+### Security
+
+- The macOS app updates Sparkle from 2.9.1 to 2.10.0, past a published
+  advisory affecting 2.9.1 and earlier.
+- Cleanup refuses an empty filter, restore extracts into a private sandbox and
+  only writes under known session folders, and a restored config can no longer
+  widen where a later restore may write. See Fixed for details.
+- Development tooling with published advisories is updated (vitest 4.1.11,
+  postcss, nanoid, source-map-js). None of it ships in the npm packages.
+- A [security policy](SECURITY.md) with private vulnerability reporting.
+
 ## [1.14.1] - 2026-10-05
 
 ### Fixed
