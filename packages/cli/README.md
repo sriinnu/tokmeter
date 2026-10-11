@@ -24,11 +24,23 @@ tokmeter daily                    # daily usage over time
 tokmeter projects                 # per-project summary
 tokmeter stats                    # overall statistics
 tokmeter pricing sonnet           # lookup model pricing
+tokmeter digest --period week     # weekly cost digest (aliases: weekly, report)
+tokmeter backfill --muse --days 30  # add a newly supported source to sealed history
+tokmeter config list              # knobs in ~/.tokmeter/config.json (get/set/reset/path)
+tokmeter install-cron             # daily price-catalog refresh (macOS launchd)
+tokmeter cron-status              # daily-refresh install and last-run state
+tokmeter install-mcp              # register the MCP server in every supported editor *
+tokmeter install-statusline       # install the statusline hook in every supported editor *
+tokmeter editors                  # list supported editors *
 tokmeter cleanup                  # interactive wipe with pre-delete backup
 tokmeter snapshot                 # portable backup (no deletion)
 tokmeter restore [--latest|--id]  # restore from ~/.cache/tokmeter/backups/
 tokmeter alias ...                # manage project display names, tags, hidden (see below)
 ```
+
+\* These, plus `live`, `statusline` and `daemon`, are delegated to the MCP
+package and need `@sriinnu/tokmeter-mcp` installed (`npm install -g @sriinnu/tokmeter-mcp`);
+the same commands are also available as `tokmeter-mcp <command>`.
 
 See [backup and restore](../../docs/backup-restore.md) for the cross-machine workflow.
 

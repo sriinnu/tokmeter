@@ -1,8 +1,8 @@
 # On-demand web dashboard
 
-Settings → **Open web dashboard** starts a child server owned by TokmeterBar, waits for that child's readiness response, then opens `http://127.0.0.1:3000/`. Reopening reuses the child. **Stop web dashboard** closes it; **Cancel dashboard startup** cancels an in-progress launch. Quitting the app closes the child too. Closing a browser tab alone does not stop it.
+Settings → **Open web dashboard** starts a child server owned by TokmeterBar, waits for that child's readiness response, then opens it in your browser. Release 1.14.1 uses port 3000. From the next release the port defaults to 8888 and is set in the Hub's Settings or with `tokmeter config set bar.dashboardPort <1024–65535>`; if that port is taken, the next free port (up to 9 above it, then any free port) is used and Settings says which. Reopening reuses the child. **Stop web dashboard** closes it; **Cancel dashboard startup** cancels an in-progress launch. Quitting the app closes the child too. Closing a browser tab alone does not stop it.
 
-The dashboard needs Node.js 18+ and the usage daemon used by the menubar. Stopping the dashboard leaves the daemon and menubar updates running. Missing assets, an unavailable Node runtime, and startup/port failures appear in Settings. If another program owns port 3000, Tokmeter refuses to open or stop that program.
+The dashboard needs Node.js 18+ and the usage daemon used by the menubar. Stopping the dashboard leaves the daemon and menubar updates running. Missing assets, an unavailable Node runtime, and startup/port failures appear in Settings. Tokmeter never opens or stops a server it didn't start: in 1.14.1 a busy port 3000 is reported as an error; from the next release it moves to a free port instead.
 
 ## Module ownership
 

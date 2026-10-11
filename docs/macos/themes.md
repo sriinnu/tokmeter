@@ -16,6 +16,8 @@ Paths below are relative to `packages/macos-bar/Sources/TokmeterBar/`.
 | `HubCard.swift` | Hub content spacing and shared panel dispatch |
 | `PrismSurface.swift` | Stateless `PrismPanel` and `PrismHeroBackdrop`; the panel is reused by popup and Hub |
 | `FrostedGlass.swift` | Glass material, opacity, and accessibility fallbacks |
+| `Skins.swift`, `SkinFooter.swift` | (next release) Hook points and dispatch for skin themes: hero, signals, ledger, section head, model/project rows, card, chart, tabs, disclosure, footnote, footer |
+| `Skin+<Name>.swift`, `Skin+<Name>Footer.swift` | (next release) One skin's palette, surface, type, and hook views |
 
 `PrismPanel` accepts palette colors and a corner radius. `PrismHeroBackdrop` accepts palette colors and draws facets relative to the available size. Neither reads settings, loads telemetry, starts timers, or owns interaction state.
 
@@ -23,7 +25,7 @@ Use the existing wrappers when adding a surface. Do not copy a complete card or 
 
 ## Saved identifiers
 
-The picker has six entries. Three styles were replaced while retaining their stored identifiers:
+In 1.14.1 the picker has six entries. Three styles were replaced while retaining their stored identifiers:
 
 | Display name | Stored value |
 | --- | --- |
@@ -33,6 +35,8 @@ The picker has six entries. Three styles were replaced while retaining their sto
 | Lagoon | `aurora` |
 | Carbon | `nocturne` |
 | Glass | `glass` |
+
+The next release adds five skin themes, listed after Paper in the picker: Meter (`meter`), Pump (`pump`), Rams (`rams`), Deck (`deck`), and Passbook (`passbook`). A skin lives in its own files and plugs into the hooks in `Skins.swift`; it never edits shared views.
 
 The stored value is the enum raw value used by `@AppStorage("appTheme")`. Legacy mode names also remain in source. Renaming a display label does not require changing stored values. Hidden enum cases remain decodable but are omitted from the explicitly curated `AppTheme.allCases` picker list.
 

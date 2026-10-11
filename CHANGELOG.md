@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Rates panel (menubar).** A "$/M" button beside All/Today in the models
+  header opens each model you used: input, output, cache read and cache
+  write (5m and 1h) in dollars per million tokens, where the price came from
+  (price catalog exact or fuzzy with the matched id, your override, or
+  unpriced), and what you actually paid per million. Unpriced models say so
+  rather than showing a guess.
+- **`GET /api/rates`** on the daemon (`?scope=all` for every model with
+  recorded usage) returns the same data. Each rate is derived exactly as
+  billing derives it, and a fallback rule such as "2x input" is flagged as
+  derived.
+
 ### Changed
 
 - **Paper is now a broadsheet.** The menubar's Paper theme was stationery:
@@ -29,10 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Five new menubar themes, each a real instrument.**
   - **Meter**: a utility meter under glass. Odometer drums show today's
-    tokens and cost, and a meter disc spins at your burn rate (it stops
-    when idle, when the panel is hidden, or under Reduce Motion).
-    Sub-dials show the ratios, and a sealed totalizer holds the all-time
-    totals.
+    tokens and cost, and a ribbon speedometer shows the last hour's burn
+    rate: a needle sweeping from idle toward a red zone, amber from $10/hr
+    and red from $20/hr. Sub-dials show the ratios, and a sealed totalizer
+    holds the all-time totals.
   - **Pump**: a fuel-pump computer. Rolling wheels show SALE, TOKENS and
     the effective $ per million today (estimated cost ÷ tokens, labelled
     as not a list price). Models are grade plates, and all-time totals sit
@@ -51,13 +64,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signals, ledger, section heads, rows, chart, tabs and cards. Adding one
   doesn't touch the shared views.
 
+- **"Drishti" is retired from what you see.** The default CLI theme is named
+  Tokmeter (its id, `default`, is unchanged, so saved configs keep working),
+  the MCP package logo no longer prints the old name, and the statusline's
+  cache directory is `tokmeter-<uid>`. Behind the scenes the daemon now sends
+  `X-Tokmeter-API` alongside the legacy `X-Drishti-API`, and recognises the
+  new daemon-child environment flag alongside the old one, so a bar, daemon or
+  launchd plist from before this release keeps working with one from after it.
+  The `tokmeter` MCP server name, its tools and the package name are
+  unchanged. The `/tmp/drishti-daemon.{pid,token}` files remain, as
+  compatibility shims for installed bars.
+
 - **The Settings sheet follows the theme.** It used the system's material
   and appearance, so it showed as a dark grey sheet over light themes. It now
   paints the theme's surface and colour scheme, and its buttons take the
   theme's tint.
 
+- **Plainer wording and one number format in the menubar and Hub.**
+  - "Ctx drag" is "Context growth", "Block left #1" and "billing window" are
+    "5-hour limit window", "7-record avg" is "7-day average", and the skins'
+    metaphor headings keep the plain name beside them ("Grades · Models",
+    "Hose meter · Last 30 recorded days", "Spend ledger").
+  - Counts agree with their noun ("1 record", "3 turns"), not "record(s)".
+  - Model, project and day amounts read as dollars and cents everywhere
+    ("$144.00", "$0.056" under ten cents); K and M shorthand stays on totals.
+    Model and project costs share one colour per theme.
+  - Chart tooltips spell dates one way ("Sep 07, 2026").
+  - The Hub's 30-day chart shows readable date labels instead of "Se…".
+  - Price sources read "price catalog" with kosha named in the tooltip, and
+    the Rates panel follows refreshes and clears the old scope's cards when
+    you switch between Today and All.
+  - The cache drawer closes with Escape and its buttons are labelled for
+    VoiceOver. Restarting the usage service has its own icon, no longer a
+    second circular arrow beside Refresh.
+
+- **Editing a price override reprices today.** A change to
+  `pricing-overrides.json` now reprices today's records, as a catalog update
+  already did. Completed days stay frozen at the price of their day.
+- **MCP tools carry annotations.** All 24 tools now declare MCP tool
+  annotations, so clients can tell reads from writes: the 22 that only read
+  session data are `readOnlyHint: true, openWorldHint: false`;
+  `tokmeter_cleanup_execute` and `tokmeter_restore` are
+  `destructiveHint: true, idempotentHint: false`.
+- **Cleanup over MCP always backs up.** `tokmeter_cleanup_execute` still
+  accepts `backup`, but a backup is now written even when `backup: false` is
+  passed, and the result says the flag was ignored.
+
 ### Fixed
 
+- **The menubar popover no longer leaves empty bands above and below its
+  content.** Its height came from the previous layout pass, so a taller hero
+  (any new theme's front panel, or a theme switch) made the window grow to
+  screen height and stay there. The layout now measures everything in one
+  pass and caps in that pass.
+- **Numbers and lamps that disagreed now agree.**
+  - "Today" was marked on the last recorded day, even when it was weeks old,
+    and Meter worked the date out once at launch, so after midnight it marked
+    yesterday. It is now compared with today's date each time.
+  - A stopped daemon could still show LIVE in a header lamp and a pulsing
+    "live session" badge in the Hub, while the footer said OFFLINE.
+  - The hero said "Cost breakdown unavailable" above a list of priced
+    models; it now says "Estimate pending" with what was recorded.
+  - Pump's $ per million used a different numerator from the Rates panel.
+  - The Hub labels its two "today" costs: "est. API" and "est. + tool".
+- **`install-mcp` now works for Claude Code.** It wrote the entry to
+  `~/.claude/settings.json`, which Claude Code does not read for MCP servers.
+  It now runs `claude mcp add --scope user`, or prints that command when
+  `claude` isn't installed, and never edits the file. A stale `drishti` or
+  `tokmeter` entry there is reported as inert.
+- **`tokmeter cleanup --help`** no longer reads as if `--backup` were opt-in:
+  a backup is always written.
 - **macOS menubar no longer deletes custom sources from config.json.** The bar
   re-encoded only the fields its Swift struct modelled, so changing any bar
   setting (chart style, refresh interval, colour source, budget) rewrote
@@ -98,6 +174,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Retired themes migrate.** A stored Synthwave, HUD, Daylight, Mint,
   Blueprint or Noise preference kept rendering while the picker showed nothing
   selected; it now maps to Terminal, Paper or Prism at launch.
+
+- **Cleanup refuses an empty filter.** A cleanup with no project, no
+  providers and no date range matched every record (an empty project string
+  meant "match all"), so it deleted every transcript of every provider. The
+  core now refuses it for every caller (CLI, TUI, MCP, daemon HTTP) with an
+  error saying what to specify. Narrow cleanups, including provider-only or
+  date-only ones, work as before.
+- **Restore treats the archive as untrusted.** It used to check entries only
+  for `..` and then run `tar -x` at `/`. Restore now refuses symlink,
+  hardlink, device and fifo entries. It extracts into a private 0700 temp
+  directory and checks the extracted tree with `lstat`. A file is copied into
+  place only when its destination is inside the session paths the scanner
+  reads, the Claude Code side directories, tokmeter's alias and config files,
+  or the backup's own SQL dump directory. A cross-home remap must also stay
+  inside `$HOME`. If any entry fails, nothing is restored. File modes and
+  mtimes are kept as `tar -x` kept them, and UUID re-minting on cross-home
+  collisions is unchanged. A snapshot whose meta file records another
+  machine's archive path now restores from the archive next to the meta file;
+  before, it failed with "Archive path outside backup directory".
+- **`install-mcp` configures OpenCode where OpenCode reads it.** The entry
+  goes into `~/.config/opencode/opencode.json` under `mcp`, as
+  `{ type: "local", command: [...], enabled: true }`. Before, it went into
+  `settings.json` under `mcpServers`, which OpenCode doesn't read. The old
+  entry is removed. If you keep an `opencode.jsonc`, the installer prints the
+  entry to add by hand rather than creating a second file.
 
 ## [1.14.1] - 2026-10-05
 

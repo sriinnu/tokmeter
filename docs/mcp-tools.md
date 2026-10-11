@@ -136,21 +136,49 @@ Preview what session data would be deleted for the given filters. Shows affected
 
 ### tokmeter_cleanup_execute
 
-DESTRUCTIVE: Permanently delete session data matching the given filters. Creates a backup by default before deleting. ALWAYS call tokmeter_cleanup_preview first. Requires confirm='DELETE' as a safety guard.
+DESTRUCTIVE: Permanently delete session data matching the given filters. Always creates a tar.gz backup before deleting. Requires at least one filter: a project, providers, or a date range. ALWAYS call tokmeter_cleanup_preview first. Requires confirm='DELETE' as a safety guard.
 
 > **Destructive.** Deletes raw session files. Requires `confirm: "DELETE"`
-> (enforced inside the server before anything is removed) and writes a
-> `.tar.gz` backup first by default. Always call `tokmeter_cleanup_preview`
-> first. See [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
+> (enforced inside the server before anything is removed). Always call
+> `tokmeter_cleanup_preview` first. See [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
+>
+> **(next release)** An empty filter (no `project`, no `providers`, no
+> `since`/`until` and no `today`/`week`/`month` scope) is refused, because it
+> would delete every session of every provider. A `.tar.gz` backup is always
+> written first: `backup: false` is still accepted, but it's ignored and the
+> result says so. In 1.14.1 the backup is on by default and `backup: false`
+> skips it.
 
 ### tokmeter_restore
 
 Restore session data from a cleanup backup. Requires confirm='RESTORE' as a safety guard.
 
 > Requires `confirm: "RESTORE"` as a safety guard.
+>
+> **(next release)** The archive is validated before anything is written.
+> Symlink, hardlink, device and fifo entries, and any `..` path, are refused.
+> Files are extracted into a private temp directory and copied into place only
+> if they land inside known agent session paths. If any entry fails, nothing is
+> restored. See [Backup, Snapshot & Restore](backup-restore.md#what-restore-will-and-wont-write-next-release).
+
+## Tool annotations (next release)
+
+Every tool declares MCP tool annotations so a client can decide what to
+auto-approve:
+
+| Tools | Annotations |
+| --- | --- |
+| All tools except the two below (22) | `readOnlyHint: true`, `openWorldHint: false` |
+| `tokmeter_cleanup_execute`, `tokmeter_restore` | `readOnlyHint: false`, `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: false` |
+
+"Read-only" means the tool changes no session data or user config. Reads still
+refresh tokmeter's own scan caches under `~/.cache/tokmeter`, as any tokmeter
+read does. Neither destructive tool is idempotent: a repeated cleanup can catch
+sessions written since the last call, and a repeated cross-home restore mints
+fresh UUIDs for the copies the first call restored.
 
 ## See also
 
-- [Consuming tokmeter](consuming-tokmeter.md) — integration guidance and the daemon HTTP API
+- [Consuming tokmeter](consuming-tokmeter.md) — integration guidance
 - [How the numbers work](how-the-numbers-work.md) — bucket semantics and where estimates enter
 - [Backup, Snapshot & Restore](backup-restore.md) — the confirmation/backup model in full

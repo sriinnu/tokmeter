@@ -27,10 +27,14 @@ npx @sriinnu/tokmeter-mcp
 | `tokmeter-mcp daemon start`            | Start cross-provider aggregation daemon     |
 | `tokmeter-mcp daemon stop`             | Stop the daemon                             |
 | `tokmeter-mcp daemon status`           | Check daemon status                         |
+| `tokmeter-mcp daemon restart`          | Restart the daemon                          |
+| `tokmeter-mcp daemon install-agent`    | Keep it running via a launchd agent (macOS) |
+| `tokmeter-mcp daemon uninstall-agent`  | Remove the launchd agent                    |
 | `tokmeter-mcp install-statusline`      | Install statusline hook for all editors     |
 | `tokmeter-mcp install-mcp`             | Install MCP server for all editors          |
 | `tokmeter-mcp install-hooks`           | Install guard hooks (Claude Code)           |
 | `tokmeter-mcp install-all`             | Restore everything — statusline + MCP + hooks |
+| `tokmeter-mcp uninstall-statusline`, `uninstall-mcp`, `uninstall-hooks` | Remove what the installers added |
 | `tokmeter-mcp editors`                 | List all supported editors                  |
 
 ## Usage
@@ -53,14 +57,21 @@ tokmeter-mcp serve
 
 #### MCP Configuration
 
-Add to your editor's MCP settings (e.g., `~/.claude/settings.json`):
+For Claude Code, register it with the `claude` CLI:
+
+```bash
+claude mcp add tokmeter --scope user -- npx -y @sriinnu/tokmeter-mcp serve
+```
+
+For other clients, add this to the client's MCP settings file. The `serve`
+argument is required; without it the package starts the terminal dashboard.
 
 ```json
 {
   "mcpServers": {
     "tokmeter": {
       "command": "npx",
-      "args": ["@sriinnu/tokmeter-mcp", "serve"]
+      "args": ["-y", "@sriinnu/tokmeter-mcp", "serve"]
     }
   }
 }
@@ -85,6 +96,30 @@ Auto-install for all supported editors:
 tokmeter-mcp install-mcp
 ```
 
+For Claude Code, v1.14.1's `install-mcp` writes the entry into
+`~/.claude/settings.json`, which Claude Code does not load MCP servers from, so
+use the `claude mcp add` command above instead. From the next release,
+`install-mcp` registers Claude Code through `claude mcp add --scope user` (or
+prints that command when the `claude` CLI isn't on your PATH), and points out
+any old, inert entry left in `settings.json`, which you can delete.
+
+For OpenCode, v1.14.1's `install-mcp` writes to
+`~/.config/opencode/settings.json`, which OpenCode doesn't read for MCP. From
+the next release it writes to `~/.config/opencode/opencode.json` under `mcp`,
+in OpenCode's own shape, and removes the old entry:
+
+```json
+{
+  "mcp": {
+    "tokmeter": {
+      "type": "local",
+      "command": ["npx", "-y", "@sriinnu/tokmeter-mcp", "serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
 #### MCP Tools
 
 Once connected, the server exposes these tools to the AI agent:
@@ -100,6 +135,16 @@ Once connected, the server exposes these tools to the AI agent:
 | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips` | Cost suggestions |
 | `tokmeter_leaderboard`, `tokmeter_digest`, `tokmeter_streaks` | Reports and usage patterns |
 | `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_backups`, `tokmeter_restore` | Preview cleanup, delete with confirmation, and restore backups |
+
+**(next release)** Every tool declares MCP annotations. The 22 reporting
+tools are `readOnlyHint: true, openWorldHint: false`. `tokmeter_cleanup_execute`
+and `tokmeter_restore` are `destructiveHint: true, idempotentHint: false`.
+`tokmeter_cleanup_execute` refuses an empty filter, so name a project,
+providers or a date range. It always writes a backup first, even when passed
+`backup: false`. `tokmeter_restore` refuses archives with links, special
+files or `..` paths, and writes only inside known agent session paths. See
+[docs/mcp-tools.md](https://github.com/sriinnu/tokmeter/blob/main/docs/mcp-tools.md) and
+[docs/backup-restore.md](https://github.com/sriinnu/tokmeter/blob/main/docs/backup-restore.md).
 
 ### Statusline
 

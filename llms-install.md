@@ -3,7 +3,7 @@
 Instructions for an AI agent installing this server on a user's machine.
 
 Tokmeter reads the session files AI coding agents already write to disk
-(Claude Code, Codex, Cursor, Gemini CLI and 12 more) and answers questions about
+(Claude Code, Codex, Cursor, Gemini CLI and 20 more) and answers questions about
 token usage and cost. It runs locally, needs **no API key, no account and no
 environment variables**, and sends nothing off the machine.
 
@@ -26,6 +26,11 @@ package's default command starts a terminal dashboard, not the MCP server.
   }
 }
 ```
+
+For Claude Code, don't edit a settings file: run
+`claude mcp add tokmeter --scope user -- npx -y @sriinnu/tokmeter-mcp serve`.
+Claude Code keeps MCP servers in `~/.claude.json` and ignores `mcpServers` in
+`~/.claude/settings.json`.
 
 For Cline, the settings file is `cline_mcp_settings.json`. Merge the
 `tokmeter` entry into the existing `mcpServers` object rather than replacing it.

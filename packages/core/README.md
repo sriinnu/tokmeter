@@ -1,6 +1,6 @@
 # Core API
 
-The engine behind tokmeter. Scans local session files, parses token records from 16+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
+The engine behind tokmeter. Scans local session files, parses token records from 20+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
 
 ## Install
 
@@ -41,7 +41,7 @@ For a scoped report, call `core.getSummary({ week: true, project: "my-app", prov
 
 ## Supported Providers
 
-Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo, Kilo CLI, Mux, Synthetic.
+Claude Code, OpenCode, Codex CLI, Codex Desktop, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo, Kilo CLI, Mux, VS Code Copilot, Antigravity, Zed, Muse, Cline, Augment, Copilot CLI, Synthetic, plus custom sources registered under `customSources` in `~/.tokmeter/config.json`.
 
 ## Pricing
 
@@ -65,7 +65,8 @@ input buckets: `cacheRead / (input + cacheRead + cacheWrite)`.
 
 History is **frozen**: anything recorded before today keeps its tokens, usage,
 and cost forever. Only *today* (still in flight) re-prices when kosha pricing
-changes. The frozen pre-today snapshot is **append-only** across calendar
+changes (and, from the release after v1.14.1, when
+`~/.tokmeter/pricing-overrides.json` changes). The frozen pre-today snapshot is **append-only** across calendar
 rollovers — never discarded and re-derived — and a monotonic floor guard
 refuses to overwrite it with a materially smaller (partial/failed) rebuild.
 

@@ -21,11 +21,11 @@ The app reads HTTP telemetry from `http://127.0.0.1:9877`. It does not run a sep
 
 The menubar shows today's tokens. Open it for estimated API cost, tool-reported cost when available, and today's models and projects. The full **Usage details** row expands lifetime totals, trends, and signals. The popup fits its content and scrolls when it reaches the available height. The Hub offers larger breakdowns and settings.
 
-Six themes are selectable: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. Prism replaces Nebula and retains the stored `nebula` identifier. Carbon replaces Nocturne; Lagoon replaces Aurora. Their stored identifiers remain `nocturne` and `aurora` so existing preferences continue to decode. Glass uses native light desktop frost, dark ink, and explicit theme-based status colors; Reduce Transparency selects an opaque fallback. The footer separates version and licensing from pricing status.
+Six themes are selectable in v1.14.1: Terminal, Paper, Prism, Lagoon, Carbon, and Glass. The next release redraws Paper as a broadsheet (popover, Settings sheet, and Hub) and adds five instrument themes: Meter (utility meter with odometer drums and a burn-rate gauge), Pump (fuel-pump display), Rams (calculator), Deck (hi-fi display), and Passbook (savings passbook). Each new theme also styles the footer and the Hub. Prism replaces Nebula and retains the stored `nebula` identifier. Carbon replaces Nocturne; Lagoon replaces Aurora. Their stored identifiers remain `nocturne` and `aurora` so existing preferences continue to decode. Glass uses native light desktop frost, dark ink, and explicit theme-based status colors; Reduce Transparency selects an opaque fallback. The footer separates version and licensing from pricing status.
 
-Refresh frequency is configurable. Costs are not a verified subscription bill; missing cost data is shown as unavailable. See [how the numbers work](../../docs/how-the-numbers-work.md) and [popover validation](../../docs/macos/popover-usability.md).
+Refresh frequency is configurable. From the release after v1.14.1, the **$/M** button in the models header opens a rates panel. For each model used today, or all time, it lists the list price per million tokens for input, output, cache read, and cache write (5-minute and 1-hour). It also shows where each price came from (your override, an exact or fuzzy kosha match, or unpriced) and the estimated average paid per million. Costs are not a verified subscription bill; missing cost data is shown as unavailable. See [how the numbers work](../../docs/how-the-numbers-work.md) and [popover validation](../../docs/macos/popover-usability.md).
 
-Settings → **Open web dashboard** starts a local dashboard server when needed and opens it after readiness. **Stop web dashboard** stops that child; quitting the app also stops it. The usage daemon continues independently. See [dashboard lifecycle and development](../../docs/macos/web-dashboard.md).
+Settings → **Open web dashboard** starts a local dashboard server when needed and opens it after readiness. **Stop web dashboard** stops that child; quitting the app also stops it. The usage daemon continues independently. From the release after v1.14.1 the dashboard prefers port 8888, configurable in Hub → Settings → Dashboard port or with `tokmeter config set bar.dashboardPort <port>` (1024–65535). If another server holds that port, it opens on the next free one and says so. See [dashboard lifecycle and development](../../docs/macos/web-dashboard.md).
 
 ## Build and test
 
@@ -48,6 +48,10 @@ For optional synthetic UI captures, create an output directory and set `TOKMETER
 - `NodeToolchain.swift` and `SubprocessRunner.swift`: Node discovery and bounded startup commands.
 - `DaemonClient.swift`: version-checked REST client.
 - `Theme.swift`, `ThemePalettes.swift`, and `Theme+Modes.swift`: identity, colors, and visual modes.
+- `Broadsheet.swift`, `HubBroadsheet.swift`: Paper's newspaper primitives.
+- `Skins.swift`, `SkinFooter.swift`, `HubSkin.swift`, and `Skin+<Name>.swift`: the instrument themes, each in its own file behind fixed hook points.
+- `PanelStack.swift`: the popover's single-pass height cap.
+- `RatesPanel.swift`, `RatesModels.swift`, `DaemonClient+Rates.swift`: the $/M rates panel.
 - `PrismSurface.swift` and `FrostedGlass.swift`: reusable surface drawing shared by the popup and Hub.
 - `HubView.swift`: full-window companion.
 
