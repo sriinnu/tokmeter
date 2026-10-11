@@ -21,9 +21,13 @@ struct HubPulseCard: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Today's pulse")
-                    .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
+                if theme == .paper {
+                    HubPaperTitle(text: "Today's pulse")
+                } else {
+                    Text("Today's pulse")
+                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                }
                 BalancedGrid(columnCounts: [5, 3, 2, 1], minimumColumnWidth: 170, spacing: 10) {
                     // "—" for inactive numeric tiles instead of "0%" — "0%"
                     // reads as "cache failed today / reasoning crashed" when
@@ -156,6 +160,41 @@ struct PulseTile: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a ruled column. Kicker, serif figure, sub-line; colour only
+    /// where the signal itself means something (burn, status).
+    private var paperBody: some View {
+        HubCard(theme: theme, nested: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                HubPaperLabel(text: label)
+                Text(value)
+                    .font(Broadsheet.display(20, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(active ? Broadsheet.ink : Broadsheet.muted)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(sub)
+                    .font(.system(size: 10.5, design: .serif))
+                    .italic(!active)
+                    .foregroundColor(Broadsheet.muted)
+                    .lineLimit(2, reservesSpace: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var standardBody: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -202,6 +241,66 @@ struct ContextPressureStrip: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    private var paperBody: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            InkRule(weight: 1)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HubPaperLabel(text: "Context drag", color: Broadsheet.ink)
+                HubPaperLabel(text: pressure.status, color: paperAccent)
+                LeaderDots()
+                Text("\(pct(pressure.dragShare))%")
+                    .font(Broadsheet.display(15, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                Text("\(Fmt.number(pressure.dragTokens)) tokens")
+                    .font(.system(size: 11, design: .serif))
+                    .foregroundColor(Broadsheet.muted)
+            }
+            HubPaperMeter(fraction: pressure.dragShare, color: paperAccent)
+            HStack(spacing: 14) {
+                paperMetric("current", Fmt.number(pressure.currentInputTokens))
+                paperMetric("base", Fmt.number(pressure.baselineInputTokens))
+                paperMetric("turns", "\(pressure.turnCount)")
+                paperMetric("age", "\(pressure.sessionAgeMinutes)m")
+            }
+            Text(pressure.reason)
+                .font(.system(size: 10.5, design: .serif))
+                .italic()
+                .foregroundColor(Broadsheet.muted)
+                .lineLimit(2)
+        }
+        .help(
+            "Estimated from latest-session input growth. Providers do not expose a true context_drag field."
+        )
+    }
+
+    private func paperMetric(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HubPaperLabel(text: label)
+            Text(value)
+                .font(.system(size: 11, weight: .bold, design: .serif))
+                .monospacedDigit()
+                .foregroundColor(Broadsheet.ink)
+        }
+    }
+
+    /// Ink unless the status is a warning: colour is reserved for meaning.
+    private var paperAccent: Color {
+        switch pressure.status {
+        case "critical": return theme.statusDanger
+        case "high": return theme.statusWarning
+        default: return Broadsheet.ink
+        }
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "memorychip.fill")
@@ -297,6 +396,45 @@ struct BillingStrip: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    private var paperBody: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            InkRule(weight: 1)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HubPaperLabel(text: "Claude billing window", color: Broadsheet.ink)
+                Text("block #\(window.blockNumber) · \(Int(window.elapsedPct))% elapsed")
+                    .font(.system(size: 11, design: .serif))
+                    .foregroundColor(Broadsheet.muted)
+                LeaderDots()
+                Text(formatRemainingLong(window.remainingSec) + " left")
+                    .font(.system(size: 12, weight: .bold, design: .serif))
+                    .foregroundColor(paperAccent)
+                Text(String(format: "$%.2f", window.cost))
+                    .font(Broadsheet.display(15, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                Text("\(window.records) turn(s)")
+                    .font(.system(size: 11, design: .serif))
+                    .foregroundColor(Broadsheet.muted)
+            }
+            HubPaperMeter(fraction: window.elapsedPct / 100, color: paperAccent)
+        }
+        .padding(.top, 4)
+    }
+
+    private var paperAccent: Color {
+        if window.elapsedPct >= 90 { return theme.statusDanger }
+        if window.elapsedPct >= 75 { return theme.statusWarning }
+        return Broadsheet.ink
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "timer")

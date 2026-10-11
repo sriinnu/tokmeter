@@ -155,8 +155,11 @@ struct YearHeatmap: View {
             // aspectRatio(1) makes the cell square at whatever width the equal
             // column slot gives it — so the grid self-sizes its height. A fixed
             // corner radius reads fine across the cell-size range.
-            RoundedRectangle(cornerRadius: 3)
-                .fill(intensity > 0 ? c.accent.opacity(intensity) : bg.secondaryTextColor.opacity(0.08))
+            // Paper prints the year in ink: square cells, density by tint.
+            RoundedRectangle(cornerRadius: theme == .paper ? 0 : 3)
+                .fill(intensity > 0
+                    ? (theme == .paper ? Broadsheet.ink : c.accent).opacity(intensity)
+                    : (theme == .paper ? Broadsheet.ink.opacity(0.06) : bg.secondaryTextColor.opacity(0.08)))
                 .aspectRatio(1, contentMode: .fit)
                 .scaleEffect(isHovered ? 1.15 : 1.0)
                 .animation(.spring(response: 0.28, dampingFraction: 0.65), value: isHovered)
@@ -303,15 +306,20 @@ private struct HeatmapCellTooltip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(bg.surfaceColor)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(c.accent.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
-        )
+        .background {
+            if theme == .paper {
+                Rectangle().fill(Broadsheet.stock)
+                    .overlay(Rectangle().strokeBorder(Broadsheet.ink, lineWidth: 1))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(bg.surfaceColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(c.accent.opacity(0.35), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(bg.isLight ? 0.12 : 0.35), radius: 6, y: 2)
+            }
+        }
         .fixedSize()
         .allowsHitTesting(false)
     }
@@ -355,8 +363,10 @@ struct HeatmapLegend: View {
                 .font(.system(size: 9, design: theme.fonts.bodyDesign))
                 .foregroundColor(bg.secondaryTextColor)
             ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { intensity in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(intensity > 0 ? c.accent.opacity(0.15 + intensity * 0.85) : bg.secondaryTextColor.opacity(0.08))
+                RoundedRectangle(cornerRadius: theme == .paper ? 0 : 2)
+                    .fill(intensity > 0
+                        ? (theme == .paper ? Broadsheet.ink : c.accent).opacity(0.15 + intensity * 0.85)
+                        : (theme == .paper ? Broadsheet.ink.opacity(0.06) : bg.secondaryTextColor.opacity(0.08)))
                     .frame(width: 10, height: 10)
             }
             Text("more")

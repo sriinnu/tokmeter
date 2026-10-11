@@ -56,7 +56,12 @@ struct HubView: View {
     /// retints the other instantly.
     @AppStorage("appTheme") var theme: AppTheme = .nebula
 
-    @State private var selection: HubSection = .overview
+    @State private var selection: HubSection
+
+    init(loader: TokmeterLoader, initialSelection: HubSection = .overview) {
+        self.loader = loader
+        _selection = State(initialValue: initialSelection)
+    }
 
     private var bg: BackgroundMode { theme.backgroundMode }
 
@@ -74,8 +79,14 @@ struct HubView: View {
                 .frame(width: 232)
                 .frame(maxHeight: .infinity)
                 .background(sidebarBackground)
-            Divider()
-                .ignoresSafeArea()
+            if theme == .paper {
+                // A column rule, in ink.
+                Rectangle().fill(Broadsheet.ink).frame(width: 1)
+                    .ignoresSafeArea()
+            } else {
+                Divider()
+                    .ignoresSafeArea()
+            }
             detailPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(hubBackground)
@@ -118,7 +129,9 @@ struct HubView: View {
     /// split reads as intentional, not a matte seam.
     @ViewBuilder
     private var sidebarBackground: some View {
-        if bg.usesMaterial {
+        if theme == .paper {
+            Broadsheet.stock
+        } else if bg.usesMaterial {
             Color.black.opacity(0.08)
         } else {
             LinearGradient(
@@ -135,7 +148,9 @@ struct HubView: View {
     /// hub reads as one continuous surface with the bar.
     @ViewBuilder
     private var hubBackground: some View {
-        if bg.usesMaterial {
+        if theme == .paper {
+            Broadsheet.stock
+        } else if bg.usesMaterial {
             // The root supplies one continuous material behind sidebar and detail.
             Color.clear
         } else {

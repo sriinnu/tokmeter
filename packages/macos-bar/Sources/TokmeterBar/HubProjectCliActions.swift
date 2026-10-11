@@ -54,6 +54,13 @@ struct HubProjectCliActions: View {
     var body: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 10) {
+                if theme == .paper {
+                    HStack {
+                        HubPaperTitle(text: "Manage in terminal")
+                        Spacer()
+                        HubPaperLabel(text: "click to copy")
+                    }
+                } else {
                 HStack(spacing: 6) {
                     Image(systemName: "terminal.fill")
                         .font(.system(size: 11, weight: .semibold))
@@ -66,7 +73,8 @@ struct HubProjectCliActions: View {
                         .font(.system(size: 9, design: theme.fonts.bodyDesign))
                         .foregroundColor(bg.secondaryTextColor)
                 }
-                VStack(spacing: 6) {
+                }
+                VStack(spacing: theme == .paper ? 0 : 6) {
                     ForEach(commands) { cmd in
                         cliRow(cmd)
                     }
@@ -116,6 +124,50 @@ struct HubCliCommandRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    private var paperBody: some View {
+        Button(action: onCopy) {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(command.title)
+                            .font(.system(size: 13, weight: .semibold, design: .serif))
+                            .foregroundColor(Broadsheet.ink)
+                        Text(command.command)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundColor(Broadsheet.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    if isFlashed {
+                        Kicker(text: "Copied", inverted: true)
+                    } else {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Broadsheet.ink)
+                            .opacity(hovered ? 1 : 0.5)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .background(hovered ? Broadsheet.ink.opacity(0.05) : Color.clear)
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovered = $0 }
+        .help("Copy: \(command.command)")
+    }
+
+    private var standardBody: some View {
         Button(action: onCopy) {
             HStack(spacing: 10) {
                 Image(systemName: command.icon)

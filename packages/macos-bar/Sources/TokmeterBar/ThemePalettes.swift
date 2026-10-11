@@ -89,13 +89,14 @@ extension AppTheme {
             )
 
         case .paper:
-            // Editorial ink + two restrained accents (red for loss, blue for neutral).
-            // Numbers rely on serif weight, not saturation, for hierarchy.
+            // Broadsheet: money and figures in ink, one teal accent (links,
+            // the active line). Hierarchy comes from serif weight and rules,
+            // not saturation. Red is not money: a newspaper sets prices in ink.
             return ThemeColors(
-                primary:   Color(red: 0.102, green: 0.102, blue: 0.102),  // #1a1a1a ink
+                primary:   Color(red: 0.078, green: 0.078, blue: 0.078),  // #141414 ink
                 secondary: Color(red: 0.165, green: 0.165, blue: 0.170),  // #2a2a2b near-ink
-                accent:    Color(red: 0.239, green: 0.353, blue: 0.502),  // #3d5a80 editorial blue
-                highlight: Color(red: 0.757, green: 0.286, blue: 0.325),  // #c14953 editorial red
+                accent:    Color(red: 0.043, green: 0.431, blue: 0.471),  // #0b6e78 broadsheet teal
+                highlight: Color(red: 0.078, green: 0.078, blue: 0.078),  // #141414 money in ink
                 warm:      Color(red: 0.545, green: 0.435, blue: 0.278),  // #8b6f47 warm brown
                 tertiary:  Color(red: 0.314, green: 0.416, blue: 0.251)   // #506a40 olive
             )

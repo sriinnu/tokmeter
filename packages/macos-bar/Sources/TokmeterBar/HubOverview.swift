@@ -71,7 +71,21 @@ struct HubOverviewPanel: View {
 
     // MARK: - Header
 
+    @ViewBuilder
     private var header: some View {
+        if theme == .paper {
+            HubPaperPageHeader(
+                title: "Overview",
+                subtitle: "Usage across your projects. Costs include estimates and tool reports.",
+                dateline: BroadsheetDateline.date() + " · "
+                    + BroadsheetDateline.edition(daysRecorded: loader.stats?.activeDays ?? 0)
+            )
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Overview")
@@ -129,15 +143,19 @@ struct HubOverviewPanel: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Last 30 recorded days")
-                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                        .foregroundColor(bg.primaryTextColor)
+                    if theme == .paper {
+                        HubPaperTitle(text: "Last 30 recorded days")
+                    } else {
+                        Text("Last 30 recorded days")
+                            .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                    }
                     Spacer()
                     HubChartLegend(theme: theme)
                     if let first = last30.first, let last = last30.last {
                         Text("\(first.date) — \(last.date)")
-                            .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                            .foregroundColor(bg.secondaryTextColor)
+                            .font(.system(size: 10, design: theme == .paper ? .serif : theme.fonts.bodyDesign))
+                            .foregroundColor(theme == .paper ? Broadsheet.muted : bg.secondaryTextColor)
                             .padding(.leading, 10)
                     }
                 }
@@ -153,9 +171,13 @@ struct HubOverviewPanel: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("365-day activity")
-                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                        .foregroundColor(bg.primaryTextColor)
+                    if theme == .paper {
+                        HubPaperTitle(text: "365-day activity")
+                    } else {
+                        Text("365-day activity")
+                            .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                    }
                     Spacer()
                     HeatmapLegend(theme: theme)
                 }
@@ -170,7 +192,7 @@ struct HubOverviewPanel: View {
     // MARK: - Top projects + Top models
 
     private var bottomRow: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme == .paper ? 24 : 12) {
             HubCard(theme: theme) {
                 HubTopProjectsList(projects: topProjectsByCost, theme: theme)
             }

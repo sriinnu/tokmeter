@@ -40,7 +40,23 @@ struct HubProjectDetailView: View {
         }
     }
 
+    @ViewBuilder
     private var backChip: some View {
+        if theme == .paper {
+            Button(action: onBack) {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .heavy))
+                    Text("All projects")
+                }
+            }
+            .buttonStyle(HubPaperButtonStyle())
+            .keyboardShortcut(.escape, modifiers: [])
+        } else {
+            standardBackChip
+        }
+    }
+
+    private var standardBackChip: some View {
         Button(action: onBack) {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.left")
@@ -61,7 +77,20 @@ struct HubProjectDetailView: View {
         .keyboardShortcut(.escape, modifiers: [])
     }
 
+    @ViewBuilder
     private var header: some View {
+        if theme == .paper {
+            HubPaperPageHeader(
+                title: project.project,
+                subtitle: "\(Fmt.cost(project.totalCost)) · \(Fmt.number(project.totalTokens)) tokens · "
+                    + "\(project.activeDays) day\(project.activeDays == 1 ? "" : "s")"
+            )
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(project.project)
                 .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
@@ -87,7 +116,7 @@ struct HubProjectDetailView: View {
     private func detailContent(_ d: ProjectDetailData) -> some View {
         detailKpiRow(d).cascadeIn(delay: 0.18)
         dailyChartCard(d).cascadeIn(delay: 0.28)
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme == .paper ? 24 : 12) {
             HubCard(theme: theme) {
                 HubProjectModelsList(models: d.models, theme: theme)
             }
@@ -117,9 +146,13 @@ struct HubProjectDetailView: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Daily activity")
-                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                        .foregroundColor(bg.primaryTextColor)
+                    if theme == .paper {
+                        HubPaperTitle(text: "Daily activity")
+                    } else {
+                        Text("Daily activity")
+                            .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                    }
                     Spacer()
                     HubChartLegend(theme: theme)
                 }
@@ -172,18 +205,44 @@ struct HubProjectModelsList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Models")
-                .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                .foregroundColor(bg.primaryTextColor)
+            if theme == .paper {
+                HubPaperTitle(text: "Models")
+            } else {
+                Text("Models")
+                    .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                    .foregroundColor(bg.primaryTextColor)
+            }
             if models.isEmpty {
                 HubEmptyState(icon: "cube", message: "No model data", theme: theme)
             } else {
                 VStack(spacing: 8) {
                     ForEach(models.prefix(8)) { m in
-                        modelRow(m)
+                        if theme == .paper {
+                            paperModelRow(m)
+                        } else {
+                            modelRow(m)
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private func paperModelRow(_ m: ModelDetail) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(Fmt.shortModel(m.model))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                LeaderDots()
+                Text(Fmt.cost(m.cost))
+                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+            }
+            HubPaperMeter(fraction: m.percentageOfTotal / 100.0)
         }
     }
 
@@ -228,20 +287,44 @@ struct HubProjectProvidersList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Providers")
-                .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                .foregroundColor(bg.primaryTextColor)
+            if theme == .paper {
+                HubPaperTitle(text: "Providers")
+            } else {
+                Text("Providers")
+                    .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                    .foregroundColor(bg.primaryTextColor)
+            }
             if providers.isEmpty {
                 HubEmptyState(icon: "antenna.radiowaves.left.and.right",
                               message: "No providers", theme: theme)
             } else {
                 VStack(spacing: 6) {
                     ForEach(providers) { p in
-                        providerRow(p)
+                        if theme == .paper {
+                            paperProviderRow(p)
+                        } else {
+                            providerRow(p)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func paperProviderRow(_ p: ProviderDetail) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(p.provider)
+                .font(.system(size: 13, weight: .semibold, design: .serif))
+                .foregroundColor(Broadsheet.ink)
+            Kicker(text: "\(p.models.count) model\(p.models.count == 1 ? "" : "s")", color: Broadsheet.muted)
+            LeaderDots()
+            Kicker(text: "\(Int(p.percentageOfTotal.rounded()))%", color: Broadsheet.muted)
+            Text(Fmt.cost(p.cost))
+                .font(.system(size: 13, weight: .bold, design: .serif))
+                .monospacedDigit()
+                .foregroundColor(Broadsheet.ink)
+        }
+        .padding(.vertical, 3)
     }
 
     private func providerRow(_ p: ProviderDetail) -> some View {

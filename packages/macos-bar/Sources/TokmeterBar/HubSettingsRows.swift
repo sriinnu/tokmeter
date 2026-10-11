@@ -20,14 +20,18 @@ struct HubStepperRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
-                Text(helpText)
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(bg.secondaryTextColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            if theme == .paper {
+                HubPaperRowText(label: label, help: helpText)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text(helpText)
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             HStack(spacing: 6) {
@@ -38,8 +42,10 @@ struct HubStepperRow: View {
                     }
                 }
                 Text("\(value)\(suffix)")
-                    .font(.system(size: 13, weight: .bold, design: theme.fonts.valueDesign))
-                    .foregroundColor(bg.primaryTextColor)
+                    .font(theme == .paper
+                        ? .system(size: 15, weight: .bold, design: .serif).monospacedDigit()
+                        : .system(size: 13, weight: .bold, design: theme.fonts.valueDesign))
+                    .foregroundColor(theme == .paper ? Broadsheet.ink : bg.primaryTextColor)
                     .frame(minWidth: 44)
                     .contentTransition(.numericText())
                 HubStepButton(icon: "plus", theme: theme, disabled: value >= range.upperBound) {
@@ -65,6 +71,25 @@ struct HubStepButton: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            // Square ink key; inverted on hover.
+            Button(action: action) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .heavy))
+                    .frame(width: 22, height: 22)
+                    .hubPaperBox(filled: hovered && !disabled)
+                    .opacity(disabled ? 0.35 : 1)
+            }
+            .buttonStyle(.borderless)
+            .disabled(disabled)
+            .onHover { hovered = !disabled && $0 }
+            .accessibilityLabel(icon == "minus" ? "Decrease" : "Increase")
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .bold))
@@ -127,16 +152,38 @@ where Option.RawValue == String, Option.AllCases: RandomAccessCollection {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
-                Text(helpText)
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(bg.secondaryTextColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            if theme == .paper {
+                HubPaperRowText(label: label, help: helpText)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text(helpText)
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
+            if theme == .paper {
+                // A square ink box that opens the same choices.
+                Menu {
+                    ForEach(Array(options), id: \.id) { opt in
+                        Button(humanLabel(for: opt)) { selection = opt }
+                    }
+                } label: {
+                    // One Text: a borderless Menu keeps only the label's text.
+                    Text(humanLabel(for: selection) + "  ▾")
+                        .font(.system(size: 13, weight: .semibold, design: .serif))
+                        .foregroundColor(Broadsheet.ink)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 170)
+                .overlay(Rectangle().strokeBorder(Broadsheet.ink, lineWidth: 1))
+                .accessibilityLabel(label)
+            } else {
             Picker("", selection: $selection) {
                 ForEach(Array(options), id: \.id) { opt in
                     Text(humanLabel(for: opt)).tag(opt)
@@ -146,6 +193,7 @@ where Option.RawValue == String, Option.AllCases: RandomAccessCollection {
             .labelsHidden()
             .frame(minWidth: 140)
             .tint(c.accent)
+            }
         }
     }
 }
@@ -163,20 +211,30 @@ struct HubToggleRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
-                Text(helpText)
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(bg.secondaryTextColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            if theme == .paper {
+                HubPaperRowText(label: label, help: helpText)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text(helpText)
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
+            if theme == .paper {
+                Toggle(label, isOn: $isOn)
+                    .labelsHidden()
+                    .toggleStyle(HubPaperToggleStyle())
+            } else {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(c.accent)
+            }
         }
     }
 }
@@ -196,14 +254,18 @@ struct HubThresholdRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
-                Text(helpText)
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(bg.secondaryTextColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            if theme == .paper {
+                HubPaperRowText(label: label, help: helpText)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text(helpText)
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             HStack(spacing: 4) {
@@ -211,7 +273,7 @@ struct HubThresholdRow: View {
                     .font(.system(size: 11, weight: .semibold, design: theme.fonts.valueDesign))
                     .foregroundColor(bg.secondaryTextColor)
                 TextField("off", text: $text)
-                    .textFieldStyle(.roundedBorder)
+                    .modifier(HubFieldStyle(theme: theme))
                     .frame(width: 80)
                     .font(.system(size: 12, design: theme.fonts.valueDesign))
                     .onAppear {
@@ -256,20 +318,28 @@ struct HubPortRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
-                    .foregroundColor(bg.primaryTextColor)
-                Text(invalid ? "Enter a port from 1024 to 65535." : helpText)
-                    .font(.system(size: 10, design: theme.fonts.bodyDesign))
-                    .foregroundColor(invalid ? theme.statusDanger : bg.secondaryTextColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            if theme == .paper {
+                HubPaperRowText(label: label,
+                                help: invalid ? "Enter a port from 1024 to 65535." : helpText,
+                                helpColor: invalid ? theme.statusDanger : Broadsheet.muted)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: theme.fonts.labelDesign))
+                        .foregroundColor(bg.primaryTextColor)
+                    Text(invalid ? "Enter a port from 1024 to 65535." : helpText)
+                        .font(.system(size: 10, design: theme.fonts.bodyDesign))
+                        .foregroundColor(invalid ? theme.statusDanger : bg.secondaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 12)
             TextField(label, text: $text)
                 .labelsHidden()
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13, weight: .bold, design: theme.fonts.valueDesign).monospacedDigit())
+                .modifier(HubFieldStyle(theme: theme))
+                .font(theme == .paper
+                    ? .system(size: 14, weight: .bold, design: .serif).monospacedDigit()
+                    : .system(size: 13, weight: .bold, design: theme.fonts.valueDesign).monospacedDigit())
                 .multilineTextAlignment(.trailing)
                 .frame(width: 72)
                 .focused($focused)

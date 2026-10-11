@@ -22,7 +22,9 @@ struct UsageOverview: View {
                 SessionsSection(loader: loader, theme: theme, showAll: $showAllSessions)
             }
             Text("Model and project costs may combine estimates and tool reports.")
-                .font(.system(size: 9, design: theme.fonts.bodyDesign))
+                .font(theme == .paper
+                      ? .system(size: 10, design: .serif).italic()
+                      : .system(size: 9, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
             DisclosureGroup(isExpanded: $showUsageDetails) {
                 VStack(spacing: 14) {
@@ -34,10 +36,14 @@ struct UsageOverview: View {
                 }
                 .padding(.top, 10)
             } label: {
-                Text("Usage details")
-                    .foregroundStyle(theme.backgroundMode.primaryTextColor)
+                if theme == .paper {
+                    Kicker(text: "Usage details")
+                } else {
+                    Text("Usage details")
+                        .foregroundStyle(theme.backgroundMode.primaryTextColor)
+                }
             }
-            .disclosureGroupStyle(FullRowDisclosureStyle())
+            .disclosureGroupStyle(FullRowDisclosureStyle(paper: theme == .paper))
             .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
             .tint(theme.backgroundMode.secondaryTextColor)
         }
@@ -47,16 +53,27 @@ struct UsageOverview: View {
 /// One button owns the chevron, label, and remaining row width, so every
 /// click toggles once and keyboard activation uses the same action.
 private struct FullRowDisclosureStyle: DisclosureGroupStyle {
+    /// Paper: a ruled kicker row with a printer's triangle, not a chevron.
+    var paper = false
+
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            if paper { InkRule() }
             Button {
                 configuration.isExpanded.toggle()
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
+                    if paper {
+                        Text(configuration.isExpanded ? "▾" : "▸")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(Broadsheet.ink)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
                     configuration.label
                     Spacer(minLength: 0)
                 }

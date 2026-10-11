@@ -70,7 +70,13 @@ final class ThemeContrastTests: XCTestCase {
             // Exercise production widgets inside a Dark Aqua native host even
             // when the selected theme is light. Both pace and delta text must
             // contain the selected theme's opaque ink in the captured pixels.
-            for color in [theme.statusWarning, theme.statusSuccess] {
+            // Paper sets normal readings in ink and keeps colour for readings
+            // that need attention, so it has no success green to find; the
+            // hot burn (danger) and hot pace / rising cost (warning) must show.
+            let expectedInks = theme == .paper
+                ? [theme.statusWarning, theme.statusDanger]
+                : [theme.statusWarning, theme.statusSuccess]
+            for color in expectedInks {
                 let expected = try nativeRenderedRGB(color)
                 var matches = 0
                 for y in 0..<bitmap.pixelsHigh {

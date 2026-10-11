@@ -33,6 +33,14 @@ struct HeroHeader: View {
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
+        if theme == .paper {
+            paperMasthead
+        } else {
+            standardHero
+        }
+    }
+
+    private var standardHero: some View {
         // The hero content dictates the height — background paints behind via
         // .background(), so HeroBackground's unbounded fills (Color.black,
         // LinearGradient, etc) don't stretch the hero vertically. Previously
@@ -82,7 +90,7 @@ struct HeroHeader: View {
     /// context drag is high/critical it tints to the warning/danger hue and
     /// breathes a touch so the user feels the pressure without opening it.
     @ViewBuilder
-    private var cacheWalletToggle: some View {
+    var cacheWalletToggle: some View {
         if let signals = loader.statbarSignals,
            ContextTelemetryPanel.hasContent(signals) {
             let status = signals.contextPressure?.status
@@ -138,7 +146,7 @@ struct HeroHeader: View {
 
     /// Shown in place of the headline numbers when the daemon is down — a plain
     /// statement plus where to fix it, instead of a shimmer that implies loading.
-    private var offlineHero: some View {
+    var offlineHero: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(loader.daemonPhase == .needsNode ? "Node.js required" : "Usage service offline")
                 .font(.system(size: 18, weight: .semibold, design: theme.fonts.bodyDesign))
@@ -152,7 +160,7 @@ struct HeroHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var estimatedCostText: String {
+    var estimatedCostText: String {
         guard let basis = loader.statbarSignals?.costBasisToday,
               basis.estimatedRecords > 0 else { return "—" }
         return Fmt.cost(basis.estimatedCost)
@@ -199,7 +207,7 @@ struct HeroHeader: View {
         }
     }
 
-    private func costLine(_ label: String, value: Double) -> some View {
+    func costLine(_ label: String, value: Double) -> some View {
         HStack {
             Text(label)
             Spacer()
@@ -208,7 +216,7 @@ struct HeroHeader: View {
     }
 
     @ViewBuilder
-    private var statusIndicator: some View {
+    var statusIndicator: some View {
         switch theme {
         case .hud:       operationalPill
         case .terminal:  terminalCursor
@@ -260,7 +268,24 @@ struct HeroHeader: View {
     /// Live-session pill — green dot + compact session descriptor. Reads as
     /// "something is happening right now and here's what." Tooltip shows the
     /// model + last-record cost for the user who wants the detail.
+    @ViewBuilder
     private func liveSessionPill(_ live: LiveSession) -> some View {
+        if theme == .paper {
+            HStack(spacing: 4) {
+                Text("●").foregroundColor(theme.statusSuccess)
+                Text("\(Fmt.projectBasename(live.project)) · \(Fmt.liveAge(live.ageSeconds))".uppercased())
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+            }
+            .font(Broadsheet.kickerFont)
+            .tracking(1)
+            .help("Live: \(live.provider) · \(Fmt.shortModel(live.model)) · last call \(Fmt.cost(live.lastRecordCost))")
+        } else {
+            standardLivePill(live)
+        }
+    }
+
+    private func standardLivePill(_ live: LiveSession) -> some View {
         let dotColor = theme.statusSuccess
         let project = Fmt.projectBasename(live.project)
         return HStack(spacing: 5) {
@@ -350,7 +375,7 @@ struct HeroHeader: View {
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: breathToggle)
     }
 
-    private var skeletonHero: some View {
+    var skeletonHero: some View {
         HStack(spacing: 8) {
             ShimmerBar(width: 120, height: 30, breathToggle: breathToggle)
             ShimmerBar(width: 42, height: 10, breathToggle: breathToggle)

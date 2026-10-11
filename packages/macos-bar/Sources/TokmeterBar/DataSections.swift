@@ -35,11 +35,13 @@ struct ModelsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if theme == .paper { InkRule().padding(.bottom, -2) }
             HStack(alignment: .center) {
                 SectionHeader(
                     label: showToday ? "TODAY'S MODELS" : "TOP MODELS",
                     count: availableModels.count,
-                    theme: theme
+                    theme: theme,
+                    ruled: false
                 )
                 Spacer()
                 modelTabPill
@@ -83,9 +85,7 @@ struct ModelsSection: View {
             tabButton(label: "All", active: !showToday) { showToday = false }
             tabButton(label: "Today", active: showToday)  { showToday = true }
         }
-        .background(
-            Capsule().fill(Color.primary.opacity(0.06))
-        )
+        .background(theme == .paper ? nil : Capsule().fill(Color.primary.opacity(0.06)))
     }
 
     private func tabButton(label: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -95,7 +95,10 @@ struct ModelsSection: View {
                 .foregroundColor(active ? theme.backgroundMode.primaryTextColor : theme.backgroundMode.secondaryTextColor)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(active ? Capsule().fill(c.accent.opacity(0.18)) : nil)
+                .background(active && theme != .paper ? Capsule().fill(c.accent.opacity(0.18)) : nil)
+                .overlay(alignment: .bottom) {
+                    if active && theme == .paper { InkRule(weight: 1.5).padding(.horizontal, 7) }
+                }
         }
         .buttonStyle(.plain)
     }
@@ -115,7 +118,72 @@ struct ModelsSection: View {
         return true
     }
 
+    @ViewBuilder
     private func modelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool = false) -> some View {
+        if theme == .paper {
+            paperModelRow(model, maxCost: maxCost, showProvider: showProvider)
+        } else {
+            standardModelRow(model, maxCost: maxCost, showProvider: showProvider)
+        }
+    }
+
+    /// Paper: a newspaper column chart. Serif name, a thin ink bar on a
+    /// hairline track, the figure in ink. The token mix stays in the tooltip.
+    private func paperModelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool) -> some View {
+        let activityOnly = isActivityOnly(model)
+        return HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(Fmt.shortModel(model.model))
+                    .font(Broadsheet.display(12.5, weight: .semibold))
+                    .foregroundColor(Broadsheet.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if showProvider {
+                    Text(model.provider)
+                        .font(.system(size: 9, design: .serif).italic())
+                        .foregroundColor(Broadsheet.muted)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 118, alignment: .leading)
+            GeometryReader { geo in
+                let pct = CGFloat(min(model.cost / max(maxCost, 0.01), 1.0))
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Broadsheet.ink.opacity(0.18)).frame(height: 0.5)
+                    Rectangle()
+                        .fill(activityOnly ? Broadsheet.muted.opacity(0.5) : Broadsheet.ink)
+                        .frame(width: safeDim(geo.size.width * (activityOnly ? 0.12 : pct), floor: 3), height: 4)
+                }
+                .frame(maxHeight: .infinity)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: model.cost)
+            }
+            .frame(height: 8)
+            .help(modelHelp(model, activityOnly: activityOnly))
+            Text(activityOnly ? "n/a" : Fmt.cost(model.cost))
+                .font(activityOnly
+                      ? .system(size: 10, design: .serif).italic()
+                      : Broadsheet.display(12.5, weight: .bold).monospacedDigit())
+                .foregroundColor(activityOnly ? Broadsheet.muted : Broadsheet.ink)
+                .frame(width: 56, alignment: .trailing)
+        }
+        .padding(.vertical, 1)
+    }
+
+    private func modelHelp(_ model: ModelUsage, activityOnly: Bool) -> String {
+        activityOnly
+            ? (model.tokens > 0
+                ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
+                : "This provider doesn't expose token counts or cost locally — only that you used it.")
+            : "\(model.tokens.formatted()) tokens · \(Fmt.cost(model.cost)) cost\n" + compositionTooltip(
+                output: model.outputTokens,
+                cacheRead: model.cacheReadTokens,
+                cacheWrite: model.cacheWriteTokens,
+                input: model.inputTokens,
+                reasoning: model.reasoningTokens
+            )
+    }
+
+    private func standardModelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool) -> some View {
         let activityOnly = isActivityOnly(model)
         return HStack(spacing: 8) {
             HStack(spacing: 3) {
@@ -287,27 +355,27 @@ struct WeekSection: View {
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(LinearGradient(
+                        .foregroundStyle(theme == .paper ? AnyShapeStyle(Broadsheet.ink) : AnyShapeStyle(LinearGradient(
                             colors: [c.accent, c.accent.opacity(0.45)],
-                            startPoint: .top, endPoint: .bottom))
-                        .cornerRadius(3)
+                            startPoint: .top, endPoint: .bottom)))
+                        .cornerRadius(theme == .paper ? 0 : 3)
                     } else if style == .area {
                         AreaMark(
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(LinearGradient(
+                        .foregroundStyle(theme == .paper ? AnyShapeStyle(Broadsheet.ink.opacity(0.12)) : AnyShapeStyle(LinearGradient(
                             colors: [c.accent.opacity(0.55), c.accent.opacity(0.06)],
-                            startPoint: .top, endPoint: .bottom))
+                            startPoint: .top, endPoint: .bottom)))
                         .interpolationMethod(.catmullRom)
 
                         LineMark(
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(LinearGradient(
+                        .foregroundStyle(theme == .paper ? AnyShapeStyle(Broadsheet.ink) : AnyShapeStyle(LinearGradient(
                             colors: [c.accent, c.warm],
-                            startPoint: .leading, endPoint: .trailing))
+                            startPoint: .leading, endPoint: .trailing)))
                         .interpolationMethod(.catmullRom)
                         .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                     } else {
@@ -315,19 +383,19 @@ struct WeekSection: View {
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(LinearGradient(
+                        .foregroundStyle(theme == .paper ? AnyShapeStyle(Broadsheet.ink) : AnyShapeStyle(LinearGradient(
                             colors: [c.accent, c.warm],
-                            startPoint: .leading, endPoint: .trailing))
+                            startPoint: .leading, endPoint: .trailing)))
                         .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .lineStyle(StrokeStyle(lineWidth: theme == .paper ? 1.5 : 2.5, lineCap: .round, lineJoin: .round))
 
                         AreaMark(
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(LinearGradient(
+                        .foregroundStyle(theme == .paper ? AnyShapeStyle(Color.clear) : AnyShapeStyle(LinearGradient(
                             colors: [c.accent.opacity(0.3), .clear],
-                            startPoint: .top, endPoint: .bottom))
+                            startPoint: .top, endPoint: .bottom)))
                         .interpolationMethod(.catmullRom)
                     }
 
@@ -339,11 +407,13 @@ struct WeekSection: View {
                             x: .value("Date", day.date),
                             y: .value("Cost", day.cost)
                         )
-                        .foregroundStyle(c.warm)
+                        .foregroundStyle(theme == .paper ? Broadsheet.ink : c.warm)
                         .symbolSize(style == .bars ? 0 : 28)
                         .annotation(position: .top, spacing: 3) {
                             Text(Fmt.cost(day.cost))
-                                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                                .font(theme == .paper
+                                      ? Broadsheet.display(10, weight: .bold).monospacedDigit()
+                                      : .system(size: 8, weight: .semibold, design: .rounded))
                                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
                         }
                     }
@@ -354,7 +424,9 @@ struct WeekSection: View {
                     AxisMarks { value in
                         AxisValueLabel {
                             Text(String((value.as(String.self) ?? "").suffix(5)))
-                                .font(.system(size: 9, design: .rounded))
+                                .font(theme == .paper
+                                      ? .system(size: 9, design: .serif).monospacedDigit()
+                                      : .system(size: 9, design: .rounded))
                                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
                         }
                     }
@@ -455,7 +527,7 @@ struct SessionsSection: View {
 
         private var c: ThemeColors { theme.colors }
 
-        var body: some View {
+        private var standardRow: some View {
             HStack(spacing: 10) {
                 Circle().fill(c.secondary).frame(width: 6, height: 6)
                 VStack(alignment: .leading, spacing: 1) {
@@ -473,7 +545,36 @@ struct SessionsSection: View {
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(c.highlight)
             }
-            .padding(.horizontal, 10)
+        }
+
+        /// `tokmeter ……………… $1.05` over a muted token line. Money in ink.
+        private var broadsheetRow: some View {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(Fmt.projectBasename(session.project))
+                        .font(.system(size: 13, weight: .bold, design: .serif))
+                        .foregroundColor(Broadsheet.ink)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .help(session.project)
+                    LeaderDots()
+                    Text(Fmt.cost(session.totalCost))
+                        .font(.system(size: 13, weight: .heavy, design: .serif))
+                        .monospacedDigit()
+                        .foregroundColor(Broadsheet.ink)
+                }
+                Text("\(Fmt.number(session.totalTokens)) tokens today")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Broadsheet.muted)
+            }
+            .accessibilityElement(children: .combine)
+        }
+
+        var body: some View {
+            Group {
+                if theme == .paper { broadsheetRow } else { standardRow }
+            }
+            .padding(.horizontal, theme == .paper ? 0 : 10)
             .padding(.vertical, 6)
             .background(
                 // Hover flourish: a 1.5pt accent bar fades in on the leading
@@ -495,7 +596,7 @@ struct SessionsSection: View {
         }
     }
 
-    /// Row background adapted per theme's card language — papery on Paper,
+    /// Row background adapted per theme's card language — ruled on Paper,
     /// black+green-border on Terminal, material on Glass, etc.
     @ViewBuilder
     private var rowBackground: some View {
@@ -508,7 +609,7 @@ struct SessionsSection: View {
         case .paperHairline:
             Rectangle().fill(Color.clear)
                 .overlay(alignment: .bottom) {
-                    Rectangle().fill(Color.black.opacity(0.12)).frame(height: 0.5)
+                    Rectangle().fill(Broadsheet.ink.opacity(0.25)).frame(height: 0.5)
                 }
         case .terminalPanel:
             RoundedRectangle(cornerRadius: 4)

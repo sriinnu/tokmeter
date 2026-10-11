@@ -232,6 +232,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     /// Opaque monetary ink with contrast on each theme's light or dark surface.
     var costInk: Color {
+        if self == .paper { return Broadsheet.ink }
         if self == .nocturne { return Color(.sRGB, red: 1.0, green: 0.72, blue: 0.51) }
         if self == .aurora { return Color(.sRGB, red: 1.0, green: 0.75, blue: 0.64) }
         return backgroundMode.isLight

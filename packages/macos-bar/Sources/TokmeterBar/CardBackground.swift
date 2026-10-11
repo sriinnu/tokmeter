@@ -75,17 +75,12 @@ struct CardBackground: View {
             }
 
         case .paperHairline:
-            ZStack {
-                RoundedRectangle(cornerRadius: radius)
-                    .fill(Color.white.opacity(0.55))
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(Color.black.opacity(0.20), lineWidth: 0.6)
-                GeometryReader { _ in
-                    Rectangle()
-                        .fill(role.opacity(0.85))
-                        .frame(width: 24, height: 1.5)
-                        .offset(x: 10, y: 0)
-                }
+            // Broadsheet: no box. A 2pt ink rule over the figure and a
+            // hairline under it, like a boxed stat in a market table.
+            VStack(spacing: 0) {
+                InkRule(weight: 2)
+                Spacer(minLength: 0)
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.4))
             }
 
         case .glassFrost:

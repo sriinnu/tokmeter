@@ -16,45 +16,77 @@ struct SettingsPopover: View {
     @ObservedObject private var configStore = HubConfigStore.shared
     @ObservedObject private var dashboard = WebDashboardController.shared
 
+    private var paper: Bool { theme == .paper }
+    private var mode: BackgroundMode { theme.backgroundMode }
+
+    /// Body type follows the theme: serif on Paper, rounded elsewhere.
+    private func f(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: paper ? .serif : .rounded)
+    }
+
+    @ViewBuilder
+    private var rule: some View {
+        if paper { InkRule(weight: 0.5) } else { Divider() }
+    }
+
+    @ViewBuilder
+    private func sectionLabel(_ text: String) -> some View {
+        if paper {
+            Kicker(text: text, inverted: true)
+        } else {
+            Text(text).font(.system(size: 11, weight: .medium, design: .rounded))
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Settings")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+            if paper {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Settings")
+                        .font(Broadsheet.display(22))
+                        .foregroundColor(Broadsheet.ink)
+                    DoubleRule()
+                }
+            } else {
+                Text("Settings")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+            }
 
             themeGrid
 
-            Divider()
+            rule
 
             chartStyleRow
 
-            Divider()
+            rule
 
             HStack {
                 Text("Refresh interval")
-                    .font(.system(size: 11, design: .rounded))
+                    .font(f(11))
                 Spacer()
                 Text(Fmt.interval(configStore.config.bar.refreshSeconds))
-                    .font(.system(size: 11, design: .rounded))
-                    .foregroundColor(.secondary)
+                    .font(paper ? Broadsheet.display(12, weight: .bold).monospacedDigit() : f(11))
+                    .foregroundColor(paper ? Broadsheet.ink : .secondary)
             }
 
-            Divider()
+            rule
 
             pricingRefreshRow
 
-            Divider()
+            rule
 
             Button { Task { await dashboard.open() } } label: {
                 Label(dashboard.isStarting ? "Starting dashboard…" : "Open web dashboard", systemImage: "safari")
-                    .font(.system(size: 11, design: .rounded))
+                    .font(f(11))
             }
-            .buttonStyle(.borderless)
+            .settingsLinkStyle(paper: paper)
 
             if dashboard.isStarting || dashboard.isRunning {
                 Button(dashboard.isStarting ? "Cancel dashboard startup" : "Stop web dashboard") {
                     dashboard.stop()
                 }
-                .buttonStyle(.borderless)
+                .font(f(11))
+                .settingsLinkStyle(paper: paper)
             }
             if let error = dashboard.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -68,12 +100,27 @@ struct SettingsPopover: View {
 
             Button(action: openConfigFile) {
                 Label("Open Config File", systemImage: "doc.text")
-                    .font(.system(size: 11, design: .rounded))
+                    .font(f(11))
             }
-            .buttonStyle(.borderless)
+            .settingsLinkStyle(paper: paper)
         }
+        .tint(paper ? Broadsheet.ink : theme.colors.accent)
+        .foregroundStyle(mode.primaryTextColor)
         .padding(14)
         .frame(width: 320)
+        // The sheet is its own window: without these it falls back to the
+        // system's material and appearance (a dark grey sheet over Paper).
+        .environment(\.colorScheme, mode.isLight ? .light : .dark)
+        .presentationBackground { surface }
+    }
+
+    @ViewBuilder
+    private var surface: some View {
+        if mode.usesMaterial {
+            ZStack { Rectangle().fill(.regularMaterial); mode.surfaceColor }
+        } else {
+            mode.surfaceColor
+        }
     }
 
     // MARK: - 7-day chart style row
@@ -84,19 +131,44 @@ struct SettingsPopover: View {
     private var chartStyleRow: some View {
         HStack {
             Text("7-day chart")
-                .font(.system(size: 11, design: .rounded))
+                .font(f(11))
             Spacer()
-            Picker("7-day chart style", selection: Binding(
-                get: { configStore.config.chartStyle },
-                set: { style in configStore.update { $0.bar.weekChartStyle = style } }
-            )) {
-                ForEach(WeekChartStyle.allCases) { s in
-                    Text(s.label).tag(s)
+            if paper {
+                paperChartStylePicker
+            } else {
+                Picker("7-day chart style", selection: Binding(
+                    get: { configStore.config.chartStyle },
+                    set: { style in configStore.update { $0.bar.weekChartStyle = style } }
+                )) {
+                    ForEach(WeekChartStyle.allCases) { s in
+                        Text(s.label).tag(s)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 160)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 160)
+        }
+    }
+
+    /// Paper: the options set as type, the current one underlined in ink —
+    /// the same treatment as the All / Today tabs.
+    private var paperChartStylePicker: some View {
+        HStack(spacing: 12) {
+            ForEach(WeekChartStyle.allCases) { s in
+                let on = configStore.config.chartStyle == s
+                Button { configStore.update { $0.bar.weekChartStyle = s } } label: {
+                    Text(s.label)
+                        .font(f(11, weight: on ? .bold : .regular))
+                        .foregroundColor(on ? Broadsheet.ink : Broadsheet.muted)
+                        .padding(.bottom, 2)
+                        .overlay(alignment: .bottom) {
+                            if on { InkRule(weight: 1.5) }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
         }
     }
 
@@ -107,9 +179,9 @@ struct SettingsPopover: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Pricing data")
-                        .font(.system(size: 11, design: .rounded))
+                        .font(f(11))
                     Text(pricingFreshnessLine)
-                        .font(.system(size: 9, design: .rounded))
+                        .font(f(9))
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -122,15 +194,14 @@ struct SettingsPopover: View {
                         }
                         Text(loader.isRefreshingPricing ? "Updating…" : (isStale ? "Force refresh" : "Update now"))
                     }
-                    .font(.system(size: 10, design: .rounded))
+                    .font(f(10))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .settingsButtonStyle(paper: paper)
                 .disabled(loader.isRefreshingPricing)
             }
             if let err = loader.pricingRefreshError {
                 Text(err)
-                    .font(.system(size: 9, design: .rounded))
+                    .font(f(9))
                     .foregroundColor(.red)
                     .lineLimit(2)
             }
@@ -165,7 +236,7 @@ struct SettingsPopover: View {
 
     @ViewBuilder
     private func cronStatusRow(_ cron: CronStatus) -> some View {
-        Divider().padding(.top, 2)
+        rule.padding(.top, 2)
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -176,16 +247,16 @@ struct SettingsPopover: View {
                                 : "clock.badge.exclamationmark"
                         )
                         .font(.system(size: 10))
-                        .foregroundColor(cron.installed ? .green : .orange)
+                        .foregroundColor(cron.installed ? theme.statusSuccess : theme.statusWarning)
                         Text(
                             cron.installed
                                 ? "Daily auto-fetch installed"
                                 : "Daily auto-fetch not installed"
                         )
-                        .font(.system(size: 11, design: .rounded))
+                        .font(f(11))
                     }
                     Text(cronDetailLine(cron))
-                        .font(.system(size: 9, design: .rounded))
+                        .font(f(9))
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                 }
@@ -207,15 +278,14 @@ struct SettingsPopover: View {
                         }
                         Text(cron.installed ? "Disable" : "Install")
                     }
-                    .font(.system(size: 10, design: .rounded))
+                    .font(f(10))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .settingsButtonStyle(paper: paper)
                 .disabled(loader.isInstallingCron)
             }
             if let err = loader.cronInstallError {
                 Text(err)
-                    .font(.system(size: 9, design: .rounded))
+                    .font(f(9))
                     .foregroundColor(.red)
                     .lineLimit(2)
             }
@@ -246,8 +316,7 @@ struct SettingsPopover: View {
 
     private var themeGrid: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Theme")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+            sectionLabel("Theme")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(AppTheme.allCases) { t in
                     themeCell(for: t)
@@ -257,7 +326,7 @@ struct SettingsPopover: View {
     }
 
     private func themeCell(for t: AppTheme) -> some View {
-        ThemePickerCell(theme: t, isSelected: theme == t) {
+        ThemePickerCell(theme: t, isSelected: theme == t, host: theme) {
             // Spring switch — the parent's `.animation(value: theme)` modifier
             // catches this and propagates a smooth retint across the tree.
             withAnimation(.spring(response: 0.50, dampingFraction: 0.78)) { theme = t }
@@ -301,7 +370,12 @@ struct SettingsPopover: View {
 struct ThemePickerCell: View {
     let theme: AppTheme
     let isSelected: Bool
+    /// The theme currently applied — the cell's chrome follows it, the
+    /// swatch previews `theme`.
+    var host: AppTheme? = nil
     let onTap: () -> Void
+
+    private var paper: Bool { host == .paper }
 
     @State private var hovered: Bool = false
 
@@ -311,11 +385,15 @@ struct ThemePickerCell: View {
                 ThemeSwatch(theme: theme, isSelected: isSelected)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(theme.displayName)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundColor(isSelected ? .primary : .secondary)
+                        .font(paper
+                              ? Broadsheet.display(12, weight: .bold)
+                              : .system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(paper ? Broadsheet.ink : (isSelected ? .primary : .secondary))
                     Text(theme.tagline)
-                        .font(.system(size: 8, design: .rounded))
-                        .foregroundColor(.secondary)
+                        .font(paper
+                              ? .system(size: 9, design: .serif).italic()
+                              : .system(size: 8, design: .rounded))
+                        .foregroundColor(paper ? Broadsheet.muted : .secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -323,20 +401,21 @@ struct ThemePickerCell: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: paper ? 0 : 6)
                     .fill(hovered ? Color.primary.opacity(0.06) : Color.clear)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(isSelected ? theme.colors.secondary : Color.clear, lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: paper ? 0 : 6)
+                            .stroke(isSelected ? (paper ? Broadsheet.ink : (host ?? theme).colors.secondary) : Color.clear,
+                                    lineWidth: 1.5)
                     )
             )
             // Subtle hover lift — same idiom as the KPI cards so the whole app
-            // feels consistent.
-            .scaleEffect(hovered ? 1.04 : 1.0)
-            .offset(y: hovered ? -1 : 0)
+            // feels consistent. Paper doesn't bounce.
+            .scaleEffect(hovered && !paper ? 1.04 : 1.0)
+            .offset(y: hovered && !paper ? -1 : 0)
             .animation(.spring(response: 0.30, dampingFraction: 0.75), value: hovered)
         }
-        .buttonStyle(.borderless)
+        .settingsLinkStyle(paper: paper)
         .onHover { hovered = $0 }
     }
 }
@@ -362,5 +441,41 @@ struct ThemeSwatch: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(isSelected ? theme.colors.accent : Color.white.opacity(0.2), lineWidth: 1.5)
         )
+    }
+}
+
+private extension View {
+    /// Paper: plain ink type, no system tint. Elsewhere: borderless.
+    @ViewBuilder
+    func settingsLinkStyle(paper: Bool) -> some View {
+        if paper {
+            buttonStyle(.plain).foregroundStyle(Broadsheet.ink)
+        } else {
+            buttonStyle(.borderless)
+        }
+    }
+
+    /// Paper: square ink-outlined button. Elsewhere: the system's mini
+    /// bordered button, tinted by the sheet.
+    @ViewBuilder
+    func settingsButtonStyle(paper: Bool) -> some View {
+        if paper {
+            buttonStyle(InkOutlineButtonStyle())
+        } else {
+            buttonStyle(.bordered).controlSize(.mini)
+        }
+    }
+}
+
+/// Square, ink-outlined, uppercase-free: the broadsheet's secondary button.
+struct InkOutlineButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(configuration.isPressed ? Broadsheet.stock : Broadsheet.ink)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(configuration.isPressed ? Broadsheet.ink : Color.clear)
+            .overlay(Rectangle().strokeBorder(Broadsheet.ink, lineWidth: 1))
+            .contentShape(Rectangle())
     }
 }

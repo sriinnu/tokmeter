@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Paper is now a broadsheet.** The menubar's Paper theme was stationery:
+  rounded cards, soft shadows, grey pills and red money. It now reads like a
+  newspaper front page:
+  - a masthead with a dateline (today, edition number = days in your
+    ledger, live session) over "The Tokmeter" nameplate and a double rule;
+  - today's tokens and estimated cost as front-page figures in columns;
+  - inverted ink kickers for section heads, and dotted leaders from each
+    project to its cost;
+  - usage details as a market page: the signals become an indicator strip
+    (kicker over serif figure, columns split by hairlines), the stat cards
+    become a ledger table with name, total, trend line and day change, and
+    the 7-day chart and model bars are drawn in ink. Colour only marks a
+    reading that needs attention;
+  - money set in ink;
+  - the Settings sheet and the Hub window in the same type and rules.
+
+  The other themes' popovers render pixel-identical to before.
+
+- **The Settings sheet follows the theme.** It used the system's material
+  and appearance, so it showed as a dark grey sheet over light themes. It now
+  paints the theme's surface and colour scheme, and its buttons take the
+  theme's tint.
+
 ### Fixed
 
 - **macOS menubar no longer deletes custom sources from config.json.** The bar

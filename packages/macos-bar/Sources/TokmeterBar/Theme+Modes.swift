@@ -44,7 +44,7 @@ enum BackgroundMode {
         case .terminalBlack:
             return Color(red: 0.0, green: 0.02, blue: 0.01)
         case .paperWarm:
-            return Color(red: 0.962, green: 0.943, blue: 0.904)
+            return Broadsheet.stock
         case .glassBlur:
             return Color(red: 0.86, green: 0.92, blue: 0.96).opacity(0.42)
         case .auroraDrift:
@@ -100,7 +100,7 @@ enum BackgroundMode {
         case .terminalBlack:
             return [Color.black, Color(red: 0.01, green: 0.03, blue: 0.01)]
         case .paperWarm:
-            return [base, Color(red: 0.948, green: 0.926, blue: 0.885)]
+            return [base, base]   // newsprint is flat; no vignette
         case .glassBlur:
             return [base, base.opacity(0.55)]
         case .auroraDrift:

@@ -17,6 +17,32 @@ struct HubKpiTile: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a market-table column. Kicker over a serif figure, no icon.
+    private var paperBody: some View {
+        HubCard(theme: theme) {
+            VStack(alignment: .leading, spacing: 6) {
+                HubPaperLabel(text: label)
+                Text(value)
+                    .font(Broadsheet.display(26, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var standardBody: some View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {

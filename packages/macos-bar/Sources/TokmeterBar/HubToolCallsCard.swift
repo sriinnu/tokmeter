@@ -19,9 +19,13 @@ struct HubToolCallsCard: View {
         HubCard(theme: theme) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Today's tools")
-                        .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
-                        .foregroundColor(bg.primaryTextColor)
+                    if theme == .paper {
+                        HubPaperTitle(text: "Today's tools")
+                    } else {
+                        Text("Today's tools")
+                            .font(.system(size: 13, weight: .semibold, design: theme.fonts.labelDesign))
+                            .foregroundColor(bg.primaryTextColor)
+                    }
                     Spacer()
                     Text(String(
                         format: "$%.2f across %d call(s) in %d turn(s)",
@@ -70,6 +74,42 @@ struct ToolCallRow: View {
     }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a table line. Tool, flat ink share rule, cost, calls.
+    private var paperBody: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(entry.tool)
+                .font(.system(size: 12, weight: .semibold, design: .serif))
+                .foregroundColor(Broadsheet.ink)
+                .frame(width: 140, alignment: .leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(entry.tool)
+            HubPaperMeter(fraction: grown ? entry.share : 0)
+            Text(String(format: "$%.2f", entry.cost))
+                .font(.system(size: 12.5, weight: .bold, design: .serif))
+                .monospacedDigit()
+                .foregroundColor(Broadsheet.ink)
+                .frame(width: 64, alignment: .trailing)
+                .contentTransition(.numericText(value: entry.cost))
+            Kicker(text: "\(entry.calls)×", color: Broadsheet.muted)
+                .frame(width: 36, alignment: .trailing)
+        }
+        .padding(.vertical, 3)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.35).delay(Double(rank) * 0.04)) {
+                grown = true
+            }
+        }
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 10) {
             Image(systemName: iconForTool(entry.tool))
                 .font(.system(size: 11, weight: .semibold))

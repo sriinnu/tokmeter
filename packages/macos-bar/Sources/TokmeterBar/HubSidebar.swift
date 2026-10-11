@@ -41,11 +41,11 @@ struct HubSidebar: View {
                 .cascadeIn(delay: 0.05)
 
             groupLabel("EXPLORE")
-                .padding(.horizontal, 22)
+                .padding(.horizontal, theme == .paper ? 16 : 22)
                 .padding(.top, 20)
                 .padding(.bottom, 4)
 
-            VStack(spacing: 3) {
+            VStack(spacing: theme == .paper ? 0 : 3) {
                 ForEach(Array(primary.enumerated()), id: \.element.id) { idx, section in
                     HubSidebarRow(
                         section: section,
@@ -58,7 +58,7 @@ struct HubSidebar: View {
                         .cascadeIn(delay: 0.12 + Double(idx) * 0.05)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, theme == .paper ? 16 : 10)
 
             Spacer(minLength: 16)
 
@@ -70,12 +70,18 @@ struct HubSidebar: View {
                 isSelected: selection == .settings,
                 railNS: railNS
             ) { select(.settings) }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, theme == .paper ? 16 : 10)
 
-            Divider()
-                .opacity(0.16)
-                .padding(.horizontal, 14)
-                .padding(.top, 10)
+            if theme == .paper {
+                InkRule(weight: 1)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+            } else {
+                Divider()
+                    .opacity(0.16)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+            }
 
             footer
                 .padding(.horizontal, 16)
@@ -111,7 +117,40 @@ struct HubSidebar: View {
 
     // MARK: - Brand mark
 
+    @ViewBuilder
     private var brand: some View {
+        if theme == .paper {
+            paperBrand
+        } else {
+            standardBrand
+        }
+    }
+
+    /// Paper: a small nameplate. Dateline, rule, "The Tokmeter", double rule.
+    private var paperBrand: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Kicker(text: "Hub")
+                Text("·").font(Broadsheet.kickerFont).foregroundColor(Broadsheet.muted)
+                Kicker(text: BroadsheetDateline.date(), color: Broadsheet.muted)
+                    .lineLimit(1)
+                    .fixedSize()
+                Spacer(minLength: 0)
+                ConnectionDot(status: connection, theme: theme)
+            }
+            InkRule(weight: 0.5)
+            Text("The Tokmeter")
+                .font(Broadsheet.display(24))
+                .foregroundColor(Broadsheet.ink)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .center)
+            DoubleRule()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Tokmeter Hub, \(connection.label)")
+    }
+
+    private var standardBrand: some View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -145,6 +184,83 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private var todayCard: some View {
+        if theme == .paper {
+            paperTodayCard
+        } else {
+            standardTodayCard
+        }
+    }
+
+    /// Paper: the front-page box. Kicker, two serif figures, a footnote and
+    /// the day's signals as plain tracked capitals, closed by a rule.
+    @ViewBuilder
+    private var paperTodayCard: some View {
+        let warming = loader.isWarming || !loader.hasFreshData
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Kicker(text: "Today", inverted: true)
+                Spacer(minLength: 0)
+                if let live = loader.statbarSignals?.liveSession {
+                    HStack(spacing: 4) {
+                        PulseDot(color: theme.statusSuccess)
+                        Kicker(text: "Live · " + Fmt.liveAge(live.ageSeconds), color: Broadsheet.ink)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            if warming {
+                shimmerLine(width: 92, height: 22)
+                shimmerLine(width: 120, height: 11)
+            } else {
+                (Text(Fmt.number(loader.todayTokens))
+                    .font(Broadsheet.display(30))
+                    .monospacedDigit()
+                    .foregroundColor(Broadsheet.ink)
+                + Text(" tokens")
+                    .font(.system(size: 13, weight: .semibold, design: .serif))
+                    .foregroundColor(Broadsheet.muted))
+                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Est. API cost")
+                        .font(.system(size: 11, design: .serif))
+                        .italic()
+                        .foregroundColor(Broadsheet.muted)
+                    LeaderDots()
+                    Text(loader.statbarSignals?.costBasisToday.flatMap { basis in
+                        basis.estimatedRecords > 0 ? Fmt.cost(basis.estimatedCost) : nil
+                    } ?? "—")
+                        .font(Broadsheet.display(20, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundColor(Broadsheet.ink)
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+                }
+                .help("Usage valued at model API rates. The overview's Today cost also includes tool reports.")
+                let facts = paperFacts
+                if !facts.isEmpty {
+                    Kicker(text: facts.joined(separator: " · "), color: Broadsheet.ink2)
+                        .lineLimit(1)
+                }
+            }
+            InkRule(weight: 1).padding(.top, 2)
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var paperFacts: [String] {
+        var facts: [String] = []
+        if let burn = loader.statbarSignals?.burnRate.costPerHour, burn >= 0.01 {
+            facts.append("Burn " + Fmt.costPerHour(burn))
+        }
+        if let cache = loader.statbarSignals?.cacheHitToday.canonicalRate, cache > 0 {
+            facts.append("Cache \(Int((cache * 100).rounded()))%")
+        }
+        return facts
+    }
+
+    @ViewBuilder
+    private var standardTodayCard: some View {
         let warming = loader.isWarming || !loader.hasFreshData
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
@@ -238,7 +354,17 @@ struct HubSidebar: View {
 
     // MARK: - Group label
 
+    @ViewBuilder
     private func groupLabel(_ text: String) -> some View {
+        if theme == .paper {
+            HubPaperLabel(text: text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            standardGroupLabel(text)
+        }
+    }
+
+    private func standardGroupLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 9, weight: .bold, design: theme.fonts.labelDesign))
             .tracking(1.8)
@@ -248,7 +374,23 @@ struct HubSidebar: View {
 
     // MARK: - Footer
 
+    @ViewBuilder
     private var footer: some View {
+        if theme == .paper {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(connection.color(theme: theme))
+                    .frame(width: 6, height: 6)
+                Kicker(text: connection.label, color: Broadsheet.ink)
+                Spacer(minLength: 0)
+                Kicker(text: "v\(appVersion)", color: Broadsheet.muted)
+            }
+        } else {
+            standardFooter
+        }
+    }
+
+    private var standardFooter: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(connection.color(theme: theme))
@@ -369,6 +511,62 @@ struct HubSidebarRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a contents line. Serif title over a hairline; the selected
+    /// section is set in reverse, like an inverted kicker.
+    private var paperBody: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(section.title)
+                            .font(.system(size: 15, weight: isSelected ? .bold : .semibold, design: .serif))
+                        if isSelected {
+                            Text(section.tagline)
+                                .font(.system(size: 10.5, design: .serif))
+                                .italic()
+                                .opacity(0.8)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if let badge {
+                        Text(badge)
+                            .font(Broadsheet.kickerFont)
+                            .tracking(Broadsheet.kickerTracking)
+                            .monospacedDigit()
+                            .opacity(0.75)
+                    } else if hovered && !isSelected {
+                        Text("⌘\(shortcutNumber)")
+                            .font(Broadsheet.kickerFont)
+                            .foregroundColor(Broadsheet.muted)
+                    }
+                }
+                .foregroundColor(isSelected ? Broadsheet.stock : Broadsheet.ink)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isSelected ? Broadsheet.ink : (hovered ? Broadsheet.ink.opacity(0.06) : Color.clear))
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(isSelected ? 0 : 0.35))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .keyboardShortcut(
+            KeyEquivalent(Character("\(shortcutNumber)")), modifiers: .command
+        )
+        .onHover { hovered = $0 }
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var standardBody: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 // Leading selection rail — slides between rows with a spring.

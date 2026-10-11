@@ -74,11 +74,22 @@ struct SectionHeader: View {
     let label: String
     let count: Int
     let theme: AppTheme
+    /// Paper only: draw the section's ink rule. Off when the caller rules the
+    /// full row itself (a header sharing its row with controls).
+    var ruled: Bool = true
 
     /// Briefly bumped to >1 when `count` changes so the pill catches the eye.
     @State private var pulseScale: CGFloat = 1.0
 
     var body: some View {
+        if theme == .paper {
+            BroadsheetSectionHead(label: label, count: count, ruled: ruled)
+        } else {
+            standard
+        }
+    }
+
+    private var standard: some View {
         HStack {
             Text(label)
                 .font(.system(size: 11, weight: .medium, design: theme.fonts.labelDesign))

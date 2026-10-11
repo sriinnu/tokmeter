@@ -101,7 +101,19 @@ struct HubProjectsList: View {
         }
     }
 
+    @ViewBuilder
     private var header: some View {
+        if theme == .paper {
+            HubPaperPageHeader(
+                title: "Projects",
+                subtitle: "\(projects.count) project\(projects.count == 1 ? "" : "s") — click one to drill in."
+            )
+        } else {
+            standardHeader
+        }
+    }
+
+    private var standardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Projects")
                 .font(.system(size: 24, weight: .bold, design: theme.fonts.heroDesign))
@@ -134,7 +146,7 @@ struct HubProjectsList: View {
             if sorted.isEmpty {
                 HubEmptyState(icon: "folder", message: "No projects yet", theme: theme)
             } else {
-                VStack(spacing: 4) {
+                VStack(spacing: theme == .paper ? 0 : 4) {
                     ForEach(Array(sorted.enumerated()), id: \.element.id) { idx, p in
                         HubProjectListRow(
                             rank: idx + 1,
@@ -160,6 +172,25 @@ struct HubSortPill: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            Button(action: onTap) {
+                Text(option.label.uppercased())
+                    .font(Broadsheet.kickerFont)
+                    .tracking(Broadsheet.kickerTracking)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .hubPaperBox(filled: isSelected, lineWidth: isSelected || hovered ? 1 : 0.5)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .onHover { hovered = $0 }
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         Button(action: onTap) {
             HStack(spacing: 5) {
                 Image(systemName: option.icon)
@@ -211,6 +242,55 @@ struct HubProjectListRow: View {
     private var bg: BackgroundMode { theme.backgroundMode }
 
     var body: some View {
+        if theme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a numbered table line; name and figure joined by leaders.
+    private var paperBody: some View {
+        Button(action: onTap) {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("\(rank).")
+                        .font(.system(size: 12, weight: .bold, design: .serif))
+                        .monospacedDigit()
+                        .foregroundColor(Broadsheet.muted)
+                        .frame(width: 26, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(project.project)
+                            .font(.system(size: 15, weight: .bold, design: .serif))
+                            .foregroundColor(Broadsheet.ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Kicker(text: "\(project.activeDays) day\(project.activeDays == 1 ? "" : "s") · \(Fmt.number(project.totalTokens)) tokens",
+                               color: Broadsheet.muted)
+                    }
+                    .layoutPriority(1)
+                    LeaderDots()
+                    Text(Fmt.cost(project.totalCost))
+                        .font(.system(size: 15, weight: .bold, design: .serif))
+                        .monospacedDigit()
+                        .foregroundColor(Broadsheet.ink)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundColor(Broadsheet.ink)
+                        .opacity(hovered ? 1 : 0.4)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 9)
+                .background(hovered ? Broadsheet.ink.opacity(0.05) : Color.clear)
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovered = $0 }
+    }
+
+    private var standardBody: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
                 Text("\(rank)")

@@ -16,6 +16,46 @@ struct HubThemePickerCell: View {
     private var c: ThemeColors { candidate.colors }
 
     var body: some View {
+        if currentTheme == .paper {
+            paperBody
+        } else {
+            standardBody
+        }
+    }
+
+    /// Paper: a listing line. Name in serif, tagline in italic, an ink tick
+    /// for the current choice; the row inverts on hover like a selected kicker.
+    private var paperBody: some View {
+        Button(action: onTap) {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(candidate.displayName)
+                        .font(.system(size: 15, weight: isSelected ? .bold : .semibold, design: .serif))
+                        .foregroundColor(Broadsheet.ink)
+                    Text(candidate.tagline)
+                        .font(.system(size: 11, design: .serif))
+                        .italic()
+                        .foregroundColor(Broadsheet.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Kicker(text: "✓ In use", inverted: true)
+                    }
+                }
+                .padding(.vertical, 9)
+                .padding(.horizontal, 4)
+                .background(hovered && !isSelected ? Broadsheet.ink.opacity(0.05) : Color.clear)
+                InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.35))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovered = $0 }
+        .accessibilityLabel("\(candidate.displayName) theme")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var standardBody: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 ZStack {
@@ -96,6 +136,21 @@ struct HubSettingsActionButton: View {
     }
 
     var body: some View {
+        if theme == .paper {
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 9, weight: .heavy))
+                    Text(label)
+                }
+            }
+            .buttonStyle(HubPaperButtonStyle(primary: tint == .accent))
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
