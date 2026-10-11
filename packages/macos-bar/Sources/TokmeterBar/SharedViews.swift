@@ -82,7 +82,9 @@ struct SectionHeader: View {
     @State private var pulseScale: CGFloat = 1.0
 
     var body: some View {
-        if theme == .paper {
+        if let skin = theme.skin {
+            SkinSectionHead(skin: skin, label: label, count: count, theme: theme)
+        } else if theme == .paper {
             BroadsheetSectionHead(label: label, count: count, ruled: ruled)
         } else {
             standard

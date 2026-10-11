@@ -6,7 +6,8 @@ import XCTest
 final class ThemeContrastTests: XCTestCase {
     @MainActor
     func testStatusInkContrastAndThemeAppearance() throws {
-        for theme in [AppTheme.glass, .paper, .terminal, .nebula, .nocturne, .aurora] {
+        for theme in [AppTheme.glass, .paper, .terminal, .nebula, .nocturne, .aurora,
+                      .meter, .pump, .rams, .deck, .passbook] {
             for color in [theme.statusWarning, theme.statusSuccess, theme.statusDanger, theme.costInk] {
                 let lightHost = try renderedRGB(color, scheme: .light)
                 let darkHost = try renderedRGB(color, scheme: .dark)

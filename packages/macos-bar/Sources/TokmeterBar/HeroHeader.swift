@@ -33,14 +33,16 @@ struct HeroHeader: View {
     private var c: ThemeColors { theme.colors }
 
     var body: some View {
-        if theme == .paper {
+        if let skin = theme.skin {
+            SkinHero(skin: skin, header: self)
+        } else if theme == .paper {
             paperMasthead
         } else {
             standardHero
         }
     }
 
-    private var standardHero: some View {
+    var standardHero: some View {
         // The hero content dictates the height — background paints behind via
         // .background(), so HeroBackground's unbounded fills (Color.black,
         // LinearGradient, etc) don't stretch the hero vertically. Previously
@@ -324,7 +326,7 @@ struct HeroHeader: View {
         case .noise:    return Color.black.opacity(0.75)    // ink on canary yellow
         case .mint:     return c.highlight                  // brick-red on peach
         case .blueprint: return c.primary                   // technical blue on cream
-        default:        return Color.white.opacity(0.85)    // clean white on dark heroes
+        default:        return theme.skin.map { $0.spec.isLight ? Color.black.opacity(0.75) : Color.white.opacity(0.85) } ?? Color.white.opacity(0.85)    // clean white on dark heroes
         }
     }
 
@@ -395,7 +397,11 @@ struct HeroHeader: View {
             return Color.black.opacity(0.92)
         case .hud, .terminal:   return c.secondary
         case .glass:            return Color(red: 0.14, green: 0.20, blue: 0.28)
-        default:                return Color.white
+        default:
+            // Skins: shared helpers (status, offline, cache key) must stay
+            // legible on light skins too.
+            if let skin = theme.skin, skin.spec.isLight { return Color.black.opacity(0.92) }
+            return Color.white
         }
     }
 
@@ -422,6 +428,7 @@ struct HeroHeader: View {
         case .blueprint: return Color.black.opacity(0.10)
         case .noise:     return Color.black.opacity(0.40)   // hard offset reads as "stuck on"
         case .mint:      return Color.black.opacity(0.06)   // hairline whisper
+        case .meter, .pump, .rams, .deck, .passbook: return Color.clear
         }
     }
 

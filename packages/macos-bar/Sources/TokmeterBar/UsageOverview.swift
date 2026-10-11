@@ -21,11 +21,16 @@ struct UsageOverview: View {
             if !loader.todayProjects.isEmpty || loader.isWarming {
                 SessionsSection(loader: loader, theme: theme, showAll: $showAllSessions)
             }
+            if let custom = theme.skin?.spec.footnote(
+                "Model and project costs may combine estimates and tool reports.", theme: theme) {
+                custom
+            } else {
             Text("Model and project costs may combine estimates and tool reports.")
                 .font(theme == .paper
                       ? .system(size: 10, design: .serif).italic()
                       : .system(size: 9, design: theme.fonts.bodyDesign))
                 .foregroundColor(theme.backgroundMode.secondaryTextColor)
+            }
             DisclosureGroup(isExpanded: $showUsageDetails) {
                 VStack(spacing: 14) {
                     SignalsRibbon(loader: loader, theme: theme)
@@ -36,14 +41,18 @@ struct UsageOverview: View {
                 }
                 .padding(.top, 10)
             } label: {
-                if theme == .paper {
+                if let custom = theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme) {
+                    custom
+                } else if theme == .paper {
                     Kicker(text: "Usage details")
                 } else {
                     Text("Usage details")
                         .foregroundStyle(theme.backgroundMode.primaryTextColor)
                 }
             }
-            .disclosureGroupStyle(FullRowDisclosureStyle(paper: theme == .paper))
+            .disclosureGroupStyle(FullRowDisclosureStyle(
+                paper: theme == .paper,
+                customLabel: theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme) != nil))
             .font(.system(size: 11, weight: .medium, design: theme.fonts.bodyDesign))
             .tint(theme.backgroundMode.secondaryTextColor)
         }
@@ -55,6 +64,8 @@ struct UsageOverview: View {
 private struct FullRowDisclosureStyle: DisclosureGroupStyle {
     /// Paper: a ruled kicker row with a printer's triangle, not a chevron.
     var paper = false
+    /// A skin drew the whole label, chevron included.
+    var customLabel = false
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -63,7 +74,9 @@ private struct FullRowDisclosureStyle: DisclosureGroupStyle {
                 configuration.isExpanded.toggle()
             } label: {
                 HStack(spacing: 5) {
-                    if paper {
+                    if customLabel {
+                        EmptyView()
+                    } else if paper {
                         Text(configuration.isExpanded ? "▾" : "▸")
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(Broadsheet.ink)

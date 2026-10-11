@@ -50,7 +50,9 @@ struct StatsGrid: View {
     }
 
     var body: some View {
-        if theme == .paper {
+        if let skin = theme.skin {
+            SkinLedger(skin: skin, rows: ledgerRows, theme: theme)
+        } else if theme == .paper {
             paperLedger
         } else {
             cards

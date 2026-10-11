@@ -32,7 +32,9 @@ struct SignalsRibbon: View {
     var body: some View {
         if let signals = loader.statbarSignals, shouldShow(signals) {
             Group {
-                if theme == .paper {
+                if let skin = theme.skin {
+                    SkinSignals(skin: skin, items: items(signals), theme: theme)
+                } else if theme == .paper {
                     PaperIndicators(items: items(signals))
                 } else {
                     SignalFlowLayout() {
@@ -46,8 +48,8 @@ struct SignalsRibbon: View {
                     }
                 }
             }
-            .padding(.horizontal, theme == .paper ? 0 : 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, theme == .paper || theme.skin != nil ? 0 : 12)
+            .padding(.vertical, theme.skin != nil ? 0 : 6)
             .background(ribbonBackground)
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
@@ -65,6 +67,8 @@ struct SignalsRibbon: View {
         let value: String
         var sub: String? = nil
         var alert: Color? = nil
+        /// Billing block only: fraction of the 5h block elapsed, 0…1.
+        var elapsed: Double? = nil
         let help: String
         var burnRate: BurnRate? = nil
     }
@@ -145,6 +149,7 @@ struct SignalsRibbon: View {
                 label: "Block left", value: formatRemaining(billing.remainingSec),
                 sub: "#\(billing.blockNumber) · \(Fmt.cost(billing.cost))",
                 alert: billing.elapsedPct >= 75 ? billingColor(billing.elapsedPct) : nil,
+                elapsed: max(0, min(1, billing.elapsedPct / 100)),
                 help: String(
                     format:
                         "Claude 5-hour billing window — block #%d, %.0f%% elapsed. "
@@ -384,7 +389,9 @@ extension SignalsRibbon {
     /// the soft rounded tray.
     @ViewBuilder
     var ribbonBackground: some View {
-        if theme == .paper {
+        if theme.skin != nil {
+            Color.clear // the skin's Signals draw their own panel
+        } else if theme == .paper {
             VStack(spacing: 0) {
                 InkRule(weight: 1)
                 Spacer(minLength: 0)

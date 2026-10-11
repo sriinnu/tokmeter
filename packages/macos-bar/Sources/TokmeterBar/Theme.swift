@@ -81,6 +81,12 @@ enum AppTheme: String, CaseIterable, Identifiable {
     case blueprint
     case noise
     case mint
+    // Skins (Skins.swift): metaphor themes, one file each.
+    case meter
+    case pump
+    case rams
+    case deck
+    case passbook
 
     /// Order the picker shows. Hidden cases stay in the enum so persisted
     /// settings don't crash on decode.
@@ -92,8 +98,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
     /// - Synthwave: costume that scrolling-grid couldn't save.
     /// - Noise: yellow surfaces and white cards compete with usage colors.
     static let allCases: [AppTheme] = [
-        .terminal, .paper, .nebula, .aurora,
-        .nocturne, .glass,
+        .terminal, .paper, .meter, .pump, .rams, .deck, .passbook,
+        .nebula, .aurora, .nocturne, .glass,
     ]
 
     /// The visible theme a retired one maps to. A stored hidden theme kept
@@ -120,7 +126,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var displayName: String {
+        if let skin { return skin.spec.displayName }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.displayName
         case .nebula:    return "Prism"
         case .nocturne:  return "Carbon"
         case .daylight:  return "Daylight"
@@ -137,7 +145,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var tagline: String {
+        if let skin { return skin.spec.tagline }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.tagline
         case .nebula:    return "Iridescent edges, dark glass"
         case .nocturne:  return "Graphite, copper, precise type"
         case .daylight:  return "Cream daytime view"
@@ -154,7 +164,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var icon: String {
+        if let skin { return skin.spec.icon }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.icon
         case .nebula:    return "diamond.fill"
         case .nocturne:  return "square.stack.3d.up.fill"
         case .daylight:  return "sun.max.fill"
@@ -180,7 +192,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var backgroundMode: BackgroundMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .darkGradient
         case .nocturne:  return .deepIndigo
         case .daylight:  return .lightCream
@@ -197,7 +211,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var heroMode: HeroMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .nebulaGradient
         case .nocturne:  return .nocturneCalm
         case .daylight:  return .daylightSoft
@@ -214,7 +230,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 
     var cardMode: CardMode {
+        if let skin { return .skin(skin) }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return .skin(skin!)
         case .nebula:    return .glossyDark
         case .nocturne:  return .flatDark
         case .daylight:  return .lightPaper
@@ -232,6 +250,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     /// Opaque monetary ink with contrast on each theme's light or dark surface.
     var costInk: Color {
+        if let skin { return skin.spec.costInk }
         if self == .paper { return Broadsheet.ink }
         if self == .nocturne { return Color(.sRGB, red: 1.0, green: 0.72, blue: 0.51) }
         if self == .aurora { return Color(.sRGB, red: 1.0, green: 0.75, blue: 0.64) }
@@ -257,7 +276,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     /// Type personality for each role. The view reads this to pick fonts.
     var fonts: ThemeFonts {
+        if let skin { return skin.spec.fonts }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook: return skin!.spec.fonts
         case .nebula:
             return ThemeFonts(heroDesign: .default, heroWeight: .bold,
                               valueDesign: .default, valueWeight: .bold,

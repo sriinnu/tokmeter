@@ -15,6 +15,8 @@ struct CardBackground: View {
     var body: some View {
         let radius = cardMode.cornerRadius
         switch cardMode {
+        case .skin(let skin):
+            SkinCard(skin: skin, role: role)
         case .lightPaper:
             // Daylight: white paper, crisp shadow, role-colored top edge.
             RoundedRectangle(cornerRadius: radius)

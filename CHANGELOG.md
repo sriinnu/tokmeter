@@ -27,6 +27,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The other themes' popovers render pixel-identical to before.
 
+- **Five new menubar themes, each a real instrument.**
+  - **Meter**: a utility meter under glass. Odometer drums show today's
+    tokens and cost, and a meter disc spins at your burn rate (it stops
+    when idle, when the panel is hidden, or under Reduce Motion).
+    Sub-dials show the ratios, and a sealed totalizer holds the all-time
+    totals.
+  - **Pump**: a fuel-pump computer. Rolling wheels show SALE, TOKENS and
+    the effective $ per million today (estimated cost ÷ tokens, labelled
+    as not a list price). Models are grade plates, and all-time totals sit
+    on a non-resettable totalizer.
+  - **Rams**: a calculator in the Braun manner. It has a dark display slab,
+    and colour appears only where it means something. A clock dial shows
+    the 5-hour billing block.
+  - **Deck**: an 80s hi-fi deck. Cyan VFD readouts with amber money,
+    segment level meters, a spectrum of daily tokens, and a tuner scale
+    for model cost share.
+  - **Passbook**: a savings passbook. A navy cloth cover, a dot-matrix day
+    total, a teller stamp for the block's time left, and the balance
+    carried forward. Its entries are labelled as estimates.
+
+  Each theme lives in its own file behind fixed hook points: the hero,
+  signals, ledger, section heads, rows, chart, tabs and cards. Adding one
+  doesn't touch the shared views.
+
 - **The Settings sheet follows the theme.** It used the system's material
   and appearance, so it showed as a dark grey sheet over light themes. It now
   paints the theme's surface and colour scheme, and its buttons take the

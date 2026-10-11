@@ -4,6 +4,42 @@
 import SwiftUI
 
 extension StatsGrid {
+    /// The ledger as data, for skins: tokens and cost all time, then pace
+    /// (or the longest streak before there's a pace baseline).
+    var ledgerRows: [LedgerRowData] {
+        var rows = [
+            LedgerRowData(
+                id: "tokens", name: "Tokens", note: "all time",
+                value: Fmt.number(loader.totalTokens),
+                trend: recordedDayTrend(metric: .tokens) { Double($0.tokens) },
+                spark: settledDaily.map { Double($0.tokens) }, sparkDays: settledDaily,
+                isWarming: loader.isWarming),
+            LedgerRowData(
+                id: "cost", name: "Cost", note: "all time",
+                value: Fmt.cost(loader.totalCost),
+                trend: recordedDayTrend(metric: .cost) { $0.cost },
+                spark: settledDaily.map { $0.cost }, sparkDays: settledDaily,
+                isWarming: loader.isWarming),
+        ]
+        if let signals = loader.statbarSignals,
+           let multiple = signals.pace.multiple,
+           signals.pace.daysOfHistory >= 2 {
+            rows.append(LedgerRowData(
+                id: "pace", name: "Pace", note: "today vs usual",
+                value: Fmt.paceMultiple(multiple),
+                alert: multiple >= 1.25 ? theme.statusWarning : nil,
+                trend: nil,
+                spark: loader.recentDaily.map { $0.cost }, sparkDays: loader.recentDaily,
+                isWarming: false))
+        } else if let s = loader.stats {
+            rows.append(LedgerRowData(
+                id: "streak", name: "Streak", note: "longest",
+                value: "\(s.longestStreak)d",
+                trend: nil, spark: [], sparkDays: [], isWarming: false))
+        }
+        return rows
+    }
+
     var paperLedger: some View {
         VStack(spacing: 0) {
             InkRule(weight: 2)

@@ -80,7 +80,16 @@ struct ModelsSection: View {
         }
     }
 
+    @ViewBuilder
     private var modelTabPill: some View {
+        if let custom = theme.skin?.spec.modelTabs(showToday: $showToday, theme: theme) {
+            custom
+        } else {
+            standardTabPill
+        }
+    }
+
+    private var standardTabPill: some View {
         HStack(spacing: 0) {
             tabButton(label: "All", active: !showToday) { showToday = false }
             tabButton(label: "Today", active: showToday)  { showToday = true }
@@ -120,7 +129,17 @@ struct ModelsSection: View {
 
     @ViewBuilder
     private func modelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool = false) -> some View {
-        if theme == .paper {
+        if let skin = theme.skin {
+            let activityOnly = isActivityOnly(model)
+            SkinModelRow(skin: skin, row: ModelRowData(
+                model: model,
+                name: Fmt.shortModel(model.model),
+                provider: showProvider ? model.provider : nil,
+                share: activityOnly ? 0 : min(model.cost / max(maxCost, 0.01), 1.0),
+                activityOnly: activityOnly,
+                help: modelHelp(model, activityOnly: activityOnly)
+            ), theme: theme)
+        } else if theme == .paper {
             paperModelRow(model, maxCost: maxCost, showProvider: showProvider)
         } else {
             standardModelRow(model, maxCost: maxCost, showProvider: showProvider)
@@ -348,6 +367,9 @@ struct WeekSection: View {
 
             if loader.daemonPhase == .warming {
                 ShimmerBar(width: 340, height: 60, breathToggle: true)
+            } else if let custom = theme.skin?.spec.weekChart(
+                days: loader.recentDaily, style: style, theme: theme) {
+                custom
             } else {
                 Chart(loader.recentDaily) { day in
                     if style == .bars {
@@ -572,9 +594,11 @@ struct SessionsSection: View {
 
         var body: some View {
             Group {
-                if theme == .paper { broadsheetRow } else { standardRow }
+                if let skin = theme.skin {
+                    SkinProjectRow(skin: skin, project: session, theme: theme)
+                } else if theme == .paper { broadsheetRow } else { standardRow }
             }
-            .padding(.horizontal, theme == .paper ? 0 : 10)
+            .padding(.horizontal, theme == .paper || theme.skin != nil ? 0 : 10)
             .padding(.vertical, 6)
             .background(
                 // Hover flourish: a 1.5pt accent bar fades in on the leading
@@ -602,6 +626,8 @@ struct SessionsSection: View {
     private var rowBackground: some View {
         let radius: CGFloat = 8
         switch theme.cardMode {
+        case .skin:
+            Color.clear // the skin's ProjectRow draws its own chrome
         case .lightPaper:
             RoundedRectangle(cornerRadius: radius)
                 .fill(Color.white)

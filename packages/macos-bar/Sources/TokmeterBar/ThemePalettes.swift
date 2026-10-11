@@ -16,7 +16,10 @@ import SwiftUI
 extension AppTheme {
     /// The concrete color values for this theme. Read via `theme.colors`.
     var palette: ThemeColors {
+        if let skin { return skin.spec.palette }
         switch self {
+        case .meter, .pump, .rams, .deck, .passbook:
+            return MeterSkin.palette // unreachable: skins return above
         case .nebula:
             // Prism: violet/cyan spectrum, pale gold for monetary values.
             return ThemeColors(
