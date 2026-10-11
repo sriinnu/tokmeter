@@ -1,0 +1,25 @@
+# Version updates. Security updates are enabled separately in the repo
+# settings and are not limited by these schedules.
+version: 2
+updates:
+  # Keeps the SHA-pinned actions current; the pins stay SHAs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: swift
+    directory: /packages/macos-bar
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
