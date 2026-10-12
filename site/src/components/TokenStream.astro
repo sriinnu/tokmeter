@@ -1,0 +1,193 @@
+---
+// The home hero: tokens from many agents stream through a meter and leave as
+// ledger rows. Each dot is a token; past the meter they turn amber, because
+// that is where tokens become cost. Raw WebGL2, no library.
+//
+// Moving the pointer over the hero raises the flow, like a burn rate. With
+// Reduce Motion it draws one still frame; off screen or in a hidden tab it
+// stops. Without WebGL2 the CSS backdrop alone shows.
+interface Props { lanes?: number }
+const { lanes = 24 } = Astro.props;
+---
+<section class="stream-hero" data-lanes={lanes}>
+  <canvas class="stream-canvas" aria-hidden="true"></canvas>
+  <div class="stream-fade" aria-hidden="true"></div>
+  <div class="stream-content"><slot /></div>
+</section>
+
+<script>
+  const VERT = `#version 300 es
+  precision highp float;
+  in float aA;      // stream: lane index · ring: position 0..1
+  in float aB;      // stream: seed 0..1 · ring: 0 inner, 1 outer
+  uniform int uMode;
+  uniform float uTime, uFlow, uAspect, uLanes, uDpr, uMeterX;
+  out vec3 vColor;
+  out float vAlpha;
+  const vec3 VIOLET = vec3(0.545, 0.361, 0.965);
+  const vec3 CYAN   = vec3(0.024, 0.714, 0.831);
+  const vec3 AMBER  = vec3(0.961, 0.690, 0.255);
+
+  void main() {
+    if (uMode == 0) {
+      float lane = aA, seed = aB;
+      float speed = 0.045 + 0.035 * fract(seed * 91.7);
+      float t = fract(seed * 7.13 + uTime * uFlow * speed);
+      float m = 0.6;                                   // where the meter sits along the path
+      float sx = t < m ? mix(-1.08, uMeterX, t / m) : mix(uMeterX, 1.08, (t - m) / (1.0 - m));
+      float ySrc = (lane / (uLanes - 1.0) - 0.5) * 1.55
+                 + (fract(seed * 53.1) - 0.5) * 0.05
+                 + sin(t * 9.0 + seed * 40.0) * 0.018;
+      float row = mod(lane, 4.0);
+      float yOut = (row - 1.5) * 0.2 + (fract(seed * 17.3) - 0.5) * 0.025;
+      float pre = smoothstep(0.0, m, t);
+      float post = smoothstep(m + 0.015, m + 0.22, t);
+      float y = mix(ySrc * (1.0 - pre * pre), yOut, post);
+      float near = exp(-pow((t - m) * 9.0, 2.0));
+      y += sin(uTime * 2.4 + seed * 30.0) * 0.012 * near;
+      gl_Position = vec4(sx, y * 0.9, 0.0, 1.0);
+      gl_PointSize = (1.6 + 2.6 * near + 0.8 * fract(seed * 13.7)) * uDpr;
+      vec3 c = mix(VIOLET, CYAN, lane / (uLanes - 1.0));
+      vColor = mix(c, AMBER, post * 0.85) + near * 0.35;
+      vAlpha = smoothstep(0.0, 0.06, t) * (1.0 - smoothstep(0.93, 1.0, t)) * (0.35 + 0.65 * fract(seed * 3.3));
+    } else {
+      float a = aA * 6.2831853;
+      float r = aB < 0.5 ? 0.12 : 0.16;
+      vec2 p = vec2(uMeterX + cos(a) * r / uAspect, sin(a) * r);
+      gl_Position = vec4(p, 0.0, 1.0);
+      gl_PointSize = (aB < 0.5 ? 2.0 : 1.4) * uDpr;
+      float sweep = fract(aA - uTime * uFlow * (aB < 0.5 ? 0.09 : -0.05));
+      float lit = aB < 0.5 ? smoothstep(0.65, 1.0, sweep) : step(0.5, fract(aA * 60.0));
+      vColor = mix(VIOLET, CYAN, aA);
+      vAlpha = 0.12 + 0.75 * lit;
+    }
+  }`;
+
+  const FRAG = `#version 300 es
+  precision mediump float;
+  in vec3 vColor;
+  in float vAlpha;
+  out vec4 outColor;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float a = vAlpha * smoothstep(0.5, 0.05, d);
+    outColor = vec4(vColor * a, a);
+  }`;
+
+  function compile(gl: WebGL2RenderingContext, type: number, src: string) {
+    const s = gl.createShader(type)!;
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+    return s;
+  }
+
+  function start(hero: HTMLElement) {
+    const canvas = hero.querySelector<HTMLCanvasElement>('.stream-canvas')!;
+    const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: true, alpha: true });
+    if (!gl) return;
+    let program: WebGLProgram;
+    try {
+      program = gl.createProgram()!;
+      gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, VERT));
+      gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+    } catch {
+      return;
+    }
+    gl.useProgram(program);
+    hero.classList.add('has-gl');
+
+    const lanes = Number(hero.dataset.lanes) || 24;
+    const small = matchMedia('(max-width: 720px)').matches;
+    const count = small ? 4500 : 11000;
+    const stream = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) {
+      stream[i * 2] = i % lanes;
+      stream[i * 2 + 1] = Math.random();
+    }
+    const RING = 240;
+    const ring = new Float32Array(RING * 2 * 2);
+    for (let i = 0; i < RING * 2; i++) {
+      ring[i * 2] = (i % RING) / RING;
+      ring[i * 2 + 1] = i < RING ? 0 : 1;
+    }
+
+    const aA = gl.getAttribLocation(program, 'aA');
+    const aB = gl.getAttribLocation(program, 'aB');
+    const vao = (data: Float32Array) => {
+      const v = gl.createVertexArray()!;
+      gl.bindVertexArray(v);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(aA);
+      gl.vertexAttribPointer(aA, 1, gl.FLOAT, false, 8, 0);
+      gl.enableVertexAttribArray(aB);
+      gl.vertexAttribPointer(aB, 1, gl.FLOAT, false, 8, 4);
+      return v;
+    };
+    const streamVao = vao(stream);
+    const ringVao = vao(ring);
+    const u = (n: string) => gl.getUniformLocation(program, n);
+    const uMode = u('uMode'), uTime = u('uTime'), uFlow = u('uFlow'), uAspect = u('uAspect');
+    const uLanes = u('uLanes'), uDpr = u('uDpr'), uMeterX = u('uMeterX');
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE); // additive: dense streams glow
+
+    let dpr = 1;
+    const resize = () => {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      gl.viewport(0, 0, w, h);
+    };
+
+    let flow = 1, target = 1, time = 0, last = performance.now();
+    const draw = () => {
+      resize();
+      const aspect = canvas.width / canvas.height;
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniform1f(uTime, time);
+      gl.uniform1f(uFlow, flow);
+      gl.uniform1f(uAspect, aspect);
+      gl.uniform1f(uLanes, lanes);
+      gl.uniform1f(uDpr, dpr);
+      gl.uniform1f(uMeterX, aspect < 1 ? 0.0 : 0.38);
+      gl.uniform1i(uMode, 0);
+      gl.bindVertexArray(streamVao);
+      gl.drawArrays(gl.POINTS, 0, count);
+      gl.uniform1i(uMode, 1);
+      gl.bindVertexArray(ringVao);
+      gl.drawArrays(gl.POINTS, 0, RING * 2);
+    };
+
+    const still = matchMedia('(prefers-reduced-motion: reduce)');
+    let raf = 0, onScreen = true;
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      flow += (target - flow) * Math.min(1, dt * 2.5);
+      time += dt;
+      draw();
+      raf = requestAnimationFrame(frame);
+    };
+    const run = () => {
+      cancelAnimationFrame(raf);
+      if (still.matches) { time = 18; draw(); return; }
+      if (onScreen && !document.hidden) { last = performance.now(); raf = requestAnimationFrame(frame); }
+    };
+    new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; run(); }).observe(hero);
+    document.addEventListener('visibilitychange', run);
+    still.addEventListener('change', run);
+    window.addEventListener('resize', () => { if (still.matches) draw(); });
+    hero.addEventListener('pointerenter', () => (target = 2.4));
+    hero.addEventListener('pointerleave', () => (target = 1));
+    run();
+  }
+
+  document.querySelectorAll<HTMLElement>('.stream-hero').forEach(start);
+</script>

@@ -1,0 +1,100 @@
+---
+import Base from '../layouts/Base.astro';
+
+export function getStaticPaths() {
+  const mods = import.meta.glob('../content/*.md', { eager: true }) as Record<string, any>;
+  return Object.entries(mods).map(([file, mod]) => ({
+    params: { slug: file.split('/').pop()!.replace(/\.md$/, '') },
+    props: { mod },
+  }));
+}
+
+const { slug } = Astro.params as { slug: string };
+const { mod } = Astro.props as { mod: any };
+const { Content, frontmatter } = mod;
+const headings = (mod.getHeadings?.() ?? []).filter((h: any) => h.depth === 2);
+
+// Reading order and grouping. The sync script owns the content; this owns
+// how it's presented.
+const meta: Record<string, { group: string; label: string; summary: string; accent: string }> = {
+  install: { group: 'Start', label: 'Install', summary: 'The CLI, the daemon and MCP server, and the macOS menu bar app.', accent: '#8b5cf6' },
+  cli: { group: 'Start', label: 'CLI', summary: 'Every command, the filters they share, and cleanup.', accent: '#06b6d4' },
+  'menu-bar': { group: 'Start', label: 'Menu bar and themes', summary: 'The macOS app’s eleven themes, and how a theme is put together.', accent: '#f5b041' },
+  mcp: { group: 'Agents', label: 'MCP tools', summary: 'All 24 tools an agent can call, grouped by what they answer.', accent: '#b388ff' },
+  daemon: { group: 'Agents', label: 'Daemon and HTTP API', summary: 'The local process every surface reads from, and its endpoints.', accent: '#06b6d4' },
+  numbers: { group: 'Trust', label: 'How the numbers work', summary: 'What each figure counts, where estimates come in, and why history doesn’t move.', accent: '#f5b041' },
+  backup: { group: 'Trust', label: 'Backup and restore', summary: 'What cleanup deletes, what it backs up, and what restore will and won’t write.', accent: '#3ef07a' },
+  troubleshooting: { group: 'Help', label: 'Troubleshooting', summary: 'The daemon, the menu bar, updates, and numbers that look wrong.', accent: '#ff7a6b' },
+  faq: { group: 'Help', label: 'FAQ', summary: 'Short answers to the questions people ask first.', accent: '#8b5cf6' },
+  architecture: { group: 'Build', label: 'Architecture', summary: 'How history is stored, how today stays live, and how the daemon serves it.', accent: '#6f8cff' },
+};
+const order = Object.keys(meta);
+const groups = [...new Set(order.map((s) => meta[s].group))];
+const i = order.indexOf(slug);
+const prev = i > 0 ? order[i - 1] : null;
+const next = i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+const me = meta[slug] ?? { group: 'Docs', label: frontmatter.title, summary: '', accent: '#06b6d4' };
+---
+<Base title={me.label} path={`/${slug}/`} description={me.summary}>
+  <header class="doc-head" style={`--accent:${me.accent}`}>
+    <div class="inner">
+      <p class="crumb"><a href="/">Tokmeter</a> / {me.group}</p>
+      <h1>{me.label}</h1>
+      <p class="summary">{me.summary}</p>
+    </div>
+  </header>
+
+  <div class="docs" style={`--accent:${me.accent}`}>
+    <nav class="side" aria-label="Documentation">
+      {groups.map((g) => (
+        <div class="grp">
+          <p>{g}</p>
+          {order.filter((s) => meta[s].group === g).map((s) => (
+            <a href={`/${s}/`} aria-current={s === slug ? 'page' : undefined}>{meta[s].label}</a>
+          ))}
+        </div>
+      ))}
+    </nav>
+
+    <article class="prose">
+      <Content />
+      <p class="source">Something wrong or out of date? This page is generated from <a href={frontmatter.source}>its source on GitHub</a>.</p>
+      <nav class="pager" aria-label="Previous and next">
+        {prev ? <a class="prev" href={`/${prev}/`}><span>Previous</span>{meta[prev].label}</a> : <span></span>}
+        {next ? <a class="next" href={`/${next}/`}><span>Next</span>{meta[next].label}</a> : <span></span>}
+      </nav>
+    </article>
+
+    {headings.length > 1 && (
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        {headings.map((h: any) => <a href={`#${h.slug}`}>{h.text}</a>)}
+      </nav>
+    )}
+  </div>
+</Base>
+
+<script>
+  // Scroll-spy for "On this page", and a copy button on every code block.
+  const links = [...document.querySelectorAll<HTMLAnchorElement>('.toc a')];
+  const map = new Map(links.map((a) => [a.getAttribute('href')!.slice(1), a]));
+  const spy = new IntersectionObserver((entries) => {
+    entries.forEach((en) => {
+      if (!en.isIntersecting) return;
+      links.forEach((l) => l.classList.remove('on'));
+      map.get(en.target.id)?.classList.add('on');
+    });
+  }, { rootMargin: '-80px 0px -70% 0px' });
+  document.querySelectorAll('.prose h2[id]').forEach((h) => spy.observe(h));
+
+  document.querySelectorAll<HTMLPreElement>('.prose pre').forEach((pre) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Copy';
+    btn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText); btn.textContent = 'Copied'; }
+      catch { btn.textContent = 'Press ⌘C'; }
+      setTimeout(() => (btn.textContent = 'Copy'), 1400);
+    });
+    pre.appendChild(btn);
+  });
+</script>
