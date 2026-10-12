@@ -112,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The popover fits its content again after a big day.** The menu bar window
+  grew to its 780pt cap and never shrank back, so a quiet morning showed the
+  panel centred in a screen-tall window with empty bands above and below. The
+  window now follows the panel's height both ways, top edge fixed under the
+  menu bar.
 - **The menubar popover no longer leaves empty bands above and below its
   content.** Its height came from the previous layout pass, so a taller hero
   (any new theme's front panel, or a theme switch) made the window grow to
