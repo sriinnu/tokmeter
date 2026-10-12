@@ -25,6 +25,9 @@ final class PanelVisibility: ObservableObject {
     /// The panel's own measured height. The window is sized to this, never
     /// the other way round; see `fitWindow`.
     private var contentHeight: CGFloat = 0
+    /// Where the window's top edge belongs: under the menu bar, as placed
+    /// when the panel opens. Kept fixed whoever resizes the window.
+    private var topEdge: CGFloat?
 
     private var observer: NSObjectProtocol?
     private var screenObservers: [NSObjectProtocol] = []
@@ -34,6 +37,7 @@ final class PanelVisibility: ObservableObject {
         guard self.window !== window else { return }
         detach()
         self.window = window
+        topEdge = window.frame.maxY
         fitWindow()
         isVisible = window.occlusionState.contains(.visible)
         screenHeight = window.screen?.visibleFrame.height ?? screenHeight
@@ -50,9 +54,21 @@ final class PanelVisibility: ObservableObject {
                 self.isVisible = window.occlusionState.contains(.visible)
                 self.screenHeight = window.screen?.visibleFrame.height ?? self.screenHeight
                 // Reopening must not show a height left over from last time.
-                if self.isVisible { self.fitWindow() }
+                // The system has just placed the window, so its top is right.
+                if self.isVisible {
+                    self.topEdge = window.frame.maxY
+                    self.fitWindow()
+                }
             }
         }
+        // NSHostingView also resizes the window to its content, keeping the
+        // bottom edge, which drops the top away from the menu bar. Whichever
+        // resize lands last, put the top edge and the height back.
+        screenObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: window, queue: .main
+        ) { _ in
+            Task { @MainActor [weak self] in self?.fitWindow() }
+        })
         for name in [NSWindow.didChangeScreenNotification, NSApplication.didChangeScreenParametersNotification] {
             screenObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: name == NSWindow.didChangeScreenNotification ? window : nil, queue: .main
@@ -78,12 +94,13 @@ final class PanelVisibility: ObservableObject {
     func fitWindow() {
         guard let window, contentHeight > 0 else { return }
         let content = window.contentRect(forFrameRect: window.frame)
-        guard abs(content.height - contentHeight) > 0.5 else { return }
         let target = window.frameRect(forContentRect: NSRect(x: content.minX, y: content.minY,
                                                              width: content.width, height: contentHeight))
+        let top = topEdge ?? window.frame.maxY
         var frame = window.frame
-        frame.origin.y = frame.maxY - target.height
+        guard abs(frame.height - target.height) > 0.5 || abs(frame.maxY - top) > 0.5 else { return }
         frame.size.height = target.height
+        frame.origin.y = top - target.height
         window.setFrame(frame, display: true, animate: false)
     }
 
