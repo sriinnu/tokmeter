@@ -26,7 +26,7 @@ Today exposes cost provenance in `/api/statbar-signals`: the estimated and repor
 
 ## History and corrections
 
-Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. Only today is repriced when the price catalog updates; from the next release, editing `~/.tokmeter/pricing-overrides.json` also reprices today. Completed days keep the cost they were sealed with. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.
+Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. Only today is repriced when the price catalog updates; since 1.15.0, editing `~/.tokmeter/pricing-overrides.json` also reprices today. Completed days keep the cost they were sealed with. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.
 
 ## Invariants
 

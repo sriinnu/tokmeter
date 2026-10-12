@@ -96,16 +96,11 @@ Auto-install for all supported editors:
 tokmeter-mcp install-mcp
 ```
 
-For Claude Code, v1.14.1's `install-mcp` writes the entry into
-`~/.claude/settings.json`, which Claude Code does not load MCP servers from, so
-use the `claude mcp add` command above instead. From the next release,
-`install-mcp` registers Claude Code through `claude mcp add --scope user` (or
+For Claude Code, `install-mcp` (1.15.0 and later) registers it through `claude mcp add --scope user` (or
 prints that command when the `claude` CLI isn't on your PATH), and points out
 any old, inert entry left in `settings.json`, which you can delete.
 
-For OpenCode, v1.14.1's `install-mcp` writes to
-`~/.config/opencode/settings.json`, which OpenCode doesn't read for MCP. From
-the next release it writes to `~/.config/opencode/opencode.json` under `mcp`,
+For OpenCode, `install-mcp` (1.15.0 and later) writes to `~/.config/opencode/opencode.json` under `mcp`,
 in OpenCode's own shape, and removes the old entry:
 
 ```json
@@ -136,7 +131,7 @@ Once connected, the server exposes these tools to the AI agent:
 | `tokmeter_leaderboard`, `tokmeter_digest`, `tokmeter_streaks` | Reports and usage patterns |
 | `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_backups`, `tokmeter_restore` | Preview cleanup, delete with confirmation, and restore backups |
 
-**(next release)** Every tool declares MCP annotations. The 22 reporting
+Since 1.15.0, every tool declares MCP annotations. The 22 reporting
 tools are `readOnlyHint: true, openWorldHint: false`. `tokmeter_cleanup_execute`
 and `tokmeter_restore` are `destructiveHint: true, idempotentHint: false`.
 `tokmeter_cleanup_execute` refuses an empty filter, so name a project,

@@ -44,7 +44,7 @@ Roo/Kilo) are backed up at the row level but not re-injected on restore —
 their data shows up in tokmeter stats once re-indexed, but isn't written back
 into the editor's SQLite DB.
 
-## What restore will and won't write (next release)
+## What restore will and won't write
 
 Snapshots are made to move between machines, so restore treats an archive as
 untrusted input:
@@ -109,9 +109,9 @@ enforced **inside the server**, not left to the client:
   `confirm: "DELETE"`** — checked in the tool handler before `CleanupService`
   runs; any other value returns an error and deletes nothing.
 - **Backup is on by default** (`backup: true`); pass `backup: false` to opt out.
-  **(next release)** Over MCP the backup is mandatory: `backup: false` is
+  From 1.15.0, over MCP the backup is mandatory: `backup: false` is
   accepted for compatibility, but it's ignored and the result says so.
-- **(next release)** An **empty filter is refused**, in core, for every caller
+- From 1.15.0, an **empty filter is refused**, in core, for every caller
   (CLI, TUI, MCP, daemon HTTP). With no project, no providers and no date
   range, a cleanup would match every session of every provider. Name at least
   one of: `project`, `providers`, `since`/`until`, or a `today`/`week`/`month`

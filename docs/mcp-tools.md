@@ -142,12 +142,12 @@ DESTRUCTIVE: Permanently delete session data matching the given filters. Always 
 > (enforced inside the server before anything is removed). Always call
 > `tokmeter_cleanup_preview` first. See [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
 >
-> **(next release)** An empty filter (no `project`, no `providers`, no
+> From 1.15.0, an empty filter (no `project`, no `providers`, no
 > `since`/`until` and no `today`/`week`/`month` scope) is refused, because it
 > would delete every session of every provider. A `.tar.gz` backup is always
 > written first: `backup: false` is still accepted, but it's ignored and the
-> result says so. In 1.14.1 the backup is on by default and `backup: false`
-> skips it.
+> result says so. In 1.14.1 and earlier the backup is on by default and
+> `backup: false` skips it.
 
 ### tokmeter_restore
 
@@ -155,13 +155,13 @@ Restore session data from a cleanup backup. Requires confirm='RESTORE' as a safe
 
 > Requires `confirm: "RESTORE"` as a safety guard.
 >
-> **(next release)** The archive is validated before anything is written.
+> From 1.15.0, the archive is validated before anything is written.
 > Symlink, hardlink, device and fifo entries, and any `..` path, are refused.
 > Files are extracted into a private temp directory and copied into place only
 > if they land inside known agent session paths. If any entry fails, nothing is
-> restored. See [Backup, Snapshot & Restore](backup-restore.md#what-restore-will-and-wont-write-next-release).
+> restored. See [Backup, Snapshot & Restore](backup-restore.md#what-restore-will-and-wont-write).
 
-## Tool annotations (next release)
+## Tool annotations
 
 Every tool declares MCP tool annotations so a client can decide what to
 auto-approve:

@@ -1,8 +1,8 @@
 # On-demand web dashboard
 
-Settings → **Open web dashboard** starts a child server owned by TokmeterBar, waits for that child's readiness response, then opens it in your browser. Release 1.14.1 uses port 3000. From the next release the port defaults to 8888 and is set in the Hub's Settings or with `tokmeter config set bar.dashboardPort <1024–65535>`; if that port is taken, the next free port (up to 9 above it, then any free port) is used and Settings says which. Reopening reuses the child. **Stop web dashboard** closes it; **Cancel dashboard startup** cancels an in-progress launch. Quitting the app closes the child too. Closing a browser tab alone does not stop it.
+Settings → **Open web dashboard** starts a child server owned by TokmeterBar, waits for that child's readiness response, then opens it in your browser. The port defaults to 8888 (1.14.1 and earlier used 3000) and is set in the Hub's Settings or with `tokmeter config set bar.dashboardPort <1024–65535>`; if that port is taken, the next free port (up to 9 above it, then any free port) is used and Settings says which. Reopening reuses the child. **Stop web dashboard** closes it; **Cancel dashboard startup** cancels an in-progress launch. Quitting the app closes the child too. Closing a browser tab alone does not stop it.
 
-The dashboard needs Node.js 18+ and the usage daemon used by the menubar. Stopping the dashboard leaves the daemon and menubar updates running. Missing assets, an unavailable Node runtime, and startup/port failures appear in Settings. Tokmeter never opens or stops a server it didn't start: in 1.14.1 a busy port 3000 is reported as an error; from the next release it moves to a free port instead.
+The dashboard needs Node.js 18+ and the usage daemon used by the menubar. Stopping the dashboard leaves the daemon and menubar updates running. Missing assets, an unavailable Node runtime, and startup/port failures appear in Settings. Tokmeter never opens or stops a server it didn't start: a busy preferred port moves to a free one (1.14.1 and earlier reported a busy port 3000 as an error).
 
 ## Module ownership
 

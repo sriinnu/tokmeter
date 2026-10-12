@@ -72,7 +72,7 @@ showing a number to a human.
 ### Pricing shows as stale
 
 The price catalog ("kosha") refreshes on a schedule. Only **today** reprices
-when the catalog updates (from the next release, also when
+when the catalog updates (since 1.15.0, also when
 `~/.tokmeter/pricing-overrides.json` changes); past days stay frozen by design. Force a refresh from
 the bar's settings or re-run the daily refresh.
 
