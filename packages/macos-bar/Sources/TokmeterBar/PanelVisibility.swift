@@ -28,6 +28,9 @@ final class PanelVisibility: ObservableObject {
     /// Where the window's top edge belongs: under the menu bar, as placed
     /// when the panel opens. Kept fixed whoever resizes the window.
     private var topEdge: CGFloat?
+    /// Tests host the panel in an offscreen window, which never reports
+    /// `.visible`; this lets them exercise the open path.
+    static var treatOffscreenAsVisibleForTests = false
 
     private var observer: NSObjectProtocol?
     private var screenObservers: [NSObjectProtocol] = []
@@ -52,9 +55,12 @@ final class PanelVisibility: ObservableObject {
             Task { @MainActor [weak self, weak window] in
                 guard let self, let window else { return }
                 self.isVisible = window.occlusionState.contains(.visible)
+                    || Self.treatOffscreenAsVisibleForTests
                 self.screenHeight = window.screen?.visibleFrame.height ?? self.screenHeight
-                // Reopening must not show a height left over from last time.
-                // The system has just placed the window, so its top is right.
+                // Opening: the system has just hung the window under the menu
+                // bar, so this is the top edge to keep. (Attach can land after
+                // AppKit's first resize, so its reading isn't trusted.) Then
+                // drop any height left over from last time.
                 if self.isVisible {
                     self.topEdge = window.frame.maxY
                     self.fitWindow()

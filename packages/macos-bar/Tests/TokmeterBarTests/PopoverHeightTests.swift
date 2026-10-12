@@ -39,6 +39,17 @@ final class PopoverHeightTests: XCTestCase {
                                "\(theme): window moved its top edge instead of resizing down")
                 return window.frame.height
             }
+            // Opening the panel: the system hangs the window under the menu
+            // bar (top edge at topEdge) and the panel becomes visible. An
+            // offscreen test window never becomes visible, so post the
+            // notification the app listens for, with the occlusion it reports.
+            for _ in 0..<12 {
+                host.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            }
+            window.setFrameTopLeftPoint(NSPoint(x: 0, y: topEdge))
+            PanelVisibility.treatOffscreenAsVisibleForTests = true
+            NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
             let small = settle()
             XCTAssertLessThan(small, 700, "\(theme): a light day still fills the cap")
             // NSHostingView resizes the window too, keeping the BOTTOM edge
@@ -78,6 +89,7 @@ final class PopoverHeightTests: XCTestCase {
             loader.todayProjects = []
             XCTAssertEqual(settle(), small, accuracy: 1, "\(theme): popover didn't shrink back")
             window.contentView = nil
+            PanelVisibility.treatOffscreenAsVisibleForTests = false
         }
     }
 }
