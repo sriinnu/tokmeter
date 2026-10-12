@@ -112,11 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The menubar popover no longer leaves empty bands above and below its
-  content.** Its height came from the previous layout pass, so a taller hero
-  (any new theme's front panel, or a theme switch) made the window grow to
-  screen height and stay there. The layout now measures everything in one
-  pass and caps in that pass.
+- **The menubar popover fits its content, growing and shrinking.** It used to
+  leave empty bands above and below. The window grew with its content (a busy
+  day, an expanded section, a theme switch) up to its 780pt cap and never
+  shrank back, so a quiet day showed the panel centred in a screen-tall
+  window. The layout now caps its height in a single pass, and the window
+  follows the panel's height both ways with its top edge fixed under the menu
+  bar.
 - **Numbers and lamps that disagreed now agree.**
   - "Today" was marked on the last recorded day, even when it was weeks old,
     and Meter worked the date out once at launch, so after midnight it marked

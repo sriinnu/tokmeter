@@ -21,18 +21,46 @@ final class PopoverHeightTests: XCTestCase {
                 TokmeterBarView(loader: loader, updater: UpdaterController(startingUpdater: false),
                                 theme: theme, usageDetailsExpanded: true)
                     .defaultAppStorage(preferences))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 1),
+            // Start stuck at the cap, the way a long-lived MenuBarExtra window
+            // is after a big day. The test never resizes the window itself:
+            // the app has to, or the window stays tall with empty bands.
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 100, width: 400, height: 780),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = host
+            let topEdge = window.frame.maxY
             func settle() -> CGFloat {
                 for _ in 0..<12 {
                     host.layoutSubtreeIfNeeded()
-                    window.setContentSize(host.fittingSize)
                     RunLoop.main.run(until: Date().addingTimeInterval(0.03))
                 }
-                return host.fittingSize.height
+                XCTAssertEqual(window.frame.height, host.fittingSize.height, accuracy: 1,
+                               "\(theme): window height doesn't follow the panel")
+                XCTAssertEqual(window.frame.maxY, topEdge, accuracy: 1,
+                               "\(theme): window moved its top edge instead of resizing down")
+                return window.frame.height
             }
+            // Opening the panel: the system hangs the window under the menu
+            // bar (top edge at topEdge) and the panel becomes visible. An
+            // offscreen test window never becomes visible, so post the
+            // notification the app listens for, with the occlusion it reports.
+            for _ in 0..<12 {
+                host.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            }
+            window.setFrameTopLeftPoint(NSPoint(x: 0, y: topEdge))
+            PanelVisibility.treatOffscreenAsVisibleForTests = true
+            NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
             let small = settle()
+            XCTAssertLessThan(small, 700, "\(theme): a light day still fills the cap")
+            // NSHostingView resizes the window too, keeping the BOTTOM edge
+            // (on CI it lands after the app's resize). Whoever goes last, the
+            // top must end up back under the menu bar.
+            // Reproduce that order exactly: tall with the top right, then a
+            // bottom-anchored shrink to the content height in the same turn,
+            // before the app reacts.
+            window.setFrame(NSRect(x: 0, y: topEdge - 780, width: 400, height: 780), display: false)
+            window.setFrame(NSRect(x: 0, y: topEdge - 780, width: 400, height: small), display: false)
+            XCTAssertEqual(settle(), small, accuracy: 1, "\(theme): an outside resize stuck")
             // A heavy day: many models and projects, all at once (first layout).
             loader.todayModels = (1...14).map {
                 ModelUsage(model: "model-\($0)", provider: "codex", cost: Double(20 - $0),
@@ -61,6 +89,7 @@ final class PopoverHeightTests: XCTestCase {
             loader.todayProjects = []
             XCTAssertEqual(settle(), small, accuracy: 1, "\(theme): popover didn't shrink back")
             window.contentView = nil
+            PanelVisibility.treatOffscreenAsVisibleForTests = false
         }
     }
 }
