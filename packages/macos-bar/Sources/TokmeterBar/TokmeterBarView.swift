@@ -102,6 +102,10 @@ struct TokmeterBarView: View {
         }
         .frame(width: 400)
         .fixedSize(horizontal: false, vertical: true)
+        // The window follows the panel's height both ways; see fitWindow.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            panelVisibility.contentHeightChanged(height)
+        }
         .background(popoverBackground)
         .trackPanelVisibility(panelVisibility)
         // Cache "wallet" drawer — slides in from the trailing edge over the

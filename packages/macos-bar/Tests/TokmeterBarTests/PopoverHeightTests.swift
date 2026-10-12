@@ -21,18 +21,26 @@ final class PopoverHeightTests: XCTestCase {
                 TokmeterBarView(loader: loader, updater: UpdaterController(startingUpdater: false),
                                 theme: theme, usageDetailsExpanded: true)
                     .defaultAppStorage(preferences))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 1),
+            // Start stuck at the cap, the way a long-lived MenuBarExtra window
+            // is after a big day. The test never resizes the window itself:
+            // the app has to, or the window stays tall with empty bands.
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 100, width: 400, height: 780),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = host
+            let topEdge = window.frame.maxY
             func settle() -> CGFloat {
                 for _ in 0..<12 {
                     host.layoutSubtreeIfNeeded()
-                    window.setContentSize(host.fittingSize)
                     RunLoop.main.run(until: Date().addingTimeInterval(0.03))
                 }
-                return host.fittingSize.height
+                XCTAssertEqual(window.frame.height, host.fittingSize.height, accuracy: 1,
+                               "\(theme): window height doesn't follow the panel")
+                XCTAssertEqual(window.frame.maxY, topEdge, accuracy: 1,
+                               "\(theme): window moved its top edge instead of resizing down")
+                return window.frame.height
             }
             let small = settle()
+            XCTAssertLessThan(small, 700, "\(theme): a light day still fills the cap")
             // A heavy day: many models and projects, all at once (first layout).
             loader.todayModels = (1...14).map {
                 ModelUsage(model: "model-\($0)", provider: "codex", cost: Double(20 - $0),
