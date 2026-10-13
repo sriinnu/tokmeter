@@ -18,7 +18,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@sriinnu/kosha-discovery": "^1.6.2"
+    "@sriinnu/kosha-discovery": "^1.8.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
