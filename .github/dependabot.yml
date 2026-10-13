@@ -23,3 +23,13 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+
+  # The tokmeter.srinivas.dev site: its own npm project, built by Cloudflare.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      site:
+        patterns: ["*"]
