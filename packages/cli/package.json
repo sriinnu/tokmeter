@@ -25,7 +25,7 @@
     "@sriinnu/tokmeter": "workspace:*",
     "@sriinnu/tokmeter-mcp": "workspace:*",
     "cli-table3": "^0.6.5",
-    "chalk": "^5.3.0"
+    "chalk": "^6.0.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
