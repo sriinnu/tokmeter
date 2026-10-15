@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { aggregateRecordsByDay } from "./aggregates.js";
 import {
-  DailyAccumulator,
   aggregatesStoreDir,
+  DailyAccumulator,
   deleteDayFile,
   listDaysOnDisk,
   loadAggregates,
@@ -13,7 +14,6 @@ import {
   sealRolledOverDay,
   writeDayFile,
 } from "./aggregates-store.js";
-import { aggregateRecordsByDay } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import type { TokenRecord } from "./types.js";
 

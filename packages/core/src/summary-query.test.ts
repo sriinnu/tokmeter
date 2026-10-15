@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { DailyAccumulator } from "./aggregates-store.js";
 import { aggregateRecordsByDay } from "./aggregates.js";
+import { DailyAccumulator } from "./aggregates-store.js";
 import { createSummaryQuery } from "./summary-query.js";
 import { TokmeterCore } from "./tokmeter-core.js";
 import type { ScanOptions, TokenRecord } from "./types.js";

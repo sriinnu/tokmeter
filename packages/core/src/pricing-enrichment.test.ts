@@ -12,8 +12,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { type UnpricedTracker, enrichCosts, resetCalculatedCosts } from "./pricing-enrichment.js";
 import { PricingService } from "./pricing.js";
+import { enrichCosts, resetCalculatedCosts, type UnpricedTracker } from "./pricing-enrichment.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
 function makeRecord(overrides: Partial<TokenRecord> = {}): TokenRecord {

@@ -5,7 +5,7 @@
  * Used by the MCP server, statusline, and live TUI dashboard.
  */
 
-import { type ThemeColors, isNerdFontEnabled, loadUserTheme } from "@sriinnu/tokmeter";
+import { isNerdFontEnabled, loadUserTheme, type ThemeColors } from "@sriinnu/tokmeter";
 import chalk, { type Chalk } from "chalk";
 
 /** Plain-text fallback for the statusline when rendering fails. No chalk, no deps. */
@@ -224,7 +224,7 @@ export function tierColor(pct: number): typeof C.accent {
 // ─── Powerline Segment Helpers ──────────────────────────────────────
 
 /** Whether Nerd Font glyphs are available (config or env). */
-export function useNerdFont(): boolean {
+export function nerdFontEnabled(): boolean {
   return _nerdFont;
 }
 

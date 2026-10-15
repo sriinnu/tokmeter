@@ -5,8 +5,8 @@
  * machine B.
  */
 
-import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
 import type { CleanupFilter, ProviderId } from "@sriinnu/tokmeter";
+import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
 
 export interface SnapshotArgs {
   project?: string;

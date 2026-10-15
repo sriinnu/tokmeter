@@ -559,7 +559,6 @@ export function uninstallStatusline(editors?: string[]): void {
       continue;
     }
 
-    // biome-ignore lint/performance/noDelete: required to remove property from object
     delete settings.statusLine;
     writeJSON(editor.settingsPath, settings);
     console.log(C.success(`  ✓ ${editor.name} — uninstalled`));
@@ -748,7 +747,6 @@ export function uninstallHooks(): void {
     return;
   }
 
-  // biome-ignore lint/performance/noDelete: required to remove property from object
   delete settings.hooks;
   writeJSON(editor.settingsPath, settings);
 

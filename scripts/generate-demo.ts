@@ -8,6 +8,7 @@ import {
 import { DailyAccumulator } from "../packages/core/src/aggregates-store.js";
 import { createRecord } from "../packages/core/src/parsers/utils.js";
 import { computeStatbarSignals } from "../packages/core/src/signals.js";
+
 const out = resolve("docs/assets/demo");
 mkdirSync(out, { recursive: true });
 const now = new Date(2026, 8, 6, 12).getTime();

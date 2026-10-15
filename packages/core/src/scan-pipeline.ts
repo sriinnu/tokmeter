@@ -12,8 +12,8 @@
 import { isBeforeToday, startOfLocalDay } from "./date-utils.js";
 import { getParsers } from "./parsers/index.js";
 import { saveRecordCacheToDisk } from "./parsers/utils.js";
-import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import type { PricingService } from "./pricing.js";
+import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface ScanContext {

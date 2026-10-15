@@ -30,8 +30,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { localDateKey } from "../date-utils.js";
-import { CodexDesktopParser, hasJsonlTokenCoverage } from "./codex-desktop.js";
 import { CodexParser } from "./codex.js";
+import { CodexDesktopParser, hasJsonlTokenCoverage } from "./codex-desktop.js";
 
 let tmpDir: string;
 

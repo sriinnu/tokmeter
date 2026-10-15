@@ -82,7 +82,7 @@ export function View3DPage() {
             text: "3D Token Usage Surface",
             font: {
               color: webTheme.text.primary,
-              size: Number.parseInt(webTheme.typography.h3.size),
+              size: Number.parseInt(webTheme.typography.h3.size, 10),
             },
           },
           scene: {
@@ -98,7 +98,7 @@ export function View3DPage() {
           paper_bgcolor: "transparent",
           font: {
             color: webTheme.text.muted,
-            size: Number.parseInt(webTheme.typography.body.size),
+            size: Number.parseInt(webTheme.typography.body.size, 10),
           },
           width: 900,
           height: 600,

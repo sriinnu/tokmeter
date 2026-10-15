@@ -3,9 +3,9 @@ import { SummaryStatusBanner } from "../components/SummaryStatusBanner.js";
 import type { LiveData } from "../hooks/useLiveData.js";
 import { useTokmeterData } from "../hooks/useTokmeterData.js";
 import { webTheme, withAlpha } from "../theme.js";
+import { buildDashboardInsights } from "./dashboard/buildDashboardInsights.js";
 import { DashboardOverviewSection } from "./dashboard/DashboardOverviewSection.js";
 import { DashboardTablesSection } from "./dashboard/DashboardTablesSection.js";
-import { buildDashboardInsights } from "./dashboard/buildDashboardInsights.js";
 
 interface DashboardPageProps {
   liveData: LiveData;

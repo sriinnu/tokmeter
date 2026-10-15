@@ -7,7 +7,7 @@
  */
 
 import type { ScanOptions, TokenRecord } from "@sriinnu/tokmeter";
-import { TokmeterCore, sumUsage } from "@sriinnu/tokmeter";
+import { sumUsage, TokmeterCore } from "@sriinnu/tokmeter";
 import chalk from "chalk";
 import Table from "cli-table3";
 

@@ -1,12 +1,12 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
-import { type Plugin, defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import {
-  TokmeterCore,
-  type TokmeterSummary,
   loadSummaryCache,
   saveSummaryCache,
+  TokmeterCore,
+  type TokmeterSummary,
 } from "../core/src/index.ts";
 import { appNoticesPlugin } from "./scripts/app-notices.js";
 

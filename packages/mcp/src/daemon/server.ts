@@ -13,17 +13,17 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
 import {
+  createServer as createHttpServer,
   type IncomingMessage,
   type ServerResponse,
-  createServer as createHttpServer,
 } from "node:http";
 import { homedir, setPriority } from "node:os";
 import { join } from "node:path";
@@ -38,10 +38,10 @@ import {
 import { WebSocket, WebSocketServer } from "ws";
 import {
   API_HEADER,
-  LEGACY_API_HEADER,
   apiVersionHeaders,
   daemonChildEnv,
   isDaemonChildEnv,
+  LEGACY_API_HEADER,
 } from "./compat-names.js";
 import {
   captureDaemonIdentity,
@@ -72,8 +72,8 @@ import {
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
 import { RefreshCoordinator } from "./refresh-coordinator.js";
-import { computeSessionLedger } from "./session-ledger.js";
 import { SessionManager } from "./session.js";
+import { computeSessionLedger } from "./session-ledger.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
 

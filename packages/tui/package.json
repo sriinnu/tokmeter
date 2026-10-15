@@ -7,7 +7,9 @@
   "bin": {
     "tokmeter-tui": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "bun src/index.tsx"

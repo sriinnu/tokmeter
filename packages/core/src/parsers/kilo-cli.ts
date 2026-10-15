@@ -14,11 +14,11 @@
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import {
-  type ReadonlySqlite,
   createRecord,
   expandHome,
   fileExists,
   openReadonlySqlite,
+  type ReadonlySqlite,
 } from "./utils.js";
 
 /** Shape of a row from the `messages` table (assistant responses only). */

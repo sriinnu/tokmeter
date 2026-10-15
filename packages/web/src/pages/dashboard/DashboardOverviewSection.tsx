@@ -1,6 +1,5 @@
 import type { CSSProperties } from "react";
-import { memo } from "react";
-import React from "react";
+import React, { memo } from "react";
 import Plot from "react-plotly.js";
 import { ContributionHeatmap } from "../../charts/ContributionHeatmap.js";
 import { ProviderPieChart } from "../../charts/ProviderPieChart.js";
@@ -8,8 +7,8 @@ import { TodayHourlyChart } from "../../charts/TodayHourlyChart.js";
 import type { LiveData } from "../../hooks/useLiveData.js";
 import type { TokmeterData } from "../../hooks/useTokmeterData.js";
 import { webTheme, withAlpha } from "../../theme.js";
-import { DashboardPanel } from "./DashboardPanel.js";
 import type { DashboardInsights, DashboardModelInsight } from "./buildDashboardInsights.js";
+import { DashboardPanel } from "./DashboardPanel.js";
 import {
   formatDashboardCostPerMillion,
   formatDashboardCurrency,

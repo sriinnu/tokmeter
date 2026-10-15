@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "../config-service.js";
 import { localDateKey } from "../date-utils.js";
@@ -675,7 +675,7 @@ export interface ReadonlySqlite {
 export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite | null> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     try {
-      // @ts-ignore — bun:sqlite only resolves under the Bun runtime
+      // @ts-expect-error — bun:sqlite only resolves under the Bun runtime
       const { Database } = await import("bun:sqlite");
       const db = new Database(path, { readonly: true });
       return {
@@ -688,7 +688,7 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite |
     }
   }
   try {
-    // @ts-ignore — better-sqlite3 is an optional dependency
+    // @ts-expect-error — better-sqlite3 is an optional dependency
     const { default: Database } = await import("better-sqlite3");
     const db = new Database(path, { readonly: true });
     return {

@@ -1,8 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
-import { useLiveData } from "./hooks/useLiveData.js";
 import type { LiveConnectionStatus } from "./hooks/useLiveData.js";
+import { useLiveData } from "./hooks/useLiveData.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { ModelsPage } from "./pages/ModelsPage.js";
 import { ProjectsPage } from "./pages/ProjectsPage.js";

@@ -42,15 +42,15 @@ import { createInterface } from "node:readline";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { readCheckpoints, writeCheckpoints } from "./codex-sqlite-checkpoint.js";
 import { codexHomeDir, isCodexTokenUsage } from "./codex.js";
+import { readCheckpoints, writeCheckpoints } from "./codex-sqlite-checkpoint.js";
 import {
-  type ReadonlySqlite,
   createRecord,
   expandHome,
   fileExists,
   getConfiguredProviderPaths,
   openReadonlySqlite,
+  type ReadonlySqlite,
 } from "./utils.js";
 
 const DEFAULT_MODEL = "unknown";

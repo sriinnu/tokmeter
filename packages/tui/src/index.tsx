@@ -16,7 +16,7 @@ process.on("uncaughtException", (error) => {
 
 import type { ProviderSummary, TokmeterSummary } from "@sriinnu/tokmeter";
 import { TokmeterCore } from "@sriinnu/tokmeter";
-import { Box, Text, render, useApp, useInput } from "ink";
+import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "./theme.js";
 import { CleanupView } from "./views/CleanupView.js";

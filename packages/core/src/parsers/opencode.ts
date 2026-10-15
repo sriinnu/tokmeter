@@ -8,12 +8,12 @@
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import {
-  type ReadonlySqlite,
   createRecord,
   expandHome,
   fileExists,
   findFiles,
   openReadonlySqlite,
+  type ReadonlySqlite,
   readJsonFile,
 } from "./utils.js";
 
@@ -107,7 +107,7 @@ export class OpenCodeParser implements SessionParser {
 
     for (const file of jsonFiles) {
       const msg = await readJsonFile<OpenCodeMessage>(file);
-      if (!msg || msg.role !== "assistant" || !msg.tokens) continue;
+      if (msg?.role !== "assistant" || !msg?.tokens) continue;
 
       records.push(
         createRecord({

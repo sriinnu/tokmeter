@@ -6,8 +6,8 @@
  * impls did. Parity-tested in aggregate-migration-parity.test.ts.
  */
 
-import type { DailyAccumulator } from "./aggregates-store.js";
 import type { DailyAggregate, ProjectDayBucket } from "./aggregates.js";
+import type { DailyAccumulator } from "./aggregates-store.js";
 import { type AliasMap, isProjectHidden, resolveProjectName } from "./alias-service.js";
 import { localDateKey } from "./date-utils.js";
 import { projectNameIncludes, projectNamesMatch } from "./project-name.js";

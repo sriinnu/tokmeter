@@ -57,7 +57,7 @@ export function ModelsPage() {
             text: "Token Breakdown by Model",
             font: {
               color: webTheme.text.primary,
-              size: Number.parseInt(webTheme.typography.h3.size),
+              size: Number.parseInt(webTheme.typography.h3.size, 10),
             },
           },
           barmode: "stack",
@@ -73,7 +73,7 @@ export function ModelsPage() {
           plot_bgcolor: "transparent",
           font: {
             color: webTheme.text.muted,
-            size: Number.parseInt(webTheme.typography.body.size),
+            size: Number.parseInt(webTheme.typography.body.size, 10),
           },
         },
         config: { responsive: true },
