@@ -122,9 +122,12 @@ agent emit one JSON object per API response in the canonical usage-line format:
 
 ```json
 "customSources": [
-  { "path": "~/.ribhu/sessions", "format": "tokmeter-usage-jsonl", "provider": "ribhu" }
+  { "path": "~/my-agent/usage", "format": "tokmeter-usage-jsonl", "provider": "custom" }
 ]
 ```
+
+Ribhu Code has a native parser (`~/.ribhu/usage`), so it needs no entry; one
+pointing at that directory is ignored rather than double-counted.
 
 Each line (snake_case or camelCase; token buckets flat or nested under `usage`):
 

@@ -39,11 +39,17 @@
  *
  * Records are tagged with the source's `provider` when it is a custom-eligible
  * id (ribhu, grok, custom); anything else falls back to "custom".
+ *
+ * Ribhu now has a native parser (RibhuParser, ~/.ribhu/usage). Files under a
+ * native parser's root are skipped here, so a customSources entry that still
+ * points at (or above) ~/.ribhu/usage never counts a line twice.
  */
 
+import { resolve, sep } from "node:path";
 import { type CustomSource, loadConfig } from "../config-service.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { RibhuParser } from "./ribhu.js";
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 /** Provider ids a custom source is allowed to claim. */
@@ -102,6 +108,11 @@ function toMillis(ts: number | string | undefined): number {
   return Date.now();
 }
 
+/** Roots a native parser already reads; custom sources must not re-read them. */
+function nativeRoots(homeDir: string): string[] {
+  return new RibhuParser().sessionRoots(homeDir).map((r) => resolve(r) + sep);
+}
+
 /** Custom sources this parser reads: enabled and in the canonical format. */
 function enabledSources(homeDir: string) {
   return loadConfig(homeDir).customSources.filter(
@@ -132,10 +143,13 @@ export class CustomSourceParser implements SessionParser {
     _opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
+    const owned = nativeRoots(homeDir);
     for (const source of enabledSources(homeDir)) {
       const provider = resolveProvider(source);
       const root = expandHome(source.path, homeDir);
-      const files = await findFiles(root, (f) => f.endsWith(".jsonl") || f.endsWith(".json"), 6);
+      const files = (
+        await findFiles(root, (f) => f.endsWith(".jsonl") || f.endsWith(".json"), 6)
+      ).filter((f) => !owned.some((r) => resolve(f).startsWith(r)));
 
       for (const file of files) {
         const lines = await readJsonlFile<CanonicalUsageLine>(file);

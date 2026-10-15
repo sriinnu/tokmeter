@@ -24,6 +24,7 @@ import { OpenClawParser } from "./openclaw.js";
 import { OpenCodeParser } from "./opencode.js";
 import { PiParser } from "./pi.js";
 import { QwenParser } from "./qwen.js";
+import { RibhuParser } from "./ribhu.js";
 import { RooCodeParser } from "./roo-code.js";
 import { SyntheticParser } from "./synthetic.js";
 import { VSCodeCopilotParser } from "./vscode-copilot.js";
@@ -54,6 +55,7 @@ export const ALL_PARSERS: SessionParser[] = [
   new ClineParser(),
   new AugmentParser(),
   new CopilotCliParser(),
+  new RibhuParser(),
   new CustomSourceParser(),
   new SyntheticParser(),
 ];

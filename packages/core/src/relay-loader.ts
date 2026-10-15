@@ -26,7 +26,7 @@ import {
   shouldKeepSealedDay,
 } from "./aggregates.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
-import { getParsers } from "./parsers/index.js";
+import { getParser, getParsers } from "./parsers/index.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
 import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
@@ -38,8 +38,8 @@ export interface RelayState {
 
 /**
  * Provider ids served by the single CustomSourceParser (providerId "custom").
- * A surgical backfill of one of these must scan that parser, not a parser whose
- * id equals the target (none exists). Mirrors CUSTOM_ELIGIBLE in
+ * A surgical backfill of one of these must scan that parser too, not only a
+ * parser whose id equals the target (only ribhu has one). Mirrors CUSTOM_ELIGIBLE in
  * parsers/custom-source.ts.
  */
 const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>(["ribhu", "grok", "custom"]);
@@ -335,12 +335,17 @@ export async function backfillProviderIntoRelay(
   const todayKey = localDateKey(referenceTimestamp);
   const floorKey = localDateKey(floorMs);
 
-  // Custom-eligible ids (ribhu/grok/custom) are all emitted by the single
-  // CustomSourceParser, whose providerId is "custom". Scanning [providerId]
-  // for one of those would match no parser; scan the custom parser instead and
-  // let the per-record `r.provider === providerId` filter below pick the target.
-  const scanProviderId: ProviderId = CUSTOM_ELIGIBLE.has(providerId) ? "custom" : providerId;
-  const raw = await scanRawRecords(ctx, [scanProviderId], "history", warnings, floorMs);
+  // Custom-eligible ids (ribhu/grok/custom) are emitted by the single
+  // CustomSourceParser, whose providerId is "custom"; scan it and let the
+  // per-record `r.provider === providerId` filter below pick the target. An id
+  // that also has a native parser (ribhu) scans both — the custom parser skips
+  // the native root, and fingerprint dedup below guards any remaining overlap.
+  const scanProviderIds: ProviderId[] = !CUSTOM_ELIGIBLE.has(providerId)
+    ? [providerId]
+    : getParser(providerId)
+      ? [providerId, "custom"]
+      : ["custom"];
+  const raw = await scanRawRecords(ctx, scanProviderIds, "history", warnings, floorMs);
 
   // Keep only this provider's records that fall in the sealed window: on/after
   // the floor day and strictly before today (a multi-day file can carry records

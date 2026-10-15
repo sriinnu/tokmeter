@@ -340,7 +340,7 @@ Other Filters:
   --cline         Only Cline
   --augment       Only Augment
   --copilot-cli   Only Copilot CLI
-  --ribhu         Only Ribhu (custom source)
+  --ribhu         Only Ribhu Code
   --grok          Only Grok (custom source)
   --custom        Only custom sources
   --synthetic     Only Synthetic
