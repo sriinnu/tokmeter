@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Dependencies refreshed across the monorepo.** Biome 1.9.4 → 2.5.15
+  (with the 2.x config migration), Vite 6.4.2 → 8.3.4, Chalk 5.6.2 →
+  6.0.1, react-dom, and the minor-and-patch group; GitHub Actions
+  (checkout, setup-node, upload-artifact) to their current majors. No
+  user-visible behaviour changes.
+
 ## [1.15.0] - 2026-10-11
 
 ### Added
