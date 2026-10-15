@@ -14,10 +14,10 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
-  rmSync,
+  readFileSync,
   rmdirSync,
+  rmSync,
   statSync,
   utimesSync,
   writeFileSync,
@@ -28,24 +28,24 @@ import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
 import {
-  type UserConfig,
   configFilePath,
   loadConfig,
   mergeConfigs,
   saveConfig,
+  type UserConfig,
 } from "./config-service.js";
 import { localDateKey } from "./date-utils.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { invalidateRecordCache } from "./parsers/utils.js";
 import { projectMatchKey } from "./project-name.js";
 import {
-  UnsafeArchiveError,
   assertSafeEntries,
   collectExtractedFiles,
   isAllowedRestorePath,
   isWithin,
   listArchiveEntries,
   restoreAllowedRoots,
+  UnsafeArchiveError,
 } from "./restore-guard.js";
 import { invalidateSummaryCache } from "./summary-cache.js";
 import type { TokmeterCore } from "./tokmeter-core.js";

@@ -13,8 +13,8 @@ interface Props {
 }
 
 /** Shared Plotly font sizes derived from theme typography tokens */
-const baseFontSize = Number.parseInt(webTheme.typography.body.size);
-const titleFontSize = Number.parseInt(webTheme.typography.h3.size);
+const baseFontSize = Number.parseInt(webTheme.typography.body.size, 10);
+const titleFontSize = Number.parseInt(webTheme.typography.h3.size, 10);
 
 export function ContributionHeatmap({ daily }: Props) {
   if (daily.length === 0) {

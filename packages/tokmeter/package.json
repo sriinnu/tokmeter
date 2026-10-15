@@ -23,7 +23,9 @@
     "tokmeter": "dist/cli/cli.js",
     "tokmeter-tui": "dist/tui/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "prepack": "python3 ../../scripts/prepare-license-materials.py npm",
     "build": "rm -rf dist && mkdir -p dist/core dist/cli dist/tui && cp -r ../core/dist/* dist/core/ && cp -r ../cli/dist/* dist/cli/ && cp -r ../tui/dist/* dist/tui/"

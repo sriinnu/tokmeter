@@ -7,8 +7,8 @@
 
 import { afterEach, describe, expect, test } from "vitest";
 import { iterateAllDays } from "./aggregate-consumers.js";
+import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
 import { DailyAccumulator } from "./aggregates-store.js";
-import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import type { TokenRecord } from "./types.js";
 

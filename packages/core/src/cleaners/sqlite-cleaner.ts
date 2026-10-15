@@ -147,7 +147,7 @@ export class SqliteCleaner implements SessionCleaner {
 
   private async loadSqlite(): Promise<any> {
     try {
-      // @ts-ignore — better-sqlite3 is an optional dependency
+      // @ts-expect-error — better-sqlite3 is an optional dependency
       const { default: Database } = await import("better-sqlite3");
       return Database;
     } catch {

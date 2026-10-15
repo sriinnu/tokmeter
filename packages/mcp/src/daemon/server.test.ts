@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
-  type StatsFloor,
-  type TodayTotals,
   computeStatsFloor,
   computeTodayFloor,
   isAllowedHttpHost,
   isAllowedWsOrigin,
   isValidAuthHeader,
+  type StatsFloor,
+  type TodayTotals,
 } from "./server.js";
 
 describe("isAllowedWsOrigin — WS handshake origin allowlist", () => {

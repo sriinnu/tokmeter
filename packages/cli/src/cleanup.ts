@@ -8,7 +8,6 @@
  */
 
 import { createInterface } from "node:readline";
-import { CleanupService, TokmeterCore, localDateKey } from "@sriinnu/tokmeter";
 import type {
   CleanupFilter,
   DailyEntry,
@@ -16,6 +15,7 @@ import type {
   ProviderId,
   ScanOptions,
 } from "@sriinnu/tokmeter";
+import { CleanupService, localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { fmtCost, fmtNum, renderPreview, renderResult } from "./cleanup-render.js";
 

@@ -15,7 +15,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "bun src/cli.ts",
@@ -38,7 +40,16 @@
     "url": "https://github.com/sriinnu/tokmeter.git",
     "directory": "packages/cli"
   },
-  "keywords": ["tokens", "ai", "llm", "usage-tracking", "pricing", "cli", "claude", "anthropic"],
+  "keywords": [
+    "tokens",
+    "ai",
+    "llm",
+    "usage-tracking",
+    "pricing",
+    "cli",
+    "claude",
+    "anthropic"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },

@@ -5,17 +5,17 @@
  *   import { createServer, LiveTracker, formatCost } from "@sriinnu/tokmeter-mcp";
  */
 
-export { createServer, startServer } from "./server.js";
-export { runStatusline } from "./statusline.js";
-export { startLive } from "./live.js";
-export { LiveTracker, type Snapshot, type TokenBreakdown } from "./tracker.js";
 export {
-  formatNumber,
-  formatCost,
-  formatPercent,
+  C,
   formatBar,
   formatBurnRate,
+  formatCost,
   formatDuration,
+  formatNumber,
+  formatPercent,
   sparkline,
-  C,
 } from "./formatter.js";
+export { startLive } from "./live.js";
+export { createServer, startServer } from "./server.js";
+export { runStatusline } from "./statusline.js";
+export { LiveTracker, type Snapshot, type TokenBreakdown } from "./tracker.js";

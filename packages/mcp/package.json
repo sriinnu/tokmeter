@@ -31,7 +31,9 @@
       "import": "./dist/installer.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "prepack": "python3 ../../scripts/prepare-license-materials.py npm",
     "build": "tsc",

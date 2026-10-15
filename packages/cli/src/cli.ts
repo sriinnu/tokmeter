@@ -14,8 +14,8 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { TokmeterCore, localDateKey } from "@sriinnu/tokmeter";
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
+import { localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
 
@@ -650,10 +650,7 @@ async function runPricingAudit(_options: { json: boolean }): Promise<void> {
  *  - "Actual run" cost uses historical frozen pricing; alternatives use
  *    today's kosha. Both timestamps shown.
  */
-async function runRoutes(options: {
-  json: boolean;
-  project?: string;
-}): Promise<void> {
+async function runRoutes(options: { json: boolean; project?: string }): Promise<void> {
   const { TokmeterCore } = await import("@sriinnu/tokmeter");
   const core = new TokmeterCore();
   await core.scan({ today: true, project: options.project });
@@ -791,7 +788,7 @@ async function runRoutes(options: {
   if (unpriced.length > 0) {
     console.log("");
     console.log(
-      `Unpriced models excluded (no kosha price; honest \$? not free): ${unpriced.join(", ")}`
+      `Unpriced models excluded (no kosha price; honest $? not free): ${unpriced.join(", ")}`
     );
   }
 }

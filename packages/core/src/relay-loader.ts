@@ -10,6 +10,13 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
+  aggregateRecordsByDay,
+  type DailyAggregate,
+  isValidRecord,
+  recordFingerprint,
+  shouldKeepSealedDay,
+} from "./aggregates.js";
+import {
   DailyAccumulator,
   finalizeDay,
   foldRecordIntoDay,
@@ -18,13 +25,6 @@ import {
   migrateMonolithSnapshotIfNeeded,
   writeDayFile,
 } from "./aggregates-store.js";
-import {
-  type DailyAggregate,
-  aggregateRecordsByDay,
-  isValidRecord,
-  recordFingerprint,
-  shouldKeepSealedDay,
-} from "./aggregates.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { getParsers } from "./parsers/index.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";

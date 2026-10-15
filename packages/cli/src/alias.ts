@@ -23,7 +23,6 @@ import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import {
   type AliasMap,
-  TokmeterCore,
   applyTagOp,
   loadAliases,
   mergeAliases,
@@ -32,6 +31,7 @@ import {
   setAlias,
   setHidden,
   suggestAliases,
+  TokmeterCore,
 } from "@sriinnu/tokmeter";
 import chalk from "chalk";
 import Table from "cli-table3";
@@ -503,7 +503,7 @@ function decodeClaudeSlugFromPath(filePath: string): string | undefined {
   const parts = filePath.split(/[\\/]+/).filter(Boolean);
   const idx = parts.indexOf("projects");
   const slug = idx >= 0 ? parts[idx + 1] : undefined;
-  if (!slug || !slug.startsWith("-")) return undefined;
+  if (!slug?.startsWith("-")) return undefined;
   // Only treat this as a claude-code slug if the path has `.claude/projects` —
   // avoids misfiring on unrelated "projects" dirs.
   if (!filePath.includes("/.claude/projects/")) return undefined;

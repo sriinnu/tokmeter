@@ -268,11 +268,10 @@ export function resolveLaunchTarget(opts?: { nodePath?: string; cliEntry?: strin
  * the error propagates, so a failed install never leaves a stuck half-state
  * (plist on disk → dispatch routes to launchd → but nothing is loaded).
  */
-export function installAgent(opts?: {
-  nodePath?: string;
-  cliEntry?: string;
-  heapMb?: number;
-}): { plistPath: string; heapEnforced: boolean } {
+export function installAgent(opts?: { nodePath?: string; cliEntry?: string; heapMb?: number }): {
+  plistPath: string;
+  heapEnforced: boolean;
+} {
   const target = resolveLaunchTarget(opts);
   const heapMb = opts?.heapMb ?? Number.parseInt(process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144", 10);
 

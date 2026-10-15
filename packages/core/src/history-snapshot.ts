@@ -34,7 +34,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { type DailyAggregate, aggregateRecordsByDay } from "./aggregates.js";
+import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
 /** v2 — legacy raw-records on-disk shape. Still the canonical writer for now. */

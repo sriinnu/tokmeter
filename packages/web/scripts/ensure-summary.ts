@@ -3,10 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  TokmeterCore,
-  type TokmeterSummary,
   loadSummaryCache,
   saveSummaryCache,
+  TokmeterCore,
+  type TokmeterSummary,
 } from "../../core/src/index.ts";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));

@@ -29,6 +29,7 @@
 // NOTE: import the constant from formatter so we don't drift two copies.
 import { isDaemonChildEnv } from "./daemon/compat-names.js";
 import { FALLBACK_STATUSLINE } from "./formatter.js";
+
 const isStatusline = ["statusline", "status"].includes(process.argv[2] ?? "");
 // The detached/launchd daemon child runs in the foreground with this env flag
 // set (see server.ts). It's a long-lived singleton, so its crash policy

@@ -14,8 +14,8 @@
 
 import {
   CONFIG_FIELDS,
-  DEFAULT_CONFIG,
   configFilePath,
+  DEFAULT_CONFIG,
   getConfigValue,
   loadConfig,
   saveConfig,

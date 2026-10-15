@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  bandForPct,
   DEFAULT_HEALTH_THRESHOLDS,
   type HealthBand,
-  bandForPct,
   pctOfBudget,
   worstBand,
 } from "./session-health.js";

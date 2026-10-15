@@ -21,8 +21,8 @@ import {
   computeStatsFromRecords,
   computeStatsFromState,
 } from "./aggregate-consumers.js";
-import { DailyAccumulator } from "./aggregates-store.js";
 import { aggregateRecordsByDay } from "./aggregates.js";
+import { DailyAccumulator } from "./aggregates-store.js";
 import {
   aggregateByDate,
   aggregateByModel,

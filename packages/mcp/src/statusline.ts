@@ -27,10 +27,10 @@ import {
   formatNumber,
   formatResetIn,
   formatTierBar,
+  nerdFontEnabled,
   powerline,
   segmentColors,
   tierColor,
-  useNerdFont,
 } from "./formatter.js";
 import { monoTheme } from "./typography.js";
 
@@ -558,7 +558,7 @@ export async function runStatusline(): Promise<void> {
     // Icon sets — Nerd Font (opt-in) or animated Unicode (default, works everywhere)
     // Each icon is an 8-frame animation array. frame() cycles 0-7 at ~200ms, so
     // each statusline invocation picks a different frame — creating the shimmer.
-    const nf = useNerdFont();
+    const nf = nerdFontEnabled();
     const af = frame(); // animation frame for icon cycling
 
     const ICON = nf

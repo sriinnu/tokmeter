@@ -2,8 +2,8 @@ import type { CSSProperties } from "react";
 import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { applyTypography, webTheme, withAlpha } from "../../theme.js";
-import { DashboardPanel } from "./DashboardPanel.js";
 import type { DashboardInsights, DashboardModelInsight } from "./buildDashboardInsights.js";
+import { DashboardPanel } from "./DashboardPanel.js";
 import {
   formatDashboardCurrency,
   formatDashboardDate,

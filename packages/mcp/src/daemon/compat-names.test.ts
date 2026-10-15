@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
   API_HEADER,
-  DAEMON_CHILD_FLAG,
-  LEGACY_API_HEADER,
-  LEGACY_DAEMON_CHILD_FLAG,
   apiVersionHeaders,
+  DAEMON_CHILD_FLAG,
   daemonChildEnv,
   isDaemonChildEnv,
+  LEGACY_API_HEADER,
+  LEGACY_DAEMON_CHILD_FLAG,
 } from "./compat-names.js";
 import { renderAgentPlist } from "./launchd.js";
 
