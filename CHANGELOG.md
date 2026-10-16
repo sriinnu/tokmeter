@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **OpenCode usage since its SQLite move was missing.** The parser queried a
+  flat `messages` table; current OpenCode stores each message as JSON in
+  `message.data`. The query threw and only the legacy JSON store was read, so
+  every DB-era turn — models, tokens, projects — was dropped. Both stores are
+  now read and merged on message id, and records carry the real project
+  instead of a flat "opencode" bucket. Kilo CLI (an OpenCode fork) shares the
+  reader. Run `tokmeter backfill --opencode --days 40` to fill sealed days.
+  Free-tier models (`-free` / `:free`) now show $0.00 instead of
+  "Unavailable": OpenCode's own catalog prices them at zero, so their $0 is a
+  fact, not missing pricing.
+- **SQLite-backed sources were empty under Node.** `better-sqlite3` is not a
+  dependency of the published package, so the daemon and every npm install
+  read nothing from OpenCode, Kilo CLI, Cursor, Codex Desktop, Zed or
+  Antigravity. Node's built-in `node:sqlite` (Node ≥ 22.5) is now used first,
+  with a short busy timeout so a scan that lands on a writer's lock waits
+  instead of silently reading nothing. Cursor, Zed, Antigravity and Codex
+  Desktop therefore start reporting under Node for the first time.
+- **A response could be counted twice into a sealed day at midnight.** The
+  rollover dedups yesterday's priced in-memory records against stragglers
+  re-read from raw (deliberately unpriced), and the dedup fingerprint
+  included `cost` — so the two copies of one response never matched. Cost is
+  derived, not identity; it is no longer part of the fingerprint.
+- **OpenCode's own cost is kept as reported.** It was stored as a floor but
+  labelled "calculated", so any reprice replaced it with a kosha estimate.
+- **Local models show $0.00, not "Unavailable".** A custom-source line whose
+  routed vendor is a local runtime (Ollama, LM Studio, llama.cpp, MLX) is a
+  known $0; Ollama's hosted `-cloud` models are excluded.
+
 ## [1.15.1] - 2026-10-15
 
 ### Changed

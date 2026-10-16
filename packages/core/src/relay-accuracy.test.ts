@@ -92,8 +92,11 @@ describe("relay accuracy — cold-scan/live-fold parity", () => {
     // and the cold rebuild MUST produce the same curve or pace diverges after a
     // daemon restart. Hours are 9:30 / 14:30 / 20:30 local so both paths bucket
     // by the same local getHours() and the day key is unambiguous.
+    // Distinct token counts per record: two responses identical in every
+    // token bucket at the same millisecond are one response (cost is not
+    // part of a record's identity — see recordFingerprint).
     const at = (h: number, cost: number) =>
-      r({ timestamp: new Date(2026, 4, 20, h, 30, 0).getTime(), cost });
+      r({ timestamp: new Date(2026, 4, 20, h, 30, 0).getTime(), cost, inputTokens: cost * 100 });
     const records = [at(9, 1), at(9, 2), at(14, 4), at(20, 0.5)];
 
     const acc = new DailyAccumulator("2026-05-20");
@@ -193,6 +196,23 @@ describe("relay accuracy — midnight rollover seals the outgoing day dedup-corr
     expect(sealed.cost).toBeCloseTo(2.2, 10);
     expect(sealed.recordCount).toBe(3); // not 5 (double-count), not 2 (loss)
     expect(sealed.inputTokens).toBe(220);
+  });
+
+  test("an unpriced straggler collapses into its priced in-memory copy", () => {
+    // Production shape: recent records were priced before midnight, but
+    // stragglers come back from the today-scan as-parsed (cost 0) — the scan
+    // never re-prices pre-today records. Same response, different cost: it
+    // must still count once, at the priced figure.
+    const recent: TokenRecord[] = [
+      r({ timestamp: Date.parse(`${day}T22:00:00`), cost: 1.25, inputTokens: 100 }),
+    ];
+    const stragglers: TokenRecord[] = [
+      r({ timestamp: Date.parse(`${day}T22:00:00`), cost: 0, inputTokens: 100 }), // same response
+    ];
+    const sealed = sealOutgoing(recent, stragglers);
+    expect(sealed.recordCount).toBe(1);
+    expect(sealed.inputTokens).toBe(100);
+    expect(sealed.cost).toBeCloseTo(1.25, 10);
   });
 
   test("no stragglers → sealed day equals what was already counted (no change)", () => {
