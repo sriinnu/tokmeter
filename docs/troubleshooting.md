@@ -61,6 +61,37 @@ almost never wrong.
 A genuine shrink only happens on an explicit forced/deep rescan, which is gated
 precisely because raw transcripts age out and the relay becomes the only copy.
 
+### A tool's models are missing (OpenCode, Cursor, Zed, Kilo CLI, …)
+
+Two causes, both fixed in **1.15.2**:
+
+- **OpenCode** moved its history into SQLite (`message.data` JSON). Earlier
+  versions queried a table that no longer exists and read only the legacy JSON
+  store, so nothing after OpenCode's switch appeared.
+- **SQLite-backed sources under Node** (OpenCode, Kilo CLI, Cursor, Zed, Codex
+  Desktop, Antigravity) had no SQLite driver in the published package, so the
+  daemon and CLI read nothing from them. 1.15.2 uses Node's built-in
+  `node:sqlite`, which needs **Node 22.13+** (or 23.4+). On older Node these
+  sources stay empty — upgrade Node.
+
+After upgrading, today fills in on its own. Days already sealed need a one-time
+backfill, which only adds the missing tool and never touches the others:
+
+```bash
+tokmeter backfill --opencode --days 40
+```
+
+Backfill reaches only as far back as the tool's raw data still exists.
+
+### A model shows "Unavailable" — or $0.00
+
+"Unavailable" means tokmeter has no price for that model; the tokens are real,
+the cost is unknown. **$0.00** means the cost is known to be zero: a free tier
+(OpenCode `-free` / `:free` models), a model served on your own machine
+(Ollama, LM Studio, llama.cpp, MLX via a custom source), or a tool that
+reported zero itself. A subscription or coding plan is not free; it is
+estimated at API rates.
+
 ### "The cost seems off"
 
 Estimated cost is **not a bill**. Where a tool reports its own cost, that's used;
