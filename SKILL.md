@@ -135,9 +135,16 @@ Each line (snake_case or camelCase; token buckets flat or nested under `usage`):
            "cache_write_tokens": 0, "reasoning_tokens": 0}}
 ```
 
-`provider` is the AGENT (`ribhu`, `grok`, or `custom`), never the routed vendor;
-`model` is the resolved model, so pricing works even when the agent routes
-across models per response. `input_tokens` is uncached (Anthropic-style).
+The config entry's `provider` is the AGENT (`ribhu`, `grok`, or `custom`), and
+every record is tagged with it; `model` is the resolved model, so pricing works
+even when the agent routes across models per response. `input_tokens` is
+uncached (Anthropic-style).
+
+A line MAY also carry `"provider"`: the routed vendor that served that response
+(`"deepseek"`, `"ollama"`, …). It never replaces the agent tag. It only marks a
+locally served response — `ollama`, `lmstudio`, `llamacpp`, `llama.cpp`, `mlx`
+— as a known $0 instead of missing pricing (Ollama `-cloud` models excluded,
+they bill). A positive `cost` on a line is kept as a floor.
 
 ## Backfill (pick up newly added parsers / sources into history)
 
