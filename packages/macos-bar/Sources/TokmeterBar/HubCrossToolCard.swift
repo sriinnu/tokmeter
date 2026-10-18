@@ -179,6 +179,7 @@ struct HubCrossToolCard: View {
         case "augment":                       return "a.square.fill"
         case "copilot-cli":                  return "airplane"
         case "ribhu":                         return "hammer.fill"
+        case "chitragupta":                   return "arrow.triangle.branch"
         default:                              return "waveform.circle"
         }
     }

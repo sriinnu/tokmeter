@@ -185,4 +185,47 @@ describe("CustomSourceParser", () => {
     expect(costOf("cloud")).not.toBe("direct");
     expect(costOf("hosted")).not.toBe("direct");
   });
+
+  it("reads Chitragupta's usage lines under their own provider label", async () => {
+    // The two lines Chitragupta wrote on 2026-10-18, verbatim: ISO timestamps,
+    // routed vendor in `provider`, cost null when the provider reported none.
+    const dir = seedLines(".chitragupta/usage", "2026-10-18.jsonl", [
+      {
+        id: "b921e947-b08a-49ac-aa8a-64224b36e842",
+        ts: "2026-10-18T14:22:33.806Z",
+        model: "llama3.2:3b",
+        provider: "ollama",
+        project: "/Users/x/AUriva/chitragupta",
+        input_tokens: 32,
+        output_tokens: 2,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        cost: null,
+      },
+      {
+        id: "1630d994-41f3-4f7e-9321-05e2e9f7090c",
+        ts: "2026-10-18T14:22:34.683Z",
+        model: "deepseek-v4-flash",
+        provider: "deepseek",
+        project: "/Users/x/AUriva/chitragupta",
+        input_tokens: 37,
+        output_tokens: 11,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        cost: null,
+      },
+    ]);
+    registerSource({ path: dir, format: "tokmeter-usage-jsonl", provider: "chitragupta" });
+    const records = await new CustomSourceParser().scan(tmpDir);
+    expect(records.map((r) => [r.provider, r.model, r.inputTokens, r.outputTokens])).toEqual([
+      ["chitragupta", "llama3.2:3b", 32, 2],
+      ["chitragupta", "deepseek-v4-flash", 37, 11],
+    ]);
+    expect(records[0].timestamp).toBe(Date.parse("2026-10-18T14:22:33.806Z"));
+    // Local Ollama is a known $0; DeepSeek's null cost is left for pricing.
+    expect(records[0].usage?.cost).toBe("direct");
+    expect(records[1].usage?.cost).not.toBe("direct");
+  });
 });

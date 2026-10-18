@@ -54,7 +54,8 @@ export interface CustomSource {
   format: CustomSourceFormat;
   /**
    * Provider id to tag these records with. One of the custom-eligible ids
-   * ("ribhu", "grok", "custom"); anything else falls back to "custom".
+   * ("ribhu", "chitragupta", "grok", "custom"); anything else falls back to
+   * "custom".
    */
   provider?: string;
   /** Human label for the UI (e.g. "Takumi"). Cosmetic. */

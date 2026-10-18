@@ -210,6 +210,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--ribhu":
         args.providers = [...(args.providers || []), "ribhu" as ProviderId];
         break;
+      case "--chitragupta":
+        args.providers = [...(args.providers || []), "chitragupta" as ProviderId];
+        break;
       case "--grok":
         args.providers = [...(args.providers || []), "grok" as ProviderId];
         break;
@@ -341,6 +344,7 @@ Other Filters:
   --augment       Only Augment
   --copilot-cli   Only Copilot CLI
   --ribhu         Only Ribhu (custom source)
+  --chitragupta   Only Chitragupta (custom source)
   --grok          Only Grok (custom source)
   --custom        Only custom sources
   --synthetic     Only Synthetic

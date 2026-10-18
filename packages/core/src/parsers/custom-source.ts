@@ -38,7 +38,12 @@
  * knows that name.
  *
  * Records are tagged with the source's `provider` when it is a custom-eligible
- * id (ribhu, grok, custom); anything else falls back to "custom".
+ * id (ribhu, chitragupta, grok, custom); anything else falls back to "custom".
+ *
+ * Chitragupta writes one line per model call it makes itself to
+ * ~/.chitragupta/usage. It leaves out CLI-tier calls (those CLIs log their own
+ * usage), its kernel bypass (not a model call), and calls from a self-metering
+ * caller such as Ribhu, so a routed Ribhu turn is counted once, on Ribhu's side.
  *
  * A line MAY carry the routed vendor as `provider` (Ribhu writes "deepseek",
  * "ollama", …). It never replaces the agent id; it only answers one question:
@@ -52,7 +57,12 @@ import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 /** Provider ids a custom source is allowed to claim. */
-const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>(["ribhu", "grok", "custom"]);
+const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
+  "ribhu",
+  "chitragupta",
+  "grok",
+  "custom",
+]);
 
 interface CanonicalUsageLine {
   ts?: number | string;

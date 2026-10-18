@@ -42,7 +42,12 @@ export interface RelayState {
  * id equals the target (none exists). Mirrors CUSTOM_ELIGIBLE in
  * parsers/custom-source.ts.
  */
-const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>(["ribhu", "grok", "custom"]);
+const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
+  "ribhu",
+  "chitragupta",
+  "grok",
+  "custom",
+]);
 
 /**
  * Refresh historical aggregates from the per-day relay store.
@@ -335,7 +340,7 @@ export async function backfillProviderIntoRelay(
   const todayKey = localDateKey(referenceTimestamp);
   const floorKey = localDateKey(floorMs);
 
-  // Custom-eligible ids (ribhu/grok/custom) are all emitted by the single
+  // Custom-eligible ids (ribhu/chitragupta/grok/custom) are all emitted by the single
   // CustomSourceParser, whose providerId is "custom". Scanning [providerId]
   // for one of those would match no parser; scan the custom parser instead and
   // let the per-record `r.provider === providerId` filter below pick the target.
