@@ -16,23 +16,14 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSyn
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { getKoshaRegistryMtime, localDateKey } from "@sriinnu/tokmeter";
-import type { DaemonResponse } from "./daemon/client.js";
 import type { TokenUsage } from "./daemon/protocol.js";
+import { C, FALLBACK_STATUSLINE } from "./formatter.js";
 import {
-  C,
-  FALLBACK_STATUSLINE,
-  formatCost,
-  formatDuration,
-  formatLineDelta,
-  formatNumber,
-  formatResetIn,
-  formatTierBar,
-  nerdFontEnabled,
-  powerline,
-  segmentColors,
-  tierColor,
-} from "./formatter.js";
-import { monoTheme } from "./typography.js";
+  type RateWindowView,
+  type RouteView,
+  renderStatusline,
+  type StatusView,
+} from "./statusline-view.js";
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
 // The statusline runs as a fresh subprocess every ~200ms. To avoid
@@ -125,6 +116,8 @@ interface StatuslineInput {
   cost?: {
     total_cost_usd?: number;
     total_duration_ms?: number;
+    /** Time the model spent working; the honest denominator for a burn rate. */
+    total_api_duration_ms?: number;
     total_lines_added?: number;
     total_lines_removed?: number;
   };
@@ -166,6 +159,100 @@ interface StatuslineInput {
     kind?: "mr";
   };
   worktree?: { name?: string };
+  /** Set by non-Claude harnesses that reuse this contract (Ribhu sends "ribhu"). */
+  agent?: string | { name?: string };
+  /**
+   * Who picked the model, for harnesses that route (Ribhu via Chitragupta).
+   * Proposed contract; absent until the harness sends it.
+   */
+  route?: {
+    via?: string;
+    provider?: string;
+    model?: string;
+    authority?: "kernel" | "fallback" | "pinned";
+    offline?: boolean;
+    recent_fallbacks?: number;
+    recent_total?: number;
+  };
+}
+
+// ─── View adapters ──────────────────────────────────────────────────────
+
+function shortEffort(level: string): string {
+  return level === "medium" ? "med" : level;
+}
+
+function rateWindow(w: RateWindow | undefined, spanSec: number): RateWindowView | undefined {
+  if (w?.used_percentage === undefined || !Number.isFinite(w.used_percentage)) return undefined;
+  return { pct: w.used_percentage, spanSec, ...(w.resets_at ? { resetsAt: w.resets_at } : {}) };
+}
+
+function routeFromInput(input: StatuslineInput): RouteView | undefined {
+  const r = input.route;
+  if (!r?.via) return undefined;
+  return {
+    via: r.via,
+    ...(r.provider ? { provider: r.provider } : {}),
+    ...(r.model ? { model: r.model } : {}),
+    ...(r.authority ? { authority: r.authority } : {}),
+    ...(r.offline ? { offline: true } : {}),
+    ...(r.recent_total
+      ? { recent: { fallbacks: r.recent_fallbacks ?? 0, total: r.recent_total } }
+      : {}),
+  };
+}
+
+/** Claude Code sets COLUMNS for the statusline command; keep a small margin. */
+function terminalColumns(): number {
+  const fromEnv = Number(process.env.COLUMNS);
+  const cols = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : (process.stdout.columns ?? 200);
+  return Math.max(40, cols - 2);
+}
+
+/** NO_COLOR disables color; FORCE_COLOR (anything but "0") re-enables it. */
+function colorEnabled(): boolean {
+  const force = process.env.FORCE_COLOR;
+  if (force !== undefined) return force !== "0";
+  return !process.env.NO_COLOR;
+}
+
+/**
+ * "Turns left" before the context fills, from how much the last few turns
+ * added. Each upward step in the fill is one turn; a drop of more than 5
+ * points is a compaction and starts the history over. Kept per session in
+ * the statusline's cache dir, since every render is a fresh process.
+ */
+export function estimateTurnsLeft(history: number[], pct: number): number | null {
+  const steps: number[] = [];
+  for (let i = 1; i < history.length; i++) {
+    const d = history[i] - history[i - 1];
+    if (d > 0) steps.push(d);
+  }
+  const recent = steps.slice(-5);
+  if (recent.length < 2) return null;
+  const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+  if (avg <= 0) return null;
+  return Math.max(0, Math.floor((100 - pct) / avg));
+}
+
+function trackContextTurns(sessionId: string, pct: number): number | null {
+  const path = join(
+    CACHE_DIR,
+    `ctx-${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}.json`
+  );
+  let history: number[] = [];
+  try {
+    history = JSON.parse(readFileSync(path, "utf-8")) as number[];
+    if (!Array.isArray(history)) history = [];
+  } catch {}
+  const last = history[history.length - 1];
+  if (last !== undefined && pct < last - 5) history = [];
+  if (last === undefined || pct !== last) history.push(pct);
+  history = history.slice(-8);
+  try {
+    writeFileSync(path, JSON.stringify(history), { mode: 0o600 });
+  } catch {}
+  return estimateTurnsLeft(history, pct);
 }
 
 // ─── Animation Engine ────────────────────────────────────────────────────
@@ -471,68 +558,12 @@ function findProjectTotal(totals: TodayTotals, projectName: string): ProjectTota
   return hit;
 }
 
-/** Filled run in the tier color, empty run dimmed so the segment bg shows through. */
-function trackBar(pct: number, color: (s: string) => string): string {
-  const { filled, empty } = formatTierBar(pct, 8);
-  return color(filled) + C.dim(empty);
-}
-
-/**
- * Subscription window: `⏳ 5h ━━━━──── 48% ↻2h10m`. Color follows the usage
- * tier so a window about to throttle reads red at a glance. The reset is
- * relative — "in 2h10m" is what you act on, not a clock time.
- */
-function rateWindowSegment(label: string, w: RateWindow | undefined, now: number): string | null {
-  const pct = w?.used_percentage;
-  if (pct === undefined || !Number.isFinite(pct)) return null;
-  const color = tierColor(pct);
-  const parts = [C.dim(label), trackBar(pct, color), color(`${Math.round(pct)}%`)];
-  const reset = w?.resets_at ? formatResetIn(w.resets_at, now) : "";
-  if (reset) parts.push(C.dim(`↻${reset}`));
-  return parts.join(" ");
-}
-
-/**
- * Cache temperature. Warm: hit ratio + minutes until the cached prefix goes
- * cold — the one number that tells you "reply now or re-cache 180K". Cold:
- * how much the next request will re-cache. Misses are diagnosed by Claude
- * Code itself (tools changed, system prompt changed…); we just count them.
- */
-function cacheSegment(pc: StatuslineInput["prompt_cache"], now: number): string | null {
-  if (!pc || pc.caching_observed === false) return null;
-  const bolt = "↯";
-  const parts: string[] = [];
-  if (pc.warm) {
-    const ratio = pc.hit_ratio;
-    const pctText = ratio !== null && ratio !== undefined ? `${Math.round(ratio * 100)}%` : "warm";
-    parts.push(C.accent(`${bolt}${pctText}`));
-    if (pc.expires_at) {
-      const left = formatResetIn(pc.expires_at, now);
-      if (left) parts.push(C.dim(left));
-    }
-  } else {
-    parts.push(C.danger(`${bolt}cold`));
-    if (pc.recache_tokens_if_cold) {
-      parts.push(C.dim(`≈${formatNumber(pc.recache_tokens_if_cold)}`));
-    }
-  }
-  if (pc.misses && pc.misses > 0) parts.push(C.warn(`✗${pc.misses}`));
-  return parts.join(" ");
-}
-
-const PR_STATE_GLYPH: Record<string, (s: string) => string> = {
+const _PR_STATE_GLYPH: Record<string, (s: string) => string> = {
   approved: (s) => C.accent(`${s} ✓`),
   changes_requested: (s) => C.danger(`${s} ✗`),
   draft: (s) => C.dim(`${s} ◌`),
   pending: (s) => C.warn(`${s} ○`),
 };
-
-function prSegment(pr: StatuslineInput["pr"]): string | null {
-  if (!pr?.number) return null;
-  const ref = `⇄${pr.kind === "mr" ? "!" : "#"}${pr.number}`;
-  const paint = pr.review_state ? PR_STATE_GLYPH[pr.review_state] : undefined;
-  return paint ? paint(ref) : C.dim(ref);
-}
 
 // ─── Main ───────────────────────────────────────────────────────────────
 
@@ -596,10 +627,9 @@ export async function runStatusline(): Promise<void> {
 
     // ── Daemon sync (background, non-blocking) ──
     const sessionId = input.session_id ?? `session-${now}`;
-    let daemonResponse: DaemonResponse = { connected: false };
     try {
       const { syncUpdate } = await import("./daemon/client.js");
-      daemonResponse = await syncUpdate(
+      await syncUpdate(
         {
           provider: "claude-code",
           sessionId,
@@ -620,225 +650,62 @@ export async function runStatusline(): Promise<void> {
       );
     } catch {}
 
-    // ── Build Powerline Segments ──
-    // One clean bar — no duplication. Each segment = one piece of info.
-    const seg = segmentColors();
-    const pl: { text: string; bg: string }[] = [];
-
-    // Icon sets — Nerd Font (opt-in) or animated Unicode (default, works everywhere)
-    // Each icon is an 8-frame animation array. frame() cycles 0-7 at ~200ms, so
-    // each statusline invocation picks a different frame — creating the shimmer.
-    const nf = nerdFontEnabled();
-    const af = frame(); // animation frame for icon cycling
-
-    const ICON = nf
-      ? {
-          infinity: logoIcon(af, daemonResponse.connected),
-          agent: "󰵰", // 󰍰 nf-md-robot
-          git: "", //  nf-fa-git
-          turn: "", //  nf-fa-level_up
-          context: "󰍛", // 󰍛 nf-md-memory
-          folder: "󰣞", // 󰳞 nf-md-folder
-          dollar: "", //  nf-fa-dollar
-          flame: "", //  nf-oct-flame
-          up: "", //  nf-fa-arrow_up
-          down: "", //  nf-fa-arrow_down
-          refresh: "", //  nf-fa-refresh
-          hourglass: "", //  nf-fa-hourglass_half
-          worktree: "", //  nf-fa-code_fork
-        }
-      : {
-          // Disney pixel animation: width-stable, anchored, no horizontal jitter.
-          //
-          // Width-stability rules:
-          //   - Every animation frame must occupy the same number of terminal cells.
-          //   - Emoji are width-2 (sometimes 1 on legacy terminals); when paired
-          //     with text characters, the total width can shift. We avoid mixing.
-          infinity: logoIcon(af, daemonResponse.connected),
-          // Emoji only where the emoji IS the meaning (branch, burn, window,
-          // brand). Everything else is a 1-cell text glyph: ✏ and ⚡ are
-          // emoji-presentation (2 cells) while ✎ and ↯ are text (1 cell), so
-          // alternating them jittered the whole bar every frame.
-          agent: "",
-          git: "🌿",
-          turn: "✎",
-          context: "",
-          folder: "",
-          dollar: "",
-          flame: "🔥",
-          up: ["↑", "↑", "↑", "↗", "↑", "↑", "↑", "↗"][af],
-          down: ["↓", "↓", "↓", "↘", "↓", "↓", "↓", "↘"][af],
-          refresh: ["⟳", "↻", "⟳", "↺", "⟳", "↻", "⟳", "↺"][af],
-          // Sand runs for 4 frames, flips for 4 — both glyphs are width-2 emoji.
-          hourglass: af < 4 ? "⏳" : "⌛",
-          worktree: "⎇",
-        };
-
-    // Hero logo bg: breathes through purple shades (indigo → violet → magenta → back).
-    // Asymmetric timing — slow rise (frames 0-3), peak (4), slow fall (5-7).
-    const logoBgCycle = [
-      "#4338ca", // indigo (rest)
-      "#5b21b6", // deep violet
-      "#6d28d9", // violet
-      "#7c3aed", // bright violet
-      "#8b5cf6", // peak — radiant violet
-      "#7c3aed", // bright violet
-      "#6d28d9", // violet
-      "#5b21b6", // deep violet
-    ];
-    const logoBg = logoBgCycle[af];
-
-    // Helper: prefix icon only if non-empty
-    const ic = (icon: string, text: string) => (icon ? `${icon} ${text}` : text);
-
-    // 1. Logo + daemon heartbeat — its own segment with breathing purple bg cycle
-    pl.push({ text: ICON.infinity, bg: logoBg });
-
-    // 2. Project (+ worktree). Truncate long names so the bar doesn't wrap on
-    // 80-col terms.
-    if (projectName) {
-      const trunc = projectName.length > 24 ? `${projectName.slice(0, 23)}…` : projectName;
-      const wt = input.worktree?.name ?? input.workspace?.git_worktree;
-      const wtText = wt ? ` ${ICON.worktree}${wt}` : "";
-      pl.push({ text: ic(ICON.folder, monoTheme.name(trunc) + wtText), bg: seg.project });
-    }
-
-    // 3. Model — display name, ∞ for 1M windows, then the reasoning posture:
-    // ∴ (therefore) when extended thinking is on, effort level when reported.
-    if (modelId) {
-      let label = modelLabel(input.model);
-      if (ctxMax >= 900_000 && !label.includes("∞")) label += " ∞";
-      const effort = input.effort?.level;
-      const think = input.thinking?.enabled ? "∴" : effort ? "·" : "";
-      const posture = think ? ` ${think}${effort ?? ""}` : "";
-      const fast = input.fast_mode ? " »" : "";
-      pl.push({ text: ic(ICON.agent, `${label}${posture}${fast}`), bg: seg.model });
-    }
-
-    // 4. Context — tiered fill: calm → amber → red as compaction nears.
-    if (ctxPct !== null) {
-      const color = tierColor(ctxPct);
-      const bar = trackBar(ctxPct, color);
-      // Past 200K the 1M-window models bill at the long-context rate.
-      const over = input.exceeds_200k_tokens ? C.warn(" 200K+") : "";
-      pl.push({
-        text: ic(ICON.context, `${bar} ${color(`${Math.round(ctxPct)}%`)}${over}`),
-        bg: seg.context,
-      });
-    }
-
-    // 5. Git — branch, dirty count, and the session's line delta.
-    if (git) {
-      const dirty = git.dirty > 0 ? ` ${ICON.turn}${git.dirty}` : "";
-      const delta = formatLineDelta(
-        input.cost?.total_lines_added ?? 0,
-        input.cost?.total_lines_removed ?? 0
-      );
-      const deltaText = delta
-        ? ` ${C.accent(delta.added)}${delta.added && delta.removed ? " " : ""}${C.danger(delta.removed)}`
-        : "";
-      pl.push({ text: `${ICON.git} ${git.branch}${dirty}${deltaText}`, bg: seg.git });
-    }
-
-    // 6. Cost
-    if (sessionCost > 0) {
-      pl.push({ text: ic(ICON.dollar, formatCost(sessionCost)), bg: seg.cost });
-    }
-
-    // ── Line 1 suffix: this session, live ──
-    const session: string[] = [];
-
-    // Session burn. Σ = ledger totals the daemon summed from this session's
-    // transcript (the honest cumulative). Without a daemon answer, fall back
-    // to the last API call's usage — still real, just not cumulative.
-    const ledger = daemonResponse.yourSession?.ledger;
-    if (ledger) {
-      const tParts = [
-        C.input(`${ICON.up}${formatNumber(ledger.inputTokens)}`),
-        C.output(`${ICON.down}${formatNumber(ledger.outputTokens)}`),
-      ];
-      const cached = ledger.cacheReadTokens + ledger.cacheWriteTokens;
-      if (cached > 0) tParts.push(C.cache(`${ICON.refresh}${formatNumber(cached)}`));
-      if (ledger.reasoningTokens > 0)
-        tParts.push(C.think(`∴${formatNumber(ledger.reasoningTokens)}`));
-      session.push(`${C.dim("Σ")}${tParts.join(" ")}`);
-    } else if (usage) {
-      const tParts: string[] = [];
-      if (usage.input_tokens) tParts.push(C.input(`${ICON.up}${formatNumber(usage.input_tokens)}`));
-      if (usage.output_tokens)
-        tParts.push(C.output(`${ICON.down}${formatNumber(usage.output_tokens)}`));
-      if (usage.cache_read_input_tokens)
-        tParts.push(C.cache(`${ICON.refresh}${formatNumber(usage.cache_read_input_tokens)}`));
-      if (tParts.length > 0) session.push(tParts.join(" "));
-    }
-
-    const cache = cacheSegment(input.prompt_cache, now);
-    if (cache) session.push(cache);
-
-    // Burn rate
-    if (durationMs > 60_000 && sessionCost > 0) {
-      const rate = sessionCost / (durationMs / 3_600_000);
-      session.push(C.warn(`${ICON.flame}${formatCost(rate)}/hr`));
-    }
-
-    if (durationMs > 60_000) session.push(C.dim(formatDuration(durationMs)));
-
-    // ── Line 2: the world outside this session ──
-    const world: string[] = [];
-
-    const rl = input.rate_limits;
-    if (rl) {
-      const five = rateWindowSegment("5h", rl.five_hour, now);
-      const week = rateWindowSegment("7d", rl.seven_day, now);
-      const spend = rateWindowSegment("$", rl.spend_limit, now);
-      const windows = [five, week, spend].filter((s): s is string => s !== null);
-      if (windows.length > 0) world.push(`${ICON.hourglass} ${windows.join(`  ${C.dim("·")}  `)}`);
-    }
-
-    // Today's totals — cross-provider roll-up across Claude Code, Codex, Qwen,
-    // etc., for the local calendar day. Cache resets at midnight via dayKey.
-    // Stale totals render dimmed with "~" and their age, so a number the
-    // daemon hasn't confirmed lately never reads as live. Down is a dash,
-    // never $0.00: unknown is not zero.
+    // ── Render ──
     const todayRead = await todayPromise;
-    if (todayRead.state === "down") {
-      world.push(`${C.dim(`${monoTheme.ephemeral("today")} — daemon offline`)}`);
-    } else if (todayRead.totals.cost > 0) {
-      const today = todayRead.totals;
-      const stale = todayRead.state === "stale";
-      const age = stale ? ` ${formatAge(todayRead.ageMs)} old` : "";
-      world.push(
-        stale
-          ? C.dim(`${monoTheme.ephemeral("today")} ~${formatCost(today.cost)}${age}`)
-          : `${C.accent(monoTheme.ephemeral("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
-      );
-      // Project roll-up — only show when it's a meaningful subset of today's
-      // total (not identical to the day total, not zero). Gives you "what has
-      // this repo cost me today" across every model you ran against it.
-      const proj = findProjectTotal(today, projectName);
-      if (proj && proj.cost > 0 && proj.cost < today.cost - 0.005) {
-        world.push(
-          stale
-            ? C.dim(`${monoTheme.ephemeral("proj")} ~${formatCost(proj.cost)}`)
-            : `${C.accent(monoTheme.ephemeral("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
-        );
+    const view: StatusView = {
+      now,
+      project: projectName,
+      model: modelLabel(input.model),
+      ...(input.effort?.level ? { effort: shortEffort(input.effort.level) } : {}),
+      ...(routeFromInput(input) ? { route: routeFromInput(input) } : {}),
+      ctx: {
+        pct: ctxPct,
+        ...(ctxMax > 0 ? { windowTokens: ctxMax } : {}),
+        turnsLeft: ctxPct === null ? null : trackContextTurns(sessionId, ctxPct),
+      },
+      ...(input.prompt_cache?.caching_observed
+        ? {
+            cache: {
+              warm: input.prompt_cache.warm ?? false,
+              expiresAt: input.prompt_cache.expires_at ?? null,
+              rebuildTokens: input.prompt_cache.recache_tokens_if_cold ?? null,
+            },
+          }
+        : {}),
+      ...(input.cost
+        ? {
+            cost: {
+              usd: input.cost.total_cost_usd ?? null,
+              ...(input.cost.total_api_duration_ms
+                ? { activeMs: input.cost.total_api_duration_ms }
+                : {}),
+            },
+          }
+        : {}),
+      ...(rateWindow(input.rate_limits?.five_hour, 5 * 3600)
+        ? { five: rateWindow(input.rate_limits?.five_hour, 5 * 3600) }
+        : {}),
+      ...(rateWindow(input.rate_limits?.seven_day, 7 * 86400)
+        ? { seven: rateWindow(input.rate_limits?.seven_day, 7 * 86400) }
+        : {}),
+      today:
+        todayRead.state === "down"
+          ? { state: "down" }
+          : todayRead.totals.cost > 0
+            ? { state: todayRead.state, usd: todayRead.totals.cost, ageMs: todayRead.ageMs }
+            : { state: "none" },
+      ...(git ? { git: { branch: git.branch, dirty: git.dirty } } : {}),
+      ...(input.pr?.number ? { pr: { number: input.pr.number } } : {}),
+    };
+    if (todayRead.state !== "down") {
+      const proj = findProjectTotal(todayRead.totals, projectName);
+      if (proj && proj.cost > 0 && proj.cost < todayRead.totals.cost - 0.005) {
+        view.repo = { usd: proj.cost, stale: todayRead.state === "stale" };
       }
     }
-
-    // Concurrent sessions across every tracked agent.
-    if (daemonResponse.connected && daemonResponse.aggregated) {
-      const agg = daemonResponse.aggregated;
-      if (agg.sessions > 1) world.push(`${C.title("⊕")}${C.dim(`${agg.sessions} live`)}`);
-    }
-
-    const pr = prSegment(input.pr);
-    if (pr) world.push(pr);
-
-    // ── Output: powerline bar + session suffix, then the world line ──
-    const sep = ` ${C.dim("│")} `;
-    const line1 = powerline(pl) + (session.length > 0 ? ` ${session.join(sep)}` : "");
-    const out = world.length > 0 ? `${line1}\n${world.join(sep)}` : line1;
-    process.stdout.write(out);
+    process.stdout.write(
+      renderStatusline(view, { cols: terminalColumns(), color: colorEnabled() })
+    );
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
     try {
