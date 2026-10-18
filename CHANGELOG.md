@@ -36,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local models show $0.00, not "Unavailable".** A custom-source line whose
   routed vendor is a local runtime (Ollama, LM Studio, llama.cpp, MLX) is a
   known $0; Ollama's hosted `-cloud` models are excluded.
+- **The statusline went blank whenever the daemon was busy.** `/api/today`
+  waited for a full today refresh (2.5–5s measured), the statusline gave up
+  at 1.5s, and Claude Code cancels any render that hasn't printed by its next
+  update. Of 138 captured renders, 41% ran past 1s and showed nothing. The
+  daemon now answers from what it has and refreshes afterwards; the
+  statusline waits at most 300ms and otherwise shows the last good totals,
+  dimmed with their age (`today ~$138 2m old`). A stopped daemon reads
+  `today — daemon offline`, never $0.00.
+- **A slow daemon is no longer treated as a dead one.** Every statusline
+  timeout started another `daemon start` process. Only a refused connection
+  starts the daemon now, at most once a minute.
+- **The LaunchAgent no longer runs the daemon in launchd's Background
+  class.** That class throttles disk I/O as well as CPU; under load the
+  daemon got about 2% CPU and sat blocked opening its own state file for
+  minutes. It now runs as Standard and still lowers its own CPU priority.
+  Run `tokmeter-mcp daemon install-agent` once to pick this up.
 
 ## [1.15.1] - 2026-10-15
 

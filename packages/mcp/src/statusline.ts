@@ -305,10 +305,20 @@ interface TodayTotals {
   projects: Record<string, ProjectTotal>;
   /** YYYY-MM-DD of when this was computed — invalidates after midnight. */
   day: string;
+  /** Epoch ms the daemon computed these totals (absent from older daemons). */
+  computedAt?: number;
 }
 
 function todayKey(): string {
   return localDateKey();
+}
+
+/** Compact age for stale markers: "41s", "3m", "2h". */
+export function formatAge(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
 }
 
 /**
@@ -324,23 +334,60 @@ function todayKey(): string {
  * don't even hit the socket. Cache key is the YYYY-MM-DD date AND kosha mtime —
  * midnight rollover and pricing edits both invalidate it on the next pass.
  *
- * If the daemon is unreachable, we fire-and-forget START it (the cross-process
- * singleton guard prevents dupes) and SKIP the "today" segment for this tick.
+ * Never blank: Claude Code cancels a render that hasn't printed by its next
+ * update (~300ms mid-turn). The old 1.5s fetch cap meant 41% of 138 captured
+ * renders ran past 1s and showed nothing. So the fetch is capped at
+ * DAEMON_FETCH_MS and a miss falls back to the last good totals for today,
+ * marked stale with their age so the line never passes them off as live.
+ *
+ * Only a refused connection means the daemon is down. A slow answer is a busy
+ * daemon; starting another one per tick just forks node for nothing. Even a
+ * refused start is throttled to once a minute across all statusline processes.
  */
-async function getTodayTotalsCached(): Promise<TodayTotals | null> {
+const DAEMON_FETCH_MS = 300;
+const DAEMON_SPAWN_THROTTLE_MS = 60_000;
+/** Older than this, daemon numbers render dimmed with their age. */
+const TODAY_STALE_MS = 30_000;
+
+type TodayRead =
+  | { state: "fresh" | "stale"; totals: TodayTotals; ageMs: number }
+  | { state: "down" };
+
+export function readLastGoodToday(path: string): { totals: TodayTotals; ts: number } | null {
+  try {
+    const wrapper = JSON.parse(readFileSync(path, "utf-8")) as CacheWrapper<TodayTotals>;
+    // Any pricing era will do for a dimmed fallback, but never yesterday's day.
+    if (wrapper.data?.day !== todayKey()) return null;
+    return { totals: wrapper.data, ts: wrapper.data.computedAt ?? wrapper.ts };
+  } catch {
+    return null;
+  }
+}
+
+export function isConnectionRefused(err: unknown): boolean {
+  const cause = (err as { cause?: { code?: string } })?.cause;
+  return cause?.code === "ECONNREFUSED";
+}
+
+async function getTodayTotalsCached(): Promise<TodayRead> {
   const cachePath = join(CACHE_DIR, "today.json");
   const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}`;
+  const now = Date.now();
   const cached = readCache<TodayTotals>(cachePath, 20_000, contentKey);
-  if (cached) return cached;
+  if (cached) {
+    const ageMs = Math.max(0, now - (cached.computedAt ?? now));
+    return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", totals: cached, ageMs };
+  }
 
   const { DAEMON_HOST, DAEMON_PORT } = await import("./daemon/protocol.js");
   const HTTP_PORT = DAEMON_PORT + 1;
   const url = `http://${DAEMON_HOST}:${HTTP_PORT}/api/today`;
 
+  let refused = false;
   try {
-    // Bound the fetch hard — a hung daemon must never hold the hot path open.
+    // Bound the fetch hard — a busy daemon must never hold the hot path open.
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 1500);
+    const t = setTimeout(() => ctrl.abort(), DAEMON_FETCH_MS);
     let totals: TodayTotals | null = null;
     try {
       const res = await fetch(url, { signal: ctrl.signal });
@@ -353,21 +400,40 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
 
     if (totals) {
       writeCache(cachePath, totals, contentKey);
-      return totals;
+      const ageMs = Math.max(0, now - (totals.computedAt ?? now));
+      return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", totals, ageMs };
     }
-  } catch {
-    // Daemon unreachable — fall through to start it and skip this tick.
+  } catch (err) {
+    refused = isConnectionRefused(err);
   }
 
-  // Daemon not reachable: fire-and-forget start it (detached, heap-capped),
-  // then skip the "today" segment for this tick. The singleton guard in the
-  // daemon prevents a stampede if many ticks race to start it.
-  //
-  // Heap cap: the daemon performs the one-time full-history scan, which on a
-  // real power-user corpus peaks well past 2GB. We must give it room to warm
-  // (a 768MB cap OOM-kills it before it finishes). The statusline's OWN 768MB
-  // intent doesn't apply here — this child IS the daemon. Default 6144MB,
-  // tunable via TOKMETER_DAEMON_HEAP_MB to match the daemon's own constant.
+  if (refused) await startDaemonThrottled();
+
+  const lastGood = readLastGoodToday(cachePath);
+  if (lastGood)
+    return { state: "stale", totals: lastGood.totals, ageMs: Math.max(0, now - lastGood.ts) };
+  return { state: "down" };
+}
+
+/**
+ * Fire-and-forget start of the daemon (detached, heap-capped), at most once per
+ * DAEMON_SPAWN_THROTTLE_MS across every statusline process. The singleton guard
+ * in the daemon still prevents duplicates if two ticks race past the throttle.
+ *
+ * Heap cap: the daemon performs the one-time full-history scan, which on a
+ * real power-user corpus peaks well past 2GB. We must give it room to warm
+ * (a 768MB cap OOM-kills it before it finishes). The statusline's OWN 768MB
+ * intent doesn't apply here — this child IS the daemon. Default 6144MB,
+ * tunable via TOKMETER_DAEMON_HEAP_MB to match the daemon's own constant.
+ */
+async function startDaemonThrottled(): Promise<void> {
+  const marker = join(CACHE_DIR, "daemon-spawn.at");
+  try {
+    if (Date.now() - statSync(marker).mtimeMs < DAEMON_SPAWN_THROTTLE_MS) return;
+  } catch {}
+  try {
+    writeFileSync(marker, String(Date.now()), { mode: 0o600 });
+  } catch {}
   try {
     const { spawn } = await import("node:child_process");
     const daemonHeapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";
@@ -382,8 +448,6 @@ async function getTodayTotalsCached(): Promise<TodayTotals | null> {
     });
     child.unref();
   } catch {}
-
-  return null;
 }
 
 /**
@@ -523,6 +587,12 @@ export async function runStatusline(): Promise<void> {
       cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
       cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
     };
+
+    // Start today's read now so its daemon round trip overlaps the session
+    // sync below instead of queueing behind it (worst case 300ms, not 500ms).
+    // Handled at creation: it's awaited only after another await, and an
+    // unhandled rejection in between would kill the process.
+    const todayPromise = getTodayTotalsCached().catch((): TodayRead => ({ state: "down" }));
 
     // ── Daemon sync (background, non-blocking) ──
     const sessionId = input.session_id ?? `session-${now}`;
@@ -727,10 +797,20 @@ export async function runStatusline(): Promise<void> {
 
     // Today's totals — cross-provider roll-up across Claude Code, Codex, Qwen,
     // etc., for the local calendar day. Cache resets at midnight via dayKey.
-    const today = await getTodayTotalsCached();
-    if (today && today.cost > 0) {
+    // Stale totals render dimmed with "~" and their age, so a number the
+    // daemon hasn't confirmed lately never reads as live. Down is a dash,
+    // never $0.00: unknown is not zero.
+    const todayRead = await todayPromise;
+    if (todayRead.state === "down") {
+      world.push(`${C.dim(`${monoTheme.ephemeral("today")} — daemon offline`)}`);
+    } else if (todayRead.totals.cost > 0) {
+      const today = todayRead.totals;
+      const stale = todayRead.state === "stale";
+      const age = stale ? ` ${formatAge(todayRead.ageMs)} old` : "";
       world.push(
-        `${C.accent(monoTheme.ephemeral("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
+        stale
+          ? C.dim(`${monoTheme.ephemeral("today")} ~${formatCost(today.cost)}${age}`)
+          : `${C.accent(monoTheme.ephemeral("today"))} ${C.cost(formatCost(today.cost))} ${C.input(`${ICON.up}${formatNumber(today.in)}`)} ${C.output(`${ICON.down}${formatNumber(today.out)}`)}`
       );
       // Project roll-up — only show when it's a meaningful subset of today's
       // total (not identical to the day total, not zero). Gives you "what has
@@ -738,7 +818,9 @@ export async function runStatusline(): Promise<void> {
       const proj = findProjectTotal(today, projectName);
       if (proj && proj.cost > 0 && proj.cost < today.cost - 0.005) {
         world.push(
-          `${C.accent(monoTheme.ephemeral("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
+          stale
+            ? C.dim(`${monoTheme.ephemeral("proj")} ~${formatCost(proj.cost)}`)
+            : `${C.accent(monoTheme.ephemeral("proj"))} ${C.cost(formatCost(proj.cost))} ${C.input(`${ICON.up}${formatNumber(proj.in)}`)} ${C.output(`${ICON.down}${formatNumber(proj.out)}`)}`
         );
       }
     }
