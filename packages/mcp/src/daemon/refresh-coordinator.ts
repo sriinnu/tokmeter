@@ -26,6 +26,17 @@ export class RefreshCoordinator<T> {
     return this.start(full);
   }
 
+  /**
+   * Stale-while-revalidate: hand back `current` at once and, when it is at
+   * least `ttlMs` old and nothing is in flight, start an incremental refresh
+   * in the background. For hot-path readers that must answer now and can show
+   * the age of what they got.
+   */
+  serveStale(current: T, ageMs: number, ttlMs: number, onError: (error: unknown) => void): T {
+    if (!this.busy && ageMs >= ttlMs) void this.run(false).catch(onError);
+    return current;
+  }
+
   private start(full: boolean): Promise<T> {
     const promise = Promise.resolve()
       .then(() => this.refresh(full))

@@ -790,6 +790,26 @@ async function getHttpCore(): Promise<any> {
 }
 
 /**
+ * Stale-while-revalidate read for hot-path callers (the statusline). Once the
+ * core is warm, answer from it immediately and let a stale one refresh after
+ * the reply. `getHttpCore()` instead awaits that refresh, and a today refresh
+ * runs every parser at once: measured 2.5–5s on a real corpus, while Claude
+ * Code cancels a statusline that hasn't printed by its next ~300ms update.
+ * Cold start still waits, since there is nothing to serve yet.
+ */
+async function getHttpCoreNoWait(): Promise<any> {
+  if (!_httpCore) return getHttpCore();
+  return coreRefresh.serveStale(
+    _httpCore.core,
+    Date.now() - _httpCore.ts,
+    TODAY_REFRESH_TTL,
+    (err) => {
+      console.error("Background today refresh failed:", toErrorMessage(err));
+    }
+  );
+}
+
+/**
  * Force a full re-scan of the persistent core (history reloaded, today
  * repriced). Used after a pricing update. Routes through the single mediator
  * so concurrent calls and concurrent refreshes don't stack into back-to-back
@@ -939,16 +959,24 @@ function startHttpApi(): void {
           return;
         }
 
-        const core = await getHttpCore();
-
         if (pathname === "/api/today") {
           // Today's cross-provider totals, computed from the WARM core — no
-          // scan. The statusline reads this so it NEVER scans on its 200ms hot
-          // path. Shape matches statusline's TodayTotals. The today-floor pins
-          // each field to its per-day high-water mark so codex fork-dedup
-          // swaps can't show today *decreasing* (user can't un-spend money).
-          json(res, applyTodayFloor(computeTodayTotals(core)));
-        } else if (pathname === "/api/projects") {
+          // scan, and no wait on a refresh (see getHttpCoreNoWait). The
+          // statusline reads this on its hot path. The today-floor pins each
+          // field to its per-day high-water mark so codex fork-dedup swaps
+          // can't show today *decreasing* (user can't un-spend money).
+          // `computedAt` lets the caller show how old the numbers are.
+          const warm = await getHttpCoreNoWait();
+          json(res, {
+            ...applyTodayFloor(computeTodayTotals(warm)),
+            computedAt: _httpCore?.ts ?? Date.now(),
+          });
+          return;
+        }
+
+        const core = await getHttpCore();
+
+        if (pathname === "/api/projects") {
           json(res, core.getAllProjects());
         } else if (pathname === "/api/sessions") {
           // All projects across providers, sorted by most-recently-used descending.
