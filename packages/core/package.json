@@ -25,7 +25,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "better-sqlite3": "^12.11.1",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   },
   "license": "MPL-2.0",
   "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",

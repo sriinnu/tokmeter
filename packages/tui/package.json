@@ -22,7 +22,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.0",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   },
   "license": "AGPL-3.0-only",
   "author": "Srinivas Pendela <sriinnu@users.noreply.github.com>",
