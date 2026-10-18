@@ -32,6 +32,7 @@ export type ProviderId =
   // canonical usage-line format. `custom` is the catch-all for any other
   // registered path.
   | "ribhu"
+  | "chitragupta"
   | "grok"
   | "custom"
   | "synthetic";

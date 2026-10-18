@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Chitragupta's own model calls are tracked.** Chitragupta now writes one
+  usage line per model response to `~/.chitragupta/usage`, and tokmeter reads
+  it under its own `chitragupta` label (`--chitragupta`). Register it in
+  `~/.tokmeter/config.json` `customSources` with `provider: "chitragupta"`.
+  Calls a self-metering caller like Ribhu routes through Chitragupta are
+  counted once, on the caller's side.
+
 ### Fixed
 
 - **OpenCode usage since its SQLite move was missing.** The parser queried a
