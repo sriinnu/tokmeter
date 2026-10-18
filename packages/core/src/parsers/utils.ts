@@ -135,7 +135,13 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      the first: subagent transcripts open with placeholder usage from
 //      message_start and only the last line carries real output tokens.
 //      v13/v14 caches hold first-line values for subagent turns; rebuild.
-const CACHE_VERSION = 16;
+// 17 — opencode/kilo-cli read the current `message.data` JSON schema (the
+//      flat `messages` query threw, so every DB-era message was dropped) and
+//      opencode merges legacy JSON with the DB instead of either-or.
+// 18 — opencode free-tier ($0, `-free`/`:free`) records carry cost provenance
+//      "direct", so they render $0.00 instead of "Unavailable". Same for
+//      custom-source lines served by a local runtime (Ollama, LM Studio, …).
+const CACHE_VERSION = 18;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -661,16 +667,37 @@ export interface ReadonlySqlite {
 }
 
 /**
+ * Wait briefly for a writer's lock instead of failing at once. Every driver
+ * defaults to a 0 ms busy timeout, so a scan that lands while the owning app
+ * (OpenCode, Cursor, …) holds a rollback-journal lock throws "database is
+ * locked" and the parser silently reports nothing for that pass. Short on
+ * purpose: these drivers are synchronous and block the daemon's event loop.
+ */
+function withBusyTimeout(db: ReadonlySqlite): ReadonlySqlite {
+  try {
+    db.get("PRAGMA busy_timeout = 1000");
+  } catch {
+    // Best effort — a driver that rejects the pragma still reads fine.
+  }
+  return db;
+}
+
+/**
  * Opens a SQLite database read-only, picking the right driver for the
- * runtime: `bun:sqlite` under Bun, `better-sqlite3` under Node.
+ * runtime: `bun:sqlite` under Bun; under Node the built-in `node:sqlite`
+ * (Node ≥ 22.5), then `better-sqlite3`.
  *
  * better-sqlite3's native N-API bindings are not supported under Bun
  * (https://github.com/oven-sh/bun/issues/4290 — `dlopen` refuses to load
  * them, Bun's own error message points at `bun:sqlite` instead), so a
  * parser that only tries `better-sqlite3` silently returns zero records on
- * every Bun install, including this project's own dev/CLI runtime. Both
- * drivers are optional — a published npm consumer running under Node with
- * neither installed gets `null` back, not a crash.
+ * every Bun install, including this project's own dev/CLI runtime.
+ *
+ * Under Node, better-sqlite3 is not a dependency of the published package —
+ * it only resolves from packages/core in this repo — so the daemon and every
+ * npm install got `null` here and all SQLite-backed parsers came back empty.
+ * `node:sqlite` needs no install; better-sqlite3 remains the fallback for
+ * older Node. With none available the result is `null`, not a crash.
  */
 export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite | null> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
@@ -678,24 +705,45 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite |
       // @ts-expect-error — bun:sqlite only resolves under the Bun runtime
       const { Database } = await import("bun:sqlite");
       const db = new Database(path, { readonly: true });
-      return {
+      return withBusyTimeout({
         get: (sql, ...params) => db.query(sql).get(...params) as never,
         all: (sql, ...params) => db.query(sql).all(...params) as never,
         close: () => db.close(),
-      };
+      });
     } catch {
       return null;
     }
   }
   try {
+    // Specifier in a variable so bundlers and older type libs leave it alone.
+    const builtin = "node:sqlite";
+    const { DatabaseSync } = (await import(builtin)) as {
+      DatabaseSync: new (
+        path: string,
+        opts: { readOnly: boolean }
+      ) => {
+        prepare(sql: string): { get(...p: unknown[]): unknown; all(...p: unknown[]): unknown[] };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(path, { readOnly: true });
+    return withBusyTimeout({
+      get: (sql, ...params) => db.prepare(sql).get(...params) as never,
+      all: (sql, ...params) => db.prepare(sql).all(...params) as never,
+      close: () => db.close(),
+    });
+  } catch {
+    // Node < 22.5 — fall through to better-sqlite3.
+  }
+  try {
     // @ts-expect-error — better-sqlite3 is an optional dependency
     const { default: Database } = await import("better-sqlite3");
     const db = new Database(path, { readonly: true });
-    return {
+    return withBusyTimeout({
       get: (sql, ...params) => db.prepare(sql).get(...params),
       all: (sql, ...params) => db.prepare(sql).all(...params),
       close: () => db.close(),
-    };
+    });
   } catch {
     return null;
   }

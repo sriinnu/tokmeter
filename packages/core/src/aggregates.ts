@@ -230,14 +230,20 @@ export function toNullMap<T>(obj: Record<string, T> | undefined): Record<string,
  * deliberately excluded so the fingerprint is content-stable across the
  * fork-dedup winner-swap. `project` IS included: two different projects
  * hitting the same provider/model at the exact same millisecond with
- * identical token counts (and thus identical cost) are still two distinct
- * records, and without project in the key they'd wrongly collapse into one.
+ * identical token counts are still two distinct records, and without project
+ * in the key they'd wrongly collapse into one.
+ * `cost` is deliberately EXCLUDED: it is derived (priced after parsing), so
+ * the same response can carry different costs depending on when it was seen.
+ * The midnight rollover unions yesterday's priced in-memory records with
+ * freshly re-read, intentionally unpriced stragglers; with cost in the key the
+ * two copies never matched and the response was counted twice into an
+ * immutable sealed day.
  * This is the SINGLE definition shared by the live fold (DailyAccumulator)
  * and the cold-scan rebuild (aggregateRecordsByDay), so a rebuilt day dedups
- * identically to the day accumulated live.
+ * identically to the day accumulated live. Fingerprints live only in memory.
  */
 export function recordFingerprint(r: TokenRecord): string {
-  return `${r.timestamp}|${r.provider}|${r.model}|${r.project}|${r.inputTokens}|${r.outputTokens}|${r.cacheReadTokens}|${r.cacheWriteTokens}|${r.reasoningTokens}|${r.cost}`;
+  return `${r.timestamp}|${r.provider}|${r.model}|${r.project}|${r.inputTokens}|${r.outputTokens}|${r.cacheReadTokens}|${r.cacheWriteTokens}|${r.reasoningTokens}`;
 }
 
 export function isValidRecord(r: TokenRecord): boolean {

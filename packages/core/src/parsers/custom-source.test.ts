@@ -159,4 +159,30 @@ describe("CustomSourceParser", () => {
     expect(records[0].provider).toBe("custom"); // unknown id → custom
     expect(records[0].model).toBe("grok-code");
   });
+
+  it("reports a locally served response as $0, but not an Ollama cloud model or a hosted vendor", async () => {
+    const line = (id: string, model: string, provider: string) => ({
+      ts: 1_790_000_000_000,
+      id,
+      model,
+      provider,
+      cost: null,
+      input_tokens: 100,
+      output_tokens: 10,
+    });
+    const dir = seedLines(".ribhu/usage", "u.jsonl", [
+      line("local", "llama3.2:3b", "ollama"),
+      line("cloud", "gpt-oss:120b-cloud", "ollama"),
+      line("hosted", "deepseek-v4-pro", "deepseek"),
+    ]);
+    registerSource({ path: dir, format: "tokmeter-usage-jsonl", provider: "ribhu" });
+
+    const records = await new CustomSourceParser().scan(tmpDir);
+    const costOf = (id: string) => records.find((r) => r.apiCallId === id)?.usage?.cost;
+
+    expect(records.every((r) => r.provider === "ribhu")).toBe(true); // vendor never replaces the agent
+    expect(costOf("local")).toBe("direct");
+    expect(costOf("cloud")).not.toBe("direct");
+    expect(costOf("hosted")).not.toBe("direct");
+  });
 });

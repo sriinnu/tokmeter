@@ -39,6 +39,11 @@
  *
  * Records are tagged with the source's `provider` when it is a custom-eligible
  * id (ribhu, grok, custom); anything else falls back to "custom".
+ *
+ * A line MAY carry the routed vendor as `provider` (Ribhu writes "deepseek",
+ * "ollama", …). It never replaces the agent id; it only answers one question:
+ * was this served by a local runtime? A local response costs $0 as a fact, so
+ * it is marked reported rather than left looking like missing pricing.
  */
 
 import { type CustomSource, loadConfig } from "../config-service.js";
@@ -56,6 +61,8 @@ interface CanonicalUsageLine {
   project?: string;
   cwd?: string;
   cost?: number;
+  /** Routed vendor that served the response (not the agent). */
+  provider?: string;
   /**
    * Token buckets may sit at the top level OR nested under `usage` — most
    * agents (and Takumi, which routes through Chitragupta and writes whatever
@@ -86,6 +93,26 @@ interface UsageBuckets {
   cacheWriteTokens?: number;
   reasoning_tokens?: number;
   reasoningTokens?: number;
+}
+
+/** Runtimes that serve models on this machine — no per-token bill. */
+const LOCAL_RUNTIMES: ReadonlySet<string> = new Set([
+  "ollama",
+  "lmstudio",
+  "lm-studio",
+  "llamacpp",
+  "llama.cpp",
+  "mlx",
+]);
+
+/**
+ * True when a local runtime served the model. Ollama also proxies hosted
+ * models (`gpt-oss:120b-cloud`, `…:cloud`) that bill against a quota, so a
+ * cloud-tagged model is never treated as local.
+ */
+export function isLocallyServed(routedVendor: string | undefined, model: string): boolean {
+  if (!routedVendor || !LOCAL_RUNTIMES.has(routedVendor.toLowerCase())) return false;
+  return !/[-:]cloud$/i.test(model);
 }
 
 function resolveProvider(source: CustomSource): ProviderId {
@@ -191,6 +218,7 @@ export class CustomSourceParser implements SessionParser {
         reasoningTokens: reasoning,
       });
       if (typeof line.cost === "number" && line.cost > 0) rec.cost = line.cost;
+      else if (isLocallyServed(line.provider, rec.model) && rec.usage) rec.usage.cost = "direct";
       records.push(rec);
     }
 
