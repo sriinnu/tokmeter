@@ -667,6 +667,22 @@ export interface ReadonlySqlite {
 }
 
 /**
+ * Wait briefly for a writer's lock instead of failing at once. Every driver
+ * defaults to a 0 ms busy timeout, so a scan that lands while the owning app
+ * (OpenCode, Cursor, …) holds a rollback-journal lock throws "database is
+ * locked" and the parser silently reports nothing for that pass. Short on
+ * purpose: these drivers are synchronous and block the daemon's event loop.
+ */
+function withBusyTimeout(db: ReadonlySqlite): ReadonlySqlite {
+  try {
+    db.get("PRAGMA busy_timeout = 1000");
+  } catch {
+    // Best effort — a driver that rejects the pragma still reads fine.
+  }
+  return db;
+}
+
+/**
  * Opens a SQLite database read-only, picking the right driver for the
  * runtime: `bun:sqlite` under Bun; under Node the built-in `node:sqlite`
  * (Node ≥ 22.5), then `better-sqlite3`.
@@ -683,22 +699,6 @@ export interface ReadonlySqlite {
  * `node:sqlite` needs no install; better-sqlite3 remains the fallback for
  * older Node. With none available the result is `null`, not a crash.
  */
-/**
- * Wait briefly for a writer's lock instead of failing at once. Every driver
- * defaults to a 0 ms busy timeout, so a scan that lands while the owning app
- * (OpenCode, Cursor, …) holds a rollback-journal lock throws "database is
- * locked" and the parser silently reports nothing for that pass. Short on
- * purpose: these drivers are synchronous and block the daemon's event loop.
- */
-function withBusyTimeout(db: ReadonlySqlite): ReadonlySqlite {
-  try {
-    db.get("PRAGMA busy_timeout = 1000");
-  } catch {
-    // Best effort — a driver that rejects the pragma still reads fine.
-  }
-  return db;
-}
-
 export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite | null> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     try {

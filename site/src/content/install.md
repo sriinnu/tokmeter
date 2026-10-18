@@ -3,8 +3,11 @@ title: "Installation"
 source: "https://github.com/sriinnu/tokmeter/wiki/Installation"
 ---
 
-Requires Node.js 18+. Reading session files needs no provider credentials;
-pricing lookups fetch a public catalog, and `--light` skips them.
+Requires Node.js 18+. Tools that keep their history in SQLite — OpenCode, Kilo
+CLI, Cursor, Zed, Codex Desktop, Antigravity — need **Node 22.13+** (or 23.4+)
+for its built-in `node:sqlite`; on older Node those sources stay empty. Reading
+session files needs no provider credentials; pricing lookups fetch a public
+catalog, and `--light` skips them.
 
 ## Try it without installing
 

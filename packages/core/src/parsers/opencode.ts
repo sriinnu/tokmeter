@@ -41,7 +41,7 @@ export class OpenCodeParser implements SessionParser {
       records.push(rec);
     };
 
-    // bun:sqlite or better-sqlite3, whichever the runtime supports.
+    // bun:sqlite under Bun; node:sqlite, then better-sqlite3, under Node.
     if (await fileExists(dbPath)) {
       const db = await openReadonlySqlite(dbPath);
       if (db) {

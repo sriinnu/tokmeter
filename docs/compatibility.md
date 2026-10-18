@@ -9,7 +9,7 @@ Checked for the 1.10.0 release candidate on 2026-09-06. An implemented parser is
 | Codex CLI | Live checked + fixtures | New response receipts and legacy cumulative counters; real receipt totals reconciled. Replays and mixed formats covered. |
 | Codex Desktop / VS Code | Live checked for response receipts; SQLite fallback fixture tested | New receipts use the granular parser. Opaque SQLite totals are baseline deltas with no invented cost; cannot reconstruct usage before observation. |
 | Claude Code | Live numeric reconciliation + fixture coverage in scan/relay tests | Existing day totals preserved during a raw-data rebuild. No paid request or invoice check performed. |
-| Cursor | Fixture tested | Local SQLite formats; a current live installation was not validated in this release. |
+| Cursor | Live numeric reconciliation (2026-10-16, under Node: 76 token-bearing bubbles in `state.vscdb` summed with sqlite3/jq — input 11,148,181 / output 1,007,118 exact) + fixtures | Local SQLite `cursorDiskKV` bubbles; only ~2.5% of bubbles carry token counts. The tokscale CSV path was not present on that machine and was not re-checked. |
 | Gemini CLI | Fixture tested | Local token buckets; current live installation not validated here. |
 | Qwen | Fixture tested | Local usage only; no provider/model completion performed. |
 | Roo Code | Fixture tested | Local usage and reported cost when exposed. |
@@ -27,7 +27,7 @@ Checked for the 1.10.0 release candidate on 2026-09-06. An implemented parser is
 
 ### SQLite-backed sources and Node
 
-OpenCode, Kilo CLI, Cursor, Zed, Codex Desktop and Antigravity are read from SQLite. Under Bun that is `bun:sqlite`; under Node (the daemon, the CLI, every npm install) it is Node's built-in `node:sqlite`, available without flags from Node 22.13 / 23.4 (22.5+ behind a flag), with `better-sqlite3` as a fallback when it is resolvable from the package (not a global install). On older Node these sources report nothing rather than failing — upgrade Node. Before the fix that added `node:sqlite`, the published package had no Node driver at all, so these sources were empty for every Node user. Cursor and Codex Desktop have not yet been reconciled against raw data on a live Node install.
+OpenCode, Kilo CLI, Cursor, Zed, Codex Desktop and Antigravity are read from SQLite. Under Bun that is `bun:sqlite`; under Node (the daemon, the CLI, every npm install) it is Node's built-in `node:sqlite`, available without flags from Node 22.13 / 23.4 (22.5+ behind a flag), with `better-sqlite3` as a fallback when it is resolvable from the package (not a global install). On older Node these sources report nothing rather than failing — upgrade Node. Before the fix that added `node:sqlite`, the published package had no Node driver at all, so these sources were empty for every Node user. Cursor was reconciled against raw data under Node on 2026-10-16. Codex Desktop only reports growth on threads updated today that lack JSONL telemetry, baselining a thread on first sight instead of emitting its lifetime total; on that date no thread qualified, so it correctly reported nothing.
 
 ## Keeping this table current
 
