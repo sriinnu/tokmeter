@@ -137,8 +137,15 @@ ${Object.entries(DAEMON_CHILD_ENV)
   </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
+  <!--
+    Standard, not Background: Background puts the daemon in the lowest CPU and
+    I/O tier. Under load (a Swift build, a busy agent host) it got ~2% CPU and
+    sat in open(2) on its own state file for minutes while the statusline and
+    bar timed out against it. It serves interactive readers, so it needs a
+    normal share; it idles at near-zero CPU anyway.
+  -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Standard</string>
   <key>StandardOutPath</key>
   <string>${xmlEscape(outLog)}</string>
   <key>StandardErrorPath</key>

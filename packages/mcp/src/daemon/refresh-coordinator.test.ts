@@ -68,3 +68,40 @@ describe("refresh coalescing", () => {
     expect(await gate.run(true)).toBe(3);
   });
 });
+
+describe("serveStale — hot-path reads never wait on a refresh", () => {
+  test("a stale value is returned at once and one background refresh starts", async () => {
+    const refresh = deferred<string>();
+    const work = vi.fn(() => refresh.promise);
+    const gate = new RefreshCoordinator(work);
+    const onError = vi.fn();
+    expect(gate.serveStale("old", 13_000, 12_000, onError)).toBe("old");
+    expect(gate.busy).toBe(true);
+    // A burst while that refresh runs serves the same value and starts nothing new.
+    expect(gate.serveStale("old", 14_000, 12_000, onError)).toBe("old");
+    await Promise.resolve();
+    expect(work).toHaveBeenCalledTimes(1);
+    refresh.resolve("new");
+    await gate.run(false);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("a fresh value starts no refresh", async () => {
+    const work = vi.fn(async () => "new");
+    const gate = new RefreshCoordinator(work);
+    expect(gate.serveStale("cur", 2_000, 12_000, () => {})).toBe("cur");
+    await Promise.resolve();
+    expect(work).not.toHaveBeenCalled();
+    expect(gate.busy).toBe(false);
+  });
+
+  test("a failed background refresh goes to onError, not an unhandled rejection", async () => {
+    const gate = new RefreshCoordinator<string>(async () => {
+      throw new Error("parser exploded");
+    });
+    const onError = vi.fn();
+    expect(gate.serveStale("cur", 60_000, 12_000, onError)).toBe("cur");
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(gate.busy).toBe(false);
+  });
+});
