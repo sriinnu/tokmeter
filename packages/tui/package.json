@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@sriinnu/tokmeter": "workspace:*",
-    "ink": "^5.0.0",
+    "ink": "^8.0.0",
     "react": "^18.3.0"
   },
   "devDependencies": {
