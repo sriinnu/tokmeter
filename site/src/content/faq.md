@@ -24,7 +24,7 @@ reprices when the catalog updates (since 1.15.0, also when your
 20+ formats, including Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Amp,
 Muse, Cline, Augment, Copilot CLI, Kimi, Qwen, Roo, Kilo, Droid, Zed, and more.
 An agent with no built-in parser can register a path and emit a usage line via
-`customSources`.
+`customSources`; Ribhu and Chitragupta are tracked this way.
 
 **Can I delete old session data safely?**
 Yes — `tokmeter cleanup` always backs up first, and since 1.15.0 so does

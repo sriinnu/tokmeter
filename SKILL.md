@@ -122,7 +122,8 @@ agent emit one JSON object per API response in the canonical usage-line format:
 
 ```json
 "customSources": [
-  { "path": "~/.ribhu/sessions", "format": "tokmeter-usage-jsonl", "provider": "ribhu" }
+  { "path": "~/.ribhu/usage", "format": "tokmeter-usage-jsonl", "provider": "ribhu" },
+  { "path": "~/.chitragupta/usage", "format": "tokmeter-usage-jsonl", "provider": "chitragupta" }
 ]
 ```
 
@@ -135,7 +136,8 @@ Each line (snake_case or camelCase; token buckets flat or nested under `usage`):
            "cache_write_tokens": 0, "reasoning_tokens": 0}}
 ```
 
-The config entry's `provider` is the AGENT (`ribhu`, `grok`, or `custom`), and
+The config entry's `provider` is the AGENT (`ribhu`, `chitragupta`, `grok`, or
+`custom`), and
 every record is tagged with it; `model` is the resolved model, so pricing works
 even when the agent routes across models per response. `input_tokens` is
 uncached (Anthropic-style).
@@ -145,6 +147,10 @@ A line MAY also carry `"provider"`: the routed vendor that served that response
 locally served response — `ollama`, `lmstudio`, `llamacpp`, `llama.cpp`, `mlx`
 — as a known $0 instead of missing pricing (Ollama `-cloud` models excluded,
 they bill). A positive `cost` on a line is kept as a floor.
+
+A router that makes model calls for other agents (Chitragupta) must not write
+a line for a call whose caller meters itself (Ribhu), or that response is
+counted twice.
 
 ## Backfill (pick up newly added parsers / sources into history)
 

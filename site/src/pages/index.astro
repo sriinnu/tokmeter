@@ -8,6 +8,7 @@ const agents = [
   'Claude Code', 'Codex', 'Codex Desktop', 'Gemini CLI', 'Cursor', 'OpenCode', 'Amp', 'Droid',
   'OpenClaw', 'Pi', 'Kimi', 'Qwen Code', 'Roo Code', 'Kilo Code', 'Kilo CLI', 'Mux',
   'VS Code Copilot', 'Copilot CLI', 'Antigravity', 'Zed', 'Muse', 'Cline', 'Augment', 'Synthetic',
+  'Ribhu', 'Chitragupta',
 ];
 
 const themes = [
@@ -29,7 +30,7 @@ const surfaces = [
   ['/menu-bar/', 'macOS', 'Menu bar app', 'Today’s tokens in the menu bar. Open it for cost, models, projects and a $/M rates panel, in eleven themes.'],
   ['/mcp/', 'Agents', 'MCP server', '24 tools, so an agent can ask what it has spent, compare models or forecast the month. 22 only read; the two that delete need a typed confirmation.'],
   ['/daemon/', 'Local API', 'Daemon', 'One process scans once and serves every surface over <code>127.0.0.1</code>, token-protected.'],
-  ['/install/', 'Editors', 'Statusline', 'This session’s tokens and cost under your prompt in Claude Code, OpenCode and others, plus every open agent’s total when the daemon runs.'],
+  ['/install/', 'Editors', 'Statusline', 'This session’s tokens and cost under your prompt in Claude Code, OpenCode and Ribhu, plus today’s total across every agent. It never waits on the daemon: a late number shows dimmed with its age.'],
   ['/install/', 'Browser', 'Web dashboard', 'Larger charts on demand, started and stopped by the menu bar app.'],
 ];
 ---
