@@ -17,7 +17,7 @@ tokmeter pricing <model> # price lookup
 
 - Scope: `--today`, `--week`, `--month`, `--since YYYY-MM-DD --until YYYY-MM-DD`, `--older-than 30d|2w|1m`, `--year N`
 - Project: `--project NAME` (substring)
-- Provider: `--claude`, `--codex`, `--gemini`, `--cursor`, `--opencode`, `--amp`, `--muse`, `--cline`, `--augment`, `--copilot-cli`, `--kimi`, `--qwen`, `--roocode`, `--kilo`, `--kilocode`, `--droid`, `--openclaw`, `--pi`, `--mux`, `--ribhu`, `--grok`, `--custom`, `--synthetic` (repeatable)
+- Provider: `--claude`, `--codex`, `--gemini`, `--cursor`, `--opencode`, `--amp`, `--muse`, `--cline`, `--augment`, `--copilot-cli`, `--kimi`, `--qwen`, `--roocode`, `--kilo`, `--kilocode`, `--droid`, `--openclaw`, `--pi`, `--mux`, `--ribhu`, `--chitragupta`, `--grok`, `--custom`, `--synthetic` (repeatable)
 - Output: `--json`, `--light` (skip pricing lookups)
 
 ## Backup, snapshot & cleanup

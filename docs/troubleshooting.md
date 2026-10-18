@@ -47,6 +47,25 @@ If the daemon is running but not answering (the bar stays on "?" and
 `tokmeter-mcp daemon restart`. Under the LaunchAgent that is the same as
 `launchctl kickstart -k gui/$(id -u)/com.tokmeter.daemon`.
 
+## The statusline
+
+### The statusline is blank, or shows `~` and an age
+
+Claude Code cancels a statusline that hasn't printed by its next update,
+about 300 ms while a turn is running. Before **1.16.0** the statusline waited
+up to 1.5 s for the daemon, so on a busy machine many renders were cancelled
+and the line stayed empty.
+
+Since 1.16.0 it never waits more than about 300 ms. If the daemon hasn't
+answered, it shows the last good totals dimmed with their age, for example
+`today ~$138 2m old`. That number is real but not current; it catches up on
+its own. `today — daemon offline` means the daemon isn't running at all, and
+the statusline starts it (at most once a minute).
+
+If it stays stale for minutes, run `tokmeter-mcp daemon install-agent` once.
+Older LaunchAgents ran the daemon in macOS's Background class, which throttles
+its disk access under load; 1.16.0 installs it at normal priority.
+
 ## Numbers look wrong
 
 ### "My history is shrinking / tokens are disappearing"
@@ -63,14 +82,14 @@ precisely because raw transcripts age out and the relay becomes the only copy.
 
 ### A tool's models are missing (OpenCode, Cursor, Zed, Kilo CLI, …)
 
-Two causes, both fixed in **1.15.2**:
+Two causes, both fixed in **1.16.0**:
 
 - **OpenCode** moved its history into SQLite (`message.data` JSON). Earlier
   versions queried a table that no longer exists and read only the legacy JSON
   store, so nothing after OpenCode's switch appeared.
 - **SQLite-backed sources under Node** (OpenCode, Kilo CLI, Cursor, Zed, Codex
   Desktop, Antigravity) had no SQLite driver in the published package, so the
-  daemon and CLI read nothing from them. 1.15.2 uses Node's built-in
+  daemon and CLI read nothing from them. 1.16.0 uses Node's built-in
   `node:sqlite`, which needs **Node 22.13+** (or 23.4+). On older Node these
   sources stay empty — upgrade Node.
 
