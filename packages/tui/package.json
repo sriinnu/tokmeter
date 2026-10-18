@@ -17,11 +17,11 @@
   "dependencies": {
     "@sriinnu/tokmeter": "workspace:*",
     "ink": "^5.0.0",
-    "react": "^18.3.0"
+    "react": "^19.3.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^19.3.0",
     "typescript": "^5.7.0"
   },
   "license": "AGPL-3.0-only",
