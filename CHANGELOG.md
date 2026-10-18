@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The statusline is redesigned around decisions.** Each segment answers
+  something you'd act on: context fill (amber at 70%, red at 85%, "compacts
+  next turn" from 95%, "compacting" at 100%, with turns left estimated from
+  recent growth), the prompt-cache countdown with the rebuild size, session
+  cost per hour of model working time (an 18h session with 58 active minutes
+  reads $26.7/h, not $1.42/h), and the 5h/7d windows with a straight-line
+  forecast to reset once 5% is used. The worst problem takes the second line
+  in words: limit reached, limit coming before reset, context nearly full,
+  router fell back, cache about to cool. A router (Ribhu via Chitragupta) is
+  shown with the model that actually answered and whether the router chose
+  it. Unknown values read `?`, never 0. The line drops segments by priority
+  to fit `COLUMNS` instead of wrapping, and honours `NO_COLOR`/`FORCE_COLOR`.
+  Dropped: last-call token counts, lines changed, and the live-session count.
+
 ## [1.16.0] - 2026-10-18
 
 ### Added
