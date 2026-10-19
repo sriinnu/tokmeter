@@ -1,0 +1,33 @@
+name: Add support for an agent
+description: Track token usage from an AI coding agent Tokmeter doesn't read yet
+labels: [enhancement]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      placeholder: Name and link
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it writes its session files
+      description: Path(s) on disk, per OS if they differ, and the format (JSONL, SQLite, JSON...).
+      placeholder: ~/.example/sessions/YYYY/MM/DD/*.jsonl
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: A redacted line that carries token usage
+      description: |
+        One record with the token counts, with prompts and paths removed. Note whether the agent writes one line per API response or several lines per turn, and which field is the response id.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Model naming, compression, how it handles resumed or forked sessions.

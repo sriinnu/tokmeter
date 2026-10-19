@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/sriinnu/tokmeter/security/advisories/new
+    about: Privately, so it can be fixed before it's public.
+  - name: Documentation
+    url: https://tokmeter.srinivas.dev
+    about: Install, configuration and troubleshooting.
