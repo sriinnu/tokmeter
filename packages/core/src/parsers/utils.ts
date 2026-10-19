@@ -141,7 +141,9 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 18 — opencode free-tier ($0, `-free`/`:free`) records carry cost provenance
 //      "direct", so they render $0.00 instead of "Unavailable". Same for
 //      custom-source lines served by a local runtime (Ollama, LM Studio, …).
-const CACHE_VERSION = 18;
+// 19 — codex reads compressed (.jsonl.zst) and archived rollouts, which it
+//      had skipped entirely; also covers #135's chitragupta provider label.
+const CACHE_VERSION = 19;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
