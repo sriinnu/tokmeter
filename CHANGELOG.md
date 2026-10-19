@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to fit `COLUMNS` instead of wrapping, and honours `NO_COLOR`/`FORCE_COLOR`.
   Dropped: last-call token counts, lines changed, and the live-session count.
 
+### Fixed
+
+- **Codex history was mostly missing.** Codex compresses an idle rollout to
+  `rollout-….jsonl.zst` (no `.jsonl` copy remains) and moves archived threads
+  to `~/.codex/archived_sessions`. tokmeter read neither: of 55,691 Codex
+  responses since 2026-09-03, 46,452 were invisible, and a day whose files
+  were compressed or archived before it sealed lost them. Both are read now,
+  large compressed files are streamed, and fork dedup compares decompressed
+  sizes so a compressed parent session isn't dropped in favour of a smaller
+  fork. Days already sealed short are repaired separately.
+
 ## [1.16.0] - 2026-10-18
 
 ### Added

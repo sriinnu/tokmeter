@@ -35,7 +35,9 @@
  * which DO replay ancestor history) enter the keep-largest dedup.
  */
 
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import { zstdDecompressSync } from "node:zlib";
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
@@ -78,6 +80,10 @@ export function codexSessionDirs(providerId: ProviderId, homeDir: string): strin
   const codexHome = codexHomeDir(homeDir);
   return [
     `${codexHome}/sessions`,
+    // Codex moves archived threads here, flat. Their usage is as real as any
+    // other session's; skipping this dir dropped most of a day once threads
+    // were archived before the day sealed.
+    `${codexHome}/archived_sessions`,
     ...getConfiguredProviderPaths(providerId, homeDir).map((p) => expandHome(p, homeDir)),
   ];
 }
@@ -222,6 +228,92 @@ interface CodexFileMeta {
   sizeBytes: number;
 }
 
+// ─── Compressed rollouts ──────────────────────────────────────────────────
+//
+// Codex compresses an idle rollout to `rollout-….jsonl.zst` and keeps no
+// `.jsonl` twin. Reading only `.jsonl` made 46,452 of 55,691 receipts since
+// 2026-09-03 invisible (measured 2026-10-18), and a day whose files were
+// compressed before it sealed lost them for good.
+
+/** A Codex rollout file, plain or zstd-compressed. */
+export function isCodexRollout(file: string): boolean {
+  return file.endsWith(".jsonl") || file.endsWith(".jsonl.zst");
+}
+
+function isZst(file: string): boolean {
+  return file.endsWith(".zst");
+}
+
+/**
+ * Decompressed size of a zstd file, from its frame header's content-size
+ * field (every Codex rollout sampled carries it, and it matched the real
+ * length on every file checked). Falls back to decompressing when absent.
+ * Fork dedup keeps the largest file of a session family, so it must compare
+ * contents, not compressed bytes — or a compressed parent loses to a smaller
+ * fork and its records disappear.
+ */
+export function zstContentSize(file: string): number {
+  try {
+    const fd = openSync(file, "r");
+    const b = Buffer.alloc(18);
+    try {
+      readSync(fd, b, 0, 18, 0);
+    } finally {
+      closeSync(fd);
+    }
+    if (b.readUInt32LE(0) === 0xfd2fb528) {
+      const d = b[4] as number;
+      const fcsFlag = d >> 6;
+      const single = (d >> 5) & 1;
+      const offset = 5 + (single ? 0 : 1) + ([0, 1, 2, 4][d & 3] as number);
+      const n = fcsFlag === 0 ? (single ? 1 : 0) : ([1, 2, 4, 8][fcsFlag] as number);
+      if (n === 1) return b[offset] as number;
+      if (n === 2) return b.readUInt16LE(offset) + 256;
+      if (n === 4) return b.readUInt32LE(offset);
+      if (n === 8) return Number(b.readBigUInt64LE(offset));
+    }
+    return zstdDecompressSync(readFileSync(file)).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Content size of a rollout: the file size, or the decompressed size for .zst. */
+async function rolloutSize(file: string): Promise<number> {
+  if (isZst(file)) return zstContentSize(file);
+  return (await stat(file)).size;
+}
+
+/** Whole decompressed text of a small .zst rollout. */
+function readZstText(file: string): string {
+  return zstdDecompressSync(readFileSync(file)).toString("utf-8");
+}
+
+/** Decompressed stream of a .zst rollout, for files too large to inflate whole. */
+async function zstStream(file: string): Promise<NodeJS.ReadableStream> {
+  const { createReadStream } = await import("node:fs");
+  const { createZstdDecompress } = await import("node:zlib");
+  return createReadStream(file).pipe(createZstdDecompress());
+}
+
+/** First `limit` decompressed bytes of a .zst rollout, without inflating the rest. */
+async function readZstHead(file: string, limit: number): Promise<string> {
+  const stream = (await zstStream(file)) as NodeJS.ReadableStream & { destroy(): void };
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of stream) {
+      const b = chunk as Buffer;
+      chunks.push(b);
+      total += b.length;
+      if (total >= limit) break;
+    }
+  } finally {
+    stream.destroy();
+  }
+  return Buffer.concat(chunks).subarray(0, limit).toString("utf-8");
+}
+
 /**
  * Read just the first handful of lines of a codex rollout to extract the
  * `session_meta` event. We cap the read at 64 KB so this stays cheap on
@@ -237,12 +329,18 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
   try {
     const st = await stat(file);
     mtimeMs = st.mtimeMs;
-    sizeBytes = st.size;
+    sizeBytes = isZst(file) ? zstContentSize(file) : st.size;
     const fd = await open(file, "r");
     try {
-      const buf = Buffer.alloc(Math.min(65_536, st.size));
-      await fd.read(buf, 0, buf.length, 0);
-      const text = buf.toString("utf-8");
+      let text: string;
+      if (isZst(file)) {
+        // session_meta is among the first events; decompress and keep the head.
+        text = await readZstHead(file, 65_536);
+      } else {
+        const buf = Buffer.alloc(Math.min(65_536, st.size));
+        await fd.read(buf, 0, buf.length, 0);
+        text = buf.toString("utf-8");
+      }
       // Scan the first few JSONL lines for a session_meta event.
       const lines = text.split("\n").slice(0, 20);
       for (const line of lines) {
@@ -290,7 +388,10 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
  * treat null as "unknown → don't skip" so we never silently drop real data.
  */
 async function newestEventMs(file: string, sizeBytes: number): Promise<number | null> {
-  if (sizeBytes === 0) return null;
+  // A compressed tail can't be read without decompressing. Unknown fails open
+  // (the file is parsed); only rollouts compressed since the watermark get
+  // here, because the mtime prefilter already dropped the rest.
+  if (sizeBytes === 0 || isZst(file)) return null;
   const { open } = await import("node:fs/promises");
   try {
     const fd = await open(file, "r");
@@ -509,10 +610,31 @@ export async function parseCodexFile(
 ): Promise<TokenRecord[]> {
   const out: TokenRecord[] = [];
   const state = defaultState();
-  if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
+  if (isZst(file) && sizeBytes < CODEX_LARGE_FILE_BYTES) {
+    try {
+      for (const line of readZstText(file).split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let evt: CodexEvent;
+        try {
+          evt = JSON.parse(trimmed) as CodexEvent;
+        } catch {
+          continue; // skip malformed line
+        }
+        foldCodexEvent(evt, state, file, out);
+      }
+    } catch (error) {
+      // Same fail-soft, never-silent contract as the plain reads below.
+      onWarning?.(`failed read of ${file}: ${error instanceof Error ? error.message : error}`);
+    }
+  } else if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
     const { createReadStream } = await import("node:fs");
     const { createInterface } = await import("node:readline");
-    const stream = createReadStream(file, { encoding: "utf-8" });
+    // A large compressed rollout streams through the decompressor, so peak
+    // memory stays one line, not the inflated file.
+    const stream = (
+      isZst(file) ? await zstStream(file) : createReadStream(file, { encoding: "utf-8" })
+    ) as NodeJS.ReadableStream & { destroy(): void };
     const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
     try {
       for await (const line of rl) {
@@ -592,7 +714,7 @@ export class CodexParser implements SessionParser {
     const seenFiles = new Set<string>();
     let allFiles: string[] = [];
     for (const dir of this.sessionRoots(homeDir)) {
-      for (const f of await findFiles(dir, (f) => f.endsWith(".jsonl"), 5)) {
+      for (const f of await findFiles(dir, isCodexRollout, 5)) {
         if (seenFiles.has(f)) continue;
         seenFiles.add(f);
         allFiles.push(f);
@@ -650,8 +772,7 @@ export class CodexParser implements SessionParser {
     // to a single large file, not the whole history (which OOM'd the box).
     const sized = await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, async (f) => {
       try {
-        const st = await stat(f);
-        return { file: f, size: st.size };
+        return { file: f, size: await rolloutSize(f) };
       } catch {
         return { file: f, size: 0 };
       }

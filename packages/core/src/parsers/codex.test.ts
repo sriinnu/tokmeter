@@ -13,8 +13,9 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexParser, parseCodexFile } from "./codex.js";
+import { CodexParser, parseCodexFile, zstContentSize } from "./codex.js";
 
 describe("Codex per-response usage receipts", () => {
   it("reconciles the documented current-format compatibility fixture", async () => {
@@ -667,5 +668,103 @@ describe("CodexParser", () => {
     const spawnerCounted = records.some((r) => r.inputTokens === 100_000);
     expect(spawnerCounted).toBe(true);
     expect(totalIn).toBe(100_000 + 140_000); // spawner + the larger of sub/resume
+  });
+});
+
+describe("compressed and archived rollouts", () => {
+  /** Replace a plain rollout with its .jsonl.zst, the way Codex does for idle threads. */
+  function compress(file: string, toDir?: string): string {
+    const fs = require("node:fs");
+    const out = join(toDir ?? join(file, ".."), `${require("node:path").basename(file)}.zst`);
+    fs.mkdirSync(join(out, ".."), { recursive: true });
+    writeFileSync(out, zstdCompressSync(readFileSync(file)));
+    fs.rmSync(file);
+    return out;
+  }
+  const events = [
+    { totalIn: 100_000, totalOut: 5_000, cached: 80_000 },
+    { totalIn: 150_000, totalOut: 8_000, cached: 120_000 },
+  ];
+
+  it("reads a .jsonl.zst rollout exactly like the plain file", async () => {
+    writeFakeSession(events);
+    const plain = await new CodexParser().scan(tmpDir);
+    rmSync(join(tmpDir, ".codex"), { recursive: true, force: true });
+    compress(writeFakeSession(events));
+    const zst = await new CodexParser().scan(tmpDir);
+    expect(zst).toHaveLength(2);
+    expect(zst.map((r) => [r.inputTokens, r.outputTokens, r.cacheReadTokens])).toEqual(
+      plain.map((r) => [r.inputTokens, r.outputTokens, r.cacheReadTokens])
+    );
+  });
+
+  it("reads archived threads from archived_sessions", async () => {
+    compress(writeFakeSession(events), join(tmpDir, ".codex", "archived_sessions"));
+    const records = await new CodexParser().scan(tmpDir);
+    expect(records).toHaveLength(2);
+    expect(records[0].inputTokens).toBe(20_000);
+  });
+
+  it("streams a large compressed rollout to the same records", async () => {
+    const file = compress(writeFakeSession(events));
+    const whole = await parseCodexFile(file, 1000);
+    const streamed = await parseCodexFile(file, 9_000_000);
+    expect(streamed.map((r) => r.inputTokens)).toEqual(whole.map((r) => r.inputTokens));
+    expect(streamed).toHaveLength(2);
+  });
+
+  it("reads the decompressed size from the zstd frame header", () => {
+    const file = compress(writeFakeSession(events));
+    const fs = require("node:fs");
+    const { zstdDecompressSync } = require("node:zlib");
+    expect(zstContentSize(file)).toBe(zstdDecompressSync(fs.readFileSync(file)).length);
+  });
+
+  it("fork dedup compares decompressed sizes, so a compressed parent still wins", async () => {
+    // Parent P has three turns; fork F replays two of them. Compressed, P is
+    // smaller on disk than plain F, but its contents are larger — P must win,
+    // or its third turn disappears.
+    const fs = require("node:fs");
+    const dir = join(tmpDir, ".codex", "sessions", "2026", "04", "09");
+    fs.mkdirSync(dir, { recursive: true });
+    const line = (o: unknown) => JSON.stringify(o);
+    const turn = (i: number, totalIn: number) =>
+      line({
+        timestamp: `2026-04-09T12:00:${String(10 + i).padStart(2, "0")}.000Z`,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: totalIn,
+              cached_input_tokens: 0,
+              output_tokens: 10,
+              reasoning_output_tokens: 0,
+            },
+          },
+        },
+      });
+    const meta = (id: string, forked?: string) =>
+      line({
+        timestamp: "2026-04-09T12:00:00.000Z",
+        type: "session_meta",
+        payload: { id, cwd: "/tmp/p", ...(forked ? { forked_from_id: forked } : {}) },
+      });
+    const ctx = line({
+      timestamp: "2026-04-09T12:00:01.000Z",
+      type: "turn_context",
+      payload: { model: "gpt-5.4" },
+    });
+    const parent = join(dir, "rollout-2026-04-09T12-00-00-parent.jsonl");
+    writeFileSync(
+      parent,
+      `${[meta("P"), ctx, turn(0, 1000), turn(1, 2000), turn(2, 3000)].join("\n")}\n`
+    );
+    const fork = join(dir, "rollout-2026-04-09T12-00-05-fork.jsonl");
+    writeFileSync(fork, `${[meta("F", "P"), ctx, turn(0, 1000), turn(1, 2000)].join("\n")}\n`);
+    const parentZst = compress(parent);
+    expect(fs.statSync(parentZst).size).toBeLessThan(fs.statSync(fork).size);
+    const records = await new CodexParser().scan(tmpDir);
+    expect(records).toHaveLength(3);
   });
 });
