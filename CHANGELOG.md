@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   router fell back, cache about to cool. A router (Ribhu via Chitragupta) is
   shown with the model that actually answered and whether the router chose
   it. Unknown values read `?`, never 0. The line drops segments by priority
-  to fit `COLUMNS` instead of wrapping, and honours `NO_COLOR`/`FORCE_COLOR`.
+  to fit `COLUMNS` instead of wrapping, and honours `NO_COLOR`/`FORCE_COLOR`
+  (`tokmeter-mcp` used to force color on and override both).
   Dropped: last-call token counts, lines changed, and the live-session count.
 
 ### Fixed
@@ -39,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --version` was an unknown command. Both print the version now. The
   bundled CLI also looked for its package.json one level too shallow, so the
   scheduled-job command pinned `@latest` instead of the installed version.
-
 - **Codex history was mostly missing.** Codex compresses an idle rollout to
   `rollout-….jsonl.zst` (no `.jsonl` copy remains) and moves archived threads
   to `~/.codex/archived_sessions`. tokmeter read neither: of 55,691 Codex
@@ -47,7 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were compressed or archived before it sealed lost them. Both are read now,
   large compressed files are streamed, and fork dedup compares decompressed
   sizes so a compressed parent session isn't dropped in favour of a smaller
-  fork. Days already sealed short are repaired separately.
+  fork. Days that sealed before this release keep their old totals. A Deep
+  Rescan (Hub, last 30 days) grows a day back only when nothing else in it
+  would shrink, so days whose other agents' logs have since aged out stay
+  as they were.
 
 ## [1.16.0] - 2026-10-18
 
