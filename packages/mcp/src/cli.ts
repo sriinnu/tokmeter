@@ -76,8 +76,11 @@ process.on("uncaughtException", (error) => {
 
 // Force chalk to output ANSI colors even when stdout is not a TTY.
 // The statusline runs as a subprocess hook (stdout → Claude Code, not a terminal),
-// so chalk's auto-detection strips colors. FORCE_COLOR makes them always emit.
-process.env.FORCE_COLOR = "3";
+// so chalk's auto-detection strips colors. FORCE_COLOR makes them always emit —
+// unless the user set NO_COLOR or their own FORCE_COLOR, which must win.
+if (process.env.FORCE_COLOR === undefined && !process.env.NO_COLOR) {
+  process.env.FORCE_COLOR = "3";
+}
 
 import { C } from "./formatter.js";
 
