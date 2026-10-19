@@ -12,6 +12,8 @@ Tokmeter reads the session files your agents already write to disk and turns the
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sriinnu)
+[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/sriinnu)
 
 </div>
 
@@ -169,6 +171,13 @@ already wrote, needs **no provider credentials**, sends **no telemetry**, and
 requires **no account**. The only outbound request is an optional fetch of a
 public model-price catalog, which `--light` skips entirely. Your usage data
 never leaves the device.
+
+## Support
+
+Tokmeter is free and open source. If it saves you money, consider chipping in to keep it maintained:
+
+- [GitHub Sponsors](https://github.com/sponsors/sriinnu)
+- [Buy Me a Coffee](https://buymeacoffee.com/sriinnu)
 
 ## License
 
