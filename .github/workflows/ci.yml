@@ -35,6 +35,18 @@ jobs:
       - name: Test
         run: bun run test
 
+      # Tests run under Bun; users run Node. A Node-only API imported at module
+      # top level (zstd, 22.15+) once stopped the CLI from starting on Node 20.
+      - name: Setup oldest supported Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: CLI and MCP load on Node 20
+        run: |
+          node packages/tokmeter/dist/cli/cli.js --version
+          node packages/mcp/dist/cli.js --version
+
   native-build-and-test:
     runs-on: macos-15
     timeout-minutes: 15

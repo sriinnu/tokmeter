@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tokmeter would not start on Node 20 or on Node 22 before 22.15.** Both
+  CLIs died at load with `SyntaxError: The requested module 'node:zlib' does
+  not provide an export named 'zstdDecompressSync'`, though `engines` says
+  Node 18+. The Zed parser imported zstd (added in Node 22.15) by name, which
+  fails when the module loads, before any command runs; every release since
+  the Zed parser (July) had it, and 1.16.0 from npm reproduces it. zstd is now
+  read off the module namespace: on an older Node, compressed Codex rollouts
+  are skipped with a warning naming the count, and a compressed Zed row is
+  skipped like a corrupt one. CI now starts both CLIs on Node 20, because the
+  test suite runs under Bun and never exercised Node's module loader.
+- **`tokmeter --version` ran the default report**, and `tokmeter-mcp
+  --version` was an unknown command. Both print the version now. The
+  bundled CLI also looked for its package.json one level too shallow, so the
+  scheduled-job command pinned `@latest` instead of the installed version.
+
 - **Codex history was mostly missing.** Codex compresses an idle rollout to
   `rollout-….jsonl.zst` (no `.jsonl` copy remains) and moves archived threads
   to `~/.codex/archived_sessions`. tokmeter read neither: of 55,691 Codex

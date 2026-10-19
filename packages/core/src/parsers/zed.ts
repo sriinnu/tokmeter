@@ -23,7 +23,10 @@
  */
 
 import { join } from "node:path";
-import { zstdDecompressSync } from "node:zlib";
+// Namespace import: zstd is Node 22.15+, and a named import of it fails at
+// module load on older Node, taking every command down with it. There, a
+// zstd row throws inside decodeThreadData and is skipped like a corrupt one.
+import * as zlib from "node:zlib";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
 import {
@@ -72,7 +75,7 @@ function decodeThreadData(row: ThreadRow): DbThreadJson | null {
   try {
     const json =
       row.data_type === "zstd"
-        ? zstdDecompressSync(Buffer.from(row.data)).toString("utf-8")
+        ? zlib.zstdDecompressSync(Buffer.from(row.data)).toString("utf-8")
         : Buffer.from(row.data).toString("utf-8");
     return JSON.parse(json) as DbThreadJson;
   } catch {

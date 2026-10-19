@@ -69,18 +69,26 @@ function resolveLaunchCommand(): { description: string; shellCommand: string } {
   };
 }
 
-/** Reads this package's version from package.json so the npx fallback is pinned. */
-function readOwnVersion(): string {
-  // The compiled JS lives in dist/, so package.json is one directory up.
-  // import.meta.url is the most portable way to find it under both bun and node.
+/**
+ * This package's version, from the nearest package.json above the compiled
+ * file. Standalone that is packages/cli (dist/ is one level down); inside the
+ * published @sriinnu/tokmeter bundle it is two levels up (dist/cli/), where a
+ * fixed one-level lookup found nothing and fell back to "latest".
+ */
+export function readOwnVersion(): string {
   try {
-    const here = new URL(import.meta.url).pathname;
-    const pkgPath = join(dirname(dirname(here)), "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    return typeof pkg.version === "string" ? pkg.version : "latest";
+    let dir = dirname(new URL(import.meta.url).pathname);
+    for (let i = 0; i < 3; i++) {
+      dir = dirname(dir);
+      const pkgPath = join(dir, "package.json");
+      if (!existsSync(pkgPath)) continue;
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      return typeof pkg.version === "string" ? pkg.version : "latest";
+    }
   } catch {
-    return "latest";
+    // fall through
   }
+  return "latest";
 }
 
 /** A path is "stable" if launchd will still find it tomorrow. Excludes

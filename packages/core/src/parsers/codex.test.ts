@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CodexParser, parseCodexFile, zstContentSize } from "./codex.js";
+import { CodexParser, isCodexRollout, parseCodexFile, zstContentSize } from "./codex.js";
 
 describe("Codex per-response usage receipts", () => {
   it("reconciles the documented current-format compatibility fixture", async () => {
@@ -685,6 +685,12 @@ describe("compressed and archived rollouts", () => {
     { totalIn: 100_000, totalOut: 5_000, cached: 80_000 },
     { totalIn: 150_000, totalOut: 8_000, cached: 120_000 },
   ];
+
+  it("skips .jsonl.zst on a Node without zstd instead of failing to load", () => {
+    expect(isCodexRollout("rollout-1.jsonl", false)).toBe(true);
+    expect(isCodexRollout("rollout-1.jsonl.zst", false)).toBe(false);
+    expect(isCodexRollout("rollout-1.jsonl.zst", true)).toBe(true);
+  });
 
   it("reads a .jsonl.zst rollout exactly like the plain file", async () => {
     writeFakeSession(events);
