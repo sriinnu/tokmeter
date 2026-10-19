@@ -1,5 +1,8 @@
 # Version updates. Security updates are enabled separately in the repo
-# settings and are not limited by these schedules.
+# settings and are not limited by these schedules or the major-version ignores
+# below. Major bumps are taken deliberately, in their own PRs, after reading
+# the upstream migration notes (TypeScript 7 no longer found Node's types
+# without a tsconfig change; ink 8 needs React 19).
 version: 2
 updates:
   # Keeps the SHA-pinned actions current; the pins stay SHAs.
@@ -14,6 +17,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -30,6 +36,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       site:
         patterns: ["*"]

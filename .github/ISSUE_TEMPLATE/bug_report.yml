@@ -1,0 +1,66 @@
+name: Bug report
+description: Something is wrong, crashes, or the numbers don't match
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issue? Don't file it here. Use [private reporting](https://github.com/sriinnu/tokmeter/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - CLI (tokmeter)
+        - TUI
+        - Statusline
+        - MCP server
+        - Daemon
+        - macOS app
+        - Web dashboard
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Which agent's numbers are affected
+      placeholder: e.g. Codex, Claude Code, Cursor, or "all"
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Numbers (if a total is wrong)
+      description: |
+        What Tokmeter shows, and what you expected, for which day. If you can, count it independently from the agent's own session files: that comparison is the fastest route to a fix.
+  - type: input
+    id: version
+    attributes:
+      label: tokmeter --version
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: node --version
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: e.g. macOS 26.1, Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Paste the full error. Remove anything private (paths with names, API keys).
+      render: shell
