@@ -181,6 +181,15 @@ switch (command) {
     break;
   }
 
+  case "--version":
+  case "-v": {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const pkg = new URL("../package.json", import.meta.url);
+    console.log(JSON.parse(readFileSync(fileURLToPath(pkg), "utf-8")).version);
+    break;
+  }
+
   case "help":
   case "--help":
   case "-h":
@@ -227,6 +236,7 @@ ${b("COMMANDS")}
   ${a("uninstall-hooks")}   Remove guard hooks (Claude Code)
   ${a("editors")}           List all supported editors
   ${a("help")}              Show this help message
+  ${a("--version")}         Print the installed version
 
 ${b("DAEMON — Cross-Provider Aggregation")}
   The daemon enables real-time aggregation across multiple AI coding assistants.

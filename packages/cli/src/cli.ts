@@ -17,6 +17,7 @@ process.on("uncaughtException", (error) => {
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
 import { localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
+import { readOwnVersion } from "./cron.js";
 import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
 
 // ---- Arg parser (lightweight, no deps) ----
@@ -242,11 +243,17 @@ function parseArgs(argv: string[]): CliArgs {
       case "--id":
         args.restoreId = rest[++i];
         break;
+      case "--version":
+      case "-v":
+        console.log(readOwnVersion());
+        process.exit(0);
+        break;
       case "--help":
       case "-h":
         console.log(`tokmeter — Token usage tracking for AI coding agents
 
 Usage: tokmeter [command] [options]
+       tokmeter --version
 
 Commands:
   projects        Show per-project breakdown (default: overview)

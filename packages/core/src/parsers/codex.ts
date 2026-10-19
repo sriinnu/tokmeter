@@ -37,7 +37,7 @@
 
 import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { zstdDecompressSync } from "node:zlib";
+import * as zlib from "node:zlib";
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
@@ -235,9 +235,18 @@ interface CodexFileMeta {
 // 2026-09-03 invisible (measured 2026-10-18), and a day whose files were
 // compressed before it sealed lost them for good.
 
-/** A Codex rollout file, plain or zstd-compressed. */
-export function isCodexRollout(file: string): boolean {
-  return file.endsWith(".jsonl") || file.endsWith(".jsonl.zst");
+/**
+ * zstd landed in node:zlib in Node 22.15 / 23.8. A named import of it throws at
+ * module load on older Node and takes the whole CLI down, so it is read off the
+ * namespace and checked here; without it, compressed rollouts are skipped and
+ * the scan says so.
+ */
+export const ZSTD_SUPPORTED =
+  typeof zlib.zstdDecompressSync === "function" && typeof zlib.createZstdDecompress === "function";
+
+/** A Codex rollout file, plain or zstd-compressed (when this Node can inflate it). */
+export function isCodexRollout(file: string, zstd = ZSTD_SUPPORTED): boolean {
+  return file.endsWith(".jsonl") || (zstd && file.endsWith(".jsonl.zst"));
 }
 
 function isZst(file: string): boolean {
@@ -272,7 +281,7 @@ export function zstContentSize(file: string): number {
       if (n === 4) return b.readUInt32LE(offset);
       if (n === 8) return Number(b.readBigUInt64LE(offset));
     }
-    return zstdDecompressSync(readFileSync(file)).length;
+    return zlib.zstdDecompressSync(readFileSync(file)).length;
   } catch {
     return 0;
   }
@@ -286,14 +295,13 @@ async function rolloutSize(file: string): Promise<number> {
 
 /** Whole decompressed text of a small .zst rollout. */
 function readZstText(file: string): string {
-  return zstdDecompressSync(readFileSync(file)).toString("utf-8");
+  return zlib.zstdDecompressSync(readFileSync(file)).toString("utf-8");
 }
 
 /** Decompressed stream of a .zst rollout, for files too large to inflate whole. */
 async function zstStream(file: string): Promise<NodeJS.ReadableStream> {
   const { createReadStream } = await import("node:fs");
-  const { createZstdDecompress } = await import("node:zlib");
-  return createReadStream(file).pipe(createZstdDecompress());
+  return createReadStream(file).pipe(zlib.createZstdDecompress());
 }
 
 /** First `limit` decompressed bytes of a .zst rollout, without inflating the rest. */
@@ -718,6 +726,17 @@ export class CodexParser implements SessionParser {
         if (seenFiles.has(f)) continue;
         seenFiles.add(f);
         allFiles.push(f);
+      }
+    }
+    if (!ZSTD_SUPPORTED) {
+      let skipped = 0;
+      for (const dir of this.sessionRoots(homeDir)) {
+        skipped += (await findFiles(dir, (f) => f.endsWith(".jsonl.zst"), 5)).length;
+      }
+      if (skipped > 0) {
+        opts?.onWarning?.(
+          `${skipped} compressed Codex rollouts (.jsonl.zst) skipped: Node ${process.versions.node} has no zstd; Node 22.15+ reads them`
+        );
       }
     }
     // Today-only scans skip files untouched since the watermark BEFORE the
