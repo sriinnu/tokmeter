@@ -22,7 +22,8 @@ Tokmeter never trusts a single in-memory pass. It composes on-disk stores under
 
 | Store | Path | Holds | Job |
 |---|---|---|---|
-| **Relay** | `aggregates/YYYY-MM-DD.json` | one sealed, immutable per-day rollup (totals + per-model/project/provider buckets + a 24-slot intraday `costByHour` curve) | the history source of truth; months of history in a few MB |
+| **Relay** | `aggregates/YYYY-MM-DD.json` | one sealed, immutable per-day rollup (totals + per-model/project/provider buckets + a 24-slot intraday `costByHour` curve + the rates each model was billed at, `prices`) | the history source of truth; months of history in a few MB |
+| **Coverage reports** | `coverage/YYYY-MM-DD.json` | session files that changed on a sealed day, carry usage, and fed no record | the morning-after check that a day isn't missing a source |
 | **Record cache** | `scan-cache.json` | parsed `TokenRecord[]` per source file, keyed by `(path, mtime, size)` | skip re-parsing unchanged session files (used by Claude Code's append-offset reads; Codex streams and does not cache) |
 | **Summary cache** | `summary-cache.json` | the last computed summary payload | offline fallback for readers when the daemon is down - **not** a reason to re-scan |
 
@@ -60,8 +61,15 @@ How the code enforces it:
   *trailing gap* from raw - it never re-parses interior days (a day the user
   simply didn't use is indistinguishable from a hole and must not trigger a
   full-corpus scan).
+- **Coverage check after the seal.** Once a day seals, the daemon walks each
+  tool's whole data folder (all of `~/.codex`, not just the `sessions` folder
+  the parser reads) for files that changed that day, carry a real token count,
+  and fed no record (`coverage-check.ts`). It uses the source files of the
+  records it already holds, so it re-parses nothing, and it skips databases,
+  caches, logs and git checkouts. Findings become a warning and a report.
 - **The only exception is an explicit rescan** (`rescanHistory` / the Hub's Deep
-  Rescan). That is the sole path allowed to re-derive and overwrite sealed days.
+  Rescan). That is the sole path allowed to re-derive and overwrite sealed days,
+  and it bills each day at the rates stored on it (`prices`), never today's.
 
 ---
 
@@ -136,6 +144,9 @@ history. It is deliberately constrained:
   peak memory is one file, not the corpus. For Codex, large rollouts (≥ 8 MB) are
   streamed line-by-line and parsed one at a time; smaller files batch
   concurrently. A single unreadable file fails soft (skips that file only).
+- **Priced as it was.** Each day in the window is rebuilt with its own stored
+  rates (`day-prices.ts`); a day sealed before rates were stored gets "implied"
+  ones derived from its sealed cost. A day's cost moves only if its tokens do.
 - **Guarded.** The `/api/rescan` endpoint refuses when free memory is low
   (~6 GB), is POST + token-gated (CSRF/DoS), and is fire-and-forget (returns
   immediately, rebuilds in the background) so an HTTP client can't time out.
