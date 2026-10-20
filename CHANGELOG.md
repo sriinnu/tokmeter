@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A Deep Rescan no longer reprices past days at today's rates.** kosha
+  keeps no price history, so rebuilding a sealed day billed its records at
+  whatever the rates were on the day of the rescan, and a day's cost could
+  change without one token changing (a forced 30-day rescan moved 10-06
+  from $458.54 to $453.44 and 10-12 from $143.53 to $136.95, tokens
+  identical). Each sealed day now stores the price card every model was
+  billed with (about 1–2 KB a day), and a rebuild bills the day with its own
+  cards: those days keep $458.54 and $143.53. Days sealed before this get an
+  "implied" card on rebuild, today's card scaled so the day's sealed token
+  mix costs what was sealed. A backfilled provider is billed at the day's
+  card for any model the day already priced. If kosha refreshes in the same
+  tick as the midnight seal (a wake after midnight), the day seals without
+  cards rather than with ones it wasn't priced at.
+
 ## [1.16.1] - 2026-10-20
 
 ### Changed

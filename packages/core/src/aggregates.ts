@@ -20,6 +20,7 @@
  */
 
 import { localDateKey } from "./date-utils.js";
+import type { DayPrices } from "./day-prices.js";
 import type { ProviderId, TokenRecord } from "./types.js";
 
 /** Token-bucket sub-totals shared by per-day, per-model, per-project, etc. */
@@ -141,6 +142,13 @@ export interface DailyAggregate {
    * missing curve as a $0 day, which would drag the baseline down).
    */
   costByHour?: number[];
+  /**
+   * The price card each model's calculated cost used when this day was
+   * priced, so a rebuild bills the day at its own rates, not today's (see
+   * day-prices.ts). Optional: days sealed before cards existed omit it and
+   * get "implied" cards on rebuild.
+   */
+  prices?: DayPrices;
 }
 
 function emptyBuckets(): TokenBuckets {

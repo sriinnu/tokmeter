@@ -22,6 +22,7 @@ import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js
 import { type AliasMap, loadAliases } from "./alias-service.js";
 import { type CrossToolComparison, computeCrossToolComparison } from "./cross-tool.js";
 import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { type DayPrices, priceCardsFor } from "./day-prices.js";
 import { writeKoshaWishlist } from "./kosha-wishlist.js";
 import { computeModelRates, type ModelRatesResponse } from "./model-rates.js";
 import {
@@ -194,8 +195,9 @@ export class TokmeterCore {
     const carriedRecent = this.recentRecords.filter((r) =>
       isBeforeToday(r.timestamp, referenceTimestamp)
     );
+    const sealPrices = await this.pricesForSeal(referenceTimestamp, [], koshaChanged);
     this.recentRecords = this.sliceRecent([...carriedRecent, ...todayRecords], referenceTimestamp);
-    this.refreshTodayAccumulator(todayRecords, referenceTimestamp);
+    this.refreshTodayAccumulator(todayRecords, referenceTimestamp, [], sealPrices);
 
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
@@ -285,9 +287,10 @@ export class TokmeterCore {
       saveRecordCacheToDisk();
     }
 
+    const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now, stragglers);
+    this.refreshTodayAccumulator(today, now, stragglers, sealPrices);
 
     this.scanMeta = {
       ...this.scanMeta,
@@ -316,10 +319,37 @@ export class TokmeterCore {
     return out;
   }
 
+  /**
+   * The cards to seal the outgoing day with, when this tick crosses midnight.
+   * They must be the cards its records were priced with, which is the current
+   * registry unless kosha changed this very tick (a wake after midnight runs
+   * the 00:05 refresh and the seal together). Then nobody can vouch for them:
+   * the day seals without cards and a later rebuild implies them from its cost.
+   */
+  private async pricesForSeal(
+    referenceTimestamp: number,
+    stragglers: TokenRecord[],
+    koshaChanged: boolean
+  ): Promise<DayPrices | undefined> {
+    const prev = this.todayAccumulator;
+    if (!prev || this.skipPricing || koshaChanged) return undefined;
+    if (prev.date >= localDateKey(referenceTimestamp)) return undefined;
+    const models = new Set(Object.keys(prev.toAggregate().models));
+    for (const r of [...this.recentRecords, ...stragglers]) {
+      if (localDateKey(r.timestamp) === prev.date) models.add(r.model);
+    }
+    try {
+      return await priceCardsFor(models, this.pricing);
+    } catch {
+      return undefined; // seal without cards rather than not seal
+    }
+  }
+
   private refreshTodayAccumulator(
     todayRecords: TokenRecord[],
     referenceTimestamp: number,
-    stragglers: TokenRecord[] = []
+    stragglers: TokenRecord[] = [],
+    sealPrices?: DayPrices
   ): void {
     const todayKey = localDateKey(referenceTimestamp);
 
@@ -345,7 +375,7 @@ export class TokmeterCore {
       const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
       const toSeal = new DailyAccumulator(prev.date);
       toSeal.hydrate(derived ?? prev.toAggregate());
-      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey);
+      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey, sealPrices);
       if (sealed) this.aggregates.set(sealed.date, sealed);
     }
 

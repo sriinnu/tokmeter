@@ -26,7 +26,9 @@ import {
   writeDayFile,
 } from "./aggregates-store.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
+import { attachDayPrices, type DayPrices, pricesForRebuild, priceWithCard } from "./day-prices.js";
 import { getParsers } from "./parsers/index.js";
+import type { PriceCard } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
 import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
@@ -48,6 +50,29 @@ const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
   "grok",
   "custom",
 ]);
+
+/**
+ * Give a day its price cards before it's written: `kept` for models that
+ * already had one, today's for the rest. Fail-soft — a pricing fault must not
+ * stop a day from sealing; it seals without cards and gets implied ones if
+ * it's ever rebuilt.
+ */
+async function withPrices(
+  ctx: ScanContext,
+  day: DailyAggregate,
+  warnings: ScanWarning[],
+  kept?: DayPrices
+): Promise<void> {
+  if (ctx.skipPricing) return;
+  try {
+    await attachDayPrices(day, ctx.pricing, kept);
+  } catch (error) {
+    warnings.push({
+      scope: "history",
+      message: `Couldn't record the prices for ${day.date}: ${toErrorMessage(error)}`,
+    });
+  }
+}
 
 /**
  * Refresh historical aggregates from the per-day relay store.
@@ -112,6 +137,7 @@ export async function refreshFromRelay(
     // interior-hole day from them freezes a partial day permanently. Interior
     // holes are recovered by an explicit rescan, not the gap fill.
     if (day.date >= todayKey || day.date < gapStart || onDiskSet.has(day.date)) continue;
+    await withPrices(ctx, day, warnings);
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(day.date, day);
@@ -148,7 +174,8 @@ async function foldRawIntoDays(
   ctx: ScanContext,
   referenceTimestamp: number,
   warnings: ScanWarning[],
-  floorMs?: number
+  floorMs?: number,
+  cardFor?: (r: TokenRecord) => PriceCard | undefined
 ): Promise<Map<string, DailyAggregate>> {
   const todayKey = localDateKey(referenceTimestamp);
   const dayAccs = new Map<string, DailyAccumulator>();
@@ -157,7 +184,7 @@ async function foldRawIntoDays(
     if (records.length === 0) return;
     if (!ctx.skipPricing) {
       try {
-        await enrichCosts(records, ctx.pricing, "history", warnings);
+        await enrichCosts(records, ctx.pricing, "history", warnings, undefined, cardFor);
       } catch (error) {
         warnings.push({ scope: "history", message: `Pricing failed: ${toErrorMessage(error)}` });
       }
@@ -227,6 +254,7 @@ async function rebuildHistoricalFromScratch(
   const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings);
   const aggregates = new Map<string, DailyAggregate>();
   for (const [date, day] of days) {
+    await withPrices(ctx, day, warnings);
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(date, day);
@@ -265,8 +293,29 @@ export async function rebuildRecentWindow(
 ): Promise<RelayState> {
   migrateV2IfNeeded(ctx.homeDir);
   const floorMs = startOfLocalDay(referenceTimestamp - windowDays * 86_400_000);
+  const floorKey = localDateKey(floorMs);
+  const aggregates = loadAggregates(ctx.homeDir);
+  // Each sealed day in the window rebuilds at its OWN prices — the cards it
+  // sealed with, or implied ones for a day sealed before cards existed — so a
+  // rescan changes a day's cost only when its tokens change, never because
+  // kosha's rates moved since.
+  const kept = new Map<string, DayPrices>();
+  if (!ctx.skipPricing) {
+    for (const [date, day] of aggregates) {
+      if (date < floorKey) continue;
+      try {
+        kept.set(date, await pricesForRebuild(day, ctx.pricing));
+      } catch (error) {
+        warnings.push({
+          scope: "history",
+          message: `Couldn't read the prices ${date} sealed at — its rebuild uses today's: ${toErrorMessage(error)}`,
+        });
+      }
+    }
+  }
+  const cardFor = (r: TokenRecord) => kept.get(localDateKey(r.timestamp))?.[r.model]?.card;
   const warnBefore = warnings.length;
-  const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs);
+  const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs, cardFor);
   // Providers whose scan soft-failed on a file during THIS fold. `force`
   // consents to an intentional shrink (a parser fix), not to a broken read —
   // a day that shrank for a partial-scan provider is kept even when forced,
@@ -279,7 +328,6 @@ export async function rebuildRecentWindow(
       .map((w) => w.provider)
   );
   // Start from what's already sealed, overwrite ONLY the window's days.
-  const aggregates = loadAggregates(ctx.homeDir);
   for (const [date, day] of rebuilt) {
     const existing = aggregates.get(date);
     const forcedButTruncated =
@@ -297,6 +345,7 @@ export async function rebuildRecentWindow(
       });
       continue;
     }
+    await withPrices(ctx, day, warnings, kept.get(date));
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(date, day);
@@ -375,8 +424,16 @@ export async function backfillProviderIntoRelay(
         skipped++;
         continue; // already backfilled — additive re-run would double-count
       }
-      for (const r of records) foldRecordIntoDay(existing, r);
+      // Bill the added provider at this day's prices where the day has a card
+      // for the model (another provider used it that day); today's otherwise.
+      const kept = existing.prices;
+      for (const r of records) {
+        const card = kept?.[r.model]?.card;
+        if (card && r.costEligible !== false && r.usage?.cost !== "direct") priceWithCard(r, card);
+        foldRecordIntoDay(existing, r);
+      }
       finalizeDay(existing); // recompute totalTokens rollups after the fold
+      await withPrices(ctx, existing, warnings, kept);
       try {
         writeDayFile(ctx.homeDir, existing);
         added++;
@@ -390,6 +447,7 @@ export async function backfillProviderIntoRelay(
       // No sealed day for this date yet — this provider is the only activity.
       const fresh = aggregateRecordsByDay(records)[0];
       if (!fresh) continue;
+      await withPrices(ctx, fresh, warnings);
       try {
         writeDayFile(ctx.homeDir, fresh);
         aggregates.set(date, fresh);
