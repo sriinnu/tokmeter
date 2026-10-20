@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+#
+# release-flow.test.sh — drive scripts/release.sh end to end in a sandbox and
+# kill it at each stage, to prove a rerun resumes instead of redoing or
+# refusing work.
+#
+# Real: git, a bare "origin", SSH signing with a throwaway key, bump-version.sh.
+# Faked: gh (state in files, squash-merges into the bare origin), npm, curl,
+# bun, and the secret gate (it packs the real packages; here it only records
+# that it ran). The signer can be told to miss taps.
+#
+#   bash scripts/test/release-flow.test.sh
+#
+set -euo pipefail
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+V=1.1.0
+pass=0; fail=0
+ok()  { echo "  ✓ $*"; pass=$((pass + 1)); }
+bad() { echo "  ✗ $*"; fail=$((fail + 1)); }
+check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi; }
+
+# ── fakes ────────────────────────────────────────────────────────────────────
+BIN="$TMP/bin"; mkdir -p "$BIN"
+cat > "$BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+S="$GH_STATE"; mkdir -p "$S/pr" "$S/release"
+echo "gh $*" >> "$S/log"
+sub="$1 $2"; shift 2
+key() { echo "${1//\//_}"; }
+opt() { local want="$1"; shift; while [[ $# -gt 0 ]]; do [[ "$1" == "$want" ]] && { echo "$2"; return; }; shift; done; }
+case "$sub" in
+  "pr view")
+    f="$S/pr/$(key "$1")"; [[ -f "$f" ]] || exit 1
+    read -r num state < "$f"
+    case "$(opt --json "$@")" in number) echo "$num" ;; state) echo "$state" ;; esac ;;
+  "pr create")
+    n=$(( $(find "$S/pr" -type f | wc -l) + 100 ))
+    echo "$n OPEN" > "$S/pr/$(key "$(opt --head "$@")")"; echo "https://example.test/pull/$n" ;;
+  "pr checks")
+    [[ -f "$S/pr/$(key "$1")" ]] || { echo "no pull requests found"; exit 1; }
+    if [[ -f "$S/checks_fail" ]]; then printf 'build\tfail\t1s\tu\n'; exit 1; fi
+    printf 'build\tpass\t1s\tu\n' ;;
+  "pr merge")
+    br="$1"; w="$(mktemp -d)"
+    git clone -q "$ORIGIN" "$w"
+    git -C "$w" merge -q --squash "origin/$br" >/dev/null
+    git -C "$w" -c commit.gpgsign=false commit -q -m "$(opt --subject "$@")"
+    git -C "$w" push -q origin main; rm -rf "$w"
+    read -r num _ < "$S/pr/$(key "$br")"; echo "$num MERGED" > "$S/pr/$(key "$br")" ;;
+  "pr close"|"pr reopen") ;;
+  "release view")
+    [[ -f "$S/release/$1" ]] || exit 1
+    [[ "$*" == *assets* ]] && cat "$S/release/$1"; true ;;
+  "release create") echo "TokmeterBar-${1#v}.zip" > "$S/release/$1" ;;
+  *) echo "fake gh: unhandled: $sub $*" >&2; exit 2 ;;
+esac
+EOF
+cat > "$BIN/npm" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == view ]] && { echo "${2##*@}"; exit 0; }; exit 0
+EOF
+cat > "$BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+url="${*: -1}"
+if [[ "$url" == *registry* ]]; then
+  echo "{\"servers\":[{\"server\":{\"name\":\"io.github.sriinnu/tokmeter\",\"version\":\"$FAKE_VERSION\"}}]}"
+else
+  echo "<sparkle:shortVersionString>$FAKE_VERSION</sparkle:shortVersionString>"
+fi
+EOF
+cat > "$BIN/bun" <<'EOF'
+#!/usr/bin/env bash
+echo "bun $*" >> "$GH_STATE/log"
+EOF
+# Signer: misses $SIGN_FAILS taps (counted down in a file), then signs.
+cat > "$BIN/signer" <<'EOF'
+#!/usr/bin/env bash
+c="$(cat "$SIGN_FAILS_FILE" 2>/dev/null || echo 0)"
+if (( c > 0 )); then
+  echo $((c - 1)) > "$SIGN_FAILS_FILE"
+  echo "Couldn't sign message: incorrect passphrase supplied to decrypt private key?" >&2
+  exit 255
+fi
+exec ssh-keygen "$@"
+EOF
+chmod +x "$BIN"/*
+
+ssh-keygen -q -t ed25519 -N "" -C test -f "$TMP/key"
+echo "test@example.test $(cat "$TMP/key.pub")" > "$TMP/allowed_signers"
+cat > "$TMP/gitconfig" <<EOF
+[user]
+	name = Test
+	email = test@example.test
+	signingkey = $TMP/key.pub
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	program = $BIN/signer
+	allowedSignersFile = $TMP/allowed_signers
+[init]
+	defaultBranch = main
+EOF
+
+# ── a fresh sandbox repo per scenario ────────────────────────────────────────
+sandbox() {
+  local d="$TMP/$1"; rm -rf "$d"; mkdir -p "$d"
+  export GH_STATE="$d/gh" ORIGIN="$d/origin.git" SIGN_FAILS_FILE="$d/sign_fails" FAKE_VERSION="$V"
+  export HOME="$d" GIT_CONFIG_GLOBAL="$TMP/gitconfig" GIT_CONFIG_NOSYSTEM=1 PATH="$BIN:$PATH"
+  mkdir -p "$GH_STATE"
+  git init -q --bare "$ORIGIN"
+  R="$d/repo"; mkdir -p "$R"/scripts/lib "$R"/packages/{tokmeter,mcp,macos-bar}
+  cp "$SRC/scripts/release.sh" "$SRC/scripts/bump-version.sh" "$R/scripts/"
+  cp "$SRC/scripts/lib/signing.sh" "$R/scripts/lib/"
+  # shellcheck disable=SC2016  # the $ belongs in the written files, unexpanded
+  printf '#!/usr/bin/env bash\necho gate >> "$GH_STATE/log"\n' > "$R/scripts/check-no-secrets.sh"
+  echo '{ "name": "@sriinnu/tokmeter", "version": "1.0.0" }' > "$R/packages/tokmeter/package.json"
+  echo '{ "name": "@sriinnu/tokmeter-mcp", "version": "1.0.0" }' > "$R/packages/mcp/package.json"
+  echo '{ "version": "1.0.0", "packages": [{ "version": "1.0.0" }] }' > "$R/packages/mcp/server.json"
+  # shellcheck disable=SC2016
+  printf 'SHORT_VERSION="${CFBundleShortVersionString:-1.0.0}"\nBUILD_VERSION="${CFBundleVersion:-7}"\n' > "$R/packages/macos-bar/bundle.sh"
+  echo '![release](https://img.shields.io/badge/release-v1.0.0-blue)' > "$R/README.md"
+  printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A fix.\n\n## [1.0.0] - 2026-01-01\n\n- First.\n' > "$R/CHANGELOG.md"
+  git -C "$R" init -q
+  git -C "$R" add -A && git -C "$R" -c commit.gpgsign=false commit -q -m init
+  git -C "$R" remote add origin "$ORIGIN" && git -C "$R" push -q -u origin main
+  git -C "$R" switch -q -c "release/v$V"
+}
+release() { (cd "$R" && bash scripts/release.sh "$V" --yes --skip-brew "$@" </dev/null) > "$GH_STATE/out" 2>&1; }
+main_subject() { git -C "$R" fetch -q origin && git -C "$R" log -1 --format=%s origin/main; }
+count() { grep -c -- "$1" "$GH_STATE/log" || true; }
+released() { [[ -f "$GH_STATE/release/v$V" ]]; }
+tag_ok() {
+  git -C "$R" fetch -q --tags origin
+  [[ "$(git -C "$R" rev-parse "v$V^{commit}")" == "$(git -C "$R" rev-parse origin/main)" ]] \
+    && git -C "$R" verify-tag "v$V" >/dev/null 2>&1
+}
+show_out() { sed 's/^/      | /' "$GH_STATE/out"; }
+
+echo "release-flow tests"
+
+echo "• clean run"
+sandbox clean
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "squash subject is 'chore(release): v$V (#100)'" test "$(main_subject)" = "chore(release): v$V (#100)"
+check "signed tag on the release commit" tag_ok
+check "GitHub release created" released
+check "secret gate ran" test "$(count gate)" = 1
+check "bundle build advanced once (7 → 8)" grep -q 'CFBundleVersion:-8' "$R/packages/macos-bar/bundle.sh"
+
+echo "• rerun of a finished release changes nothing"
+before="$(count 'gh pr create')$(count 'gh pr merge')$(count 'gh release create')"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "no new PR, merge or release" test "$(count 'gh pr create')$(count 'gh pr merge')$(count 'gh release create')" = "$before"
+check "reports the stages as done" grep -q 'already done: release v' "$GH_STATE/out"
+
+echo "• missed tap on the release commit is retried"
+sandbox missed_tap
+echo 1 > "$SIGN_FAILS_FILE"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "says attempt 1/3 failed" grep -q 'attempt 1/3' "$GH_STATE/out"
+check "release commit landed" test "$(main_subject)" = "chore(release): v$V (#100)"
+
+echo "• another repo's signature is pending: wait for it, then sign"
+sandbox other_signer
+# Stands in for a commit elsewhere waiting on the key; gone after 4s.
+(exec -a "ssh-keygen -Y sign -n git other-repo" sleep 4) &
+sleep 0.5
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "names the waiting signature" grep -q 'another signature is waiting' "$GH_STATE/out"
+check "signed tag on the release commit" tag_ok
+wait
+
+echo "• three missed taps stop the run; the rerun resumes"
+sandbox no_tap
+echo 3 > "$SIGN_FAILS_FILE"
+if release; then bad "stops"; else ok "stops"; fi
+check "nothing pushed" test "$(count 'gh pr create')" = 0
+if release; then ok "rerun exits 0"; else bad "rerun exits 0"; show_out; fi
+check "rerun reuses the applied bump" grep -q 'already done: bump applied' "$GH_STATE/out"
+check "bundle build advanced once, not twice" grep -q 'CFBundleVersion:-8' "$R/packages/macos-bar/bundle.sh"
+check "signed tag on the release commit" tag_ok
+
+echo "• died after the commit (not pushed)"
+sandbox committed
+(cd "$R" && bash scripts/bump-version.sh "$V" >/dev/null && git add -u && git commit -q -S -m "chore(release): v$V")
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "skips the commit" grep -q "already done: .* chore(release): v$V" "$GH_STATE/out"
+check "release commit landed" test "$(main_subject)" = "chore(release): v$V (#100)"
+
+echo "• CI fails; the rerun reuses the open PR"
+sandbox ci_fail
+touch "$GH_STATE/checks_fail"
+if release; then bad "stops on red CI"; else ok "stops on red CI"; fi
+rm "$GH_STATE/checks_fail"
+if release; then ok "rerun exits 0"; else bad "rerun exits 0"; show_out; fi
+check "one PR, not two" test "$(count 'gh pr create')" = 1
+check "rerun reports the open PR" grep -q 'already done: PR #100 is open' "$GH_STATE/out"
+check "GitHub release created" released
+
+echo "• --no-publish, then publish later from main"
+sandbox later
+if release --no-publish; then ok "first run exits 0"; else bad "first run exits 0"; show_out; fi
+check "tagged, not released" bash -c "! test -f '$GH_STATE/release/v$V'"
+git -C "$R" switch -q main 2>/dev/null || true
+if release; then ok "second run exits 0"; else bad "second run exits 0"; show_out; fi
+check "release created" released
+check "no second merge" test "$(count 'gh pr merge')" = 1
+
+echo "• a non-bump change in the tree is refused"
+sandbox dirty
+echo "stray" >> "$R/README.md"; echo "x" > "$R/stray.txt"
+if release; then bad "refuses"; else ok "refuses"; fi
+check "says why" grep -q 'working tree not clean' "$GH_STATE/out"
+
+echo
+echo "release-flow: ${pass} passed, ${fail} failed"
+(( fail == 0 ))

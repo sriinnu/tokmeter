@@ -12,6 +12,10 @@
 #
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=SCRIPTDIR/lib/signing.sh
+source "$ROOT/scripts/lib/signing.sh"
+
 VERSION="${1:-}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: update-brew-cask.sh X.Y.Z" >&2; exit 1; }
 
@@ -51,12 +55,23 @@ if git -C "$work/tap" diff --quiet; then
 fi
 
 branch="chore/tokmeterbar-${VERSION}"
-git -C "$work/tap" switch -q -c "$branch"
-git -C "$work/tap" add Casks/tokmeterbar.rb
-git -C "$work/tap" commit -q -m "tokmeterbar ${VERSION}"
-git -C "$work/tap" push -q -u origin "$branch"
-gh pr create --repo "$TAP" --base main --head "$branch" \
-  --title "tokmeterbar ${VERSION}" \
-  --body "Points the cask at ${TAG}. sha256 computed from the zip attached to the release."
+# Rerunnable: an earlier run may have pushed the branch or opened the PR
+# before it died.
+if [[ "$(gh pr view "$branch" --repo "$TAP" --json state -q .state 2>/dev/null || true)" != "OPEN" ]]; then
+  if git -C "$work/tap" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+    git -C "$work/tap" fetch -q --depth 1 origin "$branch"
+    git -C "$work/tap" diff --quiet FETCH_HEAD -- Casks/tokmeterbar.rb \
+      || { echo "ERROR: ${TAP} already has a ${branch} branch with a different cask — delete it by hand." >&2; exit 1; }
+    echo "==> ${branch} is already pushed with this cask"
+  else
+    git -C "$work/tap" switch -q -c "$branch"
+    git -C "$work/tap" add Casks/tokmeterbar.rb
+    signed "cask commit" git -C "$work/tap" commit -q -S -m "tokmeterbar ${VERSION}"
+    git -C "$work/tap" push -q -u origin "$branch"
+  fi
+  gh pr create --repo "$TAP" --base main --head "$branch" \
+    --title "tokmeterbar ${VERSION}" \
+    --body "Points the cask at ${TAG}. sha256 computed from the zip attached to the release."
+fi
 gh pr merge "$branch" --repo "$TAP" --squash --delete-branch
 echo "==> Merged cask update: brew install --cask ${TAP%/*}/${TAP#*/}/tokmeterbar now serves ${VERSION}"
