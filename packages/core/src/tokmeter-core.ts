@@ -57,6 +57,7 @@ import {
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
 import { createSummaryQuery } from "./summary-query.js";
+import { TodayJournal } from "./today-journal.js";
 import type {
   DailyEntry,
   ModelSummary,
@@ -92,6 +93,8 @@ export class TokmeterCore {
   private aggregates: Map<string, DailyAggregate> = new Map();
   // Live accumulator for today; null before the first scan completes.
   private todayAccumulator: DailyAccumulator | null = null;
+  // Last records of files that vanished today, so the day only grows.
+  private readonly todayJournal: TodayJournal;
   private pricing: PricingService;
   private homeDir: string;
   private skipPricing: boolean;
@@ -102,6 +105,7 @@ export class TokmeterCore {
     this.homeDir = config?.homeDir || homedir();
     this.skipPricing = config?.skipPricing ?? false;
     this.pricing = new PricingService(config?.cacheDir);
+    this.todayJournal = new TodayJournal(this.homeDir);
   }
 
   private getAliases(): AliasMap {
@@ -172,12 +176,16 @@ export class TokmeterCore {
       historySource = relay.historySource;
     }
 
-    const todayRecords = await scanTodayRecords(
+    const scannedToday = await scanTodayRecords(
       this.ctx(),
       options?.providers,
       referenceTimestamp,
       todayWarnings
     );
+    // A provider-filtered scan would make every other file look deleted.
+    const todayRecords = options?.providers?.length
+      ? scannedToday
+      : this.todayJournal.reconcile(scannedToday, referenceTimestamp);
 
     // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
@@ -280,12 +288,10 @@ export class TokmeterCore {
       );
     }
 
-    const { today, stragglers } = await scanTodayRecordsWithStragglers(
-      this.ctx(),
-      undefined,
-      now,
-      todayWarnings
-    );
+    const scanned = await scanTodayRecordsWithStragglers(this.ctx(), undefined, now, todayWarnings);
+    const stragglers = scanned.stragglers;
+    // Grow-only: a file archived or deleted today keeps its records until the seal.
+    const today = this.todayJournal.reconcile(scanned.today, now);
 
     if (this.skipPricing) {
       markPricingSkipped(today);

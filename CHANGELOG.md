@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deleting or archiving a thread no longer takes its tokens out of today.**
+  Today was rebuilt from the session files present on each tick, so a
+  thread deleted before midnight vanished from the day it ran in, and that
+  smaller day was what got sealed (10-14 lost 64.3M Codex tokens this way).
+  Tokmeter now keeps the last records of any file that disappears today and
+  carries them until the day seals, including across a daemon restart
+  (`~/.cache/tokmeter/today/`). A file that moved (a Codex archive) isn't
+  counted twice. Not covered: shared databases and running-total sources
+  (Cursor, Zed, Mux, Antigravity, Codex desktop), and files deleted while
+  no daemon was running.
+
 - **Codex subagent work now counts as subagent work.** The "Subagents" share
   in the bar and the signals left out every Codex subagent thread: the parser
   knew which rollouts were subagents (it groups them for dedup) but never
