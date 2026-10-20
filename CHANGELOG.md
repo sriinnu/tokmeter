@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tick as the midnight seal (a wake after midnight), the day seals without
   cards rather than with ones it wasn't priced at.
 
+- **A long-running daemon kept pricing at stale rates.** It refreshes today
+  every 12 seconds through a path that never refreshed kosha's price
+  catalog; only a full scan (at startup) did. Without the macOS daily job
+  installed, and always on Linux and Windows, rates froze at whatever they
+  were when the daemon started. The daemon now refreshes the catalog once
+  it's a day old, in the background, and after a failed refresh (offline)
+  waits an hour before trying again instead of retrying every tick.
+
 ## [1.16.1] - 2026-10-20
 
 ### Changed
