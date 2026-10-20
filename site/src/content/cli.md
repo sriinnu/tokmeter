@@ -39,3 +39,17 @@ deleting (no `--no-backup` flag). `--force` skips the prompt, not the backup.
 > **Scope cleanup to `--until` yesterday or older.** Sealed past days live in the
 > relay ledger even after raw transcripts age out, but *today* isn't sealed yet —
 > deleting today's raw before midnight rollover loses it.
+
+## Checking history
+
+```sh
+tokmeter coverage                      # yesterday: files that changed but fed no usage
+tokmeter coverage --date 2026-10-19    # any day; --json for the full report
+tokmeter backfill --codex --days 30    # add one tool's missing usage to sealed days
+```
+
+`coverage` (1.17.0+) lists session files under each tool's data folder that
+changed on that day, contain a real token count, and fed nothing into the
+ledger — the sign that a tool started writing somewhere tokmeter doesn't read
+yet. It exits with code 2 when it finds any. The daemon runs the same check
+after every day seals and shows a warning.
