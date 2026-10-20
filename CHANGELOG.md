@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Codex subagent work now counts as subagent work.** The "Subagents" share
+  in the bar and the signals left out every Codex subagent thread: the parser
+  knew which rollouts were subagents (it groups them for dedup) but never
+  marked their records. On a heavy multi-agent day that was most of Codex's
+  usage (63.5% of one day's Codex tokens). Totals don't change; only the
+  split does. Codex records also carry their response id now, the key later
+  work uses to recognise the same response across scans.
+
 ## [1.17.0] - 2026-10-20
 
 ### Added

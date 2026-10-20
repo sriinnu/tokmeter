@@ -96,6 +96,18 @@ describe("Codex per-response usage receipts", () => {
     }
   );
 
+  it("records carry the response id as apiCallId; legacy counters carry none", async () => {
+    const receipts = await parse([
+      context(),
+      receipt("response-a"),
+      receipt("response-b", "turn-2"),
+    ]);
+    expect(receipts.map((r) => r.apiCallId)).toEqual(["response-a", "response-b"]);
+    const legacyOnly = await parse([context(), legacy()]);
+    expect(legacyOnly.length).toBeGreaterThan(0);
+    expect(legacyOnly.every((r) => r.apiCallId === undefined)).toBe(true);
+  });
+
   it("retains old-format turns and their models across a session upgrade", async () => {
     const records = await parse([context("old", "gpt-5.6-sol"), legacy(), context(), receipt()]);
     expect(records.map((r) => r.model)).toEqual(["gpt-5.6-sol", "gpt-6-astra"]);
@@ -628,6 +640,32 @@ describe("CodexParser", () => {
     const records = await new CodexParser().scan(tmpDir);
     const totalIn = records.reduce((s, r) => s + r.inputTokens, 0);
     expect(totalIn).toBe(150_000); // parent 100k + subagent 50k, both counted
+  });
+
+  it("marks a subagent rollout's records isSubagent, and only those", async () => {
+    // The flag comes from the rollout's FIRST session_meta, so the parent's
+    // replayed meta that follows it must not clear it, and the parent's own
+    // file must not get it.
+    writeLinkedSession({
+      name: "the-parent",
+      id: "parent-id",
+      events: [{ totalIn: 100_000, totalOut: 1_000, cached: 0 }],
+    });
+    writeLinkedSession({
+      name: "the-sub",
+      id: "sub-id",
+      threadSource: "subagent",
+      parentThreadId: "parent-id",
+      parentMetaReplay: { id: "parent-id" },
+      events: [{ totalIn: 50_000, totalOut: 500, cached: 0 }],
+    });
+    const records = await new CodexParser().scan(tmpDir);
+    const sub = records.filter((r) => r.sourceFile?.includes("the-sub"));
+    const parent = records.filter((r) => r.sourceFile?.includes("the-parent"));
+    expect(sub.length).toBeGreaterThan(0);
+    expect(sub.every((r) => r.isSubagent === true)).toBe(true);
+    expect(parent.length).toBeGreaterThan(0);
+    expect(parent.every((r) => r.isSubagent === undefined)).toBe(true);
   });
 
   it("a resume that forks FROM a subagent competes within that thread, not the spawner's group", async () => {
