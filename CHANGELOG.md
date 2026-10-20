@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hover a model in the bar to see its full name.** Long ids were cut off
+  ("deepseek-fla…", "minimax-m3.1…") with no way to read them. A small pill
+  now shows the full id and its provider a moment after the pointer settles
+  on the row, in every theme. It's drawn over the row rather than as a
+  popover, which would take focus and close the menubar panel.
+
 ### Fixed
 
 - **Codex subagent work now counts as subagent work.** The "Subagents" share

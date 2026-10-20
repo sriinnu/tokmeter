@@ -137,8 +137,15 @@ struct ModelsSection: View {
         return true
     }
 
-    @ViewBuilder
     private func modelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool = false) -> some View {
+        styledModelRow(model, maxCost: maxCost, showProvider: showProvider)
+            // Names truncate; hovering shows the full id in every theme.
+            .modelNamePill(model.model, provider: model.provider, theme: theme)
+            .accessibilityHint(model.model)
+    }
+
+    @ViewBuilder
+    private func styledModelRow(_ model: ModelUsage, maxCost: Double, showProvider: Bool) -> some View {
         if let skin = theme.skin {
             let activityOnly = isActivityOnly(model)
             SkinModelRow(skin: skin, row: ModelRowData(
