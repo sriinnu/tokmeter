@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "prepack": "python3 ../../scripts/prepare-license-materials.py npm",
-    "build": "rm -rf dist && mkdir -p dist/core dist/cli dist/tui && cp -r ../core/dist/* dist/core/ && cp -r ../cli/dist/* dist/cli/ && cp -r ../tui/dist/* dist/tui/"
+    "build": "node bundle.mjs"
   },
   "dependencies": {
     "@sriinnu/kosha-discovery": "^1.8.1",
