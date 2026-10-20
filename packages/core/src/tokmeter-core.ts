@@ -32,7 +32,7 @@ import {
   setCachedKoshaMtime,
   setCachedOverridesMtime,
 } from "./parsers/utils.js";
-import { PricingService, todayPricingStale } from "./pricing.js";
+import { maybeBackgroundRefresh, PricingService, todayPricingStale } from "./pricing.js";
 import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
 import {
   backfillProviderIntoRelay,
@@ -136,7 +136,6 @@ export class TokmeterCore {
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
-        const { maybeBackgroundRefresh } = await import("./pricing.js");
         maybeBackgroundRefresh();
       } catch {
         /* enrichCosts will re-warn if pricing stays unavailable */
@@ -257,6 +256,11 @@ export class TokmeterCore {
     const todayWarnings: ScanWarning[] = [];
     let koshaChanged = false;
     if (!this.skipPricing) {
+      // The daemon lives on this path (a full scan runs only at start), so
+      // without this a long-running daemon never refreshed kosha unless the
+      // macOS launchd job was installed, and prices went stale on Linux and
+      // Windows. Fresh registry or a recent attempt → no-op.
+      maybeBackgroundRefresh();
       try {
         await this.pricing.init();
       } catch {
