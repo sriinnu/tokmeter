@@ -51,6 +51,7 @@ import {
   toNullMap,
 } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
+import type { DayPrices } from "./day-prices.js";
 import type { TokenRecord } from "./types.js";
 
 const STORE_DIR_NAME = ".cache/tokmeter/aggregates";
@@ -263,11 +264,19 @@ export function dayFileMtime(homeDir: string, date: string): number | null {
 export function sealRolledOverDay(
   homeDir: string,
   prev: DailyAccumulator,
-  todayKey: string
+  todayKey: string,
+  prices?: DayPrices
 ): DailyAggregate | null {
   if (prev.date >= todayKey || prev.isEmpty()) return null;
   if (dayFileMtime(homeDir, prev.date) !== null) return null;
   const sealed = prev.seal();
+  // The cards the day was priced with (the caller passes none when it can't
+  // vouch for them); only models the day actually used.
+  if (prices) {
+    const used: DayPrices = {};
+    for (const m of Object.keys(sealed.models)) if (prices[m]) used[m] = prices[m];
+    if (Object.keys(used).length > 0) sealed.prices = used;
+  }
   try {
     writeDayFile(homeDir, sealed);
   } catch {

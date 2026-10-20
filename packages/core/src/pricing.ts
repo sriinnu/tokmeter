@@ -611,57 +611,16 @@ export class PricingService {
   ): Promise<number> {
     const pricing = await this.getPricing(modelId);
     if (!pricing) return 0;
-
-    const perToken = (perMillion: number) => perMillion / 1_000_000;
-
-    let cost = 0;
-    cost += inputTokens * perToken(pricing.inputPerMillion);
-    cost += outputTokens * perToken(pricing.outputPerMillion);
-    if (cacheReadTokens) {
-      // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
-      // Fall back to that ratio if the resolver didn't supply an explicit rate.
-      // Gemini and DeepSeek charge ~25% for cached input, but kosha publishes
-      // those explicit rates so this fallback only fires for genuinely-missing
-      // cache rates — never overrides upstream data.
-      const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
-      cost += cacheReadTokens * perToken(cacheRate);
-    }
-    if (cacheWriteTokens && (pricing.cacheWritePerMillion || pricing.cacheWrite1hPerMillion)) {
-      // Cache writes only fire when an explicit rate exists. Anthropic has them
-      // (1.25× input). OpenAI/Gemini don't charge for cache writes — caching is
-      // free or implicit, only reads are discounted. We don't synthesize a
-      // fallback because the wrong default would silently overcharge.
-      //
-      // The registry's cacheWritePerMillion is the 5-minute-TTL rate. Writes
-      // the provider reports as 1-hour TTL bill at 2× input on Anthropic —
-      // Claude Code caches at 1h exclusively, so pricing them as 5m
-      // under-charged every one of its cache writes by 1.6×. Use an explicit
-      // 1h rate when the registry carries one. The 2× ratio is Anthropic's
-      // documented rule (same shape as the cache-read fallback above), so it
-      // applies to Claude models only: Claude Code pointed at another vendor
-      // via ANTHROPIC_BASE_URL still reports a 1h share, and that vendor's
-      // write rate is the only honest price we have for it.
-      const write1h = Math.max(0, Math.min(cacheWrite1hTokens, cacheWriteTokens));
-      const write5m = cacheWriteTokens - write1h;
-      if (write5m && pricing.cacheWritePerMillion) {
-        cost += write5m * perToken(pricing.cacheWritePerMillion);
-      }
-      if (write1h) {
-        const rate1h =
-          pricing.cacheWrite1hPerMillion ??
-          (/claude/i.test(modelId) ? pricing.inputPerMillion * 2 : pricing.cacheWritePerMillion);
-        if (rate1h) cost += write1h * perToken(rate1h);
-      }
-    }
-    if (reasoningTokens) {
-      // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate
-      const reasoningRate =
-        pricing.reasoningOutputPerMillion ??
-        pricing.reasoningInputPerMillion ??
-        pricing.outputPerMillion;
-      cost += reasoningTokens * perToken(reasoningRate);
-    }
-    return cost;
+    return costFromCard(
+      modelId,
+      pricing,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      reasoningTokens,
+      cacheWrite1hTokens
+    );
   }
 
   /** Clear the in-memory pricing cache. */
@@ -762,4 +721,78 @@ export class PricingService {
         : {}),
     };
   }
+}
+
+/**
+ * The price card a model is billed with: kosha's per-million rates plus the
+ * optional 1h cache-write rate. Sealed days store one per model so a later
+ * rebuild bills that day at its own prices, never today's.
+ */
+export type PriceCard = FullPricing;
+
+/**
+ * Cost of a token mix under a price card — the one definition of billing
+ * arithmetic. `calculateCost` resolves the card from kosha and calls this; a
+ * rebuild of a sealed day calls it with the card stored on that day.
+ */
+export function costFromCard(
+  modelId: string,
+  pricing: PriceCard,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
+  reasoningTokens = 0,
+  cacheWrite1hTokens = 0
+): number {
+  const perToken = (perMillion: number) => perMillion / 1_000_000;
+
+  let cost = 0;
+  cost += inputTokens * perToken(pricing.inputPerMillion);
+  cost += outputTokens * perToken(pricing.outputPerMillion);
+  if (cacheReadTokens) {
+    // Both OpenAI and Anthropic price cached input at ~10% of full input rate.
+    // Fall back to that ratio if the resolver didn't supply an explicit rate.
+    // Gemini and DeepSeek charge ~25% for cached input, but kosha publishes
+    // those explicit rates so this fallback only fires for genuinely-missing
+    // cache rates — never overrides upstream data.
+    const cacheRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion * 0.1;
+    cost += cacheReadTokens * perToken(cacheRate);
+  }
+  if (cacheWriteTokens && (pricing.cacheWritePerMillion || pricing.cacheWrite1hPerMillion)) {
+    // Cache writes only fire when an explicit rate exists. Anthropic has them
+    // (1.25× input). OpenAI/Gemini don't charge for cache writes — caching is
+    // free or implicit, only reads are discounted. We don't synthesize a
+    // fallback because the wrong default would silently overcharge.
+    //
+    // The registry's cacheWritePerMillion is the 5-minute-TTL rate. Writes
+    // the provider reports as 1-hour TTL bill at 2× input on Anthropic —
+    // Claude Code caches at 1h exclusively, so pricing them as 5m
+    // under-charged every one of its cache writes by 1.6×. Use an explicit
+    // 1h rate when the registry carries one. The 2× ratio is Anthropic's
+    // documented rule (same shape as the cache-read fallback above), so it
+    // applies to Claude models only: Claude Code pointed at another vendor
+    // via ANTHROPIC_BASE_URL still reports a 1h share, and that vendor's
+    // write rate is the only honest price we have for it.
+    const write1h = Math.max(0, Math.min(cacheWrite1hTokens, cacheWriteTokens));
+    const write5m = cacheWriteTokens - write1h;
+    if (write5m && pricing.cacheWritePerMillion) {
+      cost += write5m * perToken(pricing.cacheWritePerMillion);
+    }
+    if (write1h) {
+      const rate1h =
+        pricing.cacheWrite1hPerMillion ??
+        (/claude/i.test(modelId) ? pricing.inputPerMillion * 2 : pricing.cacheWritePerMillion);
+      if (rate1h) cost += write1h * perToken(rate1h);
+    }
+  }
+  if (reasoningTokens) {
+    // Use reasoning-specific rates if available (kosha 0.6.0+), else output rate
+    const reasoningRate =
+      pricing.reasoningOutputPerMillion ??
+      pricing.reasoningInputPerMillion ??
+      pricing.outputPerMillion;
+    cost += reasoningTokens * perToken(reasoningRate);
+  }
+  return cost;
 }
