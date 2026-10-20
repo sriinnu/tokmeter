@@ -172,6 +172,13 @@ export async function refreshKoshaRegistry(cacheDir?: string): Promise<void> {
 
 /** Default freshness window — beyond this we lazily kick off a background refresh. */
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
+ * After an attempt, wait this long before the next. The daemon calls this on
+ * every 12s tick, and a refresh that fails (offline, kosha down) leaves the
+ * registry stale, so without a floor it would retry over the network every
+ * tick.
+ */
+const RETRY_AFTER_MS = 60 * 60 * 1000;
 
 /**
  * Fire-and-forget background refresh if the kosha registry is older than
@@ -186,13 +193,17 @@ const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
  * Safe to call on every scan — does nothing when the registry is fresh.
  */
 let backgroundRefreshInFlight: Promise<void> | null = null;
+let lastRefreshAttemptAt = 0;
 export function maybeBackgroundRefresh(
-  options: { staleAfterMs?: number; cacheDir?: string } = {}
+  options: { staleAfterMs?: number; cacheDir?: string; now?: number } = {}
 ): void {
   const staleAfter = options.staleAfterMs ?? STALE_AFTER_MS;
+  const now = options.now ?? Date.now();
   const mtime = getKoshaRegistryMtime();
-  if (mtime > 0 && Date.now() - mtime < staleAfter) return; // fresh
+  if (mtime > 0 && now - mtime < staleAfter) return; // fresh
   if (backgroundRefreshInFlight) return; // already refreshing
+  if (lastRefreshAttemptAt > 0 && now - lastRefreshAttemptAt < RETRY_AFTER_MS) return;
+  lastRefreshAttemptAt = now;
   backgroundRefreshInFlight = refreshKoshaRegistry(options.cacheDir)
     .catch(() => {
       // Background refresh failures are non-fatal — the next scan still works

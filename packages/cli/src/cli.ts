@@ -14,6 +14,7 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
+import { homedir } from "node:os";
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
 import { localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
@@ -56,7 +57,10 @@ interface CliArgs extends ScanOptions {
     | "routes"
     | "update"
     | "refresh"
-    | "backfill";
+    | "backfill"
+    | "coverage";
+  /** For `coverage`: the local day to check (YYYY-MM-DD); default yesterday. */
+  date?: string;
   /** For `backfill`: how many recent sealed days to recompute into the relay. */
   backfillDays?: number;
   /** Alias sub-command and its positional arguments. */
@@ -118,6 +122,13 @@ function parseArgs(argv: string[]): CliArgs {
         args.since = rest[++i];
         if (!args.since) {
           console.error("Error: --since requires a date argument");
+          process.exit(1);
+        }
+        break;
+      case "--date":
+        args.date = rest[++i];
+        if (!args.date || !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
+          console.error("Error: --date requires a day as YYYY-MM-DD");
           process.exit(1);
         }
         break;
@@ -268,6 +279,9 @@ Commands:
                   flag (e.g. --muse), adds only that provider's slice;
                   without one, re-derives every provider (grow-only;
                   --force allows shrinking, back up ~/.cache/tokmeter first)
+  coverage        Session files that changed on a day but fed no record:
+                  usage the parsers are missing. --date D (default
+                  yesterday). The daemon runs it after each day seals.
 
 Live & Daemon:
   live            Start live TUI dashboard (from tokmeter-mcp)
@@ -400,6 +414,9 @@ Output:
       case "pricing-audit":
       case "routes":
         args.command = arg;
+        break;
+      case "coverage":
+        args.command = "coverage";
         break;
       case "backfill":
         args.command = "backfill";
@@ -1058,6 +1075,43 @@ async function main() {
       );
       process.exit(1);
     }
+    return;
+  }
+
+  if (args.command === "coverage") {
+    const { yesterdayDateKey } = await import("@sriinnu/tokmeter");
+    const date = args.date ?? yesterdayDateKey(Date.now());
+    const core = new TokmeterCore({ skipPricing: true });
+    if (!args.json) console.error(`Checking ${date}: parsing files changed since then…`);
+    const report = await core.checkCoverage(date);
+    if (args.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    const home = homedir();
+    const tilde = (p: string) => (p.startsWith(home) ? `~${p.slice(home.length)}` : p);
+    console.log(
+      `\n${date} — walked ${report.homes.length} agent folders in ${(report.elapsedMs / 1000).toFixed(1)}s${report.partial ? " (time budget ran out: partial)" : ""}`
+    );
+    if (report.unread.length === 0) {
+      console.log("Every session file that changed that day fed the ledger.\n");
+      return;
+    }
+    console.log(
+      `${report.unread.length} file(s) changed that day, carry usage, and fed no record — that usage is not in the ledger:\n`
+    );
+    for (const f of report.unread.slice(0, 50)) {
+      const kb = `${Math.max(1, Math.round(f.bytes / 1024))} KB`.padStart(9);
+      console.log(
+        `  ${kb}  ${f.kind === "compressed" ? "compressed" : "usage     "}  ${tilde(f.path)}  [${f.providers.join(", ")}]`
+      );
+    }
+    if (report.unread.length > 50)
+      console.log(`  … ${report.unread.length - 50} more (--json for all)`);
+    console.log(
+      "\nIf these are real sessions, please open an issue with the folder layout: https://github.com/sriinnu/tokmeter/issues/new?template=agent_support.yml\n"
+    );
+    process.exitCode = 2;
     return;
   }
 
