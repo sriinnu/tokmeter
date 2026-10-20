@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tokmeter now tells you when a day may be missing usage.** After each day
+  seals, the daemon walks every agent's folder (all of `~/.codex`, not just
+  the `sessions` folder its parser reads) for session files that changed that
+  day, carry a real token count, and fed no record, and says so in a warning:
+  "2026-10-19 may be missing usage: 5 session files changed that day that no
+  parser read (5 in ~/.codex/archived_sessions)". With 1.16.0's parsers it
+  flags exactly the archived Codex rollouts behind the 10-18 hole; with
+  today's it flags nothing. It re-parses nothing (the daemon already holds
+  the day's records), skips databases, caches, logs and git checkouts, and
+  takes about a second. `tokmeter coverage [--date YYYY-MM-DD]` runs it for
+  any day without the daemon, and `/api/coverage` serves the last week's
+  reports.
+
 ### Fixed
 
 - **A Deep Rescan no longer reprices past days at today's rates.** kosha
