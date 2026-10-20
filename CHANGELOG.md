@@ -22,11 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thread deleted before midnight vanished from the day it ran in, and that
   smaller day was what got sealed (10-14 lost 64.3M Codex tokens this way).
   Tokmeter now keeps the last records of any file that disappears today and
-  carries them until the day seals, including across a daemon restart
-  (`~/.cache/tokmeter/today/`). A file that moved (a Codex archive) isn't
-  counted twice. Not covered: shared databases and running-total sources
-  (Cursor, Zed, Mux, Antigravity, Codex desktop), and files deleted while
-  no daemon was running.
+  carries them until the day seals. Shared databases (OpenCode, Kilo CLI,
+  Zed, Cursor) are carried per thread, so a session deleted inside one is
+  kept too. It survives a daemon restart, a file deleted while the daemon
+  was down, and the daemon being off at midnight (the next start seals the
+  day with what was kept, from `~/.cache/tokmeter/today/`). A file that
+  moved (a Codex archive) isn't counted twice.
+
+- **A provider-filtered scan no longer shrinks the day.** A long-running
+  process that ran one (e.g. a `--codex` view) replaced today with just that
+  provider, and if midnight came next, the sealed day was missing the rest.
 
 - **Codex subagent work now counts as subagent work.** The "Subagents" share
   in the bar and the signals left out every Codex subagent thread: the parser

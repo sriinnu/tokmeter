@@ -176,16 +176,21 @@ export class TokmeterCore {
       historySource = relay.historySource;
     }
 
-    const scannedToday = await scanTodayRecords(
+    const scannedToday = await scanTodayRecordsWithStragglers(
       this.ctx(),
       options?.providers,
       referenceTimestamp,
       todayWarnings
     );
-    // A provider-filtered scan would make every other file look deleted.
+    // A provider-filtered scan would make every other file look deleted, so it
+    // only reads the journal.
     const todayRecords = options?.providers?.length
-      ? scannedToday
-      : this.todayJournal.reconcile(scannedToday, referenceTimestamp);
+      ? this.todayJournal.withCarriedFor(scannedToday.today, options.providers, referenceTimestamp)
+      : this.todayJournal.reconcile(
+          scannedToday.today,
+          referenceTimestamp,
+          scannedToday.stragglers
+        );
 
     // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
@@ -209,9 +214,21 @@ export class TokmeterCore {
     const carriedRecent = this.recentRecords.filter((r) =>
       isBeforeToday(r.timestamp, referenceTimestamp)
     );
+    // A provider-filtered scan only saw those providers. Keep everyone else's
+    // today as it was, or a filtered scan just before midnight would leave
+    // the rollover seal a partial day.
+    const filtered = options?.providers?.length ? new Set(options.providers) : null;
+    const stateToday = filtered
+      ? [
+          ...this.recentRecords.filter(
+            (r) => !isBeforeToday(r.timestamp, referenceTimestamp) && !filtered.has(r.provider)
+          ),
+          ...todayRecords,
+        ]
+      : todayRecords;
     const sealPrices = await this.pricesForSeal(referenceTimestamp, [], koshaChanged);
-    this.recentRecords = this.sliceRecent([...carriedRecent, ...todayRecords], referenceTimestamp);
-    this.refreshTodayAccumulator(todayRecords, referenceTimestamp, [], sealPrices);
+    this.recentRecords = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
+    this.refreshTodayAccumulator(stateToday, referenceTimestamp, [], sealPrices);
 
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
@@ -291,7 +308,7 @@ export class TokmeterCore {
     const scanned = await scanTodayRecordsWithStragglers(this.ctx(), undefined, now, todayWarnings);
     const stragglers = scanned.stragglers;
     // Grow-only: a file archived or deleted today keeps its records until the seal.
-    const today = this.todayJournal.reconcile(scanned.today, now);
+    const today = this.todayJournal.reconcile(scanned.today, now, stragglers);
 
     if (this.skipPricing) {
       markPricingSkipped(today);
