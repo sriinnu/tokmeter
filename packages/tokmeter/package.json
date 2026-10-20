@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "Token usage tracking for AI coding agents — parsers, CLI, and TUI",
   "type": "module",
   "main": "dist/core/index.js",
@@ -38,7 +38,7 @@
     "react": "^18.3.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.9.9",
     "@types/react": "^18.3.0",
     "typescript": "^5.7.0"
   },

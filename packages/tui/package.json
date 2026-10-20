@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-tui",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "private": true,
   "description": "Token usage tracking TUI \u2014 interactive terminal UI with charts",
   "type": "module",
@@ -20,7 +20,7 @@
     "react": "^18.3.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.9.9",
     "@types/react": "^18.3.0",
     "typescript": "^5.7.0"
   },

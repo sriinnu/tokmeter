@@ -80,6 +80,23 @@ almost never wrong.
 A genuine shrink only happens on an explicit forced/deep rescan, which is gated
 precisely because raw transcripts age out and the relay becomes the only copy.
 
+### A day looks short, or "may be missing usage"
+
+Since 1.17.0 the daemon checks each day after it seals. It looks for session
+files that changed that day, carry a real token count, and fed nothing into
+the ledger. The warning names the folder, for example
+`5 in ~/.codex/archived_sessions`. To see the files:
+
+```bash
+tokmeter coverage --date 2026-10-19
+```
+
+It exits with code 2 when something is unread. Unread files usually mean the
+tool started writing somewhere new, or in a new format, that tokmeter doesn't
+read yet. Please open an issue with the folder layout; don't attach the files.
+Once a fix ships, `tokmeter backfill --<tool> --days N` adds the missing usage
+to sealed days, as far back as the raw files still exist.
+
 ### A tool's models are missing (OpenCode, Cursor, Zed, Kilo CLI, …)
 
 Two causes, both fixed in **1.16.0**:
@@ -121,10 +138,13 @@ showing a number to a human.
 
 ### Pricing shows as stale
 
-The price catalog ("kosha") refreshes on a schedule. Only **today** reprices
-when the catalog updates (since 1.15.0, also when
-`~/.tokmeter/pricing-overrides.json` changes); past days stay frozen by design. Force a refresh from
-the bar's settings or re-run the daily refresh.
+The price catalog ("kosha") is refreshed by the daemon once it's a day old
+(since 1.17.0; before that only at daemon start or by the macOS daily job). A
+failed refresh, such as when you're offline, is retried an hour later. Only
+**today** reprices when the catalog updates (since 1.15.0, also when
+`~/.tokmeter/pricing-overrides.json` changes); past days keep the prices they
+were billed at. Force a refresh from the bar's settings or with
+`tokmeter update`.
 
 ## Performance
 

@@ -5,7 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.17.0] - 2026-10-20
+
+### Added
+
+- **Tokmeter now tells you when a day may be missing usage.** After each day
+  seals, the daemon walks every agent's folder (all of `~/.codex`, not just
+  the `sessions` folder its parser reads) for session files that changed that
+  day, carry a real token count, and fed no record, and says so in a warning:
+  "2026-10-19 may be missing usage: 5 session files changed that day that no
+  parser read (5 in ~/.codex/archived_sessions)". With 1.16.0's parsers it
+  flags exactly the archived Codex rollouts behind the 10-18 hole; with
+  today's it flags nothing. It re-parses nothing (the daemon already holds
+  the day's records), skips databases, caches, logs and git checkouts, and
+  takes about a second. `tokmeter coverage [--date YYYY-MM-DD]` runs it for
+  any day without the daemon, and `/api/coverage` serves the last week's
+  reports.
+
+### Fixed
+
+- **A Deep Rescan no longer reprices past days at today's rates.** kosha
+  keeps no price history, so rebuilding a sealed day billed its records at
+  whatever the rates were on the day of the rescan, and a day's cost could
+  change without one token changing (a forced 30-day rescan moved 10-06
+  from $458.54 to $453.44 and 10-12 from $143.53 to $136.95, tokens
+  identical). Each sealed day now stores the price card every model was
+  billed with (about 1–2 KB a day), and a rebuild bills the day with its own
+  cards: those days keep $458.54 and $143.53. Days sealed before this get an
+  "implied" card on rebuild, today's card scaled so the day's sealed token
+  mix costs what was sealed. A backfilled provider is billed at the day's
+  card for any model the day already priced. If kosha refreshes in the same
+  tick as the midnight seal (a wake after midnight), the day seals without
+  cards rather than with ones it wasn't priced at.
+
+- **A long-running daemon kept pricing at stale rates.** It refreshes today
+  every 12 seconds through a path that never refreshed kosha's price
+  catalog; only a full scan (at startup) did. Without the macOS daily job
+  installed, and always on Linux and Windows, rates froze at whatever they
+  were when the daemon started. The daemon now refreshes the catalog once
+  it's a day old, in the background, and after a failed refresh (offline)
+  waits an hour before trying again instead of retrying every tick.
+
+## [1.16.1] - 2026-10-20
 
 ### Changed
 

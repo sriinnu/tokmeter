@@ -20,10 +20,18 @@ import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
 import { DailyAccumulator, sealRolledOverDay } from "./aggregates-store.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
+import {
+  type CoverageReport,
+  findUnreadFiles,
+  summarizeCoverage,
+  writeCoverageReport,
+} from "./coverage-check.js";
 import { type CrossToolComparison, computeCrossToolComparison } from "./cross-tool.js";
-import { isBeforeToday, localDateKey, yesterdayDateKey } from "./date-utils.js";
+import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
+import { type DayPrices, priceCardsFor } from "./day-prices.js";
 import { writeKoshaWishlist } from "./kosha-wishlist.js";
 import { computeModelRates, type ModelRatesResponse } from "./model-rates.js";
+import { getParsers } from "./parsers/index.js";
 import {
   getCachedKoshaMtime,
   getCachedOverridesMtime,
@@ -31,7 +39,7 @@ import {
   setCachedKoshaMtime,
   setCachedOverridesMtime,
 } from "./parsers/utils.js";
-import { PricingService, todayPricingStale } from "./pricing.js";
+import { maybeBackgroundRefresh, PricingService, todayPricingStale } from "./pricing.js";
 import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
 import {
   backfillProviderIntoRelay,
@@ -135,7 +143,6 @@ export class TokmeterCore {
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
-        const { maybeBackgroundRefresh } = await import("./pricing.js");
         maybeBackgroundRefresh();
       } catch {
         /* enrichCosts will re-warn if pricing stays unavailable */
@@ -194,8 +201,9 @@ export class TokmeterCore {
     const carriedRecent = this.recentRecords.filter((r) =>
       isBeforeToday(r.timestamp, referenceTimestamp)
     );
+    const sealPrices = await this.pricesForSeal(referenceTimestamp, [], koshaChanged);
     this.recentRecords = this.sliceRecent([...carriedRecent, ...todayRecords], referenceTimestamp);
-    this.refreshTodayAccumulator(todayRecords, referenceTimestamp);
+    this.refreshTodayAccumulator(todayRecords, referenceTimestamp, [], sealPrices);
 
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
@@ -255,6 +263,11 @@ export class TokmeterCore {
     const todayWarnings: ScanWarning[] = [];
     let koshaChanged = false;
     if (!this.skipPricing) {
+      // The daemon lives on this path (a full scan runs only at start), so
+      // without this a long-running daemon never refreshed kosha unless the
+      // macOS launchd job was installed, and prices went stale on Linux and
+      // Windows. Fresh registry or a recent attempt → no-op.
+      maybeBackgroundRefresh();
       try {
         await this.pricing.init();
       } catch {
@@ -285,9 +298,18 @@ export class TokmeterCore {
       saveRecordCacheToDisk();
     }
 
+    const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
+    const sealingDate =
+      this.todayAccumulator.date < localDateKey(now) ? this.todayAccumulator.date : null;
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now, stragglers);
+    this.refreshTodayAccumulator(today, now, stragglers, sealPrices);
+    if (sealingDate && this.aggregates.has(sealingDate)) {
+      // Off the tick: the walk is async and budgeted, and a failure must never
+      // touch the seal that just happened.
+      const readFiles = [...this.recentRecords, ...stragglers].map((r) => r.sourceFile ?? "");
+      void this.checkSealedDayCoverage(sealingDate, readFiles);
+    }
 
     this.scanMeta = {
       ...this.scanMeta,
@@ -316,10 +338,37 @@ export class TokmeterCore {
     return out;
   }
 
+  /**
+   * The cards to seal the outgoing day with, when this tick crosses midnight.
+   * They must be the cards its records were priced with, which is the current
+   * registry unless kosha changed this very tick (a wake after midnight runs
+   * the 00:05 refresh and the seal together). Then nobody can vouch for them:
+   * the day seals without cards and a later rebuild implies them from its cost.
+   */
+  private async pricesForSeal(
+    referenceTimestamp: number,
+    stragglers: TokenRecord[],
+    koshaChanged: boolean
+  ): Promise<DayPrices | undefined> {
+    const prev = this.todayAccumulator;
+    if (!prev || this.skipPricing || koshaChanged) return undefined;
+    if (prev.date >= localDateKey(referenceTimestamp)) return undefined;
+    const models = new Set(Object.keys(prev.toAggregate().models));
+    for (const r of [...this.recentRecords, ...stragglers]) {
+      if (localDateKey(r.timestamp) === prev.date) models.add(r.model);
+    }
+    try {
+      return await priceCardsFor(models, this.pricing);
+    } catch {
+      return undefined; // seal without cards rather than not seal
+    }
+  }
+
   private refreshTodayAccumulator(
     todayRecords: TokenRecord[],
     referenceTimestamp: number,
-    stragglers: TokenRecord[] = []
+    stragglers: TokenRecord[] = [],
+    sealPrices?: DayPrices
   ): void {
     const todayKey = localDateKey(referenceTimestamp);
 
@@ -345,7 +394,7 @@ export class TokmeterCore {
       const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
       const toSeal = new DailyAccumulator(prev.date);
       toSeal.hydrate(derived ?? prev.toAggregate());
-      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey);
+      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey, sealPrices);
       if (sealed) this.aggregates.set(sealed.date, sealed);
     }
 
@@ -396,6 +445,67 @@ export class TokmeterCore {
         ...warnings,
       ],
     };
+  }
+
+  /**
+   * After a day seals: which files changed that day, look like they carry
+   * usage, and fed no record? `readFiles` are the sourceFiles of the records
+   * the daemon already holds, so this re-parses nothing. The report is kept
+   * on disk and summarized as a history warning.
+   */
+  private async checkSealedDayCoverage(date: string, readFiles: string[]): Promise<void> {
+    try {
+      const report = await findUnreadFiles({
+        homeDir: this.homeDir,
+        date,
+        readFiles,
+        parsers: getParsers(undefined),
+        budgetMs: 10_000,
+      });
+      await writeCoverageReport(this.homeDir, report);
+      this.noteCoverage(report);
+    } catch {
+      /* best-effort: never let the check disturb the daemon */
+    }
+  }
+
+  private noteCoverage(report: CoverageReport): void {
+    const message = summarizeCoverage(report, this.homeDir);
+    const prefix = `${report.date} may be missing usage`;
+    this.scanMeta = {
+      ...this.scanMeta,
+      warnings: [
+        ...this.scanMeta.warnings.filter((w) => !w.message.startsWith(prefix)),
+        ...(message ? [{ scope: "history" as const, message }] : []),
+      ],
+    };
+  }
+
+  /**
+   * Coverage check for any day, without the daemon: parse every file changed
+   * since that day began (pricing skipped, nothing sealed or written to the
+   * relay), then look for usage files no record came from. What
+   * `tokmeter coverage` runs.
+   */
+  async checkCoverage(date: string): Promise<CoverageReport> {
+    const warnings: ScanWarning[] = [];
+    const since = startOfLocalDay(new Date(`${date}T12:00:00`).getTime());
+    const records = await scanRawRecords(
+      { ...this.ctx(), skipPricing: true },
+      undefined,
+      "history",
+      warnings,
+      since
+    );
+    const report = await findUnreadFiles({
+      homeDir: this.homeDir,
+      date,
+      readFiles: records.map((r) => r.sourceFile ?? ""),
+      parsers: getParsers(undefined),
+      budgetMs: 60_000,
+    });
+    await writeCoverageReport(this.homeDir, report);
+    return report;
   }
 
   /**

@@ -31,6 +31,10 @@ Today exposes cost provenance in `/api/statbar-signals`: the estimated and repor
 
 Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. Only today is repriced when the price catalog updates; since 1.15.0, editing `~/.tokmeter/pricing-overrides.json` also reprices today. Completed days keep the cost they were sealed with. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.
 
+**Each day keeps the prices it was billed at (since 1.17.0).** The price catalog keeps no history: it is overwritten on every refresh. So a rescan used to bill a past day at the rates of the day the rescan ran, and a day could change cost without one token changing. Each sealed day now stores the rates every model was billed with, and a rescan bills that day with them. A day sealed before 1.17.0 has no stored rates; a rescan derives them from what the day cost, scaling today's rates so the day's own tokens cost exactly what was sealed. Those derived rates are marked "implied". A model the day had no rate for (new in the rescan, or unpriced back then) is billed at today's rate. Costs a tool reported itself are never repriced.
+
+**A day that may be missing usage is flagged (since 1.17.0).** A day can only hold what the parsers read. After a day seals, the daemon looks through each tool's whole data folder for session files that changed that day, contain a real token count, and fed nothing into the ledger, and warns if it finds any. This is how a tool changing where it writes (Codex moving finished sessions to `~/.codex/archived_sessions` in October 2026) shows up the next morning instead of weeks later. It does not recount tokens. Run it for any day with `tokmeter coverage --date YYYY-MM-DD`.
+
 ## Invariants
 
 These hold the accounting together. Breaking one produces numbers that look
@@ -52,6 +56,9 @@ and re-price a record whose counts grow.
 **Sub-buckets are subsets.** The 1-hour share of cache writes is part of the
 cache-write total, not an additional bucket. Adding a subset into a total counts
 the same tokens twice and inflates every downstream percentage.
+
+**A sealed day keeps its prices.** A rebuild bills a day with the rates stored
+on it, never today's. A day's cost changes only when its tokens do.
 
 **Sealed days are immutable.** The per-day relay files are the durable ledger
 precisely because raw session files age out — for some providers within days. A

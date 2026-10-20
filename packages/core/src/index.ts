@@ -66,6 +66,8 @@ export {
   saveConfig,
   setConfigValue,
 } from "./config-service.js";
+export type { CoverageReport, UnreadFile } from "./coverage-check.js";
+export { readCoverageReports, summarizeCoverage } from "./coverage-check.js";
 export {
   endOfLocalDay,
   isBeforeToday,

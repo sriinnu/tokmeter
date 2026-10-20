@@ -11,7 +11,8 @@
  * at $0 without polluting the unpriced signal.
  */
 
-import type { PricingService } from "./pricing.js";
+import { priceWithCard } from "./day-prices.js";
+import type { PriceCard, PricingService } from "./pricing.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
 /**
@@ -71,7 +72,12 @@ export async function enrichCosts(
   pricing: PricingService,
   warningScope: "history" | "today",
   warnings: ScanWarning[],
-  unpricedTracker?: UnpricedTracker
+  unpricedTracker?: UnpricedTracker,
+  /**
+   * A stored card to bill a record with instead of today's kosha rate — set
+   * when rebuilding sealed days, which keep the prices they sealed at.
+   */
+  cardFor?: (r: TokenRecord) => PriceCard | undefined
 ): Promise<void> {
   const costPromises = records.map(async (r) => {
     // An explicit tool-reported $0 is still a fact. Do not replace it with
@@ -84,6 +90,11 @@ export async function enrichCosts(
       // without touching the unpricedTracker, which exists for the DIFFERENT
       // problem of "kosha doesn't have this model yet."
       if (r.usage) r.usage.cost = "not_exposed";
+      return;
+    }
+    const card = cardFor?.(r);
+    if (card) {
+      priceWithCard(r, card);
       return;
     }
     try {

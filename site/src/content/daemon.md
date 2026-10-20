@@ -38,6 +38,7 @@ registration, not queries):
 | `/api/summary` | The full `TokmeterSummary` |
 | `/api/stats`, `/api/daily`, `/api/models`, `/api/providers`, `/api/projects`, `/api/sessions` | Scoped aggregates |
 | `/api/statbar-signals` | Burn rate, cache hit, pace, billing window |
+| `/api/coverage` | The last week's coverage reports: session files that changed on a sealed day and fed no usage (1.17.0+) |
 | `/api/rates` | Per-model $/M rates (input, output, cache read/write) with the price source; `?scope=all` for every model with usage |
 
 > **Never run a full scan in a loop.** A full corpus scan is memory-heavy;

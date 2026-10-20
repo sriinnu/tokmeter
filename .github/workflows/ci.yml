@@ -35,6 +35,12 @@ jobs:
       - name: Test
         run: bun run test
 
+      # The release script is rerunnable stage by stage; a missed key tap or a
+      # red CI run must resume, not redo or refuse (1.16.1 died on a tap that
+      # went to another repo's commit).
+      - name: Release flow
+        run: bash scripts/test/release-flow.test.sh
+
       # Tests run under Bun; users run Node. A Node-only API imported at module
       # top level (zstd, 22.15+) once stopped the CLI from starting on Node 20.
       - name: Setup oldest supported Node
