@@ -1090,6 +1090,13 @@ function startHttpApi(): void {
             recent = all.slice(-ANOM_CAP).reverse(); // newest first
           } catch {}
           json(res, { anomalies: recent, total, cappedAt: ANOM_CAP });
+        } else if (pathname === "/api/coverage") {
+          // The last week's coverage reports (files that changed on a sealed
+          // day, carry usage, and fed no record), newest first. Written by the
+          // daemon after each midnight seal and by `tokmeter coverage`.
+          const { readCoverageReports } = await import("@sriinnu/tokmeter");
+          const { homedir } = await import("node:os");
+          json(res, { reports: await readCoverageReports(homedir(), 7) });
         } else if (pathname === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
           // and the result of its last run. The plist truncates the log on
