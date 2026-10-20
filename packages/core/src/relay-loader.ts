@@ -31,6 +31,7 @@ import { getParsers } from "./parsers/index.js";
 import type { PriceCard } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
+import { carriedRecordsFor, withCarried } from "./today-journal.js";
 import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface RelayState {
@@ -128,8 +129,15 @@ export async function refreshFromRelay(
   const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider" && !w.partial);
   if (gapDegraded) return { aggregates, historySource: "extended" };
 
+  // A day the daemon never sealed (it was down at midnight) still has its
+  // journal: fold in what was deleted while it ran, or while it was down.
+  const carried: TokenRecord[] = [];
+  for (let date = gapStart; date < todayKey; date = nextDayKey(date)) {
+    carried.push(...carriedRecordsFor(ctx.homeDir, date));
+  }
+
   const onDiskSet = new Set(onDisk);
-  for (const day of aggregateRecordsByDay(raw)) {
+  for (const day of aggregateRecordsByDay(withCarried(raw, carried))) {
     // Never seal today; never overwrite an already-sealed (immutable) day.
     // Never seal a day BEFORE the gap either: the mtime watermark admits
     // multi-day session files whose early records predate gapStart, but those

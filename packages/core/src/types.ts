@@ -179,6 +179,14 @@ export interface TokenRecord {
    * subagent compaction record is `kind:"compaction"` AND `isSubagent:true`.
    */
   isSubagent?: boolean;
+  /**
+   * The thread (or message) this record belongs to inside a source file that
+   * many threads share: Zed's threads.db row id, Cursor's bubble key, the
+   * OpenCode/Kilo CLI database message id. Lets
+   * grow-only today (today-journal.ts) keep a deleted thread's usage, which a
+   * file-level check can't see because the database file never goes away.
+   */
+  threadKey?: string;
 }
 
 /** Summary of token usage for a single model within a context. */

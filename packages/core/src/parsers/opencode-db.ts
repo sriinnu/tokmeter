@@ -100,6 +100,12 @@ export function openCodeMessageToRecord(
     cwd,
     sourceFile,
     apiCallId: msg.id || fallback.id,
+    // In the database, one file holds every session: name the message so a
+    // deleted session's usage can be kept (today-journal.ts). The JSON store
+    // has a file per message, which is carried as a file.
+    ...(!fallback.legacyJson && (msg.id || fallback.id)
+      ? { threadKey: msg.id || fallback.id }
+      : {}),
     inputTokens: t.input ?? 0,
     outputTokens: t.output ?? 0,
     reasoningTokens: t.reasoning ?? 0,
@@ -196,6 +202,7 @@ function readFlatMessages(db: ReadonlySqlite, dbPath: string, provider: Provider
       project: (row.session_id && sessionProjects.get(row.session_id)) || provider,
       sourceFile: dbPath,
       apiCallId: row.id,
+      ...(row.id ? { threadKey: row.id } : {}),
       inputTokens: row.input_tokens ?? 0,
       outputTokens: row.output_tokens ?? 0,
       reasoningTokens: row.reasoning_tokens ?? 0,

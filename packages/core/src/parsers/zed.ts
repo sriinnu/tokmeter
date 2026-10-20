@@ -166,6 +166,7 @@ export class ZedParser implements SessionParser {
               model: thread.model?.model || "unknown",
               project: resolveProject(row.folder_paths, row.folder_paths_order),
               sourceFile: dbPath,
+              threadKey: row.id,
               inputTokens,
               outputTokens,
               cacheReadTokens,
