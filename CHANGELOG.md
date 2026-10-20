@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   day with what was kept, from `~/.cache/tokmeter/today/`). A file that
   moved (a Codex archive) isn't counted twice.
 
+- **Zed and Mux no longer count a thread's history again every day it's
+  touched.** Both report a running total per thread, and tokmeter emitted the
+  whole total stamped on the latest update, so reusing a long thread on a new
+  day added its entire history to that day (and a fresh install put months of
+  usage on one day). Tokmeter now keeps each thread's total as of the start of
+  the day it's used and counts only the growth. A thread it sees for the
+  first time counts from then on, unless it was created that same day, since
+  there's no way to know how its history splits across past days. Days
+  already sealed are unchanged.
+
 - **A provider-filtered scan no longer shrinks the day.** A long-running
   process that ran one (e.g. a `--codex` view) replaced today with just that
   provider, and if midnight came next, the sealed day was missing the rest.
