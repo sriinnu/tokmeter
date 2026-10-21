@@ -63,6 +63,8 @@ final class TokmeterLoader: ObservableObject {
     /// the "⚠ N price changes" pill that catches the WORST failure mode —
     /// a wrong rate slipping through every other defense.
     @Published var pricingAnomalies: AnomaliesResponse?
+    /// Plan windows per agent (Codex weekly, Claude Code 5h/7d), from /api/quota.
+    @Published var quotaWindows: [QuotaWindow] = []
     /// Projection of today's tokens against the user's top lifetime models.
     /// Drives the Hub's "If today ran on..." card.
     @Published var crossToolComparison: CrossToolComparison?
@@ -351,6 +353,7 @@ final class TokmeterLoader: ObservableObject {
         async let anomaliesTask = fetchAnomaliesSafe()
         async let signalsTask = fetchStatbarSignalsSafe()
         async let crossToolTask = fetchCrossToolSafe()
+        async let quotaTask = try? client.fetchQuota()
         antigravityLiveGeneration += 1
         let antigravityLiveIssuedAsGeneration = antigravityLiveGeneration
         async let antigravityLiveTask = fetchAntigravityLiveSafe()
@@ -367,10 +370,11 @@ final class TokmeterLoader: ObservableObject {
             anomaliesResult,
             signalsResult,
             crossToolResult,
+            quotaResult,
             antigravityLiveResult
         ) = await (
             dailyTask, modelsTask, todayModelsTask, sessionsTask, todayProjectsTask, pricingStatusTask,
-            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask,
+            cronStatusTask, healthTask, anomaliesTask, signalsTask, crossToolTask, quotaTask,
             antigravityLiveTask
         )
 
@@ -409,6 +413,9 @@ final class TokmeterLoader: ObservableObject {
             }
             if let crossTool = crossToolResult {
                 self.crossToolComparison = crossTool
+            }
+            if let quota = quotaResult, quota.windows != self.quotaWindows {
+                self.quotaWindows = quota.windows
             }
             // Only apply if nothing newer (a manual Fetch now, or another
             // loadData tick) was issued while this request was in flight —
