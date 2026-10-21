@@ -82,7 +82,7 @@ describe("OpenCodeParser", () => {
     const a = records.find((r) => r.apiCallId === "msg_a");
     expect(a).toMatchObject({
       provider: "opencode",
-      model: "muse-spark-1.3-contributor-free",
+      model: "muse-spark-1.3-contributor-free@opencode",
       inputTokens: 100,
       outputTokens: 20,
       reasoningTokens: 5,
@@ -115,7 +115,7 @@ describe("OpenCodeParser", () => {
     const records = await new OpenCodeParser().scan(home);
 
     expect(records.map((r) => r.apiCallId).sort()).toEqual(["msg_a", "msg_old"]);
-    expect(records.find((r) => r.apiCallId === "msg_old")?.model).toBe("glm-4.7");
+    expect(records.find((r) => r.apiCallId === "msg_old")?.model).toBe("glm-4.7@opencode");
   });
 
   it("reports a free-tier $0 as a fact, but leaves a coding-plan $0 to pricing", async () => {
@@ -171,7 +171,7 @@ describe("KiloCliParser", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       apiCallId: "m1",
-      model: "glm-4.7",
+      model: "glm-4.7@zai",
       inputTokens: 10,
       cacheReadTokens: 30,
     });

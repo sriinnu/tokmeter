@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens count but stay unpriced until kosha lists them. Days already sealed
   pick it up with `tokmeter backfill --kimi`.
 
+### Changed
+
+- **OpenCode, Kilo and Kilo CLI models now say who served them**, as
+  `deepseek-v4.1-flash@ollama-cloud`. These tools route one model through many
+  providers, and the price differs a lot by route: DeepSeek V4.1 Flash is
+  $0.15/$0.60 per million on Ollama Cloud, $0.30/$1.19 on Alibaba and
+  $0.016/$0.89 on OpenRouter. When a tool didn't report a cost, tokmeter used
+  to price by model name alone and took whichever provider kosha matched first.
+  It now uses the serving provider's own rate, then falls back to the name-only
+  lookup. Costs the tool reported itself are unchanged. An override can name
+  the exact route (`"deepseek-v4.1-flash@ollama-cloud"`). Which upstream
+  OpenRouter picked isn't written anywhere on disk, so OpenRouter routes are
+  priced at OpenRouter's list rate. Past days keep their model names.
+
 ### Fixed
 
 - **Just after midnight, today showed yesterday's whole total and stayed

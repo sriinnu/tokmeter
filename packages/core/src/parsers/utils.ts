@@ -143,7 +143,7 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      custom-source lines served by a local runtime (Ollama, LM Studio, …).
 // 19 — codex reads compressed (.jsonl.zst) and archived rollouts, which it
 //      had skipped entirely; also covers #135's chitragupta provider label.
-const CACHE_VERSION = 19;
+const CACHE_VERSION = 20;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
