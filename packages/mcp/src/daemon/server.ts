@@ -1632,15 +1632,30 @@ function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>
 }
 
 function computeTodayTotals(core: any): TodayTotals {
-  const day = localDateKey();
-  const today = core.getTodayAggregate?.() as {
+  return todayTotalsFrom(core.getTodayAggregate?.() ?? null, localDateKey());
+}
+
+/**
+ * Today's totals for `day` from the core's today aggregate. Just after
+ * midnight a warm core served without waiting on its refresh (see
+ * getHttpCoreNoWait) still holds yesterday's accumulator; labelling that with
+ * the wall-clock day made the floor take yesterday's whole total as today's
+ * high-water and hold it all day (10-20's sealed $290.85 showed as 10-21's
+ * today, 10-04's $501.03 as 10-05's). An aggregate for another day counts as
+ * nothing yet for `day`.
+ */
+export function todayTotalsFrom(
+  today: {
+    date?: string;
     cost: number;
     inputTokens: number;
     outputTokens: number;
     projects: Record<string, { cost: number; inputTokens: number; outputTokens: number }>;
-  } | null;
+  } | null,
+  day: string
+): TodayTotals {
   const projects: Record<string, { cost: number; in: number; out: number }> = {};
-  if (today) {
+  if (today && (today.date === undefined || today.date === day)) {
     for (const [name, pb] of Object.entries(today.projects)) {
       projects[name || "unknown"] = {
         cost: pb.cost,

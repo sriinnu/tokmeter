@@ -7,6 +7,7 @@ import {
   isValidAuthHeader,
   type StatsFloor,
   type TodayTotals,
+  todayTotalsFrom,
 } from "./server.js";
 
 describe("isAllowedWsOrigin — WS handshake origin allowlist", () => {
@@ -179,5 +180,31 @@ describe("computeStatsFloor — lifetime totals are monotonic upward within a da
     const { result, floor } = computeStatsFloor(weird, prior, day);
     expect(result).toBe(weird);
     expect(floor).toBe(prior);
+  });
+});
+
+describe("todayTotalsFrom — a stale core's accumulator is not today", () => {
+  const agg = (date: string, cost: number) => ({
+    date,
+    cost,
+    inputTokens: 100,
+    outputTokens: 50,
+    projects: { alpha: { cost, inputTokens: 100, outputTokens: 50 } },
+  });
+
+  test("today's accumulator passes through", () => {
+    const t = todayTotalsFrom(agg("2026-10-21", 37.5), "2026-10-21");
+    expect(t).toMatchObject({ cost: 37.5, in: 100, out: 50, day: "2026-10-21" });
+  });
+
+  test("just after midnight, yesterday's accumulator counts as nothing yet", () => {
+    const t = todayTotalsFrom(agg("2026-10-20", 290.85), "2026-10-21");
+    expect(t).toEqual({ cost: 0, in: 0, out: 0, projects: {}, day: "2026-10-21" });
+  });
+
+  test("so the new day's floor isn't seeded with yesterday's whole total", () => {
+    const stale = computeTodayFloor(todayTotalsFrom(agg("2026-10-20", 290.85), "2026-10-21"), null);
+    const fresh = computeTodayFloor(todayTotalsFrom(agg("2026-10-21", 33.24), "2026-10-21"), stale);
+    expect(fresh.cost).toBe(33.24);
   });
 });
