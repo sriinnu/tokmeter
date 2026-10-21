@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Copilot CLI counted reasoning twice, and a session that ran past midnight
+  could be lost.** Copilot reports output OpenAI-style, with reasoning inside
+  it, and the parser added reasoning on top: on one machine that was 161K extra
+  tokens over 12 days, each matching the reasoning in the rollup exactly. It
+  also dated a whole session at its start, so a session that ended after
+  midnight landed on a day that was already sealed. Each response's output now
+  counts when it happens, and the shutdown adds the input and cache. A session
+  that never shuts down still counts its output. Totals equal Copilot's own
+  rollup. Already-sealed days keep their old numbers.
 - **Just after midnight, today showed yesterday's whole total and stayed
   there.** The statusline and bar read today from the daemon without waiting
   for its refresh, so the first read after midnight still had yesterday's

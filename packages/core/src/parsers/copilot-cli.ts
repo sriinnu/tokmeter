@@ -6,30 +6,36 @@
  * This is the standalone Copilot CLI, distinct from the VS Code Copilot Chat
  * extension handled by the vscode-copilot parser.
  *
- * Per-message events (`assistant.message`) carry only `outputTokens`; the full,
- * authoritative input/cache/reasoning breakdown is the per-model rollup Copilot
- * writes at shutdown:
+ * Two sources of usage:
+ *   - `assistant.message` carries that response's `outputTokens`, stamped when
+ *     it happened. Summed per model they equal the shutdown rollup's output.
+ *   - `session.shutdown` writes the authoritative per-model rollup:
+ *       data.modelMetrics[model].usage = { inputTokens, outputTokens,
+ *         cacheReadTokens, cacheWriteTokens, reasoningTokens }
+ *       data.modelMetrics[model].requests.cost = premium-request credits, NOT USD
  *
- *   type: "session.shutdown"
- *   data.modelMetrics[model] = {
- *     requests: { count, cost },           // cost = premium-request credits, NOT USD
- *     usage: { inputTokens, outputTokens, cacheReadTokens,
- *              cacheWriteTokens, reasoningTokens }
- *   }
+ * Each message becomes an output-only record at its own time, and each shutdown
+ * adds one record per model with what the messages didn't already cover (all of
+ * the input and cache, plus any output gap), stamped at the shutdown. Totals
+ * equal the rollup; output lands on the day it was spent; a session that never
+ * shuts down still counts its output. Stamping everything at session start, as
+ * this parser used to, put a session that ran past midnight on a day already
+ * sealed by the time its shutdown was written, where it could never land.
  *
- * We emit one record per (session, model) from that rollup — authoritative and
- * self-consistent. A session with no shutdown event (still open, or crashed) is
- * not counted until it ends; that is honest under-reporting, never a double.
+ * Copilot reports usage OpenAI-style: `inputTokens` INCLUDES `cacheReadTokens`
+ * (subtracted here, as in the muse/gemini parsers) and `outputTokens` INCLUDES
+ * `reasoningTokens` (on real sessions reasoning is always below output, even a
+ * one-request 26 out / 19 reasoning). Messages carry no reasoning split, so
+ * reasoning stays inside output rather than being counted a second time.
  *
- * `inputTokens` is OpenAI-style and INCLUDES `cacheReadTokens`, so we subtract
- * the cached portion (matching the muse/gemini parsers) to avoid charging cached
- * tokens at the full input rate. The `cost` field is Copilot premium-request
- * credits, not dollars, so we ignore it and let tokmeter price by model.
+ * A later shutdown in the same file (a resumed session) adds only what its
+ * rollup grew by. If a rollup covered only its own segment that under-counts,
+ * which is the safe side: never a double.
  */
 
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 interface CopilotUsage {
   inputTokens?: number;
@@ -41,7 +47,14 @@ interface CopilotUsage {
 
 interface CopilotEvent {
   type?: string;
+  /** ISO time the event was written. */
+  timestamp?: string;
   data?: {
+    model?: string;
+    newModel?: string;
+    selectedModel?: string;
+    messageId?: string;
+    outputTokens?: number;
     sessionId?: string;
     startTime?: number;
     sessionStartTime?: number;
@@ -68,11 +81,14 @@ export class CopilotCliParser implements SessionParser {
 
   async scanStreaming(
     homeDir: string,
-    _opts: ScanFilterOptions | undefined,
+    opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
     const [stateDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(stateDir, (f) => f.endsWith("events.jsonl"), 3);
+    let files = await findFiles(stateDir!, (f) => f.endsWith("events.jsonl"), 3);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
 
     for (const file of files) {
       const records = this.parseFile(await readJsonlFile<CopilotEvent>(file), file);
@@ -82,60 +98,111 @@ export class CopilotCliParser implements SessionParser {
 
   private parseFile(events: CopilotEvent[], file: string): TokenRecord[] {
     let cwd: string | undefined;
-    let startTime: number | undefined;
     let sessionId: string | undefined;
-    let shutdown: CopilotEvent | undefined;
-
+    let model: string | undefined;
     for (const ev of events) {
       if (ev.type === "session.start") {
         cwd = ev.data?.context?.gitRoot ?? ev.data?.context?.cwd;
-        startTime = ev.data?.startTime;
         sessionId = ev.data?.sessionId;
-      } else if (ev.type === "session.shutdown") {
-        shutdown = ev;
+        break;
       }
     }
-
-    const metrics = shutdown?.data?.modelMetrics;
-    if (!metrics) return [];
-
-    const ts = shutdown?.data?.sessionStartTime ?? startTime ?? Date.now();
     const project = cwd ? canonicalizeProjectName(cwd, "copilot-cli") : "copilot-cli";
     const sid = sessionId ?? file;
 
+    // Per model, what's been emitted so far: shutdowns emit only the rest.
+    const emitted = new Map<string, Required<CopilotUsage>>();
+    const emittedFor = (m: string) => {
+      let e = emitted.get(m);
+      if (!e) {
+        e = {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        };
+        emitted.set(m, e);
+      }
+      return e;
+    };
+    const record = (
+      m: string,
+      timestamp: number,
+      apiCallId: string,
+      t: { input: number; output: number; cacheRead: number; cacheWrite: number }
+    ) =>
+      createRecord({
+        timestamp,
+        provider: "copilot-cli",
+        model: m,
+        project,
+        cwd,
+        sourceFile: file,
+        apiCallId,
+        inputTokens: t.input,
+        outputTokens: t.output,
+        cacheReadTokens: t.cacheRead,
+        cacheWriteTokens: t.cacheWrite,
+      });
+
     const records: TokenRecord[] = [];
-    for (const [model, m] of Object.entries(metrics)) {
-      const u = m.usage;
-      if (!u) continue;
-      const total =
-        (u.inputTokens ?? 0) +
-        (u.outputTokens ?? 0) +
-        (u.cacheReadTokens ?? 0) +
-        (u.cacheWriteTokens ?? 0) +
-        (u.reasoningTokens ?? 0);
-      if (total <= 0) continue;
-
-      const cacheRead = u.cacheReadTokens ?? 0;
-      const inputTokens = Math.max(0, (u.inputTokens ?? 0) - cacheRead);
-
-      records.push(
-        createRecord({
-          timestamp: ts,
-          provider: "copilot-cli",
-          model: model || "unknown",
-          project,
-          cwd,
-          sourceFile: file,
-          apiCallId: `${sid}:${model}`,
-          inputTokens,
-          outputTokens: u.outputTokens ?? 0,
-          cacheReadTokens: cacheRead,
-          cacheWriteTokens: u.cacheWriteTokens ?? 0,
-          reasoningTokens: u.reasoningTokens ?? 0,
-        })
-      );
+    let shutdowns = 0;
+    for (const ev of events) {
+      const data = ev.data;
+      if (ev.type === "session.start") model = data?.selectedModel ?? data?.model ?? model;
+      else if (ev.type === "session.model_change") model = data?.newModel ?? data?.model ?? model;
+      else if (ev.type === "assistant.message") {
+        const out = data?.outputTokens ?? 0;
+        const ts = eventTime(ev);
+        const m = data?.model ?? model;
+        if (out <= 0 || ts === undefined || !m) continue;
+        emittedFor(m).outputTokens += out;
+        records.push(
+          record(m, ts, `${sid}:msg:${data?.messageId ?? ts}`, {
+            input: 0,
+            output: out,
+            cacheRead: 0,
+            cacheWrite: 0,
+          })
+        );
+      } else if (ev.type === "session.shutdown") {
+        shutdowns++;
+        const ts = eventTime(ev) ?? data?.sessionStartTime;
+        if (ts === undefined) continue;
+        for (const [m, metric] of Object.entries(data?.modelMetrics ?? {})) {
+          const u = metric.usage;
+          if (!u) continue;
+          const name = m || "unknown";
+          const e = emittedFor(name);
+          const cacheRead = u.cacheReadTokens ?? 0;
+          // Cumulative rollup → buckets; reasoning stays inside output.
+          const target = {
+            input: Math.max(0, (u.inputTokens ?? 0) - cacheRead),
+            output: u.outputTokens ?? 0,
+            cacheRead,
+            cacheWrite: u.cacheWriteTokens ?? 0,
+          };
+          const delta = {
+            input: Math.max(0, target.input - e.inputTokens),
+            output: Math.max(0, target.output - e.outputTokens),
+            cacheRead: Math.max(0, target.cacheRead - e.cacheReadTokens),
+            cacheWrite: Math.max(0, target.cacheWrite - e.cacheWriteTokens),
+          };
+          e.inputTokens += delta.input;
+          e.outputTokens += delta.output;
+          e.cacheReadTokens += delta.cacheRead;
+          e.cacheWriteTokens += delta.cacheWrite;
+          if (delta.input + delta.output + delta.cacheRead + delta.cacheWrite <= 0) continue;
+          records.push(record(name, ts, `${sid}:${name}:shutdown-${shutdowns}`, delta));
+        }
+      }
     }
-
     return records;
   }
+}
+
+function eventTime(ev: CopilotEvent): number | undefined {
+  const t = ev.timestamp ? Date.parse(ev.timestamp) : Number.NaN;
+  return Number.isFinite(t) ? t : undefined;
 }
