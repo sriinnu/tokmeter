@@ -24,12 +24,23 @@ reprices when the catalog updates (since 1.15.0, also when your
 Not since 1.17.1. The day it ran in keeps it: the daemon remembers the last
 usage of a session that disappears (including a session deleted inside
 OpenCode's, Zed's or Cursor's database) and counts it until the day seals,
-even across a restart. Archiving isn't counted twice. Sealed days were already
-safe, since they're stored by tokmeter, not read from your agents' files.
+even across a restart. Archiving isn't counted twice. Since 1.18.0 a
+transcript pruned in place keeps what it lost too (Claude Code, Codex, Kimi,
+Copilot CLI, Muse). Sealed days were already safe, since they're stored by
+tokmeter, not read from your agents' files.
+
+**Why does the same model show up as `model@provider`?**
+OpenCode, Kilo and Kilo CLI route one model through many providers, and the
+price differs by route (DeepSeek V4.1 Flash costs about twice as much on
+Alibaba as on Ollama Cloud). Since 1.18.0 their models carry the provider that
+served them, and a call the tool didn't price is billed at that provider's
+rate. Which upstream OpenRouter used isn't on disk, so OpenRouter is priced at
+its list rate.
 
 **Which agents are supported?**
 20+ formats, including Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Amp,
-Muse, Cline, Augment, Copilot CLI, Kimi, Qwen, Roo, Kilo, Droid, Zed, and more.
+Muse, Cline, Augment, Copilot CLI, Kimi CLI and Kimi Code, Qwen, Roo, Kilo,
+Droid, Zed, and more.
 An agent with no built-in parser can register a path and emit a usage line via
 `customSources`; Ribhu and Chitragupta are tracked this way.
 
