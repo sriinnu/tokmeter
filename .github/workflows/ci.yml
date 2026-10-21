@@ -50,8 +50,9 @@ jobs:
 
       - name: CLI and MCP load on Node 20
         run: |
-          node packages/tokmeter/dist/cli/cli.js --version
-          node packages/mcp/dist/cli.js --version
+          # A real version, not the "latest" fallback a path bug once gave.
+          node packages/tokmeter/dist/cli/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+          node packages/mcp/dist/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
 
   # Windows is not a supported platform yet. This job exists to show what
   # breaks before any Windows app work starts. It is not a required check, so
@@ -98,8 +99,8 @@ jobs:
           USERPROFILE: ${{ runner.temp }}/empty-home
         run: |
           mkdir -p "$HOME"
-          node packages/tokmeter/dist/cli/cli.js --version
-          node packages/mcp/dist/cli.js --version
+          node packages/tokmeter/dist/cli/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+          node packages/mcp/dist/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
           node packages/tokmeter/dist/cli/cli.js --today --json --light
 
   native-build-and-test:

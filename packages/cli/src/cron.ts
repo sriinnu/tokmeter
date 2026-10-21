@@ -10,6 +10,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const LABEL = "com.sriinnu.tokmeter.daily";
 const PLIST_DIR = join(homedir(), "Library", "LaunchAgents");
@@ -77,7 +78,9 @@ function resolveLaunchCommand(): { description: string; shellCommand: string } {
  */
 export function readOwnVersion(): string {
   try {
-    let dir = dirname(new URL(import.meta.url).pathname);
+    // fileURLToPath, not URL.pathname: on Windows the pathname is "/D:/…",
+    // which no file lookup finds, so --version printed "latest" there.
+    let dir = dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 3; i++) {
       dir = dirname(dir);
       const pkgPath = join(dir, "package.json");
