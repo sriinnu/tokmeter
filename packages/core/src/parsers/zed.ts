@@ -27,8 +27,10 @@ import { join } from "node:path";
 // module load on older Node, taking every command down with it. There, a
 // zstd row throws inside decodeThreadData and is skipped like a corrupt one.
 import * as zlib from "node:zlib";
+import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
+import { dayDelta, readBaselines, writeBaselines } from "./cumulative-baselines.js";
 import {
   createRecord,
   expandHome,
@@ -126,6 +128,8 @@ export class ZedParser implements SessionParser {
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
+    const baselines = readBaselines(homeDir);
+    const changed = { value: false };
 
     for (const dbPath of this.sessionRoots(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
@@ -143,33 +147,44 @@ export class ZedParser implements SessionParser {
           if (!thread) continue;
 
           const usage = thread.cumulative_token_usage;
-          const inputTokens = usage?.input_tokens ?? 0;
-          const outputTokens = usage?.output_tokens ?? 0;
-          const cacheReadTokens = usage?.cache_read_input_tokens ?? 0;
-          const cacheWriteTokens = usage?.cache_creation_input_tokens ?? 0;
-          // A thread with no usage recorded yet (still open, or predates
-          // token tracking) isn't a billable event — skip rather than
-          // emit an all-zero record.
-          if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens === 0) continue;
+          const current = {
+            inputTokens: usage?.input_tokens ?? 0,
+            outputTokens: usage?.output_tokens ?? 0,
+            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+            cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+            reasoningTokens: 0,
+          };
+          // cumulative_token_usage is the thread's running total "as of its
+          // latest save", so it belongs to updated_at (created_at is kept
+          // unchanged across every later save of a reused thread). Only the
+          // growth since that day began is that day's usage; emitting the
+          // whole total counted a long thread's history again every day it
+          // was touched. See cumulative-baselines.ts.
+          const updatedMs = new Date(row.updated_at || row.created_at || "").getTime();
+          if (!Number.isFinite(updatedMs)) continue;
+          const createdMs = row.created_at ? new Date(row.created_at).getTime() : Number.NaN;
+          const delta = dayDelta(
+            baselines,
+            `zed:${dbPath}#${row.id}`,
+            localDateKey(updatedMs),
+            current,
+            Number.isFinite(createdMs) ? localDateKey(createdMs) : undefined,
+            changed
+          );
+          if (!delta) continue;
 
           records.push(
             createRecord({
-              // cumulative_token_usage is the thread's running total "as of
-              // its latest save" — updated_at, not created_at (which Zed
-              // preserves unchanged across every subsequent save of a
-              // reused thread). Using created_at would dump a long-lived
-              // thread's entire current total onto the day it was first
-              // opened, and show $0 on every day it was actually used again.
-              timestamp:
-                new Date(row.updated_at || row.created_at || Date.now()).getTime() || Date.now(),
+              timestamp: updatedMs,
               provider: "zed",
               model: thread.model?.model || "unknown",
               project: resolveProject(row.folder_paths, row.folder_paths_order),
               sourceFile: dbPath,
-              inputTokens,
-              outputTokens,
-              cacheReadTokens,
-              cacheWriteTokens,
+              threadKey: row.id,
+              inputTokens: delta.inputTokens,
+              outputTokens: delta.outputTokens,
+              cacheReadTokens: delta.cacheReadTokens,
+              cacheWriteTokens: delta.cacheWriteTokens,
             })
           );
         }
@@ -179,6 +194,7 @@ export class ZedParser implements SessionParser {
         db.close();
       }
     }
+    if (changed.value) writeBaselines(baselines, homeDir);
     return records;
   }
 }

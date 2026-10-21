@@ -166,13 +166,13 @@ export class CursorParser implements SessionParser {
       // counts — resolve both per composer (conversation) first.
       const modelByComposer = new Map<string, string>();
       const projectByComposer = new Map<string, string>();
-      const parsed: { composerId: string; bubble: CursorBubble }[] = [];
+      const parsed: { key: string; composerId: string; bubble: CursorBubble }[] = [];
 
       for (const row of rows) {
         const composerId = composerIdFromKey(row.key);
         const bubble = toBubbleJson(row.value);
         if (!composerId || !bubble) continue;
-        parsed.push({ composerId, bubble });
+        parsed.push({ key: row.key, composerId, bubble });
 
         if (bubble.modelInfo?.modelName && !modelByComposer.has(composerId)) {
           modelByComposer.set(composerId, bubble.modelInfo.modelName);
@@ -185,7 +185,7 @@ export class CursorParser implements SessionParser {
         }
       }
 
-      for (const { composerId, bubble } of parsed) {
+      for (const { key, composerId, bubble } of parsed) {
         const inputTokens = bubble.tokenCount?.inputTokens ?? 0;
         const outputTokens = bubble.tokenCount?.outputTokens ?? 0;
         if (inputTokens === 0 && outputTokens === 0) continue;
@@ -197,6 +197,7 @@ export class CursorParser implements SessionParser {
             model: modelByComposer.get(composerId) || "unknown",
             project: projectByComposer.get(composerId) || "cursor",
             sourceFile: dbPath,
+            threadKey: key,
             inputTokens,
             outputTokens,
             usage: { source: "tool_sqlite" },

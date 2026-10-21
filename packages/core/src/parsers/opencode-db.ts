@@ -17,6 +17,7 @@
  * reported, so it maps straight onto inputTokens without adjustment.
  */
 
+import { withServedBy } from "../pricing.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, TokenRecord } from "../types.js";
 import { createRecord, type ReadonlySqlite } from "./utils.js";
@@ -49,6 +50,7 @@ interface MessageRow {
 interface FlatMessageRow {
   id?: string;
   model_id?: string;
+  provider_id?: string | null;
   input_tokens?: number;
   output_tokens?: number;
   reasoning_tokens?: number;
@@ -95,11 +97,20 @@ export function openCodeMessageToRecord(
   const rec = createRecord({
     timestamp: msg.time?.created ?? fallback.timestamp ?? Date.now(),
     provider,
-    model: msg.modelID || "unknown",
+    // The same model costs very differently per route (DeepSeek on Ollama
+    // Cloud is half Alibaba's rate), so the record names who served it and
+    // pricing looks up that provider's own rate (see splitServedBy).
+    model: withServedBy(msg.modelID || "unknown", msg.providerID),
     project: cwd ? canonicalizeProjectName(cwd, provider) : provider,
     cwd,
     sourceFile,
     apiCallId: msg.id || fallback.id,
+    // In the database, one file holds every session: name the message so a
+    // deleted session's usage can be kept (today-journal.ts). The JSON store
+    // has a file per message, which is carried as a file.
+    ...(!fallback.legacyJson && (msg.id || fallback.id)
+      ? { threadKey: msg.id || fallback.id }
+      : {}),
     inputTokens: t.input ?? 0,
     outputTokens: t.output ?? 0,
     reasoningTokens: t.reasoning ?? 0,
@@ -120,7 +131,8 @@ export function openCodeMessageToRecord(
   // Only the explicit free variants (OpenCode Zen `-free`, OpenRouter `:free`;
   // OpenCode's own catalog lists them at $0 on every rate): a coding-plan $0
   // is a subscription, which tokmeter prices at API-equivalent rates.
-  else if (msg.cost === 0 && isFreeTierModel(rec.model) && rec.usage) rec.usage.cost = "direct";
+  else if (msg.cost === 0 && isFreeTierModel(msg.modelID ?? "") && rec.usage)
+    rec.usage.cost = "direct";
   return rec;
 }
 
@@ -184,18 +196,20 @@ function readFlatMessages(db: ReadonlySqlite, dbPath: string, provider: Provider
   }
 
   const idColumn = hasColumn(db, "messages", "id") ? "id, " : "";
+  const providerColumn = hasColumn(db, "messages", "provider_id") ? "provider_id, " : "";
   const rows = db.all<FlatMessageRow>(
-    `SELECT ${idColumn}model_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id
+    `SELECT ${idColumn}${providerColumn}model_id, input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, created_at, session_id
        FROM messages WHERE role = 'assistant'`
   );
   return rows.map((row) =>
     createRecord({
       timestamp: row.created_at ?? Date.now(),
       provider,
-      model: row.model_id || "unknown",
+      model: withServedBy(row.model_id || "unknown", row.provider_id),
       project: (row.session_id && sessionProjects.get(row.session_id)) || provider,
       sourceFile: dbPath,
       apiCallId: row.id,
+      ...(row.id ? { threadKey: row.id } : {}),
       inputTokens: row.input_tokens ?? 0,
       outputTokens: row.output_tokens ?? 0,
       reasoningTokens: row.reasoning_tokens ?? 0,

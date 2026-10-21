@@ -165,6 +165,8 @@ interface CodexParseState {
   structuredTurns: Set<string>;
   responseIds: Set<string>;
   legacyRecordTurns: Map<number, string>;
+  /** From this rollout's own (first) session_meta. */
+  isSubagent: boolean;
 }
 
 function defaultState(): CodexParseState {
@@ -177,7 +179,21 @@ function defaultState(): CodexParseState {
     structuredTurns: new Set(),
     responseIds: new Set(),
     legacyRecordTurns: new Map(),
+    isSubagent: false,
   };
+}
+
+/**
+ * Whether a session_meta payload describes a multi-agent subagent thread.
+ * One definition for the file grouping (readSessionMeta) and the records, so
+ * the two can't disagree about which rollouts are subagents.
+ */
+function isSubagentMeta(p: NonNullable<CodexEvent["payload"]>): boolean {
+  return (
+    p.thread_source === "subagent" ||
+    (typeof p.parent_thread_id === "string" && p.parent_thread_id.length > 0) ||
+    (typeof p.source === "object" && p.source !== null && "subagent" in p.source)
+  );
 }
 
 /** Extract project name from cwd path (last directory component). */
@@ -362,10 +378,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
             const p = evt.payload;
             sessionId = p.id ?? "";
             forkedFromId = p.forked_from_id ?? null;
-            isSubagent =
-              p.thread_source === "subagent" ||
-              (typeof p.parent_thread_id === "string" && p.parent_thread_id.length > 0) ||
-              (typeof p.source === "object" && p.source !== null && "subagent" in p.source);
+            isSubagent = isSubagentMeta(p);
             break;
           }
         } catch {
@@ -526,7 +539,9 @@ function foldCodexEvent(
 ): void {
   if (!evt.type) return;
   if (evt.type === "session_meta" && evt.payload?.id && !state.sessionId) {
+    // FIRST session_meta only: a subagent rollout replays its parent's next.
     state.sessionId = evt.payload.id;
+    state.isSubagent = isSubagentMeta(evt.payload);
   }
   if (evt.type === "session_meta" && evt.payload?.cwd) {
     state.project = projectFromCwd(evt.payload.cwd);
@@ -601,6 +616,12 @@ function foldCodexEvent(
       outputTokens,
       cacheReadTokens: cached,
       reasoningTokens,
+      // The provider's own per-response id: the stable key for anything that
+      // must recognise the same response across scans and files.
+      ...(structured && payload.response_id ? { apiCallId: payload.response_id } : {}),
+      // Subagent cost is its own line in the signals (subagentToday); Codex
+      // knew which rollouts were subagents but never said so on the records.
+      ...(state.isSubagent ? { isSubagent: true } : {}),
     })
   );
 }

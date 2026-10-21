@@ -83,6 +83,15 @@ almost never wrong.
 A genuine shrink only happens on an explicit forced/deep rescan, which is gated
 precisely because raw transcripts age out and the relay becomes the only copy.
 
+### "I deleted a thread and today's total dropped"
+
+Since 1.17.1 it shouldn't: the daemon keeps the last usage of a file or
+database thread that disappears and counts it until midnight. If it still
+drops, check you're on 1.17.1 (`tokmeter --version`) and that the daemon was
+restarted after the upgrade, and whether the tool rewrote the file smaller
+rather than deleting it (a rewind or a deleted message), which isn't covered. What was kept is in
+`~/.cache/tokmeter/today/<date>.json`.
+
 ### A day looks short, or "may be missing usage"
 
 Since 1.17.0 the daemon checks each day after it seals. It looks for session

@@ -88,6 +88,15 @@ function seedThreadsDb(threads: ThreadFixture[]): void {
   }
 }
 
+/** Replace the fixture db, keeping the parser's baselines under tmpDir/.cache. */
+function reseed(threads: ThreadFixture[]): void {
+  rmSync(join(tmpDir, "Library", "Application Support", "Zed", "threads"), {
+    recursive: true,
+    force: true,
+  });
+  seedThreadsDb(threads);
+}
+
 describe("ZedParser", () => {
   it("decodes zstd-compressed thread data with real token counts", async () => {
     seedThreadsDb([
@@ -123,23 +132,43 @@ describe("ZedParser", () => {
     expect(r.timestamp).toBe(new Date("2026-06-01T12:00:00Z").getTime());
   });
 
-  it("attributes usage to updated_at, not created_at, for a thread reused across days", async () => {
-    // Zed preserves created_at unchanged across every save of a reused
-    // thread. Using it for the timestamp would dump the thread's entire
-    // current cumulative total onto the day it was first opened, and show
-    // $0 on every day it was actually used again.
-    seedThreadsDb([
-      {
-        id: "reused-thread",
-        summary: "Long-running refactor",
-        createdAt: "2026-01-01T09:00:00Z",
-        updatedAt: "2026-06-15T17:30:00Z",
-        cumulativeTokenUsage: { input_tokens: 500, output_tokens: 100 },
-      },
-    ]);
+  it("counts only a reused thread's growth on the day it happened, not its history", async () => {
+    // cumulative_token_usage is a running total, so emitting it whole put a
+    // long thread's entire history on every day it was touched again (and,
+    // on a fresh install, months of usage on one day). Local-midday literals:
+    // vitest and bun test run in different timezones.
+    const thread = (updatedAt: string, input: number, output: number): ThreadFixture => ({
+      id: "reused-thread",
+      summary: "Long-running refactor",
+      createdAt: "2026-01-01T12:00:00",
+      updatedAt,
+      cumulativeTokenUsage: { input_tokens: input, output_tokens: output },
+    });
+    const parser = new ZedParser();
 
-    const records = await new ZedParser().scan(tmpDir);
-    expect(records[0].timestamp).toBe(new Date("2026-06-15T17:30:00Z").getTime());
+    // First sight of an old thread: its history can't be split across the
+    // days it ran, so it counts nothing yet.
+    seedThreadsDb([thread("2026-06-15T12:00:00", 500, 100)]);
+    expect(await parser.scan(tmpDir)).toEqual([]);
+
+    // Used again the next day: only the growth, stamped on that day.
+    reseed([thread("2026-06-16T12:00:00", 800, 150)]);
+    const [r] = await parser.scan(tmpDir);
+    expect(r?.inputTokens).toBe(300);
+    expect(r?.outputTokens).toBe(50);
+    expect(r?.timestamp).toBe(new Date("2026-06-16T12:00:00").getTime());
+
+    // Rescanning the same day gives the same delta (today is replaced each
+    // tick, so it must be idempotent), and more growth that day adds to it.
+    expect((await parser.scan(tmpDir))[0]?.inputTokens).toBe(300);
+    reseed([thread("2026-06-16T18:00:00", 900, 150)]);
+    expect((await parser.scan(tmpDir))[0]?.inputTokens).toBe(400);
+
+    // A later day starts from where the previous one ended.
+    reseed([thread("2026-06-20T12:00:00", 1000, 200)]);
+    const [later] = await parser.scan(tmpDir);
+    expect(later?.inputTokens).toBe(100);
+    expect(later?.outputTokens).toBe(50);
   });
 
   it("resolves the originally-first folder, not the lexicographically-first one, for a multi-root workspace", async () => {
@@ -148,6 +177,7 @@ describe("ZedParser", () => {
         id: "multi-root",
         summary: "Multi-root workspace",
         updatedAt: "2026-06-01T12:00:00Z",
+        createdAt: "2026-06-01T11:00:00Z",
         cumulativeTokenUsage: { input_tokens: 10, output_tokens: 5 },
         // "docs" sorts before "zeta-project" lexicographically, but the user
         // opened zeta-project first (order index 0).
@@ -165,7 +195,8 @@ describe("ZedParser", () => {
       {
         id: "thread-legacy",
         summary: "Old thread",
-        updatedAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T12:00:00Z",
+        createdAt: "2026-01-01T11:00:00Z",
         model: { provider: "openai", model: "gpt-5" },
         cumulativeTokenUsage: { input_tokens: 50, output_tokens: 10 },
         compressed: false,
@@ -193,6 +224,7 @@ describe("ZedParser", () => {
         id: "no-folder",
         summary: "Scratch thread",
         updatedAt: "2026-06-01T12:00:00Z",
+        createdAt: "2026-06-01T11:00:00Z",
         cumulativeTokenUsage: { input_tokens: 10, output_tokens: 5 },
       },
     ]);

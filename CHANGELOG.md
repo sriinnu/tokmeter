@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Kimi Code (the app and its CLI).** Its sessions live in `~/.kimi-code`, one
+  `wire.jsonl` per agent, in a different format from the old Kimi CLI, so none
+  of it was counted. Each LLM call is now one record, under the session's
+  project, with subagents marked. K3 is priced from kosha as `kimi-k3`. Plan
+  aliases such as `kimi-for-coding` don't say which model served them, so their
+  tokens count but stay unpriced until kosha lists them. Days already sealed
+  pick it up with `tokmeter backfill --kimi`.
+
+### Changed
+
+- **OpenCode, Kilo and Kilo CLI models now say who served them**, as
+  `deepseek-v4.1-flash@ollama-cloud`. These tools route one model through many
+  providers, and the price differs a lot by route: DeepSeek V4.1 Flash is
+  $0.15/$0.60 per million on Ollama Cloud, $0.30/$1.19 on Alibaba and
+  $0.016/$0.89 on OpenRouter. When a tool didn't report a cost, tokmeter used
+  to price by model name alone and took whichever provider kosha matched first.
+  It now uses the serving provider's own rate, then falls back to the name-only
+  lookup. Costs the tool reported itself are unchanged. An override can name
+  the exact route (`"deepseek-v4.1-flash@ollama-cloud"`). Which upstream
+  OpenRouter picked isn't written anywhere on disk, so OpenRouter routes are
+  priced at OpenRouter's list rate. Past days keep their model names.
+
+### Fixed
+
+- **A transcript pruned by hand no longer takes its tokens out of today.** The
+  grow-only today from 1.17.1 kept a deleted file's usage, but not a file
+  rewritten smaller in place. Responses that vanish from a file that still
+  exists are now kept too, for tools whose record ids are the provider's own
+  (Claude Code, Codex, Kimi, Copilot CLI, Muse). Tools that number records by
+  position or have no ids (Cline, Roo, Kilo, Gemini, Qwen) stay file-level:
+  for them, a renumbered record would look like a lost one.
+- **A full rebuild or Deep Rescan no longer drops usage deleted during the
+  past week.** Re-deriving a day from raw used to ignore the today journal, so
+  a thread deleted before its day sealed went missing from the rebuilt day.
+- **Copilot CLI counted reasoning twice, and a session that ran past midnight
+  could be lost.** Copilot reports output OpenAI-style, with reasoning inside
+  it, and the parser added reasoning on top: on one machine that was 161K extra
+  tokens over 12 days, each matching the reasoning in the rollup exactly. It
+  also dated a whole session at its start, so a session that ended after
+  midnight landed on a day that was already sealed. Each response's output now
+  counts when it happens, and the shutdown adds the input and cache. A session
+  that never shuts down still counts its output. Totals equal Copilot's own
+  rollup. Already-sealed days keep their old numbers.
+- **Just after midnight, today showed yesterday's whole total and stayed
+  there.** The statusline and bar read today from the daemon without waiting
+  for its refresh, so the first read after midnight still had yesterday's
+  numbers, stamped with the new date. Today's high-water mark then held them
+  all day. That's what happened on 10-21 ($290.85, 10-20's total) and on
+  10-05 ($501.03, 10-04's). Display only: the sealed days were right. A read
+  of yesterday's numbers now counts as nothing yet for the new day.
+
+## [1.17.1] - 2026-10-20
+
+### Added
+
+- **Hover a model in the bar to see its full name.** Long ids were cut off
+  ("deepseek-fla…", "minimax-m3.1…") with no way to read them. A small pill
+  now shows the full id and its provider a moment after the pointer settles
+  on the row, in every theme. It's drawn over the row rather than as a
+  popover, which would take focus and close the menubar panel.
+
+### Fixed
+
+- **Deleting or archiving a thread no longer takes its tokens out of today.**
+  Today was rebuilt from the session files present on each tick, so a
+  thread deleted before midnight vanished from the day it ran in, and that
+  smaller day was what got sealed (10-14 lost 64.3M Codex tokens this way).
+  Tokmeter now keeps the last records of any file that disappears today and
+  carries them until the day seals. Shared databases (OpenCode, Kilo CLI,
+  Zed, Cursor) are carried per thread, so a session deleted inside one is
+  kept too. It survives a daemon restart, a file deleted while the daemon
+  was down, and the daemon being off at midnight (the next start seals the
+  day with what was kept, from `~/.cache/tokmeter/today/`). A file that
+  moved (a Codex archive) isn't counted twice.
+
+- **Zed and Mux no longer count a thread's history again every day it's
+  touched.** Both report a running total per thread, and tokmeter emitted the
+  whole total stamped on the latest update, so reusing a long thread on a new
+  day added its entire history to that day (and a fresh install put months of
+  usage on one day). Tokmeter now keeps each thread's total as of the start of
+  the day it's used and counts only the growth. A thread it sees for the
+  first time counts from then on, unless it was created that same day, since
+  there's no way to know how its history splits across past days. Days
+  already sealed are unchanged.
+
+- **A provider-filtered scan no longer shrinks the day.** A long-running
+  process that ran one (e.g. a `--codex` view) replaced today with just that
+  provider, and if midnight came next, the sealed day was missing the rest.
+
+- **Codex subagent work now counts as subagent work.** The "Subagents" share
+  in the bar and the signals left out every Codex subagent thread: the parser
+  knew which rollouts were subagents (it groups them for dedup) but never
+  marked their records. On a heavy multi-agent day that was most of Codex's
+  usage (63.5% of one day's Codex tokens). Totals don't change; only the
+  split does. Codex records also carry their response id now, the key later
+  work uses to recognise the same response across scans.
+
 ## [1.17.0] - 2026-10-20
 
 ### Added
