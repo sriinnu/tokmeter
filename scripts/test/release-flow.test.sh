@@ -142,6 +142,13 @@ show_out() { sed 's/^/      | /' "$GH_STATE/out"; }
 
 echo "release-flow tests"
 
+echo "• every helper is defined at top level"
+# A function defined inside a stage's block exists only when that stage runs,
+# so a resumed run that skips the stage calls "command not found" (1.18.0: the
+# appcast wait timed out three times on checks_started).
+check "no function is defined inside a block" \
+  test -z "$(grep -nE '^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{' "$SRC/scripts/release.sh")"
+
 echo "• clean run"
 sandbox clean
 if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
