@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.18.0] - 2026-10-21
 
 ### Added
 
@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   priced at OpenRouter's list rate. Past days keep their model names.
 
 ### Fixed
+
+- **`tokmeter --version` printed "latest" on Windows.** It looked for its own
+  `package.json` from a URL path (`/D:/…`), which no file lookup finds. Found
+  by the new Windows CI job, which builds tokmeter on Windows and runs the CLI
+  and MCP on Node 20. Windows is still unsupported; that job shows what
+  breaks first.
 
 - **A transcript pruned by hand no longer takes its tokens out of today.** The
   grow-only today from 1.17.1 kept a deleted file's usage, but not a file
