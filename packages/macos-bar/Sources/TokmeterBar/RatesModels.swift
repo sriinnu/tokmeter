@@ -90,10 +90,15 @@ struct Rate: Decodable {
 }
 
 struct PricingSource: Decodable {
-    /// override · kosha-exact · kosha-fuzzy · manifest · seeded · unpriced
+    /// override · kosha-exact · kosha-fuzzy · kosha-provider · manifest · seeded · unpriced
     let tier: String
     /// Registry id the price came from, when it differs from the model id.
     let matchedId: String?
+
+    /// "ollama-cloud" from a kosha-provider matchedId like "ollama-cloud:deepseek-v4.1-flash".
+    private var servingProvider: String? {
+        matchedId?.split(separator: ":", maxSplits: 1).first.map(String.init)
+    }
 
     /// Short human label for the source tag.
     var label: String {
@@ -101,6 +106,7 @@ struct PricingSource: Decodable {
         case "override": return "your override"
         case "kosha-exact": return "price catalog"
         case "kosha-fuzzy": return "catalog ≈ \(matchedId ?? "match")"
+        case "kosha-provider": return "\(servingProvider ?? "provider")'s rate"
         case "manifest": return matchedId.map { "saved catalog ≈ \($0)" } ?? "saved catalog"
         case "seeded": return "built-in rate"
         default: return "unpriced"
@@ -113,6 +119,8 @@ struct PricingSource: Decodable {
         case "kosha-exact": return "Price source: kosha, the model price catalog. It has this exact model id."
         case "kosha-fuzzy":
             return "Price source: kosha, the model price catalog. No exact id there; priced as the closest match, \(matchedId ?? "unknown"). Check it's the same model."
+        case "kosha-provider":
+            return "Price source: kosha, the model price catalog. Priced at the rate of the provider that served it, \(matchedId ?? "unknown"); the same model costs differently on other routes."
         case "manifest":
             return "Price source: kosha. Read from the saved catalog (~/.kosha/registry.json)\(matchedId.map { " as \($0)" } ?? ""); the live catalog didn't have it."
         default: return "No price anywhere: usage priced by API rates counts as $0. Add it to pricing-overrides.json to price it."

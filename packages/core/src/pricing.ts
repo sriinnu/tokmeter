@@ -81,6 +81,8 @@ export type PricingSourceTier =
   | "override"
   | "kosha-exact"
   | "kosha-fuzzy"
+  /** The serving provider's own kosha entry (a model id ending "@provider"). */
+  | "kosha-provider"
   | "manifest"
   | "seeded"
   | "unpriced";
@@ -90,6 +92,23 @@ export interface PricingSource {
   /** The registry id the price was taken from, when it differs from the
    *  requested id (fuzzy or normalized-manifest matches). */
   matchedId?: string;
+}
+
+/**
+ * A model id can name who served it: "deepseek-v4.1-flash@ollama-cloud".
+ * Tools that route one model through many providers (OpenCode and its forks)
+ * record the provider beside the model, and the same model costs several
+ * times more on one route than another. The suffix must look like a provider
+ * id (a letter first), so a Vertex-style "claude-x@20250514" date isn't one.
+ */
+export function splitServedBy(modelId: string): { model: string; servedBy?: string } {
+  const m = /^(.+)@([a-z][a-z0-9-]*)$/i.exec(modelId);
+  return m ? { model: m[1]!, servedBy: m[2]!.toLowerCase() } : { model: modelId };
+}
+
+/** `model` as served by `servedBy`, in the form splitServedBy reads back. */
+export function withServedBy(model: string, servedBy: string | undefined | null): string {
+  return servedBy ? `${model}@${servedBy.toLowerCase()}` : model;
 }
 
 // Date suffixes used by various providers for versioned model IDs.
@@ -385,6 +404,28 @@ export class PricingService {
   async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
 
+    const { model: baseModel, servedBy } = splitServedBy(modelId);
+    if (servedBy) {
+      // An override for the exact route wins, then the serving provider's own
+      // kosha entry; failing both, price it as the bare model, as before.
+      const routeOverride = this.userOverrides.get(modelId);
+      if (routeOverride) {
+        this.cache.set(modelId, routeOverride);
+        this.sources.set(modelId, { tier: "override" });
+        return routeOverride;
+      }
+      const route = this.lookupServedBy(baseModel, servedBy);
+      if (route) {
+        this.cache.set(modelId, route.pricing);
+        this.sources.set(modelId, { tier: "kosha-provider", matchedId: route.matchedId });
+        return route.pricing;
+      }
+      const bare = await this.getPricing(baseModel);
+      this.cache.set(modelId, bare);
+      this.sources.set(modelId, this.sources.get(baseModel) ?? { tier: "unpriced" });
+      return bare;
+    }
+
     // Tier 2: user-config overrides (highest priority after the cache).
     const userOverride = this.userOverrides.get(modelId);
     if (userOverride) {
@@ -525,6 +566,52 @@ export class PricingService {
       return pricing ? { pricing, matchedId: winner.modelId } : null;
     }
 
+    return null;
+  }
+
+  /**
+   * `model` from `provider`'s own entry in the saved catalog. A route's price
+   * is its `pricing` (what that provider charges); `originPricing` is the
+   * model vendor's direct rate, used only when the route lists none. Matches
+   * the id as given, then without a vendor prefix ("deepseek/…"), then
+   * without a tag (":1017"), then with dots read as hyphens.
+   */
+  private lookupServedBy(
+    model: string,
+    provider: string
+  ): { pricing: FullPricing; matchedId: string } | null {
+    const manifestModels = this.loadRegistryManifest();
+    if (!manifestModels) return null;
+    const usable = (p: ModelPricing | null | undefined): p is ModelPricing =>
+      !!p && (p.inputPerMillion ?? 0) > 0 && (p.outputPerMillion ?? 0) > 0;
+    const entries = manifestModels.filter(
+      (e) =>
+        e.providerId?.toLowerCase() === provider && (usable(e.pricing) || usable(e.originPricing))
+    );
+    if (entries.length === 0) return null;
+    // A loose form must land on the plain route, not a ":batch"/":free" variant.
+    const tagged = (e: { modelId?: string }) => (/:[^:/]+$/.test(e.modelId ?? "") ? 1 : 0);
+    entries.sort((a, b) => tagged(a) - tagged(b));
+
+    const lastSegment = (id: string) => id.slice(id.lastIndexOf("/") + 1);
+    const untagged = (id: string) => id.replace(/:[^:/]+$/, "");
+    const dashed = (id: string) => id.replace(/\./g, "-");
+    const forms: ((id: string) => string)[] = [
+      (id) => id,
+      lastSegment,
+      (id) => untagged(lastSegment(id)),
+      (id) => dashed(untagged(lastSegment(id))),
+    ];
+    const want = model.toLowerCase();
+    for (const form of forms) {
+      const target = form(want);
+      const hit = entries.find((e) => form((e.modelId ?? "").toLowerCase()) === target);
+      if (hit) {
+        const raw = usable(hit.pricing) ? hit.pricing : hit.originPricing!;
+        const pricing = this.roundPricing(raw);
+        if (pricing) return { pricing, matchedId: `${provider}:${hit.modelId}` };
+      }
+    }
     return null;
   }
 
