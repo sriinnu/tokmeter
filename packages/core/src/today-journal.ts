@@ -24,10 +24,17 @@
  * while it was down and a cold start that seals a missed day folds them in
  * ({@link carriedRecordsFor}).
  *
- * Not covered: a file rewritten smaller in place (it still exists, so it's
- * taken as it is now), a shared database whose every thread was deleted
- * (indistinguishable from unreadable), and deletions before the first
- * snapshot was ever saved.
+ * A file rewritten smaller in place (a transcript pruned by hand) still
+ * exists, so file-level carrying can't see what it lost. For providers whose
+ * record ids are the provider's own per-response ids ({@link STABLE_RECORD_IDS}),
+ * a record whose id disappears from the whole live scan is carried on its own.
+ * Parsers that number records by position (Cline, Augment's fallback) or have
+ * no id (Roo, Kilo, Gemini, Qwen) would carry a renumbered record as a lost
+ * one, so they're left file-level; they're also the ones that rewrite files.
+ *
+ * Not covered: a shrunk file from those parsers, a shared database whose every
+ * thread was deleted (indistinguishable from unreadable), and deletions before
+ * the first snapshot was ever saved.
  */
 
 import {
@@ -83,6 +90,23 @@ const NEVER_CARRIED_WITHOUT_THREAD = new Set<ProviderId>([
   "vscode-copilot",
   "codex-desktop",
 ]);
+
+/**
+ * Providers whose `apiCallId` is the provider's own id for one response
+ * (message.id, response_id, a message uuid), unchanged when the file around
+ * it is rewritten. Only these carry single records that vanish from a file
+ * that still exists.
+ */
+const STABLE_RECORD_IDS = new Set<ProviderId>([
+  "claude-code",
+  "codex",
+  "kimi",
+  "copilot-cli",
+  "muse",
+]);
+
+/** Carried-unit key for one record gone from a file that still exists. */
+const GONE = "#gone:";
 
 interface JournalFile {
   version: 1;
@@ -157,6 +181,22 @@ export function withCarried(live: TokenRecord[], carried: Iterable<TokenRecord>)
     out.push(r);
   }
   return out;
+}
+
+/** Dates that have a journal on disk, oldest first. */
+export function journalDates(homeDir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(journalDir(homeDir));
+  } catch {
+    return [];
+  }
+  const dates: string[] = [];
+  for (const name of names) {
+    const m = JOURNAL_FILE_PATTERN.exec(name);
+    if (m) dates.push(m[1]!);
+  }
+  return dates.sort();
 }
 
 /**
@@ -244,6 +284,25 @@ export class TodayJournal {
       }
     };
     diff(this.lastSeen, false);
+
+    // Records gone from a file that's still here. Only against lastSeen (this
+    // process's own parse): a restored snapshot may predate a parser upgrade
+    // that renamed ids. An id still anywhere in the live scan (a Codex fork's
+    // winner moved files) is not gone.
+    const liveIds = new Set<string>();
+    for (const r of live) if (r.apiCallId) liveIds.add(`${r.provider}|${r.apiCallId}`);
+    for (const [unit, records] of this.lastSeen) {
+      if (!liveByUnit.has(unit)) continue;
+      for (const r of records) {
+        if (!r.apiCallId || !STABLE_RECORD_IDS.has(r.provider)) continue;
+        if (liveIds.has(`${r.provider}|${r.apiCallId}`)) continue;
+        const key = `${unit}${GONE}${r.apiCallId}`;
+        if (this.carried.has(key)) continue;
+        this.carried.set(key, [r]);
+        dirty = true;
+      }
+    }
+
     if (this.restoredSeen) {
       diff(this.restoredSeen, true);
       this.restoredSeen = null;
@@ -252,6 +311,12 @@ export class TodayJournal {
     for (const unit of liveByUnit.keys()) {
       // It came back (a scan that failed for a tick, a restored file).
       if (this.carried.delete(unit)) returned.push(unit);
+    }
+    for (const [key, [r]] of this.carried) {
+      if (key.includes(GONE) && liveIds.has(`${r!.provider}|${r!.apiCallId}`)) {
+        this.carried.delete(key);
+        returned.push(key);
+      }
     }
     this.lastSeen = nextSeen;
     this.seenSavedAt ??= now;

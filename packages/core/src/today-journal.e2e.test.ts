@@ -123,6 +123,25 @@ describe("grow-only today", () => {
     expect(sealed?.totalTokens).toBe(5120);
   });
 
+  test("a full rebuild (empty relay) folds in what was deleted before the seal", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-20T12:00:00"));
+    session("kept.jsonl", "K", at("2026-10-20T11:00:00"), 100);
+    const doomed = session("doomed.jsonl", "D", at("2026-10-20T11:00:01"), 5000);
+
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+    unlinkSync(doomed);
+    await daemon.refreshToday(at("2026-10-20T12:00:12"));
+
+    // No sealed day anywhere: the next cold start rebuilds history from raw.
+    vi.setSystemTime(at("2026-10-21T09:00:00"));
+    const morning = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await morning.scan();
+    const sealed = morning.getDailyAggregates().find((d) => d.date === "2026-10-20");
+    expect(sealed?.totalTokens).toBe(5120);
+  });
+
   test("a provider-filtered scan just before midnight doesn't shrink the sealed day", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-20T23:50:00"));

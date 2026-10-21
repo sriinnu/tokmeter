@@ -31,7 +31,7 @@ import { getParsers } from "./parsers/index.js";
 import type { PriceCard } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
-import { carriedRecordsFor, withCarried } from "./today-journal.js";
+import { carriedRecordsFor, journalDates, withCarried } from "./today-journal.js";
 import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface RelayState {
@@ -187,6 +187,23 @@ async function foldRawIntoDays(
 ): Promise<Map<string, DailyAggregate>> {
   const todayKey = localDateKey(referenceTimestamp);
   const dayAccs = new Map<string, DailyAccumulator>();
+  // Days with a today-journal (the last week) may have had threads deleted
+  // before they sealed. Raw no longer has those, so keep these days' raw
+  // records to fold the journal's carried ones in after, minus duplicates.
+  const journaled = new Set(journalDates(ctx.homeDir).filter((d) => d < todayKey));
+  const journaledRaw: TokenRecord[] = [];
+
+  const foldOne = (r: TokenRecord): void => {
+    if (floorMs !== undefined && r.timestamp < floorMs) return; // outside the window
+    if (!isBeforeToday(r.timestamp, referenceTimestamp)) return; // never seal today
+    const key = localDateKey(r.timestamp);
+    let acc = dayAccs.get(key);
+    if (!acc) {
+      acc = new DailyAccumulator(key);
+      dayAccs.set(key, acc);
+    }
+    acc.fold(r);
+  };
 
   const foldFile = async (records: TokenRecord[]): Promise<void> => {
     if (records.length === 0) return;
@@ -198,15 +215,8 @@ async function foldRawIntoDays(
       }
     }
     for (const r of records) {
-      if (floorMs !== undefined && r.timestamp < floorMs) continue; // outside the window
-      if (!isBeforeToday(r.timestamp, referenceTimestamp)) continue; // never seal today
-      const key = localDateKey(r.timestamp);
-      let acc = dayAccs.get(key);
-      if (!acc) {
-        acc = new DailyAccumulator(key);
-        dayAccs.set(key, acc);
-      }
-      acc.fold(r);
+      if (journaled.has(localDateKey(r.timestamp))) journaledRaw.push(r);
+      foldOne(r);
     }
   };
 
@@ -238,6 +248,22 @@ async function foldRawIntoDays(
         provider: parser.providerId,
         message: `${parser.providerId} rebuild failed — skipped (${toErrorMessage(error)}).`,
       });
+    }
+  }
+
+  if (journaled.size > 0) {
+    const carried: TokenRecord[] = [];
+    for (const date of journaled) carried.push(...carriedRecordsFor(ctx.homeDir, date));
+    const extra = withCarried(journaledRaw, carried).slice(journaledRaw.length);
+    if (extra.length > 0) {
+      if (!ctx.skipPricing) {
+        try {
+          await enrichCosts(extra, ctx.pricing, "history", warnings, undefined, cardFor);
+        } catch (error) {
+          warnings.push({ scope: "history", message: `Pricing failed: ${toErrorMessage(error)}` });
+        }
+      }
+      for (const r of extra) foldOne(r);
     }
   }
 
