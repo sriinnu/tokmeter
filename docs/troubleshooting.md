@@ -86,8 +86,31 @@ Since 1.17.1 it shouldn't: the daemon keeps the last usage of a file or
 database thread that disappears and counts it until midnight. If it still
 drops, check you're on 1.17.1 (`tokmeter --version`) and that the daemon was
 restarted after the upgrade, and whether the tool rewrote the file smaller
-rather than deleting it (a rewind or a deleted message), which isn't covered. What was kept is in
+rather than deleting it (a rewind or a deleted message). Since 1.18.0 that's
+covered for Claude Code, Codex, Kimi, Copilot CLI and Muse, not for Cline,
+Roo, Kilo, Gemini or Qwen. What was kept is in
 `~/.cache/tokmeter/today/<date>.json`.
+
+### "My OpenCode models have `@ollama-cloud` (or another provider) on them"
+
+Since 1.18.0, OpenCode, Kilo and Kilo CLI models name the provider that
+served them, because one model costs very differently per route. It's
+the `providerID` OpenCode itself recorded. Days before 1.18.0 keep the plain
+model names, so a model's history splits at the upgrade.
+
+### "Kimi Code shows tokens but $0 for kimi-for-coding"
+
+`kimi-for-coding` is the Kimi Code plan's alias; the session files don't say
+which model served it, so there's no rate to price it with and it shows as
+unpriced rather than guessed. K3 (`kimi-code/k3`) is priced. To price the
+alias with rates you choose, add it to `~/.tokmeter/pricing-overrides.json`
+(the rates below are Kimi K2.7 Code's, as an example):
+
+```json
+{ "kimi-for-coding": { "inputPerMillion": 0.95, "outputPerMillion": 4, "cacheReadPerMillion": 0.19 } }
+```
+
+That reprices today; days already sealed keep the $0 they were sealed with.
 
 ### A day looks short, or "may be missing usage"
 
