@@ -103,6 +103,15 @@ export {
   projectNameIncludes,
   projectNamesMatch,
 } from "./project-name.js";
+export type { QuotaAgent, QuotaSample, QuotaVerdict, QuotaWindow } from "./quota.js";
+export {
+  claudeCodeQuota,
+  getQuota,
+  quotaWindows,
+  readCodexQuota,
+  recordQuotaSamples,
+  windowLabel,
+} from "./quota.js";
 export { UnsafeArchiveError } from "./restore-guard.js";
 export * from "./session-health.js";
 export { computeStatbarSignals } from "./signals.js";

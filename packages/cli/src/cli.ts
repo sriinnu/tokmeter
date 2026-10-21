@@ -58,7 +58,8 @@ interface CliArgs extends ScanOptions {
     | "update"
     | "refresh"
     | "backfill"
-    | "coverage";
+    | "coverage"
+    | "quota";
   /** For `coverage`: the local day to check (YYYY-MM-DD); default yesterday. */
   date?: string;
   /** For `backfill`: how many recent sealed days to recompute into the relay. */
@@ -282,6 +283,9 @@ Commands:
   coverage        Session files that changed on a day but fed no record:
                   usage the parsers are missing. --date D (default
                   yesterday). The daemon runs it after each day seals.
+  quota           Plan windows per agent (Codex weekly, Claude Code 5h
+                  and 7d): used %, reset time, and whether the current
+                  pace runs out before the reset
 
 Live & Daemon:
   live            Start live TUI dashboard (from tokmeter-mcp)
@@ -417,6 +421,9 @@ Output:
         break;
       case "coverage":
         args.command = "coverage";
+        break;
+      case "quota":
+        args.command = "quota";
         break;
       case "backfill":
         args.command = "backfill";
@@ -1112,6 +1119,58 @@ async function main() {
       "\nIf these are real sessions, please open an issue with the folder layout: https://github.com/sriinnu/tokmeter/issues/new?template=agent_support.yml\n"
     );
     process.exitCode = 2;
+    return;
+  }
+
+  if (args.command === "quota") {
+    const { getQuota } = await import("@sriinnu/tokmeter");
+    const windows = await getQuota(homedir());
+    if (args.json) {
+      console.log(JSON.stringify({ windows }, null, 2));
+      return;
+    }
+    if (windows.length === 0) {
+      console.log(
+        "No plan windows seen yet. Codex reports them in its session files; Claude Code only to the tokmeter statusline."
+      );
+      return;
+    }
+    const when = (sec: number) =>
+      new Date(sec * 1000).toLocaleString(undefined, {
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    const ago = (ms: number) => {
+      const m = Math.round((Date.now() - ms) / 60_000);
+      return m < 60
+        ? `${m}m ago`
+        : m < 2880
+          ? `${Math.round(m / 60)}h ago`
+          : `${Math.round(m / 1440)}d ago`;
+    };
+    console.log();
+    for (const w of windows) {
+      const pace = (w.recentPctPerHour ?? w.avgPctPerHour).toFixed(1);
+      const verdict =
+        w.verdict === "expired"
+          ? "window has reset since the last reading"
+          : w.verdict === "at-limit"
+            ? `at the limit until ${when(w.resetsAt)}`
+            : w.verdict === "hits-limit" && w.hitsLimitAt
+              ? `at ${pace}%/h you hit 100% ${when(w.hitsLimitAt)}, before the reset`
+              : `at ${pace}%/h it resets first`;
+      console.log(
+        `  ${w.agent.padEnd(12)} ${w.window.padEnd(3)} ${`${w.usedPct.toFixed(0)}%`.padStart(4)}  resets ${when(w.resetsAt)}  ${verdict}`
+      );
+      const extra = [
+        `read ${ago(w.sampledAt)}`,
+        ...(w.plan ? [`plan ${w.plan}`] : []),
+        ...(w.creditsBalance !== undefined ? [`${w.creditsBalance.toFixed(0)} credits`] : []),
+      ];
+      console.log(`  ${"".padEnd(17)}${extra.join(" · ")}`);
+    }
+    console.log();
     return;
   }
 

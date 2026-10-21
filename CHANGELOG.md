@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Plan quota: `tokmeter quota` and `/api/quota`.** Codex writes its weekly
+  window (used %, reset time, credit balance) into every rollout and tokmeter
+  ignored it; Claude Code hands its 5-hour and 7-day windows to the statusline
+  and writes them nowhere. Both are now kept under `~/.cache/tokmeter/quota/`,
+  and each window shows its pace and whether that pace reaches 100% before the
+  reset. Codex is read from the tails of its newest rollouts, never a rescan.
+  A Codex window's reading is the highest seen, because parallel threads
+  sometimes report a snapshot 1% behind.
+
 ## [1.18.0] - 2026-10-21
 
 ### Added
