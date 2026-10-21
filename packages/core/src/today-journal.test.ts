@@ -325,3 +325,77 @@ describe("TodayJournal", () => {
     expect(got.map((r) => r.apiCallId).sort()).toEqual(["ra", "resp_b1"]);
   });
 });
+
+describe("TodayJournal: a file rewritten smaller in place", () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-journal-shrunk-"));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  // Distinct times, like real responses: identical records share a fingerprint.
+  const c = (id: string, extra: Partial<TokenRecord> = {}) =>
+    rec({
+      provider: "claude-code",
+      sourceFile: "/p/s.jsonl",
+      apiCallId: id,
+      timestamp: NOON + Number(id.replace(/\D/g, "")) * 1000,
+      ...extra,
+    });
+
+  test("a response pruned from a transcript stays in today", () => {
+    const j = new TodayJournal(home);
+    j.reconcile([c("msg_1"), c("msg_2"), c("msg_3")], NOON + 5000);
+    const after = j.reconcile([c("msg_1")], NOON + 17000);
+    expect(after.map((r) => r.apiCallId).sort()).toEqual(["msg_1", "msg_2", "msg_3"]);
+    expect(sum(after)).toBe(330);
+  });
+
+  test("it survives a restart once saved, and the file later vanishing", () => {
+    const j = new TodayJournal(home);
+    j.reconcile([c("msg_1"), c("msg_2")], NOON + 5000);
+    j.reconcile([c("msg_1")], NOON + 17000);
+    const restarted = new TodayJournal(home);
+    expect(sum(restarted.reconcile([c("msg_1")], NOON + 60000))).toBe(220);
+    expect(sum(restarted.reconcile([], NOON + 72000))).toBe(220);
+  });
+
+  test("a response that moved to another file (a Codex fork's winner) isn't gone", () => {
+    const j = new TodayJournal(home);
+    const x = rec({ sourceFile: "/codex/a.jsonl", apiCallId: "resp_x" });
+    const y = rec({ sourceFile: "/codex/a.jsonl", apiCallId: "resp_y" });
+    j.reconcile([x, y], NOON + 5000);
+    const after = j.reconcile([x, { ...y, sourceFile: "/codex/b.jsonl" }], NOON + 17000);
+    expect(after).toHaveLength(2);
+  });
+
+  test("a pruned response that comes back is counted once", () => {
+    const j = new TodayJournal(home);
+    j.reconcile([c("msg_1"), c("msg_2")], NOON + 5000);
+    j.reconcile([c("msg_1")], NOON + 17000);
+    const back = j.reconcile([c("msg_1"), c("msg_2", { outputTokens: 50 })], NOON + 29000);
+    expect(back).toHaveLength(2);
+    expect(sum(back)).toBe(260); // the live, grown copy; not the carried one too
+    expect(j.carriedFiles()).toEqual([]);
+  });
+
+  test("positional ids (Cline) are not carried: a renumbered record isn't a lost one", () => {
+    const j = new TodayJournal(home);
+    const cl = (n: number, out: number) =>
+      rec({ provider: "cline", sourceFile: "/cl/ui.json", apiCallId: `t#${n}`, outputTokens: out });
+    j.reconcile([cl(0, 10), cl(1, 20), cl(2, 30)], NOON + 5000);
+    // Message 1 deleted: what was #2 is now #1.
+    const after = j.reconcile([cl(0, 10), cl(1, 30)], NOON + 17000);
+    expect(after).toHaveLength(2);
+  });
+
+  test("a restart doesn't diff records against the snapshot (ids may have been renamed)", () => {
+    const j = new TodayJournal(home);
+    j.reconcile([c("msg_1"), c("msg_2")], NOON + 5000);
+    // Force a seen snapshot to disk.
+    j.reconcile([c("msg_1"), c("msg_2")], NOON + 6 * 60_000);
+    const upgraded = new TodayJournal(home);
+    const renamed = [c("new_1"), c("new_2")];
+    expect(upgraded.reconcile(renamed, NOON + 7 * 60_000)).toHaveLength(2);
+  });
+});

@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A transcript pruned by hand no longer takes its tokens out of today.** The
+  grow-only today from 1.17.1 kept a deleted file's usage, but not a file
+  rewritten smaller in place. Responses that vanish from a file that still
+  exists are now kept too, for tools whose record ids are the provider's own
+  (Claude Code, Codex, Kimi, Copilot CLI, Muse). Tools that number records by
+  position or have no ids (Cline, Roo, Kilo, Gemini, Qwen) stay file-level:
+  for them, a renumbered record would look like a lost one.
+- **A full rebuild or Deep Rescan no longer drops usage deleted during the
+  past week.** Re-deriving a day from raw used to ignore the today journal, so
+  a thread deleted before its day sealed went missing from the rebuilt day.
 - **Copilot CLI counted reasoning twice, and a session that ran past midnight
   could be lost.** Copilot reports output OpenAI-style, with reasoning inside
   it, and the parser added reasoning on top: on one machine that was 161K extra
