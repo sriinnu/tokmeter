@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Kimi Code (the app and its CLI).** Its sessions live in `~/.kimi-code`, one
+  `wire.jsonl` per agent, in a different format from the old Kimi CLI, so none
+  of it was counted. Each LLM call is now one record, under the session's
+  project, with subagents marked. K3 is priced from kosha as `kimi-k3`. Plan
+  aliases such as `kimi-for-coding` don't say which model served them, so their
+  tokens count but stay unpriced until kosha lists them. Days already sealed
+  pick it up with `tokmeter backfill --kimi`.
+
 ### Fixed
 
 - **Just after midnight, today showed yesterday's whole total and stayed
