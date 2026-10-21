@@ -26,6 +26,8 @@ Tokmeter never trusts a single in-memory pass. It composes on-disk stores under
 | Store | Path | Holds | Job |
 |---|---|---|---|
 | **Relay** | `aggregates/YYYY-MM-DD.json` | one sealed, immutable per-day rollup (totals + per-model/project/provider buckets + a 24-slot intraday `costByHour` curve + the rates each model was billed at, `prices`) | the history source of truth; months of history in a few MB |
+| **Today journal** | `today/YYYY-MM-DD.json` | the last records of every session file (or database thread) that vanished today, plus a snapshot of what was seen, saved every 5 minutes | keeps a deleted or archived thread in the day it ran in, across restarts and a daemon that was down at midnight |
+| **Running-total baselines** | `cumulative-baselines.json` | per Zed thread / Mux session, its running total at the start of the day it was last used | turns a running total into that day's growth |
 | **Coverage reports** | `coverage/YYYY-MM-DD.json` | session files that changed on a sealed day, carry usage, and fed no record | the morning-after check that a day isn't missing a source |
 | **Record cache** | `scan-cache.json` | parsed `TokenRecord[]` per source file, keyed by `(path, mtime, size)` | skip re-parsing unchanged session files (used by Claude Code's append-offset reads; Codex streams and does not cache) |
 | **Summary cache** | `summary-cache.json` | the last computed summary payload | offline fallback for readers when the daemon is down - **not** a reason to re-scan |
@@ -59,6 +61,17 @@ How the code enforces it:
   `refreshTodayAccumulator` freezes the outgoing day into the relay (deduping
   any late "straggler" records via fingerprint), so the day survives even if its
   raw JSONL is later deleted.
+- **Today only grows (since 1.17.1).** Today is re-read every tick from the
+  files present now, so a thread deleted before midnight used to fall out of
+  its day, and the smaller day was what sealed. `TodayJournal`
+  (`today-journal.ts`) keeps each file's last records and carries a vanished
+  file's records until the seal. Shared databases (OpenCode, Kilo CLI, Zed,
+  Cursor) carry per thread, keyed by `threadKey`, and only when the database
+  was actually read that tick. A carried record is dropped when the live scan
+  still has it (same response id, thread or fingerprint), so an archive move
+  isn't counted twice. codex-desktop is never carried. The journal is on
+  disk, so a restart keeps it, and the cold-start gap fill folds it in when
+  the daemon missed midnight.
 - **Gap-fill, bounded.** On cold start `refreshFromRelay` loads the sealed days
   and, if the newest on-disk day is older than yesterday, fills only the
   *trailing gap* from raw - it never re-parses interior days (a day the user
