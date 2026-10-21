@@ -110,6 +110,22 @@ remote_tag_commit() {
 pr_field() {  # pr_field <branch> <json field> — empty when there is no PR
   gh pr view "$1" --repo "$REPO" --json "$2" -q ".$2" 2>/dev/null || true
 }
+pr_open() { [[ "$(pr_field "$1" state)" == "OPEN" ]]; }
+# Right after a PR opens CI hasn't registered yet, and `gh pr checks` reports
+# "no checks" as a failure, so callers wait for rows to appear before watching.
+# Capture the output first: under pipefail, `! gh … | grep -q` inverts gh's own
+# non-zero exit and reports "started" before any check exists (1.13.0).
+# Top level, not inside stage 6: a resumed run that skips stage 6 still needs
+# it for the appcast PR (1.18.0 timed out three times on "command not found").
+checks_started() {
+  # Started means gh listed at least one check row ("name<TAB>state<TAB>...").
+  # Anything else — no checks yet, no PR yet, or a gh auth/network error — is
+  # "not started", so wait_for keeps polling and times out loudly instead of
+  # printing a false ✓.
+  local out
+  out="$(gh pr checks "$1" --repo "$REPO" 2>&1)" || true
+  printf '%s\n' "$out" | grep -qE $'^[^\t]+\t(pass|fail|pending|skipping|cancel)'
+}
 # The files bump-version.sh writes. A dirty tree made of only these, already
 # at VERSION, is a bump an earlier run applied before it died.
 BUMP_FILES_RE='^(CHANGELOG\.md|README\.md|bun\.lock|packages/[^/]+/package\.json|packages/macos-bar/bundle\.sh|packages/mcp/server\.json)$'
@@ -209,18 +225,7 @@ if [[ -z "$merged" ]]; then
     *) die "the PR for ${branch} is $(pr_field "$branch" state) — reopen it or cut a fresh branch." ;;
   esac
   # Right after PR creation CI hasn't registered yet, and `gh pr checks` reports
-  # "no checks" as a failure; wait for them to appear before watching. Capture
-  # the output first: under pipefail, `! gh … | grep -q` inverts gh's own
-  # non-zero exit and reports "started" before any check exists (1.13.0).
-  checks_started() {
-    # Started means gh listed at least one check row ("name<TAB>state<TAB>...").
-    # Anything else — no checks yet, no PR yet, or a gh auth/network error — is
-    # "not started", so wait_for keeps polling and times out loudly instead of
-    # printing a false ✓.
-    local out
-    out="$(gh pr checks "$1" --repo "$REPO" 2>&1)" || true
-    printf '%s\n' "$out" | grep -qE $'^[^\t]+\t(pass|fail|pending|skipping|cancel)'
-  }
+  # "no checks" as a failure; wait for them to appear before watching.
   wait_for "CI checks to start" 300 checks_started "$branch"
   run "gh pr checks '${branch}' --repo '${REPO}' --watch --fail-fast"
   confirm "Squash-merge the release PR to main?" || die "merge declined — nothing tagged or published. Rerun to resume."
@@ -338,8 +343,7 @@ if [[ $DRY -eq 1 ]]; then
 elif appcast_on_main; then
   skip "appcast on main lists ${VERSION}"
 else
-  appcast_pr_open() { [[ "$(pr_field "$appcast" state)" == "OPEN" ]]; }
-  wait_for "the appcast PR (${appcast})" 600 appcast_pr_open
+  wait_for "the appcast PR (${appcast})" 600 pr_open "$appcast"
   if ! checks_started "$appcast"; then
     gh pr close "$appcast" --repo "$REPO" >/dev/null
     gh pr reopen "$appcast" --repo "$REPO" >/dev/null
