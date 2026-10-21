@@ -20,6 +20,13 @@ reprices when the catalog updates (since 1.15.0, also when your
 `pricing-overrides.json` changes). Lifetime totals mix pricing eras — prefer
 `today`/`week`/`month` for a number shown to a human.
 
+**If I delete or archive a thread, do I lose its usage?**
+Not since 1.17.1. The day it ran in keeps it: the daemon remembers the last
+usage of a session that disappears (including a session deleted inside
+OpenCode's, Zed's or Cursor's database) and counts it until the day seals,
+even across a restart. Archiving isn't counted twice. Sealed days were already
+safe, since they're stored by tokmeter, not read from your agents' files.
+
 **Which agents are supported?**
 20+ formats, including Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Amp,
 Muse, Cline, Augment, Copilot CLI, Kimi, Qwen, Roo, Kilo, Droid, Zed, and more.
