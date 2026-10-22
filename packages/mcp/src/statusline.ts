@@ -13,9 +13,14 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { getKoshaRegistryMtime, localDateKey } from "@sriinnu/tokmeter";
+import {
+  claudeCodeQuota,
+  getKoshaRegistryMtime,
+  localDateKey,
+  recordQuotaSamples,
+} from "@sriinnu/tokmeter";
 import type { TokenUsage } from "./daemon/protocol.js";
 import { C, FALLBACK_STATUSLINE } from "./formatter.js";
 import {
@@ -648,6 +653,12 @@ export async function runStatusline(): Promise<void> {
         // fill % from partial data.
         ctxUsed > 0 && ctxMax > 0 ? { usedTokens: ctxUsed, maxTokens: ctxMax } : undefined
       );
+    } catch {}
+
+    // Claude Code hands its plan windows to this command and writes them
+    // nowhere else; keep them so /api/quota and the bar can show them.
+    try {
+      recordQuotaSamples(homedir(), claudeCodeQuota(input.rate_limits, now));
     } catch {}
 
     // ── Render ──
