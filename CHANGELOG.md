@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset. Codex is read from the tails of its newest rollouts, never a rescan.
   A Codex window's reading is the highest seen, because parallel threads
   sometimes report a snapshot 1% behind.
+- **Plan quota in the menubar bar.** A Plan quota section at the top of the
+  popover shows each window's used %, when it resets, and, in amber, when the
+  current pace hits 100% before the reset. A tick on each bar marks where an
+  even pace would be by now, so a fill past it is spending faster than the
+  window lasts.
 
 ## [1.18.0] - 2026-10-21
 

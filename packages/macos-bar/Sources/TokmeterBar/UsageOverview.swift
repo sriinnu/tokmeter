@@ -21,6 +21,7 @@ struct UsageOverview: View {
         // and the signal that the style should omit its own chevron.
         let customDisclosure = theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme)
         VStack(alignment: .leading, spacing: 16) {
+            QuotaSection(windows: loader.quotaWindows, theme: theme)
             if !loader.topModels.isEmpty || !loader.todayModels.isEmpty || loader.isWarming {
                 ModelsSection(loader: loader, theme: theme, showRates: showRates)
             }
