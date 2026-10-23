@@ -42,13 +42,13 @@ export function ModelCostChart({ models }: Props) {
         font: { color: webTheme.text.primary, size: titleFontSize },
       },
       xaxis: {
-        title: "Model",
+        title: { text: "Model" },
         tickangle: -45,
         gridcolor: webTheme.charts.grid,
         color: webTheme.charts.axis,
       },
       yaxis: {
-        title: "Cost ($)",
+        title: { text: "Cost ($)" },
         rangemode: "tozero",
         gridcolor: webTheme.charts.grid,
         color: webTheme.charts.axis,

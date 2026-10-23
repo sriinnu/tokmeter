@@ -74,7 +74,7 @@ export function View3DPage() {
             type: "surface",
             colorscale: webTheme.charts.heatmapScale,
             showscale: true,
-            colorbar: { title: "Tokens" },
+            colorbar: { title: { text: "Tokens" } },
           },
         ],
         layout: {
@@ -86,10 +86,18 @@ export function View3DPage() {
             },
           },
           scene: {
-            xaxis: { title: "Day", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
-            yaxis: { title: "Week", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+            xaxis: {
+              title: { text: "Day" },
+              gridcolor: webTheme.charts.grid,
+              color: webTheme.charts.axis,
+            },
+            yaxis: {
+              title: { text: "Week" },
+              gridcolor: webTheme.charts.grid,
+              color: webTheme.charts.axis,
+            },
             zaxis: {
-              title: "Tokens",
+              title: { text: "Tokens" },
               gridcolor: webTheme.charts.grid,
               color: webTheme.charts.axis,
             },

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Dependencies brought past every open advisory; `bun audit` is clean.**
+  `@sriinnu/tokmeter-mcp` shipped `qs`, `body-parser`, `proxy-addr`,
+  `ip-address` and `fast-uri` versions with known DoS, IP-spoofing and SSRF
+  advisories, all under the MCP SDK's express stack. tokmeter serves MCP over
+  stdio and the daemon binds localhost, so none was reachable, but they're
+  now at fixed versions. The web dashboard moves from plotly 2 to 4, which
+  drops the map engine with a critical XSS advisory from its bundle; its
+  axis titles move to the `{ text }` form plotly 3 requires.
+
 ## [1.19.0] - 2026-10-22
 
 ### Added

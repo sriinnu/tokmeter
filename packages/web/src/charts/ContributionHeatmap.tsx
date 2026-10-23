@@ -69,7 +69,7 @@ export function ContributionHeatmap({ daily }: Props) {
         type: "heatmap",
         colorscale: webTheme.charts.heatmapScale,
         showscale: true,
-        colorbar: { title: "Tokens" },
+        colorbar: { title: { text: "Tokens" } },
         xgap: 4,
         ygap: 4,
         hovertemplate: "%{text}<extra></extra>",

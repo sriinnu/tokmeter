@@ -62,12 +62,16 @@ export function ModelsPage() {
           },
           barmode: "stack",
           xaxis: {
-            title: "Model",
+            title: { text: "Model" },
             tickangle: -45,
             gridcolor: webTheme.charts.grid,
             color: webTheme.charts.axis,
           },
-          yaxis: { title: "Tokens", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+          yaxis: {
+            title: { text: "Tokens" },
+            gridcolor: webTheme.charts.grid,
+            color: webTheme.charts.axis,
+          },
           margin: { b: 120 },
           paper_bgcolor: "transparent",
           plot_bgcolor: "transparent",

@@ -19,7 +19,6 @@
     "build:mcp": "cd packages/mcp && bun run build",
     "build:tokmeter": "cd packages/tokmeter && bun run build",
     "ensure:tokmeter": "bash scripts/ensure-tokmeter.sh",
-
     "cli": "cd packages/cli && bun src/cli.ts",
     "cli:models": "cd packages/cli && bun src/cli.ts models",
     "cli:daily": "cd packages/cli && bun src/cli.ts daily",
@@ -27,58 +26,50 @@
     "cli:stats": "cd packages/cli && bun src/cli.ts stats",
     "cli:digest": "cd packages/cli && bun src/cli.ts digest",
     "cli:pricing": "cd packages/cli && bun src/cli.ts pricing",
-
     "tui": "cd packages/tui && bun src/index.tsx",
-
     "dev:web": "cd packages/web && bun run dev",
     "build:web:preview": "cd packages/web && bun run preview",
-
     "mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts",
     "mcp:live": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts live",
     "mcp:serve": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts serve",
     "mcp:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts statusline",
-
     "daemon:start": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon start",
     "daemon:stop": "cd packages/mcp && bun src/cli.ts daemon stop",
     "daemon:status": "cd packages/mcp && bun src/cli.ts daemon status",
     "daemon:restart": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon restart",
     "daemon:install-agent": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts daemon install-agent",
     "daemon:uninstall-agent": "cd packages/mcp && bun src/cli.ts daemon uninstall-agent",
-
     "install:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-statusline",
     "install:mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts install-mcp",
     "uninstall:statusline": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts uninstall-statusline",
     "uninstall:mcp": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts uninstall-mcp",
     "list:editors": "bun run ensure:tokmeter && cd packages/mcp && bun src/cli.ts editors",
-
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "fix": "biome check --write . && biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-
     "bar": "cd packages/macos-bar && ./bundle.sh",
     "bar:build": "cd packages/macos-bar && ./bundle.sh --no-install",
     "bar:signed": "cd packages/macos-bar && set -a && . ./.env && set +a && ./bundle.sh --signed",
     "bar:release": "cd packages/macos-bar && set -a && . ./.env && set +a && ./bundle.sh --release",
     "bar:publish": "cd packages/macos-bar && ./publish.sh",
     "bar:ship": "bun run clean && bun run bar:release && bun run bar:publish",
-
     "bump": "bash scripts/bump-version.sh",
     "release": "bash scripts/release.sh",
     "check:secrets": "bash scripts/check-no-secrets.sh",
     "brew:cask": "bash scripts/update-brew-cask.sh",
-
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo packages/macos-bar/.build packages/macos-bar/*.app packages/macos-bar/*.zip packages/macos-bar/*.dSYM packages/macos-bar/*.dSYM.zip && find packages -path '*/src/*' \\( -name '*.js' -o -name '*.d.ts' \\) -delete 2>/dev/null; true"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "~2.5.15",
     "vitest": "^4.1.12"
   },
   "overrides": {
     "postcss": "^8.5.29",
     "nanoid": "^3.3.12",
-    "source-map-js": "^1.2.2"
+    "source-map-js": "^1.2.2",
+    "qs": "^6.16.1"
   }
 }
