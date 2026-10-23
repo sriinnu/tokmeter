@@ -54,6 +54,18 @@ The default command launches a terminal UI, so the MCP entry point is the
 `serve` subcommand. On macOS, `tokmeter-mcp daemon install-agent` installs a
 launchd LaunchAgent so the daemon auto-starts at login and respawns on crash.
 
+After upgrading to 1.19.2, restart the daemon so its protected HTTP and
+WebSocket listeners replace the older process:
+
+```sh
+tokmeter-mcp daemon restart
+tokmeter-mcp daemon status
+```
+
+The token is created under `~/.tokmeter/daemon/`; keep that directory private.
+Existing Tokmeter settings and caches are tightened to owner-only permissions
+as the new version uses them. No provider credentials are needed.
+
 ## macOS menubar app
 
 Apple silicon, macOS 14+.

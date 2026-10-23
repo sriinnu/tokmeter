@@ -177,6 +177,13 @@ of truth. Every consumer - the macOS bar, the statusline, MCP tools - is a thin
 **reader** of the daemon over its local HTTP API. Nothing else scans the corpus
 on its own.
 
+Since 1.19.2, `/api/ready` is the only anonymous HTTP route. Every private
+read and WebSocket upgrade requires the owner's token from
+`~/.tokmeter/daemon/daemon.token`; localhost binding alone does not separate
+OS accounts. Consumers read the token at request time so daemon restarts can
+rotate it. The browser dashboard uses its own session cookie and a local proxy,
+so the daemon token never enters browser JavaScript.
+
 Why: scanning is expensive and memory-heavy. If each of N sessions × each refresh
 tick spawns its own scan, the machine drowns in concurrent multi-GB processes
 (this is what caused macOS memory-pressure reboots). One warm daemon reading once

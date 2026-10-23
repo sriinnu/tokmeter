@@ -27,8 +27,13 @@ from your client's tool-approval UI, not from inside the server. See
 ## Daemon HTTP
 
 `tokmeter-mcp daemon start` runs a warm core so repeated reads never re-scan the
-corpus. Read-only JSON on `127.0.0.1:9877` (WebSocket `9876` is for live session
-registration, not queries):
+corpus. HTTP listens on `127.0.0.1:9877`; WebSocket `9876` accepts live session
+registration. Since 1.19.2, both private HTTP reads and WebSocket upgrades
+require the owner's bearer token from `~/.tokmeter/daemon/daemon.token` (directory
+mode 0700, file mode 0600 on macOS/Linux). `/api/ready` is the only public
+health check. Localhost binding alone does not isolate one OS account from
+another. The CLI, statusline and menubar read the token at use time; custom
+clients must do the same and must not log it.
 
 | Endpoint | Returns |
 | --- | --- |
@@ -36,6 +41,7 @@ registration, not queries):
 | `/api/quick` | Lifetime totals + live signals — cheapest poll |
 | `/api/today` | Today's totals and per-project split |
 | `/api/summary` | The full `TokmeterSummary` |
+| `/api/live` | Current bounded live aggregate |
 | `/api/stats`, `/api/daily`, `/api/models`, `/api/providers`, `/api/projects`, `/api/sessions` | Scoped aggregates |
 | `/api/statbar-signals` | Burn rate, cache hit, pace, billing window |
 | `/api/coverage` | The last week's coverage reports: session files that changed on a sealed day and fed no usage (1.17.0+) |

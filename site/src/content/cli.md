@@ -33,7 +33,12 @@ tokmeter cleanup --project app --until 2026-10-04             # prompts for DELE
 
 Cleanup always writes a `.tar.gz` backup to `~/.cache/tokmeter/backups/` before
 deleting (no `--no-backup` flag). `--force` skips the prompt, not the backup.
-`--dry-run` deletes nothing. See
+`--dry-run` deletes nothing. Since 1.19.2, each backup has a unique ID even if
+two are made in the same second; the archive is validated and synced before
+cleanup can remove source files. Restore refuses symlinked destination parents
+and archives that exceed its entry, expanded-size or free-space limits. A
+configured external path through a symlink may therefore need a direct path
+before restoring. See
 [Backup, snapshot & restore](https://github.com/sriinnu/tokmeter/blob/main/docs/backup-restore.md).
 
 > **Scope cleanup to `--until` yesterday or older.** Sealed past days live in the
