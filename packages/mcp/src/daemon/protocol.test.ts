@@ -18,13 +18,17 @@ test("daemon clients read only an owner-private canonical token", () => {
   writeFileSync(tokenFile, "a".repeat(64), { mode: 0o600 });
   expect(daemonAuthHeader(tokenFile, dir)).toBe(`Bearer ${"a".repeat(64)}`);
 
-  chmodSync(tokenFile, 0o644);
-  expect(daemonAuthHeader(tokenFile, dir)).toBeNull();
-  chmodSync(tokenFile, 0o600);
-  chmodSync(dir, 0o755);
-  expect(daemonAuthHeader(tokenFile, dir)).toBeNull();
-  chmodSync(dir, 0o700);
+  if (process.platform !== "win32") {
+    chmodSync(tokenFile, 0o644);
+    expect(daemonAuthHeader(tokenFile, dir)).toBeNull();
+    chmodSync(tokenFile, 0o600);
+    chmodSync(dir, 0o755);
+    expect(daemonAuthHeader(tokenFile, dir)).toBeNull();
+    chmodSync(dir, 0o700);
+  }
 
+  // Creating symlinks on Windows can require privileges the test runner lacks.
+  if (process.platform === "win32") return;
   const link = join(dir, "link.token");
   symlinkSync(tokenFile, link);
   expect(daemonAuthHeader(link, dir)).toBeNull();

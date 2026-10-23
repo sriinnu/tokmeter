@@ -19,5 +19,9 @@ test("CLI fast path requires a private token, otherwise it can scan locally", ()
   writeFileSync(token, "b".repeat(64), { mode: 0o600 });
   expect(daemonReadAuthorization(home)).toBe(`Bearer ${"b".repeat(64)}`);
   chmodSync(token, 0o644);
-  expect(daemonReadAuthorization(home)).toBeNull();
+  // Windows relies on the user-profile ACL; POSIX permission bits are not an
+  // access-control signal there, and chmod may not change them.
+  if (process.platform !== "win32") {
+    expect(daemonReadAuthorization(home)).toBeNull();
+  }
 });
