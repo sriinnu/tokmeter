@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Local usage reads now require the owner's daemon token.** The daemon's
+  private HTTP routes and WebSocket upgrade, the browser dashboard, and its
+  source development server no longer expose session and cost data to an
+  anonymous process on the same machine. The menubar, CLI and statusline read
+  the token from the owner's private daemon directory.
+- **Tokmeter-owned settings, caches and backups use owner-only storage.**
+  Existing files are tightened when used. Backup archives receive unique IDs
+  and are validated and synced before cleanup can delete source files. Restore
+  rejects unsafe parent symlinks and archives that exceed entry, expanded-size
+  or available-space limits.
+
 ## [1.19.1] - 2026-10-23
 
 ### Security
