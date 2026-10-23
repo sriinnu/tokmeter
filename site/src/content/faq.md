@@ -4,10 +4,16 @@ source: "https://github.com/sriinnu/tokmeter/wiki/FAQ"
 ---
 
 **Does any data leave my machine?**
-No. Tokmeter reads session files your agents already wrote. No API keys, no
+No. Tokmeter reads session files your agents already wrote. No provider API keys, no
 telemetry, no account. The CLI's only outbound request is an optional fetch of a public
 model-price catalog, which `--light` skips. The macOS app also checks GitHub for
 app updates (Sparkle).
+
+**Can another local account read the daemon's usage data?**
+Since 1.19.2, private HTTP routes and live WebSocket connections require the
+owner's token from `~/.tokmeter/daemon/daemon.token`. `/api/ready` reveals only
+health. Upgrade and restart the daemon; an older daemon process keeps its old
+behavior until it exits. This is a local access control, not a system sandbox.
 
 **Is the cost a bill?**
 It's an estimate. Where a tool reports its own cost, that's used; otherwise cost

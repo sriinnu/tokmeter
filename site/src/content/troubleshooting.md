@@ -50,6 +50,17 @@ If the daemon is running but not answering (the bar stays on "?" and
 `tokmeter-mcp daemon restart`. Under the LaunchAgent that is the same as
 `launchctl kickstart -k gui/$(id -u)/com.tokmeter.daemon`.
 
+### HTTP reads return 401, or a saved dashboard URL returns 403
+
+Since 1.19.2, `/api/ready` is the only anonymous daemon endpoint. Private
+HTTP reads and WebSocket connections need the token in
+`~/.tokmeter/daemon/daemon.token`. Upgrade the CLI/MCP package and the bar
+together, then run `tokmeter-mcp daemon restart` so an older daemon is replaced.
+Custom clients must read the token at request time and send
+`Authorization: Bearer <token>` without logging it or putting it in command
+arguments. A saved dashboard URL has no browser session; open the dashboard
+again from the bar's Settings.
+
 ## The statusline
 
 ### The statusline is blank, or shows `~` and an age
