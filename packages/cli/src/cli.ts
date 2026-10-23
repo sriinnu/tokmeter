@@ -19,7 +19,11 @@ import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sri
 import { localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { readOwnVersion } from "./cron.js";
-import { DAEMON_READ_ENDPOINTS, daemonReadEligible } from "./daemon-read.js";
+import {
+  DAEMON_READ_ENDPOINTS,
+  daemonReadAuthorization,
+  daemonReadEligible,
+} from "./daemon-read.js";
 
 // ---- Arg parser (lightweight, no deps) ----
 
@@ -919,12 +923,17 @@ async function tryServeFromDaemon(
     args.providers && args.providers.length > 0
       ? `?providers=${encodeURIComponent(args.providers.join(","))}`
       : "";
+  const authorization = daemonReadAuthorization();
+  if (!authorization) return false;
   const timeoutMs = state === "warming" ? 90_000 : 15_000;
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(`${base}${path}${qs}`, { signal: ctrl.signal });
+      const res = await fetch(`${base}${path}${qs}`, {
+        signal: ctrl.signal,
+        headers: { Authorization: authorization },
+      });
       if (!res.ok) {
         // Daemon errored (e.g. 500 from a parser bug or a transient warm
         // failure). Surface a one-line hint to stderr so the operator knows

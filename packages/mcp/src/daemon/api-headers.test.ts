@@ -1,5 +1,5 @@
 import { EventEmitter, once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -13,7 +13,7 @@ afterEach(async () => {
   vi.resetModules();
 });
 
-type Handler = (req: unknown, res: unknown) => void;
+type Handler = (req: unknown, res: unknown) => Promise<void>;
 
 test("every HTTP response carries both API version headers and exposes both to browsers", async () => {
   const root = mkdtempSync(join(tmpdir(), "tokmeter-api-headers-"));
@@ -75,7 +75,10 @@ test("every HTTP response carries both API version headers and exposes both to b
   });
   vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
   vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  const errors: string[] = [];
+  vi.spyOn(console, "error").mockImplementation((...args) => {
+    errors.push(args.map(String).join(" "));
+  });
 
   const server = await import("./server.js");
   cleanups.push(() => server.stopDaemon());
@@ -98,11 +101,40 @@ test("every HTTP response carries both API version headers and exposes both to b
       writeHead: () => {},
       end: () => {},
     };
-    handler?.({ method, url: "/api/ready", headers: { host, origin: "http://localhost" } }, res);
+    await handler?.(
+      { method, url: "/api/ready", headers: { host, origin: "http://localhost" } },
+      res
+    );
     expect(headers["x-tokmeter-api"]).toBe("tokmeter-api/1");
     expect(headers["x-drishti-api"]).toBe("drishti-api/1");
     const exposed = headers["access-control-expose-headers"] ?? "";
     expect(exposed).toContain("X-Tokmeter-API");
     expect(exposed).toContain("X-Drishti-API");
   }
+
+  const request = async (method: string, url: string, authorization?: string) => {
+    let status = 200;
+    let body = "";
+    await handler?.(
+      { method, url, headers: { host: "127.0.0.1:9877", authorization } },
+      {
+        setHeader: () => {},
+        writeHead: (code: number) => {
+          status = code;
+        },
+        end: (value?: string) => {
+          body = value ?? "";
+        },
+      }
+    );
+    return { status, body };
+  };
+  expect((await request("GET", "/api/ready")).status).toBe(200);
+  expect((await request("GET", "/api/live")).status).toBe(401);
+  expect((await request("GET", "/api/summary")).status).toBe(401);
+  expect((await request("POST", "/api/rescan")).status).toBe(401);
+  const token = readFileSync(join(root, "daemon.token"), "utf8");
+  const live = await request("GET", "/api/live", `Bearer ${token}`);
+  expect(live.status, errors.join("\n")).toBe(200);
+  expect(JSON.parse(live.body)).toHaveProperty("aggregated");
 }, 10_000);

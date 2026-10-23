@@ -41,7 +41,6 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -52,6 +51,7 @@ import {
 import { join } from "node:path";
 import { recordFingerprint } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
+import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 import type { ProviderId, TokenRecord } from "./types.js";
 
 const JOURNAL_DIR_NAME = ".cache/tokmeter/today";
@@ -141,7 +141,10 @@ const sharedFileOf = (r: TokenRecord) => `${r.provider}|${r.sourceFile}`;
 
 function readJournal(homeDir: string, date: string): JournalFile | null {
   try {
-    const raw = JSON.parse(readFileSync(journalPath(homeDir, date), "utf-8"));
+    const path = journalPath(homeDir, date);
+    ensurePrivateDirectory(journalDir(homeDir));
+    ensurePrivateFile(path);
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
     if (raw?.version !== 1 || raw.date !== date || typeof raw.carried !== "object") return null;
     return raw as JournalFile;
   } catch {
@@ -389,7 +392,8 @@ export class TodayJournal {
     if (saveSeen) this.seenSavedAt = now;
     try {
       const dir = journalDir(this.homeDir);
-      mkdirSync(dir, { recursive: true });
+      ensurePrivateDirectory(join(this.homeDir, ".cache", "tokmeter"));
+      ensurePrivateDirectory(dir);
       const path = journalPath(this.homeDir, this.date);
       const tmp = `${path}.${process.pid}.tmp`;
       const fd = openSync(tmp, "w", 0o600);

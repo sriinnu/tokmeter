@@ -25,16 +25,10 @@
  * no consumer break).
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
 
 /** v2 — legacy raw-records on-disk shape. Still the canonical writer for now. */
@@ -172,6 +166,8 @@ export function loadHistorySnapshot(
 ): LoadedHistorySnapshot {
   const warnings: ScanWarning[] = [];
   const filePath = snapshotPath(homeDir);
+  ensurePrivateDirectory(snapshotDir(homeDir));
+  ensurePrivateFile(filePath);
 
   if (!existsSync(filePath)) {
     return {
@@ -264,12 +260,9 @@ export function saveHistorySnapshot(
   const warnings: ScanWarning[] = [];
   const dir = snapshotDir(homeDir);
   const filePath = snapshotPath(homeDir);
-  const tempFilePath = `${filePath}.tmp`;
 
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    ensurePrivateDirectory(dir);
 
     const now = new Date().toISOString();
     const snapshot: HistorySnapshotV2File = {
@@ -280,8 +273,7 @@ export function saveHistorySnapshot(
       records,
     };
 
-    writeFileSync(tempFilePath, JSON.stringify(snapshot), "utf-8");
-    renameSync(tempFilePath, filePath);
+    writePrivateFile(filePath, JSON.stringify(snapshot));
   } catch (error) {
     warnings.push({
       scope: "cache",
@@ -306,12 +298,9 @@ export function saveHistorySnapshotV3(
   const warnings: ScanWarning[] = [];
   const dir = snapshotDir(homeDir);
   const filePath = snapshotPath(homeDir);
-  const tempFilePath = `${filePath}.tmp`;
 
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    ensurePrivateDirectory(dir);
 
     const now = new Date().toISOString();
     const snapshot: HistorySnapshotV3File = {
@@ -322,8 +311,7 @@ export function saveHistorySnapshotV3(
       days,
     };
 
-    writeFileSync(tempFilePath, JSON.stringify(snapshot), "utf-8");
-    renameSync(tempFilePath, filePath);
+    writePrivateFile(filePath, JSON.stringify(snapshot));
   } catch (error) {
     warnings.push({
       scope: "cache",

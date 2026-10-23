@@ -7,10 +7,12 @@
  */
 
 import {
+  chmodSync,
   closeSync,
   existsSync,
   constants as fsConstants,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -166,10 +168,15 @@ function writeSecretFile(path: string, data: string): void {
 
 function initAuthToken(): void {
   _authToken = randomBytes(32).toString("hex");
-  // Ensure the state dir exists (and is locked to the owner) before writing.
-  try {
-    mkdirSync(DAEMON_STATE_DIR, { recursive: true, mode: 0o700 });
-  } catch {}
+  // A pre-existing state directory may have been created under a permissive
+  // umask. Repair it before publishing the capability, and refuse symlinks or
+  // another user's directory rather than putting secrets in an unsafe root.
+  mkdirSync(DAEMON_STATE_DIR, { recursive: true, mode: 0o700 });
+  const state = lstatSync(DAEMON_STATE_DIR);
+  if (!state.isDirectory() || (process.getuid && state.uid !== process.getuid())) {
+    throw new Error("Daemon state directory is not an owner-controlled directory");
+  }
+  if (process.platform !== "win32") chmodSync(DAEMON_STATE_DIR, 0o700);
   writeSecretFile(DAEMON_TOKEN_FILE, _authToken);
   // Compat shim for bar v1.4.0 which still reads /tmp/drishti-daemon.token.
   // /tmp is shared, so this is the TOCTOU-exposed copy — best-effort, never
@@ -184,21 +191,20 @@ function initAuthToken(): void {
 
 /**
  * Pure bearer-token check, split out from {@link checkAuth} so it's testable
- * without spinning up the real daemon (which owns the module-level
- * `_authToken` set once at startup). `token === null` is dev mode (no auth
- * configured) and always passes — matches the daemon's actual first-run
- * behavior before `initAuthToken()` has run.
+ * without spinning up the real daemon. An uninitialized token must fail
+ * closed, including during the short interval before startup publishes it.
  */
 export function isValidAuthHeader(header: string | undefined, token: string | null): boolean {
-  if (!token) return true; // no token = dev mode
+  if (!token) return false;
   const value = header ?? "";
   const expected = `Bearer ${token}`;
   // Constant-time compare so an attacker can't probe the token via timing.
-  // Lengths must match for timingSafeEqual; bail early when they don't, since
-  // a length mismatch is itself a public fact (it's the request the attacker
-  // sent vs. a fixed-length expected string).
-  if (value.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+  // Compare UTF-8 byte lengths, not JS string lengths: a same-length Unicode
+  // header can encode to more bytes and make timingSafeEqual throw.
+  const supplied = Buffer.from(value);
+  const wanted = Buffer.from(expected);
+  if (supplied.length !== wanted.length) return false;
+  return timingSafeEqual(supplied, wanted);
 }
 
 function checkAuth(req: IncomingMessage): boolean {
@@ -213,6 +219,18 @@ const clientSessions = new Map<WebSocket, { provider: string; sessionId: string 
 // stuck connected:true forever → never reaped by cleanupStale and counted in
 // the aggregate indefinitely (unbounded Map growth + permanent spend inflation).
 const clientTouched = new Map<WebSocket, Map<string, { provider: string; sessionId: string }>>();
+const MAX_WS_CLIENTS = 128;
+const MAX_SESSIONS_PER_CLIENT = 64;
+const touchedKey = (provider: string, sessionId: string) => JSON.stringify([provider, sessionId]);
+
+function canTrackTouched(ws: WebSocket, provider: string, sessionId: string): boolean {
+  const touched = clientTouched.get(ws);
+  return (
+    !touched ||
+    touched.has(touchedKey(provider, sessionId)) ||
+    touched.size < MAX_SESSIONS_PER_CLIENT
+  );
+}
 
 function trackTouched(ws: WebSocket, provider: string, sessionId: string): void {
   let set = clientTouched.get(ws);
@@ -220,7 +238,7 @@ function trackTouched(ws: WebSocket, provider: string, sessionId: string): void 
     set = new Map();
     clientTouched.set(ws, set);
   }
-  set.set(`${provider}:${sessionId}`, { provider, sessionId });
+  set.set(touchedKey(provider, sessionId), { provider, sessionId });
 }
 
 // ─── Main Server ────────────────────────────────────────────────────────
@@ -253,18 +271,17 @@ export function startDaemon(): void {
   wss = new WebSocketServer({
     port: DAEMON_PORT,
     host: DAEMON_HOST,
-    // Bound message size like the HTTP body cap — ws defaults to 100 MiB, so a
-    // client could otherwise force a 100 MB JSON.parse per frame. Session
-    // updates are tiny; 1 MB is generous.
-    maxPayload: 1_048_576,
-    // Reject cross-origin handshakes. Browsers attach an Origin header to
-    // WebSocket connects, and the same-origin policy does NOT block the
-    // connection itself — so without this any website the user visits could
-    // open ws://127.0.0.1 and read broadcast spend totals or inject/unregister
-    // sessions (which then persist via saveState). Native clients (bar, CLI)
-    // send no Origin, so allow empty; otherwise require a localhost origin,
-    // matching the HTTP API's CORS gate.
-    verifyClient: ({ origin }: { origin?: string }) => isAllowedWsOrigin(origin),
+    // A legitimate session update is tiny. Bound parsing even for an
+    // authenticated but malfunctioning local client.
+    maxPayload: 65_536,
+    // Require the per-user capability for both reads and writes. A loopback
+    // socket is reachable from another local account. Keep Host and Origin
+    // checks as separate browser DNS-rebinding/cross-origin defenses.
+    verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) =>
+      Boolean(req.headers.host) &&
+      isAllowedHttpHost(req.headers.host) &&
+      isAllowedWsOrigin(origin) &&
+      isValidAuthHeader(req.headers.authorization, _authToken),
   });
 
   wss.on("listening", () => {
@@ -351,6 +368,10 @@ export function startDaemon(): void {
   });
 
   wss.on("connection", (ws) => {
+    if (wss && wss.clients.size > MAX_WS_CLIENTS) {
+      ws.close(1013, "Too many clients");
+      return;
+    }
     ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString()) as ClientMessage;
@@ -400,8 +421,15 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
 
   switch (msg.type) {
     case "register": {
+      if (!canTrackTouched(ws, msg.session.provider, msg.session.sessionId)) {
+        send(ws, { type: "error", message: "Too many sessions for one client" });
+        return;
+      }
       const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
-      sessionManager.register(msg.session);
+      if (!sessionManager.register(msg.session)) {
+        send(ws, { type: "error", message: "Session limit reached or invalid session" });
+        return;
+      }
       clientSessions.set(ws, {
         provider: msg.session.provider,
         sessionId: msg.session.sessionId,
@@ -422,6 +450,10 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
     }
 
     case "update": {
+      if (!canTrackTouched(ws, msg.session.provider, msg.session.sessionId)) {
+        send(ws, { type: "error", message: "Too many sessions for one client" });
+        return;
+      }
       const existing = sessionManager.get(msg.session.provider, msg.session.sessionId);
       if (!existing) {
         console.log(
@@ -856,7 +888,8 @@ async function getHttpSummaryPayload(): Promise<{
 
 function startHttpApi(): void {
   httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
-    // CORS: localhost only — prevents malicious websites from hitting the API
+    // CORS controls which browser origins can read responses; bearer auth
+    // below controls whether the request is served at all.
     const origin = req.headers.origin ?? "";
     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
     res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
@@ -871,12 +904,6 @@ function startHttpApi(): void {
     // Hardening headers
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
 
     // DNS-rebinding guard: reject any request whose Host is not localhost.
     // Applies to GET reads too (they carry spend/history), which the CORS
@@ -893,9 +920,23 @@ function startHttpApi(): void {
     // route correctly. Endpoints without params can keep matching `url`.
     const pathname = url.split("?")[0];
 
-    try {
-      const { CleanupService } = await import("@sriinnu/tokmeter");
+    // The readiness bit reveals no usage and lets the bar distinguish a
+    // warming daemon from an offline one. Every other route, including reads,
+    // requires the per-user capability. Loopback is reachable by other local
+    // accounts and CORS cannot prevent those native clients from reading it.
+    if (!(req.method === "GET" && pathname === "/api/ready") && !checkAuth(req)) {
+      res.writeHead(401);
+      json(res, { error: "Unauthorized" });
+      return;
+    }
 
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    try {
       // GET endpoints — all routing keys off `pathname` (i.e. URL minus query
       // string) so a stray `?foo=bar` on a parameterless endpoint can never
       // bypass the route into the 404 default. Endpoints that accept query
@@ -956,6 +997,11 @@ function startHttpApi(): void {
           const { summary, source } = await getHttpSummaryPayload();
           res.setHeader(SUMMARY_SOURCE_HEADER, source);
           json(res, summary);
+          return;
+        }
+
+        if (pathname === "/api/live") {
+          json(res, { aggregated: sessionManager?.getAggregated() ?? null });
           return;
         }
 
@@ -1199,6 +1245,7 @@ function startHttpApi(): void {
             creditsUsedToday: computeCreditsUsedToday(),
           });
         } else if (pathname === "/api/backups") {
+          const { CleanupService } = await import("@sriinnu/tokmeter");
           const service = new CleanupService(core);
           json(res, service.listBackups());
         } else if (pathname === "/api/themes") {
@@ -1213,6 +1260,7 @@ function startHttpApi(): void {
               "/api/quick",
               "/api/today",
               "/api/summary",
+              "/api/live",
               "/api/projects",
               "/api/sessions",
               "/api/stats",
@@ -1233,17 +1281,10 @@ function startHttpApi(): void {
         return;
       }
 
-      // POST endpoints (fresh core for mutations) — require auth token
+      // POST endpoints (fresh core for mutations). Authentication was checked
+      // before routing, alongside the private GET endpoints.
       if (req.method === "POST") {
-        if (!checkAuth(req)) {
-          res.writeHead(401);
-          // Do NOT echo the token file path here — it's an info leak that
-          // tells an unauthenticated probe exactly where the secret lives.
-          // Legit clients already know the path from the daemon's own
-          // startup log (visible only to the owning user).
-          json(res, { error: "Unauthorized" });
-          return;
-        }
+        const { CleanupService } = await import("@sriinnu/tokmeter");
         const body = await readBody(req);
 
         if (pathname === "/api/cleanup/preview") {
@@ -1429,6 +1470,10 @@ function startHttpApi(): void {
       json(res, { error: "Internal server error" });
     }
   });
+
+  httpServer.requestTimeout = 20_000;
+  httpServer.headersTimeout = 5_000;
+  httpServer.maxHeadersCount = 32;
 
   httpServer.on("error", (err: Error & { code?: string }) => {
     if (err.code === "EADDRINUSE") {

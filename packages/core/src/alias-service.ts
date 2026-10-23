@@ -35,16 +35,10 @@
  *                   (until the user confirms, which flips it to "user")
  */
 
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +92,8 @@ export function aliasFilePath(home: string = homedir()): string {
  */
 export function loadAliases(home: string = homedir()): AliasMap {
   const path = aliasFilePath(home);
+  ensurePrivateDirectory(dirname(path));
+  ensurePrivateFile(path);
   if (!existsSync(path)) return {};
   const raw = readFileSync(path, "utf-8");
   let parsed: unknown;
@@ -135,10 +131,7 @@ export function loadAliases(home: string = homedir()): AliasMap {
  */
 export function saveAliases(map: AliasMap, home: string = homedir()): void {
   const path = aliasFilePath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(map, null, 2));
-  renameSync(tmp, path);
+  writePrivateFile(path, JSON.stringify(map, null, 2));
 }
 
 /** Move a broken aliases.json out of the way; write a sibling .bak with a timestamp. */

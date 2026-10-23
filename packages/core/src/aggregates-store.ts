@@ -26,7 +26,6 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -52,6 +51,7 @@ import {
 } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import type { DayPrices } from "./day-prices.js";
+import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 import type { TokenRecord } from "./types.js";
 
 const STORE_DIR_NAME = ".cache/tokmeter/aggregates";
@@ -77,7 +77,8 @@ export function aggregatesStoreDir(homeDir: string): string {
 
 function ensureStoreDir(homeDir: string): string {
   const dir = aggregatesStoreDir(homeDir);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+  ensurePrivateDirectory(dir);
   return dir;
 }
 
@@ -94,6 +95,7 @@ function dayFilePath(homeDir: string, date: string): string {
 export function listDaysOnDisk(homeDir: string): string[] {
   const dir = aggregatesStoreDir(homeDir);
   if (!existsSync(dir)) return [];
+  ensurePrivateDirectory(dir);
   try {
     const entries = readdirSync(dir);
     const dates: string[] = [];
@@ -118,6 +120,7 @@ export function readDayFile(homeDir: string, date: string): DailyAggregate | nul
   const path = dayFilePath(homeDir, date);
   if (!existsSync(path)) return null;
   try {
+    ensurePrivateFile(path);
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as DailyAggregate;
     return forwardMigrateAggregate(parsed);

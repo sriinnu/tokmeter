@@ -1,12 +1,6 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import type { ScanWarning, TokmeterSummary } from "./types.js";
 
 interface SummaryCacheFile {
@@ -41,6 +35,8 @@ function summaryCachePath(homeDir: string): string {
 export function loadSummaryCache(homeDir: string): LoadedSummaryCache {
   const warnings: ScanWarning[] = [];
   const filePath = summaryCachePath(homeDir);
+  ensurePrivateDirectory(summaryCacheDir(homeDir));
+  ensurePrivateFile(filePath);
 
   if (!existsSync(filePath)) {
     return {
@@ -87,12 +83,9 @@ export function saveSummaryCache(homeDir: string, summary: TokmeterSummary): Sca
   const warnings: ScanWarning[] = [];
   const dir = summaryCacheDir(homeDir);
   const filePath = summaryCachePath(homeDir);
-  const tempFilePath = `${filePath}.tmp`;
 
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    ensurePrivateDirectory(dir);
 
     const payload: SummaryCacheFile = {
       version: SUMMARY_CACHE_VERSION,
@@ -100,8 +93,7 @@ export function saveSummaryCache(homeDir: string, summary: TokmeterSummary): Sca
       summary,
     };
 
-    writeFileSync(tempFilePath, JSON.stringify(payload), "utf-8");
-    renameSync(tempFilePath, filePath);
+    writePrivateFile(filePath, JSON.stringify(payload));
   } catch (error) {
     warnings.push({
       scope: "cache",

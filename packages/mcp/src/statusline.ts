@@ -471,9 +471,10 @@ async function getTodayTotalsCached(): Promise<TodayRead> {
     return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", totals: cached, ageMs };
   }
 
-  const { DAEMON_HOST, DAEMON_PORT } = await import("./daemon/protocol.js");
+  const { DAEMON_HOST, DAEMON_PORT, daemonAuthHeader } = await import("./daemon/protocol.js");
   const HTTP_PORT = DAEMON_PORT + 1;
   const url = `http://${DAEMON_HOST}:${HTTP_PORT}/api/today`;
+  const authorization = daemonAuthHeader();
 
   let refused = false;
   try {
@@ -482,8 +483,10 @@ async function getTodayTotalsCached(): Promise<TodayRead> {
     const t = setTimeout(() => ctrl.abort(), DAEMON_FETCH_MS);
     let totals: TodayTotals | null = null;
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
-      if (res.ok) {
+      const res = authorization
+        ? await fetch(url, { signal: ctrl.signal, headers: { Authorization: authorization } })
+        : null;
+      if (res?.ok) {
         totals = (await res.json()) as TodayTotals;
       }
     } finally {

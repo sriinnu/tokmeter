@@ -9,18 +9,23 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
-  lstatSync,
+  constants as fsConstants,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmdirSync,
   rmSync,
+  statfsSync,
   statSync,
+  unlinkSync,
   utimesSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -37,8 +42,11 @@ import {
 import { localDateKey } from "./date-utils.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { invalidateRecordCache } from "./parsers/utils.js";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import { projectMatchKey } from "./project-name.js";
 import {
+  assertArchiveLimits,
+  assertNoSymlinkParents,
   assertSafeEntries,
   collectExtractedFiles,
   isAllowedRestorePath,
@@ -68,6 +76,15 @@ export const EMPTY_FILTER_MESSAGE =
   "Specify at least one of: a project (project/projects), providers, or a date range " +
   "(since/until, or today/week/month).";
 
+function syncBackupFile(path: string): void {
+  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * True when a cleanup filter selects nothing — no project, no providers and no
  * date bound — which every filter step treats as "match all". Blank strings
@@ -88,8 +105,6 @@ export function isEmptyCleanupFilter(filter: CleanupFilter | undefined | null): 
   return !hasProject && !hasProviders && !hasDate;
 }
 
-const DEFAULT_BACKUP_DIR = join(process.env.HOME || homedir(), ".cache", "tokmeter", "backups");
-
 export class CleanupService {
   private core: TokmeterCore;
   private homeDir: string;
@@ -97,6 +112,10 @@ export class CleanupService {
   constructor(core: TokmeterCore, homeDir?: string) {
     this.core = core;
     this.homeDir = homeDir || homedir();
+  }
+
+  private backupDir(): string {
+    return join(this.homeDir, ".cache", "tokmeter", "backups");
   }
 
   /**
@@ -285,15 +304,18 @@ export class CleanupService {
 
   /** List available backups. */
   listBackups(backupDir?: string): BackupInfo[] {
-    const dir = backupDir || DEFAULT_BACKUP_DIR;
+    const dir = backupDir || this.backupDir();
     if (!existsSync(dir)) return [];
+    ensurePrivateDirectory(dir);
 
     const entries = readdirSync(dir).filter((f) => f.endsWith(".meta.json"));
     const backups: BackupInfo[] = [];
 
     for (const entry of entries) {
       try {
-        const raw = readFileSync(join(dir, entry), "utf-8");
+        const path = join(dir, entry);
+        ensurePrivateFile(path);
+        const raw = readFileSync(path, "utf-8");
         backups.push(JSON.parse(raw) as BackupInfo);
       } catch {
         // Skip malformed metadata
@@ -308,44 +330,29 @@ export class CleanupService {
   /** Restore from a backup archive. */
   restore(backupId: string, backupDir?: string): RestoreResult {
     // Sanitize backupId — only allow timestamp-like patterns
-    if (!/^[\d\-T]+$/.test(backupId)) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-[a-f0-9-]{36})?$/.test(backupId)) {
       return { restoredCount: 0, errors: [{ file: backupId, error: "Invalid backup ID format" }] };
     }
 
-    const dir = backupDir || DEFAULT_BACKUP_DIR;
+    const dir = backupDir || this.backupDir();
+    ensurePrivateDirectory(dir);
     const metaPath = join(dir, `${backupId}.meta.json`);
 
     if (!existsSync(metaPath)) {
       return { restoredCount: 0, errors: [{ file: metaPath, error: "Backup not found" }] };
     }
 
+    ensurePrivateFile(metaPath);
     const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
-    // A snapshot copied from another machine carries that machine's absolute
-    // archive path. When it doesn't point inside this backup dir, fall back to
-    // the archive that sits next to the meta file — the name createBackup
-    // always writes — instead of trusting a path from the sidecar.
-    const archivePath =
-      typeof meta.path === "string" &&
-      isWithin(meta.path, dir) &&
-      resolve(meta.path) !== resolve(dir)
-        ? meta.path
-        : join(dir, `${backupId}.tar.gz`);
-
-    // Validate archive path is within backup directory. A plain startsWith on
-    // the resolved paths is wrong — a sibling dir like `<dir>-evil` shares the
-    // prefix and would pass. Use path.relative and reject any result that
-    // escapes upward (`..`) or is absolute (different root).
-    const rel = relative(resolve(dir), resolve(archivePath));
-    if (rel === "" || rel.startsWith("..") || resolve(archivePath) === resolve(dir)) {
-      return {
-        restoredCount: 0,
-        errors: [{ file: archivePath, error: "Archive path outside backup directory" }],
-      };
-    }
+    // Every backup created by Tokmeter has this exact sibling name. A copied
+    // sidecar may carry another machine's path; it never gets to choose a
+    // different archive or traverse a symlinked subdirectory here.
+    const archivePath = join(dir, `${backupId}.tar.gz`);
 
     if (!existsSync(archivePath)) {
       return { restoredCount: 0, errors: [{ file: archivePath, error: "Archive file missing" }] };
     }
+    ensurePrivateFile(archivePath);
 
     try {
       // The archive is untrusted input (snapshots are made to move between
@@ -353,6 +360,8 @@ export class CleanupService {
       // only regular files and directories may come out of a backup.
       const entries = listArchiveEntries(archivePath);
       assertSafeEntries(entries);
+      const fs = statfsSync(tmpdir());
+      assertArchiveLimits(entries, fs.bavail * fs.bsize);
       const listing = entries.map((e) => e.name).join("\n");
 
       // Decide between same-home (paths restored verbatim) and cross-home
@@ -438,6 +447,7 @@ export class CleanupService {
               `Archive entry "${rel}" would restore outside the known agent session paths — refusing to restore anything`
             );
           }
+          assertNoSymlinkParents(dest, currentHome, allowedRoots);
         };
         for (const p of plan) assertAllowed(destFor(p.rel), p.rel);
 
@@ -471,15 +481,34 @@ export class CleanupService {
         // setuid/setgid/sticky) and mtime the way `tar -x` used to — mtime
         // drives incremental scans, so a restored old file must not look new.
         for (const { src, dest } of finalPlan) {
+          assertNoSymlinkParents(dest, currentHome, allowedRoots);
           mkdirSync(dirname(dest), { recursive: true });
+          assertNoSymlinkParents(dest, currentHome, allowedRoots);
+          // Stage as an owner-only file in the destination directory and
+          // atomically replace the final path. rename never follows a final
+          // symlink, unlike copyFileSync(dest) after a separate lstat check.
+          const tempDest = join(dirname(dest), `.tokmeter-restore-${randomUUID()}.tmp`);
+          const fd = openSync(
+            tempDest,
+            fsConstants.O_WRONLY |
+              fsConstants.O_CREAT |
+              fsConstants.O_EXCL |
+              (fsConstants.O_NOFOLLOW ?? 0),
+            0o600
+          );
+          closeSync(fd);
           try {
-            // Replace a symlink at the destination rather than writing through it.
-            if (lstatSync(dest).isSymbolicLink()) rmSync(dest);
-          } catch {}
-          copyFileSync(src, dest);
-          const st = statSync(src);
-          chmodSync(dest, st.mode & 0o777);
-          utimesSync(dest, st.atime, st.mtime);
+            copyFileSync(src, tempDest);
+            const st = statSync(src);
+            chmodSync(tempDest, 0o600);
+            utimesSync(tempDest, st.atime, st.mtime);
+            assertNoSymlinkParents(dest, currentHome, allowedRoots);
+            renameSync(tempDest, dest);
+          } finally {
+            try {
+              unlinkSync(tempDest);
+            } catch {}
+          }
         }
       } finally {
         // Always clean up the sandbox, even on partial failure.
@@ -679,11 +708,12 @@ export class CleanupService {
     backupDir?: string,
     projectNames: string[] = []
   ): Promise<string> {
-    const dir = backupDir || DEFAULT_BACKUP_DIR;
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const dir = backupDir || this.backupDir();
+    if (!backupDir) ensurePrivateDirectory(dirname(dir));
+    ensurePrivateDirectory(dir);
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const id = timestamp;
+    const id = `${timestamp}-${randomUUID()}`;
     const archivePath = join(dir, `${id}.tar.gz`);
 
     // Collect file paths to archive
@@ -730,13 +760,37 @@ export class CleanupService {
       // tar we care about (GNU, BSD, bsdtar on Windows) strips leading "/" already
       // unless -P is passed — so we just normalise the input to match.
       const relPaths = allPaths.map((p) => p.replace(/^\/+/, ""));
+      let reserved = false;
       try {
+        // Reserve the archive exclusively. Even an ID collision must never
+        // truncate an earlier backup before cleanup deletes its source files.
+        const fd = openSync(
+          archivePath,
+          fsConstants.O_WRONLY |
+            fsConstants.O_CREAT |
+            fsConstants.O_EXCL |
+            (fsConstants.O_NOFOLLOW ?? 0),
+          0o600
+        );
+        reserved = true;
+        closeSync(fd);
         execFileSync("tar", ["czf", archivePath, ...relPaths], {
           cwd: "/",
           timeout: 120_000,
         });
+        // A backup that restore would refuse is no backup at all. This also
+        // catches symlinks nested inside an archived provider directory.
+        const entries = listArchiveEntries(archivePath);
+        assertSafeEntries(entries);
+        assertArchiveLimits(entries, Number.POSITIVE_INFINITY);
+        syncBackupFile(archivePath);
       } catch {
         // If tar fails, abort — don't delete without a backup
+        if (reserved) {
+          try {
+            unlinkSync(archivePath);
+          } catch {}
+        }
         return "";
       }
 
@@ -781,7 +835,24 @@ export class CleanupService {
       sourcePlatform: platform(),
     };
 
-    writeFileSync(join(dir, `${id}.meta.json`), `${JSON.stringify(meta, null, 2)}\n`, "utf-8");
+    const metaPath = join(dir, `${id}.meta.json`);
+    try {
+      writePrivateFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+      syncBackupFile(metaPath);
+      // Best effort: some filesystems reject fsync on directories. The two
+      // payload files above must be durable before cleanup may delete source.
+      try {
+        syncBackupFile(dir);
+      } catch {}
+    } catch {
+      try {
+        unlinkSync(archivePath);
+      } catch {}
+      try {
+        unlinkSync(metaPath);
+      } catch {}
+      return "";
+    }
 
     return archivePath;
   }

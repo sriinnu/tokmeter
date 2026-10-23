@@ -4,6 +4,7 @@
  * directory or real session files.
  */
 
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,16 +13,23 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CleanupService, EMPTY_FILTER_MESSAGE, isEmptyCleanupFilter } from "./cleanup-service.js";
 import { loadConfig } from "./config-service.js";
-import { isWithin, restoreAllowedRoots } from "./restore-guard.js";
+import {
+  assertArchiveLimits,
+  assertNoSymlinkParents,
+  isWithin,
+  restoreAllowedRoots,
+} from "./restore-guard.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
+import type { TokenRecord } from "./types.js";
 
 // ─── Minimal ustar writer ─────────────────────────────────────────────────
 // Built by hand (not with the system tar) so tests can craft entries a real
@@ -150,6 +158,7 @@ describe("CleanupService.restore — archive safety", () => {
 
     expect(result.errors).toEqual([]);
     expect(readFileSync(transcript(), "utf-8")).toBe('{"ok":1}\n');
+    expect(statSync(transcript()).mode & 0o777).toBe(0o600);
     expect(Math.round(statSync(transcript()).mtimeMs / 1000)).toBe(1_767_225_600);
     expect(readFileSync(join(home, ".zshrc"), "utf-8")).toBe("original zshrc\n");
   });
@@ -180,7 +189,7 @@ describe("CleanupService.restore — archive safety", () => {
     const result = service().restore(BACKUP_ID, backupDir);
 
     expect(result.restoredCount).toBe(0);
-    expect(result.errors[0].error).toMatch(/outside the known agent session paths/);
+    expect(result.errors[0].error).toMatch(/path traversal|outside the known agent session paths/);
     expect(existsSync(join(outside, "evil.txt"))).toBe(false);
     expect(existsSync(transcript())).toBe(false);
   });
@@ -207,6 +216,19 @@ describe("CleanupService.restore — archive safety", () => {
     expect(result.errors[0].error).toMatch(/symlink/);
     expect(existsSync(link)).toBe(false);
     expect(readFileSync(join(home, ".zshrc"), "utf-8")).toBe("original zshrc\n");
+  });
+
+  it("refuses a symlinked destination parent before writing any restored file", () => {
+    const linkedProject = join(home, ".claude", "projects", "-work-p");
+    mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+    symlinkSync(outside, linkedProject);
+    writeBackup([{ name: member(transcript()), content: "outside write\n" }]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.restoredCount).toBe(0);
+    expect(result.errors[0].error).toMatch(/unsafe parent/);
+    expect(existsSync(join(outside, `${UUID}.jsonl`))).toBe(false);
   });
 
   it("refuses a hardlink entry", () => {
@@ -285,6 +307,91 @@ describe("CleanupService.restore — archive safety", () => {
     expect(result.errors[0].error).toMatch(/outside the known agent session paths/);
     expect(readFileSync(join(home, ".zshrc"), "utf-8")).toBe("original zshrc\n");
     expect(existsSync(transcript())).toBe(false);
+  });
+});
+
+describe("archive expansion limits", () => {
+  it("rejects declared expansion beyond the configured cap or disk headroom", () => {
+    const entries = [{ name: "home/user/session.jsonl", type: "-", sizeBytes: 1024 }];
+    expect(() => assertArchiveLimits(entries, 10_000, 1000)).toThrow(/expanded-size/);
+    expect(() => assertArchiveLimits(entries, 512 * 1024 ** 2 + 1023)).toThrow(/free disk/);
+  });
+
+  it("rejects an excessive entry count", () => {
+    const entries = [
+      { name: "a", type: "-", sizeBytes: 1 },
+      { name: "b", type: "-", sizeBytes: 1 },
+    ];
+    expect(() => assertArchiveLimits(entries, 1024 ** 3, 1024, 1)).toThrow(/too many entries/);
+  });
+});
+
+describe("destination path checks", () => {
+  it("rejects a symlinked home and a symlinked external-root ancestor", () => {
+    const homeLink = join(root, "home-link");
+    symlinkSync(home, homeLink);
+    const homeDest = join(homeLink, ".tokmeter", "config.json");
+    expect(() => assertNoSymlinkParents(homeDest, homeLink, [homeDest])).toThrow(/unsafe parent/);
+
+    const externalLink = join(root, "external-link");
+    symlinkSync(outside, externalLink);
+    const externalRoot = join(externalLink, "nested", "sessions");
+    const externalDest = join(externalRoot, "turn.jsonl");
+    expect(() => assertNoSymlinkParents(externalDest, home, [externalRoot])).toThrow(
+      /unsafe parent/
+    );
+  });
+});
+
+describe("backup durability and privacy", () => {
+  it("keeps two same-second snapshots distinct and owner-only", async () => {
+    const firstFile = join(home, ".codex", "sessions", "first.jsonl");
+    const secondFile = join(home, ".codex", "sessions", "second.jsonl");
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+    writeFileSync(firstFile, "first\n");
+    writeFileSync(secondFile, "second\n");
+    let sourceFile = firstFile;
+    const core = {
+      scanLifetimeRaw: async () =>
+        [
+          {
+            timestamp: Date.now(),
+            provider: "codex",
+            project: "test",
+            model: "test-model",
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            reasoningTokens: 0,
+            cost: 0.001,
+            sourceFile,
+          },
+        ] as TokenRecord[],
+    } as unknown as TokmeterCore;
+    const snapshots = new CleanupService(core, home);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-02T03:04:05Z"));
+    try {
+      const first = await snapshots.snapshot({ providers: ["codex"] }, { backupDir });
+      sourceFile = secondFile;
+      const second = await snapshots.snapshot({ providers: ["codex"] }, { backupDir });
+
+      expect(first.archivePath).not.toBe(second.archivePath);
+      expect(execFileSync("tar", ["-tzf", first.archivePath], { encoding: "utf8" })).toContain(
+        "first.jsonl"
+      );
+      expect(execFileSync("tar", ["-tzf", second.archivePath], { encoding: "utf8" })).toContain(
+        "second.jsonl"
+      );
+      expect(statSync(backupDir).mode & 0o777).toBe(0o700);
+      expect(statSync(first.archivePath).mode & 0o777).toBe(0o600);
+      expect(statSync(first.archivePath.replace(/\.tar\.gz$/, ".meta.json")).mode & 0o777).toBe(
+        0o600
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

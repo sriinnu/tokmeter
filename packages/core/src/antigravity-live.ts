@@ -24,17 +24,11 @@
  */
 
 import { execFile } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -198,8 +192,9 @@ export async function pollAntigravityLiveStatus(
 
 function appendSnapshot(snapshot: AntigravitySnapshot, homeDir: string): void {
   const path = snapshotLogPath(homeDir);
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(snapshot)}\n`);
+  ensurePrivateDirectory(dirname(path));
+  ensurePrivateFile(path);
+  appendFileSync(path, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
 }
 
 // ─── Reads (cache-only — never trigger a poll) ─────────────────────────
@@ -207,6 +202,8 @@ function appendSnapshot(snapshot: AntigravitySnapshot, homeDir: string): void {
 /** Reads every cached snapshot, oldest first. Malformed lines are skipped. */
 export function readSnapshotHistory(homeDir: string = homedir()): AntigravitySnapshot[] {
   const path = snapshotLogPath(homeDir);
+  ensurePrivateDirectory(dirname(path));
+  ensurePrivateFile(path);
   if (!existsSync(path)) return [];
   const lines = readFileSync(path, "utf-8")
     .split("\n")
@@ -279,7 +276,5 @@ export function pruneSnapshotHistory(keepLast: number, homeDir: string = homedir
   if (history.length <= keepLast) return;
   const trimmed = history.slice(-keepLast);
   const path = snapshotLogPath(homeDir);
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${trimmed.map((s) => JSON.stringify(s)).join("\n")}\n`);
-  renameSync(tmp, path);
+  writePrivateFile(path, `${trimmed.map((s) => JSON.stringify(s)).join("\n")}\n`);
 }

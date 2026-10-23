@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
+import WebSocket from "ws";
 
 const cleanups: Array<() => void> = [];
 afterEach(async () => {
@@ -98,6 +99,31 @@ test("a competing bind cannot replace or remove the winner's token and identity"
   const token = readFileSync(files.DAEMON_TOKEN_FILE, "utf8");
   const identity = readFileSync(files.DAEMON_IDENTITY_FILE, "utf8");
   expect(token).not.toBe("old fixture token");
+
+  const canConnect = (authorization?: string, origin?: string) =>
+    new Promise<boolean>((resolve) => {
+      const client = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: authorization ? { Authorization: authorization } : {},
+        ...(origin ? { origin } : {}),
+      });
+      const timer = setTimeout(() => {
+        client.terminate();
+        resolve(false);
+      }, 1000);
+      client.once("open", () => {
+        clearTimeout(timer);
+        client.close();
+        resolve(true);
+      });
+      client.once("error", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    });
+  expect(await canConnect()).toBe(false);
+  expect(await canConnect("Bearer wrong")).toBe(false);
+  expect(await canConnect(`Bearer ${token}`, "https://evil.example")).toBe(false);
+  expect(await canConnect(`Bearer ${token}`)).toBe(true);
 
   vi.resetModules();
   const loser = await import("./server.js");

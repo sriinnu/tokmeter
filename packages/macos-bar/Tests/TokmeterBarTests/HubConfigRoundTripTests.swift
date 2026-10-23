@@ -42,6 +42,10 @@ final class HubConfigRoundTripTests: XCTestCase {
         XCTAssertEqual(bar["futureBarKnob"] as? String, "keep-me")
         XCTAssertEqual(bar["weekChartStyle"] as? String, "bars")
         XCTAssertEqual(raw["modifiedBy"] as? String, "user")
+        let directoryMode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: root.path)[.posixPermissions] as? NSNumber)
+        let fileMode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(directoryMode.intValue & 0o777, 0o700)
+        XCTAssertEqual(fileMode.intValue & 0o777, 0o600)
     }
 
     /// Clearing a modeled optional must actually clear it — the merge must not

@@ -1,18 +1,6 @@
-/**
- * @sriinnu/tokmeter-core — Kosha unpriced-model wishlist writer.
- *
- * Feedback channel to kosha-discovery: drop a JSON list of every model
- * tokmeter saw real usage on but couldn't price. Kosha reads this on
- * `kosha update` to bias provider priority toward what's actually being
- * used. Without it, kosha has no way to know which models matter.
- *
- * Best-effort + synchronous: writing must never block or fail a scan.
- * File is atomic-renamed so kosha can read mid-write safely.
- */
-
-import { randomBytes } from "node:crypto";
-import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { ensurePrivateDirectory, writePrivateFile } from "./private-files.js";
 import type { TokenRecord } from "./types.js";
 
 export interface UnpricedTracker {
@@ -42,7 +30,7 @@ export function writeKoshaWishlist(
       }
       return;
     }
-    mkdirSync(dir, { recursive: true });
+    ensurePrivateDirectory(dir);
 
     // Count hits per unpriced model from today's records.
     const todayStart = new Date();
@@ -68,9 +56,7 @@ export function writeKoshaWishlist(
         .map(([id, v]) => ({ id, hits: v.hits, lastSeenAt: v.lastSeenAt }))
         .sort((a, b) => b.hits - a.hits),
     };
-    const tmp = `${filePath}.${randomBytes(4).toString("hex")}.tmp`;
-    writeFileSync(tmp, JSON.stringify(payload, null, 2));
-    renameSync(tmp, filePath);
+    writePrivateFile(filePath, JSON.stringify(payload, null, 2));
   } catch {
     // Wishlist is observability only — never block a scan.
   }

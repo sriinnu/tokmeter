@@ -23,8 +23,9 @@
  */
 
 import type { Dirent, Stats } from "node:fs";
-import { mkdir, open, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import type { ProviderId, SessionParser } from "./types.js";
 
 export interface UnreadFile {
@@ -249,17 +250,17 @@ function coverageDir(homeDir: string): string {
 /** Keep the report so the CLI, the daemon API and the bar can show it later. */
 export async function writeCoverageReport(homeDir: string, report: CoverageReport): Promise<void> {
   const dir = coverageDir(homeDir);
-  await mkdir(dir, { recursive: true });
+  ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+  ensurePrivateDirectory(dir);
   const file = join(dir, `${report.date}.json`);
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(report, null, 1)}\n`);
-  await rename(tmp, file);
+  writePrivateFile(file, `${JSON.stringify(report, null, 1)}\n`);
 }
 
 /** Most recent reports first. */
 export async function readCoverageReports(homeDir: string, limit = 7): Promise<CoverageReport[]> {
   let names: string[];
   try {
+    ensurePrivateDirectory(coverageDir(homeDir));
     names = await readdir(coverageDir(homeDir));
   } catch {
     return [];
@@ -272,7 +273,9 @@ export async function readCoverageReports(homeDir: string, limit = 7): Promise<C
   const out: CoverageReport[] = [];
   for (const n of days) {
     try {
-      out.push(JSON.parse(await readFile(join(coverageDir(homeDir), n), "utf8")));
+      const file = join(coverageDir(homeDir), n);
+      ensurePrivateFile(file);
+      out.push(JSON.parse(await readFile(file, "utf8")));
     } catch {
       /* a torn or foreign file is skipped, never fatal */
     }

@@ -51,9 +51,9 @@ describe("isAllowedHttpHost — HTTP Host-header DNS-rebinding guard", () => {
 });
 
 describe("isValidAuthHeader — bearer-token check", () => {
-  test("no configured token is dev mode — always passes", () => {
-    expect(isValidAuthHeader(undefined, null)).toBe(true);
-    expect(isValidAuthHeader("Bearer whatever", null)).toBe(true);
+  test("no configured token fails closed during startup", () => {
+    expect(isValidAuthHeader(undefined, null)).toBe(false);
+    expect(isValidAuthHeader("Bearer whatever", null)).toBe(false);
   });
 
   test("the correct bearer token passes", () => {
@@ -65,6 +65,7 @@ describe("isValidAuthHeader — bearer-token check", () => {
     expect(isValidAuthHeader(undefined, "abc123")).toBe(false);
     expect(isValidAuthHeader("Bearer abc123extra", "abc123")).toBe(false);
     expect(isValidAuthHeader("", "abc123")).toBe(false);
+    expect(isValidAuthHeader("Bearer ébc123", "abc123")).toBe(false);
   });
 });
 

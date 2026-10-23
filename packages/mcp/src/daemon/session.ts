@@ -12,6 +12,14 @@ function nonNeg(n: unknown): number {
   return Math.min(n, 1e12);
 }
 
+function boundedString(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max;
+}
+
+function boundedOptionalString(value: unknown, max: number): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= max);
+}
+
 // ─── Session State ─────────────────────────────────────────────────────
 
 export interface Session extends SessionInfo {
@@ -26,18 +34,28 @@ export interface Session extends SessionInfo {
 
 export class SessionManager {
   private sessions = new Map<string, Session>(); // key: provider:sessionId
+  private static readonly MAX_SESSIONS = 1024;
 
   // ─── Session Lifecycle ───────────────────────────────────────────────
 
-  register(info: SessionInfo): void {
+  register(info: SessionInfo): boolean {
     // Identity guard: a missing provider/sessionId would create a junk
     // "undefined:undefined" session that pollutes the aggregate for every
-    // client. Drop it — the WS handshake is unauthenticated, so any local
-    // process can send messages.
-    if (!info || typeof info.provider !== "string" || info.provider.length === 0) return;
-    if (typeof info.sessionId !== "string" || info.sessionId.length === 0) return;
+    // client. Drop it even though the handshake is authenticated: an
+    // accidentally malformed statusline must not poison the live aggregate.
+    if (
+      !info ||
+      !boundedString(info.provider, 128) ||
+      !boundedString(info.sessionId, 256) ||
+      !boundedString(info.model, 256)
+    )
+      return false;
+    if (!boundedOptionalString(info.project, 4096)) return false;
+    if (!boundedOptionalString(info.cwd, 4096)) return false;
+    if (!boundedOptionalString(info.transcriptPath, 4096)) return false;
     const key = this.key(info.provider, info.sessionId);
     const existing = this.sessions.get(key);
+    if (!existing && this.sessions.size >= SessionManager.MAX_SESSIONS) return false;
 
     if (existing) {
       // Reconnect existing session
@@ -59,6 +77,7 @@ export class SessionManager {
         connected: true,
       });
     }
+    return true;
   }
 
   update(
@@ -70,13 +89,11 @@ export class SessionManager {
     contextWindow?: ContextWindowInfo,
     info?: Pick<SessionInfo, "transcriptPath">
   ): Session | null {
-    // Identity + numeric hygiene: the WS transport is unauthenticated, so a
-    // malformed/hostile client could otherwise push a huge/negative/NaN cost or
+    // Identity + numeric hygiene: a malformed client could otherwise push a huge/negative/NaN cost or
     // a partial tokens object (undefined fields → NaN) that then propagates into
     // the aggregated totals broadcast to every OTHER client. Coerce every
     // numeric to a finite, non-negative value and drop messages with no identity.
-    if (typeof provider !== "string" || provider.length === 0) return null;
-    if (typeof sessionId !== "string" || sessionId.length === 0) return null;
+    if (!boundedString(provider, 128) || !boundedString(sessionId, 256)) return null;
     const safeTokens: TokenUsage = {
       inputTokens: nonNeg(tokens?.inputTokens),
       outputTokens: nonNeg(tokens?.outputTokens),
@@ -98,7 +115,7 @@ export class SessionManager {
 
     if (!session) {
       // Auto-register if not found
-      this.register({ provider, sessionId, model: "unknown" });
+      if (!this.register({ provider, sessionId, model: "unknown" })) return null;
       return this.update(provider, sessionId, safeCost, safeTokens, durationMs, safeContext, info);
     }
 
@@ -107,7 +124,7 @@ export class SessionManager {
     // Keep the last-known context window if this update omits it (a session
     // that reported one shouldn't lose it on a later cost-only update).
     if (safeContext) session.contextWindow = safeContext;
-    if (typeof info?.transcriptPath === "string" && info.transcriptPath.length > 0) {
+    if (boundedString(info?.transcriptPath, 4096)) {
       session.transcriptPath = info.transcriptPath;
     }
     session.durationMs = nonNeg(durationMs ?? session.durationMs);
@@ -238,7 +255,7 @@ export class SessionManager {
   // ─── Helpers ─────────────────────────────────────────────────────────
 
   private key(provider: string, sessionId: string): string {
-    return `${provider}:${sessionId}`;
+    return JSON.stringify([provider, sessionId]);
   }
 
   private shortModel(model: string): string {

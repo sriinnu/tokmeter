@@ -5,18 +5,12 @@
  */
 
 import type { Dirent } from "node:fs";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "../config-service.js";
 import { localDateKey } from "../date-utils.js";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, TokenRecord, UsageProvenance, UsageTelemetrySource } from "../types.js";
 
@@ -154,6 +148,8 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
   cacheTouchedPaths = new Set();
   cacheLastGcAtMs = 0;
   try {
+    ensurePrivateDirectory(CACHE_DIR);
+    ensurePrivateFile(CACHE_FILE);
     if (existsSync(CACHE_FILE)) {
       const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
       // Reject old cache versions — fall through to empty map so all files
@@ -212,7 +208,7 @@ function saveRecordCache(): void {
   if (!recordCache) return;
   try {
     gcStalePathsIfDue();
-    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+    ensurePrivateDirectory(CACHE_DIR);
     const data: CacheFile = {
       version: CACHE_VERSION,
       createdAt: cacheCreatedAt || new Date().toISOString(),
@@ -227,9 +223,7 @@ function saveRecordCache(): void {
       files: Object.fromEntries(recordCache),
     };
     // Atomic write: tmp file + rename prevents corruption from concurrent processes
-    const tmpFile = `${CACHE_FILE}.tmp`;
-    writeFileSync(tmpFile, JSON.stringify(data));
-    renameSync(tmpFile, CACHE_FILE);
+    writePrivateFile(CACHE_FILE, JSON.stringify(data));
   } catch {}
 }
 
