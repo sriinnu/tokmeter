@@ -6,8 +6,8 @@
  * Deletes matching rows via DELETE + VACUUM.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ensurePrivateDirectory, writePrivateFile } from "../private-files.js";
 import type { CleanupResult, CleanupTarget, ProviderId, SessionCleaner } from "../types.js";
 
 interface SqliteCleanerConfig {
@@ -95,9 +95,9 @@ export class SqliteCleaner implements SessionCleaner {
 
       if (rows.length === 0) return null;
 
-      if (!existsSync(backupDir)) mkdirSync(backupDir, { recursive: true });
+      ensurePrivateDirectory(backupDir);
       const dumpFile = join(backupDir, `${this.providerId}-${target.sqlDetail.table}.json`);
-      writeFileSync(dumpFile, JSON.stringify(rows, null, 2), "utf-8");
+      writePrivateFile(dumpFile, JSON.stringify(rows, null, 2));
       return dumpFile;
     } catch {
       return null;

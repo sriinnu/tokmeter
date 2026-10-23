@@ -250,8 +250,14 @@ final class HubConfigStore: ObservableObject {
     private func persist(_ cfg: HubUserConfig) {
         do {
             let url = URL(fileURLWithPath: storagePath)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                     withIntermediateDirectories: true)
+            let directory = url.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory,
+                                                     withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o700])
+            // Data.write(.atomic) creates a temporary sibling before rename;
+            // keep the whole directory private throughout that write.
+            try FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                   ofItemAtPath: directory.path)
             var onDisk: [String: Any] = [:]
             if FileManager.default.fileExists(atPath: storagePath) {
                 // A file we can't parse (half-written CLI save, hand edit with
@@ -265,6 +271,8 @@ final class HubConfigStore: ObservableObject {
                 onDisk = obj
             }
             try Self.mergedForWrite(cfg, over: onDisk).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                   ofItemAtPath: url.path)
             config = cfg
             saveError = nil
         } catch {

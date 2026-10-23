@@ -113,7 +113,15 @@ export type ServerMessage =
 
 // ─── Daemon Config ─────────────────────────────────────────────────────
 
-import { mkdirSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -148,3 +156,46 @@ export const DAEMON_STATE_FILE = join(DAEMON_STATE_DIR, "daemon-state.json");
 /** Legacy /tmp paths kept as compat shims for older bar/statusline binaries. */
 export const LEGACY_DAEMON_PID_FILE = "/tmp/drishti-daemon.pid";
 export const LEGACY_DAEMON_TOKEN_FILE = "/tmp/drishti-daemon.token";
+
+/**
+ * Read the daemon's canonical capability at use time, so a daemon restart and
+ * token rotation do not strand long-lived statusline or CLI processes. Never
+ * read the legacy /tmp shim here: it is shared across users and exists solely
+ * for old menubar releases.
+ */
+export function daemonAuthHeader(
+  tokenFile: string = DAEMON_TOKEN_FILE,
+  stateDir: string = DAEMON_STATE_DIR
+): string | null {
+  try {
+    const directory = lstatSync(stateDir);
+    const tokenPath = lstatSync(tokenFile);
+    const uid = process.getuid?.();
+    const posix = process.platform !== "win32";
+    if (
+      !directory.isDirectory() ||
+      tokenPath.isSymbolicLink() ||
+      (posix && (directory.mode & 0o077) !== 0) ||
+      (uid !== undefined && directory.uid !== uid)
+    ) {
+      return null;
+    }
+    const fd = openSync(tokenFile, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const file = fstatSync(fd);
+      if (
+        !file.isFile() ||
+        file.nlink !== 1 ||
+        (posix && (file.mode & 0o077) !== 0) ||
+        (uid !== undefined && file.uid !== uid)
+      )
+        return null;
+      const token = readFileSync(fd, "utf8").trim();
+      return /^[a-f0-9]{64}$/.test(token) ? `Bearer ${token}` : null;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}

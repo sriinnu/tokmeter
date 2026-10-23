@@ -14,15 +14,23 @@ bun install
 bun run dev:web
 ```
 
-Open http://localhost:3000
+Vite opens the private local URL in your browser. It sets a session cookie and
+removes the launch code from the address bar. Restart `dev:web` if you close the
+browser before the page opens; a plain `http://127.0.0.1:3000` request has no
+access to your usage data.
 
 ### Data
 
-Both the development server and Vite preview serve `/api/summary` by scanning local session data, with a persisted-summary fallback. The browser tries this endpoint before `/data.json`, so an exported file does not override a working live endpoint.
+Both the development server and Vite preview protect their pages and data with
+a per-launch browser session. They serve `/api/summary` by scanning local
+session data, with a persisted-summary fallback, and proxy `/api/live` through
+the owner's daemon credential. The browser tries the summary endpoint before
+`/data.json`, so an exported file does not override a working live endpoint.
 
 For a static export, install Python 3, then run from the repository root:
 
 ```bash
+umask 077
 mkdir -p packages/web/public
 npx @sriinnu/tokmeter --json > packages/web/public/data.json
 bun run build:web

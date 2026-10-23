@@ -29,8 +29,9 @@
  * before" limitation antigravity-live.ts's credit deltas already accept.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 
 export interface CodexSqliteCheckpoints {
   [threadId: string]: { baselineTokens: number; baselineDate: string };
@@ -43,7 +44,10 @@ function checkpointPath(homeDir: string): string {
 /** Reads the checkpoint map, or {} if it's never been written / is corrupt. */
 export function readCheckpoints(homeDir: string): CodexSqliteCheckpoints {
   try {
-    const raw = readFileSync(checkpointPath(homeDir), "utf-8");
+    const path = checkpointPath(homeDir);
+    ensurePrivateDirectory(dirname(path));
+    ensurePrivateFile(path);
+    const raw = readFileSync(path, "utf-8");
     return JSON.parse(raw) as CodexSqliteCheckpoints;
   } catch {
     return {};
@@ -60,8 +64,5 @@ export function readCheckpoints(homeDir: string): CodexSqliteCheckpoints {
  */
 export function writeCheckpoints(checkpoints: CodexSqliteCheckpoints, homeDir: string): void {
   const path = checkpointPath(homeDir);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(checkpoints));
-  renameSync(tmp, path);
+  writePrivateFile(path, JSON.stringify(checkpoints));
 }

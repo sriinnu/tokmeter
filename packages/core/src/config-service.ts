@@ -23,16 +23,10 @@
  * silently overwritten.
  */
 
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -179,6 +173,8 @@ export function configFilePath(home: string = homedir()): string {
  */
 export function loadConfig(home: string = homedir()): UserConfig {
   const path = configFilePath(home);
+  ensurePrivateDirectory(dirname(path));
+  ensurePrivateFile(path);
   if (!existsSync(path)) return { ...DEFAULT_CONFIG };
 
   const raw = readFileSync(path, "utf-8");
@@ -200,10 +196,7 @@ export function loadConfig(home: string = homedir()): UserConfig {
 /** Atomic write — tmp + rename. Safe against power loss and concurrent CLIs. */
 export function saveConfig(config: UserConfig, home: string = homedir()): void {
   const path = configFilePath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(config, null, 2));
-  renameSync(tmp, path);
+  writePrivateFile(path, JSON.stringify(config, null, 2));
 }
 
 function backupBrokenConfigFile(path: string, reason: string): void {

@@ -20,18 +20,12 @@
  * which is what the recent pace is measured from.
  */
 
-import {
-  appendFileSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { localDateKey } from "./date-utils.js";
 import { codexHomeDir } from "./parsers/codex.js";
+import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 
 export type QuotaAgent = "codex" | "claude-code";
 
@@ -297,7 +291,10 @@ function parseStore(text: string): QuotaSample[] {
 
 export function readQuotaStore(homeDir: string, agent: QuotaAgent): QuotaSample[] {
   try {
-    return parseStore(readFileSync(storeFile(homeDir, agent), "utf8"));
+    const file = storeFile(homeDir, agent);
+    ensurePrivateDirectory(quotaDir(homeDir));
+    ensurePrivateFile(file);
+    return parseStore(readFileSync(file, "utf8"));
   } catch {
     return [];
   }
@@ -324,7 +321,9 @@ export function recordQuotaSamples(homeDir: string, samples: QuotaSample[]): voi
     }
     if (add.length === 0) continue;
     try {
-      mkdirSync(quotaDir(homeDir), { recursive: true });
+      ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+      ensurePrivateDirectory(quotaDir(homeDir));
+      ensurePrivateFile(file);
       appendFileSync(file, add.map((s) => `${JSON.stringify(s)}\n`).join(""), { mode: 0o600 });
       if (statSync(file).size > STORE_COMPACT_BYTES) {
         const keep = readQuotaStore(homeDir, agent).filter(

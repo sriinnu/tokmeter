@@ -20,8 +20,9 @@
  *     the next day it's touched.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 
 export interface Buckets {
   inputTokens: number;
@@ -67,7 +68,10 @@ function baselinePath(homeDir: string): string {
 
 export function readBaselines(homeDir: string): CumulativeBaselines {
   try {
-    const raw = JSON.parse(readFileSync(baselinePath(homeDir), "utf-8"));
+    const path = baselinePath(homeDir);
+    ensurePrivateDirectory(dirname(path));
+    ensurePrivateFile(path);
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
     return raw && typeof raw === "object" ? (raw as CumulativeBaselines) : {};
   } catch {
     return {};
@@ -78,10 +82,7 @@ export function readBaselines(homeDir: string): CumulativeBaselines {
 export function writeBaselines(baselines: CumulativeBaselines, homeDir: string): void {
   try {
     const path = baselinePath(homeDir);
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(baselines));
-    renameSync(tmp, path);
+    writePrivateFile(path, JSON.stringify(baselines));
   } catch {
     /* next scan recomputes from the same baselines; nothing is lost but the update */
   }

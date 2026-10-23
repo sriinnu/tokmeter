@@ -40,6 +40,14 @@ describe("SessionManager — lifecycle", () => {
     expect(mgr.get("claude-code", "a")?.connected).toBe(true);
   });
 
+  test("provider and session ID boundaries cannot collide", () => {
+    mgr.register({ provider: "a:b", sessionId: "c", model: "one" });
+    mgr.register({ provider: "a", sessionId: "b:c", model: "two" });
+    expect(mgr.getAll()).toHaveLength(2);
+    expect(mgr.get("a:b", "c")?.model).toBe("one");
+    expect(mgr.get("a", "b:c")?.model).toBe("two");
+  });
+
   test("update auto-registers an unknown session and sets cost/tokens", () => {
     const s = mgr.update("codex", "x", 1.5, tok({ inputTokens: 100, outputTokens: 40 }));
     expect(s).not.toBeNull();
@@ -63,7 +71,7 @@ describe("SessionManager — lifecycle", () => {
   });
 });
 
-describe("SessionManager — input hygiene (unauthenticated WS transport)", () => {
+describe("SessionManager — input hygiene", () => {
   let mgr: SessionManager;
   beforeEach(() => {
     mgr = new SessionManager();
@@ -90,6 +98,23 @@ describe("SessionManager — input hygiene (unauthenticated WS transport)", () =
     mgr.update("claude-code", "", 5, tok());
     expect(mgr.getAll()).toHaveLength(0);
     expect(mgr.getAggregated().totalCost).toBe(0);
+  });
+
+  test("rejects malformed model and oversized identifiers before they reach aggregation", () => {
+    expect(mgr.register({ provider: "codex", sessionId: "x", model: {} } as never)).toBe(false);
+    expect(mgr.register({ provider: "codex", sessionId: "x".repeat(257), model: "m" })).toBe(false);
+    expect(mgr.update("codex", "x".repeat(257), 1, tok())).toBeNull();
+    expect(mgr.getAll()).toHaveLength(0);
+  });
+
+  test("bounds registered sessions while allowing an existing one to refresh", () => {
+    for (let i = 0; i < 1024; i++) {
+      expect(mgr.register({ provider: "codex", sessionId: String(i), model: "m" })).toBe(true);
+    }
+    expect(mgr.register({ provider: "codex", sessionId: "extra", model: "m" })).toBe(false);
+    expect(mgr.update("codex", "extra", 1, tok())).toBeNull();
+    expect(mgr.register({ provider: "codex", sessionId: "0", model: "m" })).toBe(true);
+    expect(mgr.getAll()).toHaveLength(1024);
   });
 
   test("a malformed context window (NaN used tokens) never yields a NaN fill", () => {

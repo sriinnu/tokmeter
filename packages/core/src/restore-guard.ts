@@ -18,7 +18,7 @@
 
 import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { aliasFilePath } from "./alias-service.js";
 import { claudeSessionSideDirs } from "./cleaners/claude-code.js";
 import { configFilePath } from "./config-service.js";
@@ -30,6 +30,8 @@ export interface ArchiveEntry {
   name: string;
   /** First character of the `tar -tv` mode column: "-" file, "d" dir, "l" symlink, "h" hardlink, … */
   type: string;
+  /** Uncompressed size from tar's verbose listing. */
+  sizeBytes?: number;
 }
 
 /** Thrown when an archive or extracted tree fails a safety check. */
@@ -48,14 +50,26 @@ export class UnsafeArchiveError extends Error {
  * than guessed at.
  */
 export function listArchiveEntries(archivePath: string): ArchiveEntry[] {
-  const names = splitLines(execFileSync("tar", ["-tzf", archivePath], { timeout: 30_000 }));
-  const verbose = splitLines(execFileSync("tar", ["-tvzf", archivePath], { timeout: 30_000 }));
+  const options = { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 };
+  const names = splitLines(execFileSync("tar", ["-tzf", archivePath], options));
+  const verbose = splitLines(execFileSync("tar", ["-tvzf", archivePath], options));
   if (names.length !== verbose.length) {
     throw new UnsafeArchiveError(
       "Archive listing is ambiguous (entry count mismatch) — refusing to extract"
     );
   }
-  return names.map((name, i) => ({ name, type: verbose[i].charAt(0) }));
+  return names.map((name, i) => {
+    const row = verbose[i];
+    const fields = row.trim().split(/\s+/);
+    // bsdtar: mode, links, user, group, size, date...;
+    // GNU tar: mode, user/group, size, date...
+    const sizeField = /^\d+$/.test(fields[1] ?? "") ? fields[4] : fields[2];
+    const sizeBytes = Number(sizeField);
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+      throw new UnsafeArchiveError(`Cannot determine archive entry size for "${name}"`);
+    }
+    return { name, type: row.charAt(0), sizeBytes };
+  });
 }
 
 function splitLines(buf: Buffer): string[] {
@@ -76,7 +90,7 @@ function hasDotDot(name: string): boolean {
  */
 export function assertSafeEntries(entries: ArchiveEntry[]): void {
   for (const e of entries) {
-    if (hasDotDot(e.name)) {
+    if (hasDotDot(e.name) || isAbsolute(e.name) || e.name.includes("\0")) {
       throw new UnsafeArchiveError(
         `Archive contains path traversal entry "${e.name}" — refusing to extract`
       );
@@ -86,6 +100,32 @@ export function assertSafeEntries(entries: ArchiveEntry[]): void {
         `Archive entry "${e.name}" is a ${describeType(e.type)}, not a regular file — refusing to extract`
       );
     }
+  }
+}
+
+/** Bound extraction before tar can consume disk with a compressed archive. */
+export function assertArchiveLimits(
+  entries: ArchiveEntry[],
+  availableBytes: number,
+  maxExpandedBytes = 64 * 1024 ** 3,
+  maxEntries = 250_000
+): void {
+  if (entries.length > maxEntries) {
+    throw new UnsafeArchiveError(`Archive has too many entries (${entries.length})`);
+  }
+  let total = 0;
+  for (const e of entries) {
+    if (!Number.isSafeInteger(e.sizeBytes) || (e.sizeBytes ?? -1) < 0) {
+      throw new UnsafeArchiveError(`Archive entry "${e.name}" has no trustworthy size`);
+    }
+    if (e.type === "-") total += e.sizeBytes ?? 0;
+    if (total > maxExpandedBytes) {
+      throw new UnsafeArchiveError("Archive exceeds the expanded-size limit");
+    }
+  }
+  // Keep enough free space for the rest of the machine to stay functional.
+  if (total > Math.max(0, availableBytes - 512 * 1024 ** 2)) {
+    throw new UnsafeArchiveError("Archive needs more free disk space than restore allows");
   }
 }
 
@@ -139,6 +179,37 @@ export function restoreAllowedRoots(homeDir: string, sqlDumpDir?: string): strin
 /** True when `path` sits inside one of `roots`. */
 export function isAllowedRestorePath(path: string, roots: string[]): boolean {
   return roots.some((root) => isWithin(path, root));
+}
+
+/** Do not let an existing parent symlink redirect a lexically allowed copy. */
+export function assertNoSymlinkParents(dest: string, homeDir: string, roots: string[]): void {
+  const home = resolve(homeDir);
+  const root = roots.find((candidate) => isWithin(dest, candidate));
+  if (!root) throw new UnsafeArchiveError(`Restore destination is not allowlisted: ${dest}`);
+  // Under HOME, trust only the already-open home path and inspect every child.
+  // For an explicitly configured external root, inspect from the filesystem
+  // root; a symlink in ANY ancestor could redirect the supposedly allowed path.
+  const start = isWithin(dest, home) ? home : parse(resolve(dest)).root;
+  const startStat = lstatSync(start);
+  if (startStat.isSymbolicLink() || !startStat.isDirectory()) {
+    throw new UnsafeArchiveError(`Restore destination has an unsafe parent: ${start}`);
+  }
+  const rel = relative(start, dirname(dest));
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new UnsafeArchiveError(`Restore destination escapes its trusted base: ${dest}`);
+  }
+  let current = start;
+  for (const part of rel.split(sep).filter(Boolean)) {
+    current = join(current, part);
+    try {
+      const st = lstatSync(current);
+      if (st.isSymbolicLink() || !st.isDirectory()) {
+        throw new UnsafeArchiveError(`Restore destination has an unsafe parent: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
 }
 
 /**

@@ -22,7 +22,9 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   realpathSync,
   renameSync,
@@ -281,6 +283,15 @@ export function installAgent(opts?: { nodePath?: string; cliEntry?: string; heap
 } {
   const target = resolveLaunchTarget(opts);
   const heapMb = opts?.heapMb ?? Number.parseInt(process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144", 10);
+
+  // launchd opens stdout/stderr before the daemon's own startup can tighten
+  // this directory. Keep those files private from their first byte.
+  mkdirSync(DAEMON_STATE_DIR, { recursive: true, mode: 0o700 });
+  const state = lstatSync(DAEMON_STATE_DIR);
+  if (!state.isDirectory() || (process.getuid && state.uid !== process.getuid())) {
+    throw new Error("Daemon log directory is not an owner-controlled directory");
+  }
+  if (process.platform !== "win32") chmodSync(DAEMON_STATE_DIR, 0o700);
 
   const plistPath = writePlist(
     renderAgentPlist({

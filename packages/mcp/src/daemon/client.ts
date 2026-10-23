@@ -15,7 +15,14 @@ import type {
   SessionLedger,
   TokenUsage,
 } from "./protocol.js";
-import { DAEMON_URL } from "./protocol.js";
+import { DAEMON_URL, daemonAuthHeader } from "./protocol.js";
+
+function authenticatedSocket(): WebSocket | null {
+  const authorization = daemonAuthHeader();
+  return authorization
+    ? new WebSocket(DAEMON_URL, { headers: { Authorization: authorization } })
+    : null;
+}
 
 // ─── Response Types ─────────────────────────────────────────────────────
 
@@ -45,7 +52,11 @@ export async function syncUpdate(
 ): Promise<DaemonResponse> {
   return new Promise<DaemonResponse>((resolve) => {
     try {
-      const ws = new WebSocket(DAEMON_URL);
+      const ws = authenticatedSocket();
+      if (!ws) {
+        resolve({ connected: false });
+        return;
+      }
       let settled = false;
 
       const finish = (result: DaemonResponse) => {
@@ -104,7 +115,11 @@ export async function syncUpdate(
 export async function isDaemonReachable(timeoutMs = 500): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     try {
-      const ws = new WebSocket(DAEMON_URL);
+      const ws = authenticatedSocket();
+      if (!ws) {
+        resolve(false);
+        return;
+      }
       const timer = setTimeout(() => {
         try {
           ws.close();
@@ -137,7 +152,11 @@ export class DaemonClient {
   async connect(session: SessionInfo, timeoutMs = 3000): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        this.ws = new WebSocket(DAEMON_URL);
+        this.ws = authenticatedSocket();
+        if (!this.ws) {
+          resolve(false);
+          return;
+        }
         this.session = session;
 
         const timer = setTimeout(() => {

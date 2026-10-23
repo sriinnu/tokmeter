@@ -55,6 +55,14 @@ final class WebDashboardController: ObservableObject {
 
     var url: URL { URL(string: "http://127.0.0.1:\(activePort)/")! }
 
+    /// A per-launch browser capability. The dashboard trades it for an
+    /// HttpOnly cookie, then redirects to `/` so it leaves the address bar.
+    private var launchURL: URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "session", value: generation.uuidString)]
+        return components.url!
+    }
+
     /// First port in preferred…preferred+9 that 127.0.0.1 can bind, else one
     /// the kernel assigns. The daemon's CORS accepts any localhost port. A
     /// port taken between this check and the child's bind fails the nonce
@@ -110,7 +118,7 @@ final class WebDashboardController: ObservableObject {
         let preferred = preferredPort()
         if isRunning, process?.isRunning == true {
             if preferred == startedPreferred {
-                openURL(url)
+                openURL(launchURL)
                 return
             }
             stop()
@@ -138,7 +146,7 @@ final class WebDashboardController: ObservableObject {
         let stdin = Pipe()
         child.executableURL = URL(fileURLWithPath: toolchain.node)
         child.arguments = [assets.appendingPathComponent("dashboard-server.mjs").path,
-                           assets.path, String(activePort), attempt.uuidString]
+                           assets.path, String(activePort)]
         child.environment = toolchain.environment(base: ProcessInfo.processInfo.environment)
         child.standardInput = stdin
         child.standardOutput = FileHandle.nullDevice
@@ -150,7 +158,13 @@ final class WebDashboardController: ObservableObject {
                 if !self.isStarting { self.error = "Web dashboard stopped. Open it again to restart." }
             }
         }
-        do { try child.run() } catch {
+        do {
+            try child.run()
+            // argv is visible through process listings. Only the child gets
+            // this nonce through its inherited stdin pipe.
+            try stdin.fileHandleForWriting.write(contentsOf: Data("\(attempt.uuidString)\n".utf8))
+        } catch {
+            if child.isRunning { child.terminate() }
             self.error = "Could not start the web dashboard: \(error.localizedDescription)"
             return
         }
@@ -164,12 +178,14 @@ final class WebDashboardController: ObservableObject {
         for _ in 0..<20 {
             guard generation == attempt else { return }
             if !child.isRunning { break }
-            if let (data, response) = try? await session.data(from: url.appendingPathComponent("_tokmeter/ready")),
+            var readyRequest = URLRequest(url: url.appendingPathComponent("_tokmeter/ready"))
+            readyRequest.setValue(attempt.uuidString, forHTTPHeaderField: "X-Tokmeter-Launch-Nonce")
+            if let (data, response) = try? await session.data(for: readyRequest),
                (response as? HTTPURLResponse)?.statusCode == 200,
-               String(data: data, encoding: .utf8) == attempt.uuidString {
+               String(data: data, encoding: .utf8) == "ready" {
                 guard generation == attempt, child.isRunning, !Task.isCancelled else { return }
                 isRunning = true
-                openURL(url)
+                openURL(launchURL)
                 return
             }
             try? await Task.sleep(nanoseconds: 150_000_000)

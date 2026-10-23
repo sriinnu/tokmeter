@@ -116,7 +116,7 @@ tokmeter-mcp statusline        # one statusline tick
 tokmeter-mcp live              # live terminal UI
 ```
 
-The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. The macOS app, statusline, and MCP server consume its shared state. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
+The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. Private reads and WebSocket connections require the per-user token in `~/.tokmeter/daemon/daemon.token`; `/api/ready` is the public health check. The macOS app, statusline, and MCP server read that credential at use time. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
 
 MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP tool reference](docs/mcp-tools.md) for all 24 tools grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
 

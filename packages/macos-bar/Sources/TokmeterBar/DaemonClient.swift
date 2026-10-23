@@ -1,8 +1,7 @@
 // DaemonClient.swift — HTTP client for the Tokmeter daemon REST API.
 //
-// The daemon writes its bearer token to /tmp/drishti-daemon.token (mode 0600)
-// when started. This client reads the token once at init and includes it on
-// every POST request. GET requests are open (read-only telemetry).
+// The daemon writes its bearer token under ~/.tokmeter/daemon (mode 0600).
+// This client reads it at request time for private GETs and POSTs.
 //
 // All endpoints live at http://127.0.0.1:9877/api/*
 
@@ -60,13 +59,23 @@ final class DaemonClient {
     // pid and token shims here, and daemons from before the rename write only
     // these. Changing them would orphan every installed bar/daemon pair.
     private let pidPath = "/tmp/drishti-daemon.pid"
-    private let tokenPath = "/tmp/drishti-daemon.token"
+    private let tokenPaths = [
+        NSHomeDirectory() + "/.tokmeter/daemon/daemon.token",
+        "/tmp/drishti-daemon.token", // Compatibility with an older daemon.
+    ]
     private let session: URLSession
 
-    /// Bearer token read once from the token file. nil until first POST attempt.
+    /// Read on each request because a restarted daemon has a new token.
     private var bearerToken: String? {
-        try? String(contentsOfFile: tokenPath, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for path in tokenPaths {
+            if let token = try? String(contentsOfFile: path, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               token.count == 64,
+               token.allSatisfy({ $0.isHexDigit }) {
+                return token
+            }
+        }
+        return nil
     }
 
     private init() {
@@ -330,7 +339,7 @@ final class DaemonClient {
     /// answer is the liveness signal. Without a valid pidfile a response must
     /// still carry the daemon's API version header (X-Tokmeter-API, or the
     /// legacy X-Drishti-API). That's a sanity check
-    /// that tokmeter answered, not authentication: GETs send no secrets.
+    /// that tokmeter answered. Private GETs carry the same bearer as writes.
     /// A refused connection maps to daemonNotRunning so the offline path runs.
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         let pidfileValid = isDaemonRunning
@@ -340,6 +349,9 @@ final class DaemonClient {
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+        if let token = bearerToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let (data, response) = try await session.data(for: req)

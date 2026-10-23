@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +43,10 @@ function localDateKey(ts: number): string {
 async function main(): Promise<void> {
   const homeDir = homedir();
   const existingFile = existsSync(publicDataPath);
+  if (existingFile) {
+    if (!lstatSync(publicDataPath).isFile()) throw new Error("Unsafe public/data.json path");
+    chmodSync(publicDataPath, 0o600);
+  }
 
   // The freshness gate applies to BOTH shortcut sources: the daemon's
   // /api/summary itself falls back to a persisted cache when its scan throws
@@ -71,12 +85,25 @@ async function main(): Promise<void> {
   }
 
   mkdirSync(publicDir, { recursive: true });
-  writeFileSync(publicDataPath, `${JSON.stringify(summary, null, 2)}\n`, "utf-8");
+  const temporary = `${publicDataPath}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(summary, null, 2)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    renameSync(temporary, publicDataPath);
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
 }
 
 async function fetchDaemonSummary(): Promise<TokmeterSummary | null> {
   try {
+    const token = (await readFile(join(homedir(), ".tokmeter/daemon/daemon.token"), "utf8")).trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) return null;
     const res = await fetch(DAEMON_SUMMARY_URL, {
+      headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(DAEMON_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
