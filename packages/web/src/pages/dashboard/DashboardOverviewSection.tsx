@@ -308,12 +308,12 @@ function ActivityTrendPanel({
             tickfont: { color: webTheme.charts.axis },
           },
           yaxis: {
-            title: "Tokens",
+            title: { text: "Tokens" },
             rangemode: "tozero",
             gridcolor: webTheme.charts.grid,
           },
           yaxis2: {
-            title: "Cost ($)",
+            title: { text: "Cost ($)" },
             overlaying: "y",
             side: "right",
             rangemode: "tozero",
@@ -524,7 +524,7 @@ function ModelMixPanel({ insights }: { insights: DashboardInsights }) {
           margin: { b: 105, l: 48, r: 18, t: 12 },
           xaxis: { tickangle: -35 },
           yaxis: {
-            title: "Tokens",
+            title: { text: "Tokens" },
             rangemode: "tozero",
             gridcolor: webTheme.charts.grid,
           },

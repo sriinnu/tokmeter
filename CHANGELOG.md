@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Dependencies brought past every open advisory; `bun audit` is clean.**
+  `@sriinnu/tokmeter-mcp` shipped `qs`, `body-parser`, `proxy-addr`,
+  `ip-address` and `fast-uri` versions with known DoS, IP-spoofing and SSRF
+  advisories, all under the MCP SDK's express stack. tokmeter serves MCP over
+  stdio and the daemon binds localhost, so none was reachable, but they're
+  now at fixed versions. The web dashboard moves from plotly 2 to 4, which
+  drops the map engine with a critical XSS advisory from its bundle; its
+  axis titles move to the `{ text }` form plotly 3 requires.
+
+### Fixed
+
+- **The web dashboard rendered a blank page.** It declared React 18 next to
+  react-dom 19, and react-dom 19 reads internals React 18 doesn't have
+  (`Cannot read properties of undefined (reading 'S')`). The dashboard now
+  runs on React 19; the CLI and TUI stay on 18 for ink.
+
 ## [1.19.0] - 2026-10-22
 
 ### Added

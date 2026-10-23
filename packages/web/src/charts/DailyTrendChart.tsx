@@ -44,16 +44,20 @@ export function DailyTrendChart({ daily }: Props) {
         text: "Daily Usage Trend",
         font: { color: webTheme.text.primary, size: titleFontSize },
       },
-      xaxis: { title: "Date", gridcolor: webTheme.charts.grid, color: webTheme.charts.axis },
+      xaxis: {
+        title: { text: "Date" },
+        gridcolor: webTheme.charts.grid,
+        color: webTheme.charts.axis,
+      },
       yaxis: {
-        title: "Tokens",
+        title: { text: "Tokens" },
         side: "left",
         rangemode: "tozero",
         gridcolor: webTheme.charts.grid,
         color: webTheme.charts.axis,
       },
       yaxis2: {
-        title: "Cost ($)",
+        title: { text: "Cost ($)" },
         side: "right",
         overlaying: "y",
         rangemode: "tozero",
