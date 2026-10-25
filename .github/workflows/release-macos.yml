@@ -11,8 +11,8 @@
 #   SPARKLE_PRIVATE_KEY           — Ed25519 key for Sparkle auto-updates
 #   SPARKLE_PUBLIC_KEY            — Public key embedded in the app
 #
-# When secrets are missing, the workflow skips signing/notarization
-# and produces an unsigned build artifact instead.
+# Missing signing, notarization, or Sparkle material is fatal. CI must never
+# produce an artifact that looks like a release but lacks part of its trust chain.
 # ============================================================================
 
 name: Release macOS Bar
@@ -20,16 +20,15 @@ name: Release macOS Bar
 on:
   release:
     types: [created]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version (e.g. 0.2.0)"
-        required: true
-        default: "0.2.0"
+
+concurrency:
+  group: release-macos-publish
+  cancel-in-progress: false
 
 env:
   APP_NAME: TokmeterBar
   BUNDLE_ID: com.sriinnu.tokmeterbar
+  RELEASE_TAG: ${{ github.event.release.tag_name }}
 
 permissions:
   contents: write
@@ -52,30 +51,57 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout trusted verification code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Verify signed release tag is on main
+        id: release-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RELEASE_SIGNER_FINGERPRINT: ${{ vars.RELEASE_SIGNER_FINGERPRINT }}
+        run: scripts/verify-release-tag.sh "$RELEASE_TAG"
+
+      - name: Checkout verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.release-tag.outputs.commit }}
+          persist-credentials: false
 
       - name: Resolve version
         run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            VERSION="${{ github.event.release.tag_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION="${{ inputs.version }}"
-          fi
+          VERSION="${RELEASE_TAG#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${VERSION}"
 
       - name: Check signing secrets
         id: check-secrets
+        env:
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
         run: |
-          if [[ -n "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" ]]; then
-            echo "has_signing=true" >> "$GITHUB_OUTPUT"
-            echo "✅ Apple signing secrets found"
-          else
-            echo "has_signing=false" >> "$GITHUB_OUTPUT"
-            echo "⚠️  Apple signing secrets not configured — building unsigned"
-          fi
+          set -euo pipefail
+          for name in APPLE_DEVELOPER_ID_P12 APPLE_DEVELOPER_ID_PASSWORD \
+            APP_STORE_CONNECT_API_KEY_P8 APP_STORE_CONNECT_KEY_ID \
+            APP_STORE_CONNECT_ISSUER_ID SPARKLE_PRIVATE_KEY SPARKLE_PUBLIC_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required release secret ${name} is missing" >&2
+              exit 1
+            fi
+          done
+          echo "has_signing=true" >> "$GITHUB_OUTPUT"
+          echo "All release signing inputs are present."
 
       - name: Import signing certificate
         if: steps.check-secrets.outputs.has_signing == 'true'
@@ -85,19 +111,26 @@ jobs:
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          CERT_PATH=$(mktemp "$RUNNER_TEMP/tokmeter-cert.XXXXXX")
+          trap 'rm -f "$CERT_PATH"' EXIT
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > /tmp/cert.p12
-          security import /tmp/cert.p12 -P "$APPLE_DEVELOPER_ID_PASSWORD" \
+          printf '%s' "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$CERT_PATH"
+          chmod 600 "$CERT_PATH"
+          security import "$CERT_PATH" -P "$APPLE_DEVELOPER_ID_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          rm -f /tmp/cert.p12
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+          DEV_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+          [[ -n "$DEV_ID" ]] || { echo "::error::Developer ID identity not found" >&2; exit 1; }
+          echo "::add-mask::$DEV_ID"
+          echo "DEV_ID=$DEV_ID" >> "$GITHUB_ENV"
 
       # bundle.sh builds the in-app web dashboard with `bunx vite build`, so
       # the runner needs Bun and the workspace's dependencies — without them
@@ -105,10 +138,10 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version: 1.3.5
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build release binary
         working-directory: packages/macos-bar
@@ -118,7 +151,6 @@ jobs:
         if: steps.check-secrets.outputs.has_signing == 'true'
         working-directory: packages/macos-bar
         env:
-          DEV_ID: "Developer ID Application: Srinivas Pendela (RSH5FK4MB6)"
           SUPUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
           CFBundleShortVersionString: ${{ env.VERSION }}
           # CFBundleVersion deliberately NOT set: bundle.sh's committed
@@ -129,14 +161,6 @@ jobs:
           # downgrade and never offers.
         run: ./bundle.sh --signed --no-install
 
-      - name: Bundle .app (unsigned)
-        if: steps.check-secrets.outputs.has_signing != 'true'
-        working-directory: packages/macos-bar
-        env:
-          CFBundleShortVersionString: ${{ env.VERSION }}
-          # See the signed step: bundle.sh owns BUILD_VERSION.
-        run: ./bundle.sh --no-install
-
       - name: Notarize
         if: steps.check-secrets.outputs.has_signing == 'true'
         working-directory: packages/macos-bar
@@ -145,30 +169,35 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          echo "$APP_STORE_CONNECT_API_KEY_P8" | sed 's/\\n/\n/g' > /tmp/api-key.p8
+          set -euo pipefail
+          API_KEY_PATH=$(mktemp "$RUNNER_TEMP/tokmeter-api-key.XXXXXX")
+          NOTARIZE_ZIP=$(mktemp "$RUNNER_TEMP/tokmeter-notarize.XXXXXX")
+          trap 'rm -f "$API_KEY_PATH" "$NOTARIZE_ZIP"' EXIT
+          API_KEY_CONTENT="${APP_STORE_CONNECT_API_KEY_P8//\\n/$'\n'}"
+          printf '%s' "$API_KEY_CONTENT" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          unset API_KEY_CONTENT
 
-          /usr/bin/ditto --norsrc -c -k --keepParent ${APP_NAME}.app /tmp/notarize.zip
+          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$NOTARIZE_ZIP"
 
-          xcrun notarytool submit /tmp/notarize.zip \
-            --key /tmp/api-key.p8 \
+          xcrun notarytool submit "$NOTARIZE_ZIP" \
+            --key "$API_KEY_PATH" \
             --key-id "$APP_STORE_CONNECT_KEY_ID" \
             --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
             --wait
 
-          xcrun stapler staple ${APP_NAME}.app
-          spctl -a -t exec -vv ${APP_NAME}.app
-          xcrun stapler validate ${APP_NAME}.app
-
-          rm -f /tmp/api-key.p8 /tmp/notarize.zip
+          xcrun stapler staple "${APP_NAME}.app"
+          spctl -a -t exec -vv "${APP_NAME}.app"
+          xcrun stapler validate "${APP_NAME}.app"
 
       - name: Create distribution zip
         working-directory: packages/macos-bar
         run: |
-          xattr -cr ${APP_NAME}.app 2>/dev/null || true
-          find ${APP_NAME}.app -name '._*' -delete 2>/dev/null || true
-          /usr/bin/ditto --norsrc -c -k --keepParent ${APP_NAME}.app ${APP_NAME}-${VERSION}.zip
-          echo "ZIP_PATH=${APP_NAME}-${VERSION}.zip" >> "$GITHUB_ENV"
-          echo "ZIP_SIZE=$(stat -f%z ${APP_NAME}-${VERSION}.zip)" >> "$GITHUB_ENV"
+          set -euo pipefail
+          ZIP_NAME="${APP_NAME}-${VERSION}.zip"
+          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$ZIP_NAME"
+          echo "ZIP_PATH=${ZIP_NAME}" >> "$GITHUB_ENV"
+          echo "ZIP_SIZE=$(stat -f%z "$ZIP_NAME")" >> "$GITHUB_ENV"
 
       - name: Sign with Sparkle
         if: steps.check-secrets.outputs.has_signing == 'true'
@@ -176,18 +205,23 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle.key
-          chmod 600 /tmp/sparkle.key
+          set -euo pipefail
+          SPARKLE_KEY_PATH=$(mktemp "$RUNNER_TEMP/tokmeter-sparkle.XXXXXX")
+          trap 'rm -f "$SPARKLE_KEY_PATH"' EXIT
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$SPARKLE_KEY_PATH"
+          chmod 600 "$SPARKLE_KEY_PATH"
 
-          SIGN_TOOL=$(find .build -name "sign_update" -type f -perm +111 2>/dev/null | head -1)
+          SIGN_TOOL=$(find .build -name "sign_update" -type f -perm +111 -print -quit 2>/dev/null)
           if [[ -z "$SIGN_TOOL" ]]; then
-            echo "WARNING: sign_update not found, skipping Sparkle signing"
-          else
-            ED_SIG=$("$SIGN_TOOL" -f /tmp/sparkle.key "${APP_NAME}-${VERSION}.zip")
-            echo "Sparkle signature: ${ED_SIG}"
-            echo "ED_SIG=${ED_SIG}" >> "$GITHUB_ENV"
+            echo "::error::Sparkle sign_update was not built" >&2
+            exit 1
           fi
-          rm -f /tmp/sparkle.key
+          ED_SIG=$("$SIGN_TOOL" -f "$SPARKLE_KEY_PATH" "${APP_NAME}-${VERSION}.zip")
+          if [[ -z "$ED_SIG" ]]; then
+            echo "::error::Sparkle produced an empty signature" >&2
+            exit 1
+          fi
+          echo "ED_SIG=${ED_SIG}" >> "$GITHUB_ENV"
 
       # A wrong SPARKLE_PRIVATE_KEY cannot fail the build — sign_update happily
       # signs with any key. It fails silently later, on every user's machine,
@@ -200,11 +234,13 @@ jobs:
       # and a zip mutated after signing. Comparing key strings would catch only
       # the second.
       - name: Verify the Sparkle signature against the app's own key
+        id: verify-sparkle
         if: steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
         working-directory: packages/macos-bar
         run: |
           set -euo pipefail
           PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "${APP_NAME}.app/Contents/Info.plist")"
+          # shellcheck disable=SC2016
           SUPUB="$PUBKEY" ED_SIG="$ED_SIG" ZIP="${APP_NAME}-${VERSION}.zip" node -e '
             const crypto = require("node:crypto");
             const fs = require("node:fs");
@@ -228,6 +264,27 @@ jobs:
             }
             console.log("Sparkle signature validates against the app'"'"'s SUPublicEDKey.");
           '
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Sparkle build number before publishing bytes
+        if: vars.CI_PUBLISH == 'true' && steps.verify-sparkle.outputs.verified == 'true'
+        run: |
+          set -euo pipefail
+          BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+            "packages/macos-bar/${APP_NAME}.app/Contents/Info.plist")"
+          [[ "$BUILD_NUM" =~ ^[0-9]+$ ]] || {
+            echo "::error::invalid CFBundleVersion" >&2
+            exit 1
+          }
+          git fetch origin main
+          PREV_BUILD="$(git show origin/main:packages/macos-bar/appcast.xml \
+            | grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
+            | head -1 | tr -dc '0-9')"
+          if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
+            echo "::error::build number is not newer than the published appcast; bump BUILD_VERSION in bundle.sh" >&2
+            exit 1
+          fi
+          echo "BUILD_NUM=$BUILD_NUM" >> "$GITHUB_ENV"
 
       # PUBLISH IS OPT-IN (vars.CI_PUBLISH == 'true'), OFF BY DEFAULT.
       # The real release path is the local Titan-gated flow (bundle.sh --release
@@ -241,12 +298,12 @@ jobs:
       # build-number source). `--clobber` also dropped so a stray run can't
       # silently overwrite a published asset.
       - name: Upload to Release
-        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true'
+        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != '' && steps.verify-sparkle.outputs.verified == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: packages/macos-bar
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "$RELEASE_TAG" \
             "${APP_NAME}-${VERSION}.zip"
 
       # Sparkle resolves new versions from packages/macos-bar/appcast.xml served
@@ -257,27 +314,15 @@ jobs:
       # signature matches the locally-uploaded zip. Letting CI also append one
       # would open a duplicate/mismatched appcast PR. Off unless CI_PUBLISH.
       - name: Update appcast.xml
-        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
+        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != '' && steps.verify-sparkle.outputs.verified == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          export PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
-          # Read the build number off the bundle we just signed, so the feed can
-          # never describe a build that does not exist.
-          export BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
-            "packages/macos-bar/${APP_NAME}.app/Contents/Info.plist")"
-          # Sparkle ranks updates by build number, so a entry numbered at or below
-          # the newest one already published is never offered — silently, with no
-          # error anywhere. Refuse to write one.
-          PREV_BUILD="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
-            packages/macos-bar/appcast.xml | head -1 | tr -dc '0-9')"
-          if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
-            echo "::error::build ${BUILD_NUM} is not newer than the published ${PREV_BUILD}; Sparkle would never offer this update. Bump BUILD_VERSION in bundle.sh." >&2
-            exit 1
-          fi
-          echo "appcast build ${BUILD_NUM} (previous published: ${PREV_BUILD:-none})"
-          export TAG="${{ github.event.release.tag_name }}"
+          PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+          export PUB_DATE
+          export BUILD_NUM
+          export TAG="$RELEASE_TAG"
           export ZIP_NAME="${APP_NAME}-${VERSION}.zip"
           export ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
           # ED_SIG already contains sparkle:edSignature="…" length="…" as one
@@ -285,6 +330,13 @@ jobs:
 
           git fetch origin main
           git checkout -B main origin/main
+
+          PREV_BUILD="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
+            packages/macos-bar/appcast.xml | head -1 | tr -dc '0-9')"
+          if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
+            echo "::error::build number is no longer newer than the published appcast" >&2
+            exit 1
+          fi
 
           python3 - <<'PY'
           import os, re, pathlib
@@ -360,10 +412,3 @@ jobs:
           # enabled AND the PR satisfies branch protection. Falls through
           # quietly otherwise so the human can squash-merge manually.
           gh pr merge "${BRANCH}" --auto --squash --delete-branch || true
-
-      - name: Upload artifact (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: TokmeterBar-${{ env.VERSION }}
-          path: packages/macos-bar/TokmeterBar-${{ env.VERSION }}.zip

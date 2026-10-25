@@ -730,6 +730,8 @@ export interface CleanupOptions {
   backupDir?: string;
   /** Skip confirmation prompts (CLI). */
   force?: boolean;
+  /** Refuse deletion unless a fresh preview resolves to this exact target/collateral digest. */
+  expectedPreviewDigest?: string;
 }
 
 /** Metadata stored alongside a backup archive. */

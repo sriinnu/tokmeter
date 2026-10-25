@@ -64,7 +64,12 @@ function fileUriToPath(uri: string): string | undefined {
 
 async function resolveWorkspaceProject(chatSessionsDir: string): Promise<string> {
   const metaPath = join(dirname(chatSessionsDir), "workspace.json");
-  const meta = await readJsonFile<WorkspaceMetaFile>(metaPath);
+  let meta: WorkspaceMetaFile | null = null;
+  try {
+    meta = await readJsonFile<WorkspaceMetaFile>(metaPath);
+  } catch {
+    // Optional display metadata; usage remains complete without it.
+  }
 
   if (meta?.folder) {
     const path = fileUriToPath(meta.folder);
@@ -151,8 +156,10 @@ export class VSCodeCopilotParser implements SessionParser {
           const raw = await readFile(file, "utf-8");
           const parsed = JSON.parse(raw) as EmptyWindowChatFile;
           records.push(...requestsToRecords(parsed.v?.requests, "vscode-copilot", file));
-        } catch {
-          // skip unreadable/malformed files
+        } catch (error) {
+          throw new Error(
+            `Unable to read Copilot session ${file}: ${error instanceof Error ? error.message : error}`
+          );
         }
       }
     }

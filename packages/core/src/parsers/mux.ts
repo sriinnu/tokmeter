@@ -52,8 +52,9 @@ export class MuxParser implements SessionParser {
         const s = await stat(file);
         if (!Number.isFinite(ts)) ts = s.mtimeMs;
         if (s.birthtimeMs > 0) createdOn = localDateKey(s.birthtimeMs);
-      } catch {
-        /* gone between find and stat */
+      } catch (error) {
+        if (!Number.isFinite(ts)) throw error;
+        // A parsed usage timestamp is authoritative; birth time is optional.
       }
       if (!Number.isFinite(ts)) continue;
 

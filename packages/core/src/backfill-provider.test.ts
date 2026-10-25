@@ -122,4 +122,36 @@ describe("backfillProviderIntoRelay — surgical custom-source fold", () => {
     expect(onDisk?.providers.ribhu.totalTokens).toBe(1100);
     expect(relay2.aggregates.get(date)?.providers.ribhu.totalTokens).toBe(1100);
   });
+
+  test("an incomplete provider scan writes no additive bucket", async () => {
+    const date = seedCodexDay();
+    const dir = join(home, ".ribhu", "sessions");
+    mkdirSync(dir, { recursive: true });
+    const good = JSON.stringify({
+      ts: SEALED_TS,
+      id: "before-limit",
+      model: "ribhu-x",
+      input_tokens: 1000,
+      output_tokens: 100,
+    });
+    writeFileSync(
+      join(dir, "oversized.jsonl"),
+      `${good}\n${JSON.stringify({ padding: "x".repeat(8 * 1024 * 1024 + 1) })}\n`
+    );
+    saveConfig(
+      {
+        ...DEFAULT_CONFIG,
+        modifiedBy: "user",
+        customSources: [{ path: dir, format: "tokmeter-usage-jsonl", provider: "ribhu" }],
+      },
+      home
+    );
+
+    const warnings: import("./types.js").ScanWarning[] = [];
+    const relay = await backfillProviderIntoRelay(ctxFor(home), "ribhu", REF, warnings, 30);
+    expect(relay.aggregates.get(date)?.providers.ribhu).toBeUndefined();
+    expect(loadAggregates(home).get(date)?.providers.ribhu).toBeUndefined();
+    expect(warnings.some((warning) => warning.scope === "provider")).toBe(true);
+    expect(warnings.some((warning) => /not persisted/i.test(warning.message))).toBe(true);
+  });
 });

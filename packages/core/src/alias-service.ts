@@ -38,6 +38,7 @@
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sanitizeDataLabel } from "./display-safety.js";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -80,6 +81,29 @@ export function aliasFilePath(home: string = homedir()): string {
   return join(home, ".tokmeter", "aliases.json");
 }
 
+function sanitizeAliasMap(input: Record<string, unknown>): AliasMap {
+  const clean: AliasMap = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (sanitizeDataLabel(k, 512) !== k) continue;
+    const e = v as Partial<AliasEntry>;
+    const display = sanitizeDataLabel(e?.display, 200);
+    if (!display) continue;
+    clean[k] = {
+      display,
+      hidden: Boolean(e.hidden),
+      tags: Array.isArray(e.tags)
+        ? [...new Set(e.tags.map((tag) => sanitizeDataLabel(tag, 100)).filter(Boolean))].slice(
+            0,
+            50
+          )
+        : [],
+      modifiedBy: e.modifiedBy === "user" ? "user" : "tokmeter",
+      modifiedAt: typeof e.modifiedAt === "string" ? e.modifiedAt : new Date().toISOString(),
+    };
+  }
+  return clean;
+}
+
 // ─── Load / Save ───────────────────────────────────────────────────────────
 
 /**
@@ -107,20 +131,7 @@ export function loadAliases(home: string = homedir()): AliasMap {
     backupBrokenAliasFile(path, "root is not an object");
     return {};
   }
-  const clean: AliasMap = {};
-  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    const e = v as Partial<AliasEntry>;
-    if (typeof e?.display === "string" && e.display.length > 0) {
-      clean[k] = {
-        display: e.display,
-        hidden: Boolean(e.hidden),
-        tags: Array.isArray(e.tags) ? e.tags.filter((t): t is string => typeof t === "string") : [],
-        modifiedBy: e.modifiedBy === "user" ? "user" : "tokmeter",
-        modifiedAt: typeof e.modifiedAt === "string" ? e.modifiedAt : new Date().toISOString(),
-      };
-    }
-  }
-  return clean;
+  return sanitizeAliasMap(parsed as Record<string, unknown>);
 }
 
 /**
@@ -131,7 +142,7 @@ export function loadAliases(home: string = homedir()): AliasMap {
  */
 export function saveAliases(map: AliasMap, home: string = homedir()): void {
   const path = aliasFilePath(home);
-  writePrivateFile(path, JSON.stringify(map, null, 2));
+  writePrivateFile(path, JSON.stringify(sanitizeAliasMap(map), null, 2));
 }
 
 /** Move a broken aliases.json out of the way; write a sibling .bak with a timestamp. */
@@ -174,15 +185,26 @@ export function setAlias(
   },
   flag: "user" | "tokmeter" = "user"
 ): AliasMap {
+  const cleanMap = sanitizeAliasMap(map as unknown as Record<string, unknown>);
+  const safeKey = sanitizeDataLabel(key, 512);
+  if (!safeKey || safeKey !== key) {
+    throw new Error("Alias key must be a safe single-line project label");
+  }
+  const safeDisplay = sanitizeDataLabel(patch.display, 200);
+  if (!safeDisplay) throw new Error("Alias display must be a safe non-empty label");
+  const safeTags = (patch.tags ?? cleanMap[key]?.tags ?? [])
+    .map((tag) => sanitizeDataLabel(tag, 100))
+    .filter(Boolean)
+    .slice(0, 50);
   // Don't clobber user-flagged with tokmeter-flagged — that's the whole rule.
-  const existing = map[key];
-  if (existing?.modifiedBy === "user" && flag === "tokmeter") return map;
+  const existing = cleanMap[key];
+  if (existing?.modifiedBy === "user" && flag === "tokmeter") return cleanMap;
   return {
-    ...map,
+    ...cleanMap,
     [key]: {
-      display: patch.display,
+      display: safeDisplay,
       hidden: patch.hidden ?? existing?.hidden ?? false,
-      tags: patch.tags ?? existing?.tags ?? [],
+      tags: safeTags,
       modifiedBy: flag,
       modifiedAt: new Date().toISOString(),
     },
@@ -196,7 +218,7 @@ export function mergeAliases(
   keys: string[],
   flag: "user" | "tokmeter" = "user"
 ): AliasMap {
-  let next = map;
+  let next = sanitizeAliasMap(map as unknown as Record<string, unknown>);
   for (const k of keys) {
     next = setAlias(next, k, { display }, flag);
   }
@@ -205,8 +227,8 @@ export function mergeAliases(
 
 /** Remove an alias. The project reverts to its canonical name. */
 export function removeAlias(map: AliasMap, key: string): AliasMap {
-  if (!(key in map)) return map;
-  const next = { ...map };
+  const next = sanitizeAliasMap(map as unknown as Record<string, unknown>);
+  if (!(key in next)) return next;
   delete next[key];
   return next;
 }
@@ -219,14 +241,20 @@ export function applyTagOp(
   tags: string[]
 ): AliasMap {
   const now = new Date().toISOString();
-  const normalizedTags = tags.map((t) => t.trim()).filter(Boolean);
-  const next: AliasMap = { ...map };
-  for (const [k, v] of Object.entries(map)) {
-    if (v.display !== display) continue;
+  const safeDisplay = sanitizeDataLabel(display, 200);
+  if (!safeDisplay || safeDisplay !== display) {
+    throw new Error("Alias display must be a safe single-line label");
+  }
+  const normalizedTags = [
+    ...new Set(tags.map((t) => sanitizeDataLabel(t, 100)).filter(Boolean)),
+  ].slice(0, 50);
+  const next = sanitizeAliasMap(map as unknown as Record<string, unknown>);
+  for (const [k, v] of Object.entries(next)) {
+    if (v.display !== safeDisplay) continue;
     let newTags = v.tags ?? [];
     switch (op) {
       case "add":
-        newTags = Array.from(new Set([...newTags, ...normalizedTags]));
+        newTags = [...new Set([...newTags, ...normalizedTags])].slice(0, 50);
         break;
       case "remove": {
         const drop = new Set(normalizedTags);
@@ -245,9 +273,13 @@ export function applyTagOp(
 /** Flip hidden flag across all entries sharing a display. */
 export function setHidden(map: AliasMap, display: string, hidden: boolean): AliasMap {
   const now = new Date().toISOString();
-  const next: AliasMap = { ...map };
-  for (const [k, v] of Object.entries(map)) {
-    if (v.display !== display) continue;
+  const safeDisplay = sanitizeDataLabel(display, 200);
+  if (!safeDisplay || safeDisplay !== display) {
+    throw new Error("Alias display must be a safe single-line label");
+  }
+  const next = sanitizeAliasMap(map as unknown as Record<string, unknown>);
+  for (const [k, v] of Object.entries(next)) {
+    if (v.display !== safeDisplay) continue;
     next[k] = { ...v, hidden, modifiedAt: now };
   }
   return next;

@@ -173,8 +173,10 @@ function readJsonMessages(db: ReadonlySqlite, dbPath: string, provider: Provider
     let msg: OpenCodeMessageData;
     try {
       msg = JSON.parse(row.data) as OpenCodeMessageData;
-    } catch {
-      continue;
+    } catch (error) {
+      throw new Error(
+        `Malformed ${provider} message ${row.id}: ${error instanceof Error ? error.message : error}`
+      );
     }
     const rec = openCodeMessageToRecord(msg, provider, dbPath, {
       id: row.id,

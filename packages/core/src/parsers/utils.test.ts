@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { configFilePath } from "../config-service.js";
 import { ALL_PROVIDER_IDS } from "./index.js";
-import { createRecord, getConfiguredProviderPaths, mapWithConcurrency } from "./utils.js";
+import {
+  createRecord,
+  findFiles,
+  getConfiguredProviderPaths,
+  mapWithConcurrency,
+  readJsonlFile,
+  readJsonlFileFromOffset,
+} from "./utils.js";
 
 describe("mapWithConcurrency", () => {
   test("preserves input order regardless of completion order", async () => {
@@ -53,6 +60,20 @@ describe("mapWithConcurrency", () => {
 });
 
 describe("createRecord usage provenance", () => {
+  test("neutralizes terminal escapes and direction overrides in display fields", () => {
+    const record = createRecord({
+      timestamp: 0,
+      provider: "codex",
+      model: "\u001b]8;;https://evil.example\u0007click\u001b]8;;\u0007\u001b[31mred",
+      project: "safe\u202Egnp.exe\nnext",
+      toolCalls: ["ok", "\u001b[2Jclear"],
+    });
+
+    expect(record.model).toBe("clickred");
+    expect(record.project).toBe("safe gnp.exe next");
+    expect(record.toolCalls).toEqual(["ok", "clear"]);
+  });
+
   test("attaches provenance metadata for every registered provider", () => {
     for (const provider of ALL_PROVIDER_IDS) {
       const record = createRecord({
@@ -116,6 +137,84 @@ describe("createRecord usage provenance", () => {
 
     expect(record.usage?.source).toBe("tool_json");
     expect(record.usage?.inputTokens).toBe("direct");
+  });
+});
+
+describe("bounded JSONL readers", () => {
+  let jsonlPath: string;
+
+  beforeEach(() => {
+    jsonlPath = join(mkdtempSync(join(tmpdir(), "tokmeter-jsonl-test-")), "session.jsonl");
+  });
+
+  afterEach(() => rmSync(join(jsonlPath, ".."), { recursive: true, force: true }));
+
+  test("surfaces a malformed complete line with records parsed before it", async () => {
+    writeFileSync(jsonlPath, '{"n":1}\nnot-json\n{"n":2}');
+    let failure: unknown;
+    await expect(
+      readJsonlFile<{ n: number }>(jsonlPath, (error) => {
+        failure = error;
+      })
+    ).resolves.toEqual([{ n: 1 }]);
+    expect((failure as Error).message).toMatch(/malformed complete JSON line/);
+  });
+
+  test("does not silently discard valid ledgers above the former record cap", async () => {
+    const count = 500_001;
+    writeFileSync(jsonlPath, `${'{"n":1}\n'.repeat(count)}`);
+    const records = await readJsonlFile<{ n: number }>(jsonlPath);
+    expect(records).toHaveLength(count);
+  });
+
+  test("offset reads discard only a genuinely partial first record", async () => {
+    const first = '{"n":1}\n';
+    writeFileSync(jsonlPath, `${first}{"n":2}\n{"n":3}`);
+    await expect(readJsonlFileFromOffset<{ n: number }>(jsonlPath, first.length)).resolves.toEqual([
+      { n: 2 },
+      { n: 3 },
+    ]);
+    await expect(
+      readJsonlFileFromOffset<{ n: number }>(jsonlPath, first.length + 3)
+    ).resolves.toEqual([{ n: 3 }]);
+  });
+
+  test("reports the exact snapshot boundary consumed by an offset read", async () => {
+    const content = '{"n":1}\n{"n":2}\n';
+    writeFileSync(jsonlPath, content);
+    let snapshot: { mtimeMs: number; sizeBytes: number } | undefined;
+    await readJsonlFileFromOffset(jsonlPath, 0, undefined, (value) => {
+      snapshot = value;
+    });
+    expect(snapshot?.sizeBytes).toBe(Buffer.byteLength(content));
+  });
+
+  test("rejects an oversized single line instead of allocating without bound", async () => {
+    writeFileSync(jsonlPath, `{"value":"${"x".repeat(8 * 1024 * 1024 + 1)}"}`);
+    let failure: unknown;
+    await expect(
+      readJsonlFile(jsonlPath, (error) => {
+        failure = error;
+      })
+    ).resolves.toEqual([]);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/line limit/);
+  });
+});
+
+describe("findFiles completeness", () => {
+  test("throws instead of silently truncating at the file-discovery cap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tokmeter-find-files-limit-"));
+    try {
+      writeFileSync(join(root, "a.jsonl"), "");
+      writeFileSync(join(root, "b.jsonl"), "");
+      writeFileSync(join(root, "c.jsonl"), "");
+      await expect(findFiles(root, (name) => name.endsWith(".jsonl"), 2, 2)).rejects.toThrow(
+        /File discovery limit/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

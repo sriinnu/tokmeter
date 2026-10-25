@@ -20,7 +20,7 @@
  *     the next day it's touched.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 
@@ -67,25 +67,21 @@ function baselinePath(homeDir: string): string {
 }
 
 export function readBaselines(homeDir: string): CumulativeBaselines {
-  try {
-    const path = baselinePath(homeDir);
-    ensurePrivateDirectory(dirname(path));
-    ensurePrivateFile(path);
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    return raw && typeof raw === "object" ? (raw as CumulativeBaselines) : {};
-  } catch {
-    return {};
+  const path = baselinePath(homeDir);
+  ensurePrivateDirectory(dirname(path));
+  if (!existsSync(path)) return {};
+  ensurePrivateFile(path);
+  const raw = JSON.parse(readFileSync(path, "utf-8"));
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`Invalid cumulative baseline schema: ${path}`);
   }
+  return raw as CumulativeBaselines;
 }
 
 /** Atomic (temp + rename). Same single-writer caveat as codex-sqlite-checkpoint.ts. */
 export function writeBaselines(baselines: CumulativeBaselines, homeDir: string): void {
-  try {
-    const path = baselinePath(homeDir);
-    writePrivateFile(path, JSON.stringify(baselines));
-  } catch {
-    /* next scan recomputes from the same baselines; nothing is lost but the update */
-  }
+  const path = baselinePath(homeDir);
+  writePrivateFile(path, JSON.stringify(baselines));
 }
 
 /**

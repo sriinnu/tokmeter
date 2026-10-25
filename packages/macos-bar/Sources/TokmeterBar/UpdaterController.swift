@@ -8,7 +8,6 @@
 // Sparkle reads its config from Info.plist:
 //   SUFeedURL    — URL to the appcast.xml on your release server
 //   SUPublicEDKey — public half of the EdDSA keypair (private half signs releases)
-//   SUEnableInstallerLauncherService = true  (modern installer flow)
 //
 // The bundle.sh script writes those keys for you. See RELEASE.md.
 

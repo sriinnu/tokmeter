@@ -120,13 +120,10 @@ export async function refreshFromRelay(
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
 
-  // A crashed provider mid-fill writes nothing — a healthy re-run will fill
-  // it correctly. Better to retry than freeze a degraded day. Per-file
-  // `partial` faults deliberately do NOT abort: a permanently unreadable file
-  // would otherwise block the gap fill on every cold start until the raw
-  // JSONL behind the gap ages out — losing whole days to protect one file's
-  // tail.
-  const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider" && !w.partial);
+  // Any provider fault, including a bounded per-file partial read, makes the
+  // gap non-authoritative. Retrying is preferable to permanently sealing a
+  // day that omitted a valid oversized line or truncated provider file.
+  const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
   if (gapDegraded) return { aggregates, historySource: "extended" };
 
   // A day the daemon never sealed (it was down at midnight) still has its
@@ -221,11 +218,10 @@ async function foldRawIntoDays(
   };
 
   for (const parser of getParsers(undefined)) {
-    // Per-file fail-soft truncations surface here for visibility. They don't
-    // gate the rebuild — rebuildRecentWindow's overwrite-vs-keep decision is
-    // shouldKeepSealedDay's size/cost comparison, which catches the truncated
-    // result by its own shrinkage. `partial: true` keeps the gap fill's
-    // whole-provider abort from firing on a single bad file.
+    // Per-file bounded-read faults surface here for visibility. Callers decide
+    // whether the resulting fold may be persisted; full rebuilds abort every
+    // write when any provider is incomplete, while recent-window rebuilds also
+    // retain their per-day grow-only comparison as a second line of defense.
     const scanOpts = {
       ...(floorMs !== undefined ? { modifiedSinceMs: floorMs } : {}),
       onWarning: (message: string) =>
@@ -285,7 +281,16 @@ async function rebuildHistoricalFromScratch(
   referenceTimestamp: number,
   warnings: ScanWarning[]
 ): Promise<RelayState> {
+  const existing = loadAggregates(ctx.homeDir);
+  const warnBefore = warnings.length;
   const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings);
+  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
+    warnings.push({
+      scope: "history",
+      message: "Full rebuild was not persisted because at least one provider scan was incomplete.",
+    });
+    return { aggregates: existing, historySource: existing.size > 0 ? "snapshot" : "none" };
+  }
   const aggregates = new Map<string, DailyAggregate>();
   for (const [date, day] of days) {
     await withPrices(ctx, day, warnings);
@@ -350,32 +355,23 @@ export async function rebuildRecentWindow(
   const cardFor = (r: TokenRecord) => kept.get(localDateKey(r.timestamp))?.[r.model]?.card;
   const warnBefore = warnings.length;
   const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs, cardFor);
-  // Providers whose scan soft-failed on a file during THIS fold. `force`
-  // consents to an intentional shrink (a parser fix), not to a broken read —
-  // a day that shrank for a partial-scan provider is kept even when forced,
-  // so a transient read fault during a forced rescan can't reproduce the
-  // 2026-07-12 loss with the user's own consent as the murder weapon.
-  const partialProviders = new Set(
-    warnings
-      .slice(warnBefore)
-      .filter((w) => w.scope === "provider" && w.partial && w.provider)
-      .map((w) => w.provider)
-  );
+  // `force` consents to an intentional parser-driven shrink, never to a
+  // broken read. A known-incomplete provider fold cannot safely update any
+  // immutable day because a new provider bucket may itself be partial.
+  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
+    warnings.push({
+      scope: "history",
+      message: "Recent-window rebuild was not persisted because a provider scan was incomplete.",
+    });
+    return { aggregates, historySource: aggregates.size > 0 ? "snapshot" : "none" };
+  }
   // Start from what's already sealed, overwrite ONLY the window's days.
   for (const [date, day] of rebuilt) {
     const existing = aggregates.get(date);
-    const forcedButTruncated =
-      force &&
-      existing &&
-      [...partialProviders].some(
-        (p) =>
-          p !== undefined &&
-          (day.providers[p]?.totalTokens ?? 0) < (existing.providers[p]?.totalTokens ?? 0)
-      );
-    if (existing && (forcedButTruncated || shouldKeepSealedDay(existing, day, { force }))) {
+    if (existing && shouldKeepSealedDay(existing, day, { force })) {
       warnings.push({
         scope: "history",
-        message: `Kept sealed day ${date} — rebuild carried less data (rebuilt ${day.totalTokens} vs sealed ${existing.totalTokens} tokens${forcedButTruncated ? "; a truncated file read made the forced rebuild untrustworthy for it — retry" : ""}).`,
+        message: `Kept sealed day ${date} — rebuild carried less data (rebuilt ${day.totalTokens} vs sealed ${existing.totalTokens} tokens).`,
       });
       continue;
     }
@@ -428,7 +424,16 @@ export async function backfillProviderIntoRelay(
   // for one of those would match no parser; scan the custom parser instead and
   // let the per-record `r.provider === providerId` filter below pick the target.
   const scanProviderId: ProviderId = CUSTOM_ELIGIBLE.has(providerId) ? "custom" : providerId;
+  const warnBefore = warnings.length;
   const raw = await scanRawRecords(ctx, [scanProviderId], "history", warnings, floorMs);
+  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
+    const aggregates = loadAggregates(ctx.homeDir);
+    warnings.push({
+      scope: "history",
+      message: `Provider backfill (${providerId}) was not persisted because its scan was incomplete.`,
+    });
+    return { aggregates, historySource: aggregates.size > 0 ? "snapshot" : "none" };
+  }
 
   // Keep only this provider's records that fall in the sealed window: on/after
   // the floor day and strictly before today (a multi-day file can carry records

@@ -272,7 +272,9 @@ function isZst(file: string): boolean {
 /**
  * Decompressed size of a zstd file, from its frame header's content-size
  * field (every Codex rollout sampled carries it, and it matched the real
- * length on every file checked). Falls back to decompressing when absent.
+ * length on every file checked). An absent size is treated as large so the
+ * caller streams it; never inflate attacker-controlled compressed input just
+ * to decide which parsing path to use.
  * Fork dedup keeps the largest file of a session family, so it must compare
  * contents, not compressed bytes — or a compressed parent loses to a smaller
  * fork and its records disappear.
@@ -297,7 +299,7 @@ export function zstContentSize(file: string): number {
       if (n === 4) return b.readUInt32LE(offset);
       if (n === 8) return Number(b.readBigUInt64LE(offset));
     }
-    return zlib.zstdDecompressSync(readFileSync(file)).length;
+    return -1;
   } catch {
     return 0;
   }
@@ -305,7 +307,10 @@ export function zstContentSize(file: string): number {
 
 /** Content size of a rollout: the file size, or the decompressed size for .zst. */
 async function rolloutSize(file: string): Promise<number> {
-  if (isZst(file)) return zstContentSize(file);
+  if (isZst(file)) {
+    const headerSize = zstContentSize(file);
+    return headerSize >= 0 ? headerSize : countZstContentSize(file);
+  }
   return (await stat(file)).size;
 }
 
@@ -318,6 +323,70 @@ function readZstText(file: string): string {
 async function zstStream(file: string): Promise<NodeJS.ReadableStream> {
   const { createReadStream } = await import("node:fs");
   return createReadStream(file).pipe(zlib.createZstdDecompress());
+}
+
+const CODEX_MAX_LINE_CHARS = 8 * 1024 * 1024;
+const CODEX_MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024;
+const CODEX_MAX_RECORDS = 600_000;
+
+/** Count an unknown-FCS zstd stream without buffering it. The capped value is
+ * still enough to route it through the large-file parser and prevents a
+ * decompression bomb from dominating fork selection through Infinity. */
+async function countZstContentSize(file: string): Promise<number> {
+  const stream = (await zstStream(file)) as NodeJS.ReadableStream & { destroy(): void };
+  let total = 0;
+  try {
+    for await (const chunk of stream) {
+      total += (chunk as Buffer).length;
+      if (total > CODEX_MAX_DECOMPRESSED_BYTES) return CODEX_MAX_DECOMPRESSED_BYTES + 1;
+    }
+    return total;
+  } finally {
+    stream.destroy();
+  }
+}
+
+async function foldCodexStream(
+  stream: NodeJS.ReadableStream & { destroy(): void },
+  file: string,
+  state: CodexParseState,
+  out: TokenRecord[],
+  maxBytes: number | undefined
+): Promise<void> {
+  let pending = "";
+  let bytes = 0;
+  stream.setEncoding?.("utf8");
+
+  const parseLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (line.length > CODEX_MAX_LINE_CHARS) {
+      throw new Error(`JSONL line limit (${CODEX_MAX_LINE_CHARS} characters) exceeded`);
+    }
+    foldCodexEvent(JSON.parse(trimmed) as CodexEvent, state, file, out);
+    if (out.length > CODEX_MAX_RECORDS) {
+      throw new Error(`record limit (${CODEX_MAX_RECORDS}) exceeded`);
+    }
+  };
+
+  for await (const rawChunk of stream) {
+    const chunk = typeof rawChunk === "string" ? rawChunk : (rawChunk as Buffer).toString("utf8");
+    bytes += Buffer.byteLength(chunk);
+    if (maxBytes !== undefined && bytes > maxBytes) {
+      throw new Error(`decompressed read limit (${maxBytes} bytes) exceeded`);
+    }
+    pending += chunk;
+    if (pending.length > CODEX_MAX_LINE_CHARS && !pending.includes("\n")) {
+      throw new Error(`JSONL line limit (${CODEX_MAX_LINE_CHARS} characters) exceeded`);
+    }
+    let newline = pending.indexOf("\n");
+    while (newline >= 0) {
+      parseLine(pending.slice(0, newline));
+      pending = pending.slice(newline + 1);
+      newline = pending.indexOf("\n");
+    }
+  }
+  parseLine(pending);
 }
 
 /** First `limit` decompressed bytes of a .zst rollout, without inflating the rest. */
@@ -343,7 +412,10 @@ async function readZstHead(file: string, limit: number): Promise<string> {
  * `session_meta` event. We cap the read at 64 KB so this stays cheap on
  * 86 MB files — `session_meta` is always one of the first events emitted.
  */
-async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
+async function readSessionMeta(
+  file: string,
+  onWarning?: (message: string) => void
+): Promise<CodexFileMeta> {
   const { open } = await import("node:fs/promises");
   let sessionId = "";
   let forkedFromId: string | null = null;
@@ -353,7 +425,7 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
   try {
     const st = await stat(file);
     mtimeMs = st.mtimeMs;
-    sizeBytes = isZst(file) ? zstContentSize(file) : st.size;
+    sizeBytes = isZst(file) ? await rolloutSize(file) : st.size;
     const fd = await open(file, "r");
     try {
       let text: string;
@@ -388,8 +460,13 @@ async function readSessionMeta(file: string): Promise<CodexFileMeta | null> {
     } finally {
       await fd.close();
     }
-  } catch {
-    return null;
+  } catch (error) {
+    onWarning?.(
+      `failed metadata read of ${file}: ${error instanceof Error ? error.message : error}`
+    );
+    // Fail open into a standalone group. Parsing gets another chance to read
+    // it, while the warning prevents authoritative persistence this scan.
+    return { file, sessionId: file, forkedFromId: null, isSubagent: false, mtimeMs, sizeBytes };
   }
   if (!sessionId) {
     // No session_meta found — fall back to the file path as a stable key so
@@ -486,10 +563,13 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
  * group — each forms its own group keyed by its own session id. See the
  * header comment: they are parallel disjoint threads, not replays.
  */
-async function dedupForkedFiles(files: string[]): Promise<string[]> {
-  const metas = (
-    await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, (f) => readSessionMeta(f))
-  ).filter((m): m is CodexFileMeta => m !== null);
+async function dedupForkedFiles(
+  files: string[],
+  onWarning?: (message: string) => void
+): Promise<string[]> {
+  const metas = await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, (f) =>
+    readSessionMeta(f, onWarning)
+  );
 
   const bySessionId = new Map<string, CodexFileMeta>();
   for (const m of metas) bySessionId.set(m.sessionId, m);
@@ -647,8 +727,10 @@ export async function parseCodexFile(
         let evt: CodexEvent;
         try {
           evt = JSON.parse(trimmed) as CodexEvent;
-        } catch {
-          continue; // skip malformed line
+        } catch (error) {
+          throw new Error(
+            `malformed JSON line in ${file}: ${error instanceof Error ? error.message : error}`
+          );
         }
         foldCodexEvent(evt, state, file, out);
       }
@@ -658,25 +740,13 @@ export async function parseCodexFile(
     }
   } else if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
     const { createReadStream } = await import("node:fs");
-    const { createInterface } = await import("node:readline");
     // A large compressed rollout streams through the decompressor, so peak
     // memory stays one line, not the inflated file.
     const stream = (
       isZst(file) ? await zstStream(file) : createReadStream(file, { encoding: "utf-8" })
     ) as NodeJS.ReadableStream & { destroy(): void };
-    const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
     try {
-      for await (const line of rl) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let evt: CodexEvent;
-        try {
-          evt = JSON.parse(trimmed) as CodexEvent;
-        } catch {
-          continue; // skip malformed line
-        }
-        foldCodexEvent(evt, state, file, out);
-      }
+      await foldCodexStream(stream, file, state, out, CODEX_MAX_DECOMPRESSED_BYTES);
     } catch (error) {
       // FAIL SOFT, per file — mirror readJsonlFile's contract. A mid-stream read
       // error (the file rotated/deleted by an active session between stat() and
@@ -688,8 +758,7 @@ export async function parseCodexFile(
       // (this exact failure shrank sealed history on 2026-07-12).
       onWarning?.(`truncated read of ${file}: ${error instanceof Error ? error.message : error}`);
     } finally {
-      rl.close();
-      stream.destroy(); // rl.close() alone doesn't release the underlying fd
+      stream.destroy();
     }
   } else {
     const events = await readJsonlFile<CodexEvent>(file, (error) => {
@@ -803,7 +872,7 @@ export class CodexParser implements SessionParser {
         return t === null || t >= watermark;
       });
     }
-    const files = await dedupForkedFiles(allFiles);
+    const files = await dedupForkedFiles(allFiles, opts?.onWarning);
 
     // Stat the winners once, then split by size. Large files are parsed ALONE
     // and streamed line-by-line (a 200 MB fork-replay rollout never overlaps
@@ -813,7 +882,10 @@ export class CodexParser implements SessionParser {
     const sized = await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, async (f) => {
       try {
         return { file: f, size: await rolloutSize(f) };
-      } catch {
+      } catch (error) {
+        opts?.onWarning?.(
+          `failed size read of ${f}: ${error instanceof Error ? error.message : error}`
+        );
         return { file: f, size: 0 };
       }
     });

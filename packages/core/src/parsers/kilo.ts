@@ -60,8 +60,10 @@ export class KiloParser implements SessionParser {
             };
             try {
               data = JSON.parse(msg.text);
-            } catch {
-              continue;
+            } catch (error) {
+              throw new Error(
+                `Malformed Kilo usage payload in ${file}: ${error instanceof Error ? error.message : error}`
+              );
             }
             const hasCost = typeof data.cost === "number";
 
@@ -81,8 +83,10 @@ export class KiloParser implements SessionParser {
               })
             );
           }
-        } catch {
-          // skip
+        } catch (error) {
+          throw new Error(
+            `Unable to read Kilo session ${file}: ${error instanceof Error ? error.message : error}`
+          );
         }
       }
     }

@@ -1,5 +1,5 @@
 import { EventEmitter, once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +90,9 @@ test("a competing bind cannot replace or remove the winner's token and identity"
   vi.spyOn(console, "error").mockImplementation(() => {});
 
   writeFileSync(files.DAEMON_TOKEN_FILE, "old fixture token");
+  const symlinkTarget = join(root, "must-not-be-overwritten");
+  writeFileSync(symlinkTarget, "owner data");
+  symlinkSync(symlinkTarget, files.LEGACY_DAEMON_PID_FILE);
   const winner = await import("./server.js");
   cleanups.push(() => winner.stopDaemon());
   winner.startDaemon();
@@ -99,6 +102,8 @@ test("a competing bind cannot replace or remove the winner's token and identity"
   const token = readFileSync(files.DAEMON_TOKEN_FILE, "utf8");
   const identity = readFileSync(files.DAEMON_IDENTITY_FILE, "utf8");
   expect(token).not.toBe("old fixture token");
+  expect(readFileSync(symlinkTarget, "utf8")).toBe("owner data");
+  expect(readFileSync(files.LEGACY_DAEMON_PID_FILE, "utf8")).toBe(String(process.pid));
 
   const canConnect = (authorization?: string, origin?: string) =>
     new Promise<boolean>((resolve) => {

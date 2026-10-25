@@ -4,7 +4,7 @@
 
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
-import { CleanupService, TokmeterCore } from "@sriinnu/tokmeter";
+import { CleanupService, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 
 function ask(question: string): Promise<string> {
@@ -62,8 +62,11 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
         new Date(b.createdAt).toLocaleString(),
         fmtBytes(b.sizeBytes),
         b.recordCount.toString(),
-        b.providers.join(", "),
-        b.projects.slice(0, 2).join(", ") + (b.projects.length > 2 ? "..." : ""),
+        b.providers.map((provider) => sanitizeDataLabel(provider, 128)).join(", "),
+        b.projects
+          .slice(0, 2)
+          .map((project) => sanitizeDataLabel(project))
+          .join(", ") + (b.projects.length > 2 ? "..." : ""),
       ]);
     }
     console.log(table.toString());
@@ -82,15 +85,19 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
   console.log(`\n📦 Restoring backup: ${backup.id}`);
   console.log(`   Created: ${new Date(backup.createdAt).toLocaleString()}`);
   console.log(`   Size: ${fmtBytes(backup.sizeBytes)}`);
-  console.log(`   Providers: ${backup.providers.join(", ")}`);
+  console.log(
+    `   Providers: ${backup.providers.map((provider) => sanitizeDataLabel(provider, 128)).join(", ")}`
+  );
 
   // Show source → target so cross-machine restores are transparent
   const currentHome = homedir();
   if (backup.sourceHomeDir) {
     const sourceUser = backup.sourceUser ? ` (${backup.sourceUser})` : "";
     const sourcePlatform = backup.sourcePlatform ? ` · ${backup.sourcePlatform}` : "";
-    console.log(`   Source:    ${backup.sourceHomeDir}${sourceUser}${sourcePlatform}`);
-    console.log(`   Target:    ${currentHome}`);
+    console.log(
+      `   Source:    ${sanitizeDataLabel(backup.sourceHomeDir, 4096)}${sanitizeDataLabel(sourceUser, 256)}${sanitizeDataLabel(sourcePlatform, 256)}`
+    );
+    console.log(`   Target:    ${sanitizeDataLabel(currentHome, 4096)}`);
     if (backup.sourceHomeDir !== currentHome) {
       console.log("   Mode:      cross-home (paths will be auto-remapped into your homedir)");
     } else {
@@ -98,7 +105,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
     }
   } else {
     console.log("   Source:    (legacy backup — source home will be sniffed from archive)");
-    console.log(`   Target:    ${currentHome}`);
+    console.log(`   Target:    ${sanitizeDataLabel(currentHome, 4096)}`);
   }
 
   const confirm = await ask("\n⚠  This will overwrite current data. Type RESTORE to confirm: ");
@@ -112,7 +119,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
   if (result.errors.length > 0) {
     console.log("\n✗ Restore failed:");
     for (const e of result.errors) {
-      console.log(`   ${e.file}: ${e.error}`);
+      console.log(`   ${sanitizeDataLabel(e.file, 4096)}: ${sanitizeDataLabel(e.error, 4096)}`);
     }
   } else {
     console.log(`\n✓ Restored ${result.restoredCount} items.`);

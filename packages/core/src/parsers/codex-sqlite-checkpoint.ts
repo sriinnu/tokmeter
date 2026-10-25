@@ -29,7 +29,7 @@
  * before" limitation antigravity-live.ts's credit deltas already accept.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 
@@ -41,17 +41,17 @@ function checkpointPath(homeDir: string): string {
   return join(homeDir, ".cache", "tokmeter", "codex-sqlite-checkpoints.json");
 }
 
-/** Reads the checkpoint map, or {} if it's never been written / is corrupt. */
+/** Reads the checkpoint map, or {} if it's never been written. */
 export function readCheckpoints(homeDir: string): CodexSqliteCheckpoints {
-  try {
-    const path = checkpointPath(homeDir);
-    ensurePrivateDirectory(dirname(path));
-    ensurePrivateFile(path);
-    const raw = readFileSync(path, "utf-8");
-    return JSON.parse(raw) as CodexSqliteCheckpoints;
-  } catch {
-    return {};
+  const path = checkpointPath(homeDir);
+  ensurePrivateDirectory(dirname(path));
+  if (!existsSync(path)) return {};
+  ensurePrivateFile(path);
+  const raw = JSON.parse(readFileSync(path, "utf-8"));
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`Invalid Codex SQLite checkpoint schema: ${path}`);
   }
+  return raw as CodexSqliteCheckpoints;
 }
 
 /**

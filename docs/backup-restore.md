@@ -105,11 +105,13 @@ tokmeter cleanup --project app --until 2026-10-04 --force     # skip the prompt
 An agent calling over stdio never sees a terminal prompt, so the gate is
 enforced **inside the server**, not left to the client:
 
+- Destructive MCP tools are **disabled by default**. The machine owner must set
+  `TOKMETER_ENABLE_DESTRUCTIVE_MCP=1` in the MCP server environment and restart
+  it. A tool caller cannot enable this through tool arguments.
 - `tokmeter_cleanup_execute` **refuses to run unless it is passed
   `confirm: "DELETE"`** — checked in the tool handler before `CleanupService`
   runs; any other value returns an error and deletes nothing.
-- **Backup is on by default** (`backup: true`); pass `backup: false` to opt out.
-  From 1.15.0, over MCP the backup is mandatory: `backup: false` is
+- **Backup is mandatory.** `backup: false` is
   accepted for compatibility, but it's ignored and the result says so.
 - From 1.15.0, an **empty filter is refused**, in core, for every caller
   (CLI, TUI, MCP, daemon HTTP). With no project, no providers and no date
@@ -119,14 +121,15 @@ enforced **inside the server**, not left to the client:
   CLI's "all" choice is unaffected, because it passes the explicit list of
   projects.
 - Always call **`tokmeter_cleanup_preview`** first; it reports the exact files,
-  bytes, and per-project/provider breakdown that `execute` would delete.
-- `tokmeter_restore` has the same shape, guarded by `confirm: "RESTORE"`.
+  bytes, and per-project/provider breakdown and returns a one-time, five-minute
+  receipt bound to those filters and the exact target/collateral set. Execute
+  rejects a missing, expired, replayed, filter-mismatched, or stale-target
+  receipt.
+- `tokmeter_restore` uses the same owner-controlled environment gate and is
+  additionally guarded by `confirm: "RESTORE"`.
 
-One honest distinction worth internalising: `confirm: "DELETE"` is a
-**deliberate-action guard, not proof a human agreed** — an autonomous agent can
-supply the string itself. The actual human "are you sure?" comes from your **MCP
-client/host's tool-approval UI** (the same layer that approves any tool call),
-not from inside the server. The CLI's `type DELETE` prompt and the MCP's
-`confirm` argument are two renderings of the same gate: one for a human at a
-terminal, one for a programmatic caller. The pre-delete backup is the
-recoverability net in both paths.
+`confirm: "DELETE"` is a deliberate-action guard, not proof a human agreed—an
+agent can supply it itself. Owner authorization comes from the server process
+environment; the preview receipt prevents skipped previews, filter changes,
+and deleting targets that appeared after preview;
+the MCP client's approval UI remains the final per-call human checkpoint.

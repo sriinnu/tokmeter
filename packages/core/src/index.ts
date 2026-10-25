@@ -47,6 +47,7 @@ export {
 } from "./cleaners/index.js";
 export {
   CleanupService,
+  cleanupPreviewDigest,
   EMPTY_FILTER_MESSAGE,
   isEmptyCleanupFilter,
 } from "./cleanup-service.js";
@@ -76,6 +77,7 @@ export {
   startOfLocalDay,
   yesterdayDateKey,
 } from "./date-utils.js";
+export { sanitizeDataLabel } from "./display-safety.js";
 export { invalidateHistorySnapshot } from "./history-snapshot.js";
 export type { ModelRateCard, ModelRatesResponse, Rate } from "./model-rates.js";
 export { computeModelRates } from "./model-rates.js";

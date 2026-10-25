@@ -57,4 +57,23 @@ final class DaemonClientURLTests: XCTestCase {
                            "http://127.0.0.1:9877" + path)
         }
     }
+
+    func testOwnedSmallFileReaderRejectsSymlinksAndOversizedFiles() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tokmeter-safe-read-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let regular = dir.appendingPathComponent("pid")
+        try Data("123\n".utf8).write(to: regular)
+        XCTAssertEqual(DaemonClient.readOwnedSmallFile(regular.path, maxBytes: 32)?.text, "123\n")
+
+        let link = dir.appendingPathComponent("pid-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: regular)
+        XCTAssertNil(DaemonClient.readOwnedSmallFile(link.path, maxBytes: 32))
+
+        let oversized = dir.appendingPathComponent("oversized")
+        try Data(repeating: 65, count: 33).write(to: oversized)
+        XCTAssertNil(DaemonClient.readOwnedSmallFile(oversized.path, maxBytes: 32))
+    }
 }

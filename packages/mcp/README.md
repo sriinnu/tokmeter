@@ -129,14 +129,16 @@ Once connected, the server exposes these tools to the AI agent:
 | `tokmeter_cache_efficiency`, `tokmeter_efficiency`, `tokmeter_anomaly` | Efficiency and anomalies |
 | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips` | Cost suggestions |
 | `tokmeter_leaderboard`, `tokmeter_digest`, `tokmeter_streaks` | Reports and usage patterns |
-| `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_backups`, `tokmeter_restore` | Preview cleanup, delete with confirmation, and restore backups |
+| `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_backups`, `tokmeter_restore` | Preview cleanup; owner-gated delete and restore with mandatory backups |
 
 Since 1.15.0, every tool declares MCP annotations. The 22 reporting
 tools are `readOnlyHint: true, openWorldHint: false`. `tokmeter_cleanup_execute`
 and `tokmeter_restore` are `destructiveHint: true, idempotentHint: false`.
-`tokmeter_cleanup_execute` refuses an empty filter, so name a project,
-providers or a date range. It always writes a backup first, even when passed
-`backup: false`. `tokmeter_restore` refuses archives with links, special
+Both destructive tools are disabled until the machine owner sets
+`TOKMETER_ENABLE_DESTRUCTIVE_MCP=1` in the server environment.
+`tokmeter_cleanup_execute` also refuses an empty filter and requires the
+one-time receipt from a matching preview. It always writes a backup first,
+even when passed `backup: false`. `tokmeter_restore` refuses archives with links, special
 files or `..` paths, and writes only inside known agent session paths. See
 [docs/mcp-tools.md](https://github.com/sriinnu/tokmeter/blob/main/docs/mcp-tools.md) and
 [docs/backup-restore.md](https://github.com/sriinnu/tokmeter/blob/main/docs/backup-restore.md).

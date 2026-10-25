@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -40,6 +40,7 @@ import {
   type UserConfig,
 } from "./config-service.js";
 import { localDateKey } from "./date-utils.js";
+import { sanitizeDataLabel } from "./display-safety.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { invalidateRecordCache } from "./parsers/utils.js";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
@@ -76,6 +77,84 @@ export const EMPTY_FILTER_MESSAGE =
   "Specify at least one of: a project (project/projects), providers, or a date range " +
   "(since/until, or today/week/month).";
 
+const MAX_BACKUP_METADATA_BYTES = 1024 * 1024;
+const BACKUP_ID_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/;
+
+function finiteNonNegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function parseBackupInfo(raw: string, expectedId: string, archivePath: string): BackupInfo | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.id !== expectedId || !BACKUP_ID_PATTERN.test(expectedId)) return null;
+  if (typeof v.createdAt !== "string" || !Number.isFinite(Date.parse(v.createdAt))) return null;
+  if (!finiteNonNegative(v.sizeBytes) || !finiteNonNegative(v.recordCount)) return null;
+  if (!Array.isArray(v.providers) || v.providers.length > 64) return null;
+  if (!Array.isArray(v.projects) || v.projects.length > 10_000) return null;
+  if (!v.providers.every((p) => typeof p === "string" && p.length <= 128)) return null;
+  if (!v.projects.every((p) => typeof p === "string" && p.length <= 4096)) return null;
+
+  const filter = v.filter;
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return null;
+  const f = filter as Record<string, unknown>;
+  for (const key of ["project", "since", "until"] as const) {
+    if (f[key] !== undefined && (typeof f[key] !== "string" || f[key].length > 4096)) return null;
+  }
+  if (
+    f.projects !== undefined &&
+    (!Array.isArray(f.projects) ||
+      f.projects.length > 10_000 ||
+      !f.projects.every((p) => typeof p === "string" && p.length <= 4096))
+  )
+    return null;
+  if (
+    f.providers !== undefined &&
+    (!Array.isArray(f.providers) ||
+      f.providers.length > 64 ||
+      !f.providers.every((p) => typeof p === "string" && p.length <= 128))
+  )
+    return null;
+  for (const key of ["today", "week", "month"] as const) {
+    if (f[key] !== undefined && typeof f[key] !== "boolean") return null;
+  }
+
+  const optionalText = (key: "sourceHomeDir" | "sourceUser" | "sourcePlatform", max: number) => {
+    const item = v[key];
+    return item === undefined ? undefined : sanitizeDataLabel(item, max);
+  };
+  return {
+    id: expectedId,
+    path: archivePath,
+    createdAt: v.createdAt,
+    sizeBytes: v.sizeBytes,
+    filter: f as CleanupFilter,
+    recordCount: v.recordCount,
+    providers: v.providers.map((p) => sanitizeDataLabel(p, 128)) as ProviderId[],
+    projects: v.projects.map((p) => sanitizeDataLabel(p, 512)),
+    sourceHomeDir: optionalText("sourceHomeDir", 4096),
+    sourceUser: optionalText("sourceUser", 256),
+    sourcePlatform: optionalText("sourcePlatform", 64),
+  };
+}
+
+function readBackupInfo(
+  metaPath: string,
+  expectedId: string,
+  archivePath: string
+): BackupInfo | null {
+  const st = statSync(metaPath);
+  if (!st.isFile() || st.size > MAX_BACKUP_METADATA_BYTES) return null;
+  return parseBackupInfo(readFileSync(metaPath, "utf-8"), expectedId, archivePath);
+}
+
 function syncBackupFile(path: string): void {
   const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   try {
@@ -103,6 +182,39 @@ export function isEmptyCleanupFilter(filter: CleanupFilter | undefined | null): 
     filter.week === true ||
     filter.month === true;
   return !hasProject && !hasProviders && !hasDate;
+}
+
+/** Stable authorization identity for the exact targets and collateral shown in a preview. */
+export function cleanupPreviewDigest(preview: CleanupPreview): string {
+  const targets = preview.targets
+    .map((target) => ({
+      provider: target.provider,
+      type: target.type,
+      path: target.path,
+      sizeBytes: target.sizeBytes,
+      description: target.description,
+      sqlDetail: target.sqlDetail
+        ? {
+            table: target.sqlDetail.table,
+            whereClause: target.sqlDetail.whereClause,
+            rowCount: target.sqlDetail.rowCount,
+          }
+        : null,
+    }))
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const warnings = preview.partialFileWarnings
+    .map((warning) => ({ ...warning }))
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        recordCount: preview.recordCount,
+        sourceFileCount: preview.sourceFileCount,
+        targets,
+        warnings,
+      })
+    )
+    .digest("hex");
 }
 
 export class CleanupService {
@@ -201,6 +313,15 @@ export class CleanupService {
 
     // Preview first
     const preview = await this.preview(filter);
+
+    if (
+      options.expectedPreviewDigest !== undefined &&
+      cleanupPreviewDigest(preview) !== options.expectedPreviewDigest
+    ) {
+      throw new Error(
+        "Cleanup targets changed after preview; nothing was deleted. Run a fresh preview and review it again."
+      );
+    }
 
     if (preview.targets.length === 0) {
       return {
@@ -315,8 +436,10 @@ export class CleanupService {
       try {
         const path = join(dir, entry);
         ensurePrivateFile(path);
-        const raw = readFileSync(path, "utf-8");
-        backups.push(JSON.parse(raw) as BackupInfo);
+        const id = entry.slice(0, -".meta.json".length);
+        const archivePath = join(dir, `${id}.tar.gz`);
+        const info = readBackupInfo(path, id, archivePath);
+        if (info) backups.push(info);
       } catch {
         // Skip malformed metadata
       }
@@ -330,7 +453,7 @@ export class CleanupService {
   /** Restore from a backup archive. */
   restore(backupId: string, backupDir?: string): RestoreResult {
     // Sanitize backupId — only allow timestamp-like patterns
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-[a-f0-9-]{36})?$/.test(backupId)) {
+    if (!BACKUP_ID_PATTERN.test(backupId)) {
       return { restoredCount: 0, errors: [{ file: backupId, error: "Invalid backup ID format" }] };
     }
 
@@ -343,11 +466,17 @@ export class CleanupService {
     }
 
     ensurePrivateFile(metaPath);
-    const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as BackupInfo;
     // Every backup created by Tokmeter has this exact sibling name. A copied
     // sidecar may carry another machine's path; it never gets to choose a
     // different archive or traverse a symlinked subdirectory here.
     const archivePath = join(dir, `${backupId}.tar.gz`);
+    let meta: BackupInfo | null = null;
+    try {
+      meta = readBackupInfo(metaPath, backupId, archivePath);
+    } catch {}
+    if (!meta) {
+      return { restoredCount: 0, errors: [{ file: metaPath, error: "Invalid backup metadata" }] };
+    }
 
     if (!existsSync(archivePath)) {
       return { restoredCount: 0, errors: [{ file: archivePath, error: "Archive file missing" }] };

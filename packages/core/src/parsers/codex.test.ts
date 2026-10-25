@@ -10,10 +10,12 @@
  * These tests pin that contract to a fixture so we never regress.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { zstdCompressSync } from "node:zlib";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createZstdCompress, zstdCompressSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CodexParser, isCodexRollout, parseCodexFile, zstContentSize } from "./codex.js";
 
@@ -749,6 +751,20 @@ describe("compressed and archived rollouts", () => {
     expect(records[0].inputTokens).toBe(20_000);
   });
 
+  it("surfaces compressed metadata failures instead of silently dropping a rollout", async () => {
+    const dir = join(tmpDir, ".codex", "sessions", "2026", "04", "09");
+    const file = join(dir, "rollout-broken.jsonl.zst");
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    writeFileSync(file, "not-a-zstd-frame");
+    const warnings: string[] = [];
+
+    const records = await new CodexParser().scan(tmpDir, {
+      onWarning: (warning) => warnings.push(warning),
+    });
+    expect(records).toEqual([]);
+    expect(warnings.some((warning) => /metadata read/.test(warning))).toBe(true);
+  });
+
   it("streams a large compressed rollout to the same records", async () => {
     const file = compress(writeFakeSession(events));
     const whole = await parseCodexFile(file, 1000);
@@ -762,6 +778,22 @@ describe("compressed and archived rollouts", () => {
     const fs = require("node:fs");
     const { zstdDecompressSync } = require("node:zlib");
     expect(zstContentSize(file)).toBe(zstdDecompressSync(fs.readFileSync(file)).length);
+  });
+
+  it("counts and parses a streaming zstd frame with no content-size header", async () => {
+    const plain = writeFakeSession(events);
+    const out = `${plain}.zst`;
+    await pipeline(
+      Readable.from([readFileSync(plain)]),
+      createZstdCompress(),
+      createWriteStream(out)
+    );
+    rmSync(plain);
+
+    expect(zstContentSize(out)).toBe(-1);
+    const records = await new CodexParser().scan(tmpDir);
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.inputTokens)).toEqual([20_000, 10_000]);
   });
 
   it("fork dedup compares decompressed sizes, so a compressed parent still wins", async () => {

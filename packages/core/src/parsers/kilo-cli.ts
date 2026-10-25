@@ -29,12 +29,8 @@ export class KiloCliParser implements SessionParser {
     if (!(await fileExists(dbPath))) return [];
 
     const db = await openReadonlySqlite(dbPath);
-    if (!db) return [];
-
     try {
       return readOpenCodeDb(db, dbPath, "kilo-cli");
-    } catch {
-      return [];
     } finally {
       db.close();
     }

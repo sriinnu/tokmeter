@@ -154,8 +154,10 @@ export class KimiParser implements SessionParser {
       let line: KimiCodeWireLine;
       try {
         line = JSON.parse(text) as KimiCodeWireLine;
-      } catch {
-        continue;
+      } catch (error) {
+        throw new Error(
+          `Malformed Kimi usage payload in ${file}: ${error instanceof Error ? error.message : error}`
+        );
       }
       if (line.type !== "usage.record" || !line.usage || typeof line.time !== "number") continue;
       if (line.usageScope && line.usageScope !== "turn") continue;

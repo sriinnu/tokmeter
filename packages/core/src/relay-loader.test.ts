@@ -5,12 +5,13 @@
 // keeps the pricing service out of the picture (stubbed). We seed the relay by
 // writing day files directly, then assert refreshFromRelay's branch behavior.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { aggregateRecordsByDay } from "./aggregates.js";
-import { listDaysOnDisk, writeDayFile } from "./aggregates-store.js";
+import { listDaysOnDisk, loadAggregates, writeDayFile } from "./aggregates-store.js";
+import { DEFAULT_CONFIG, saveConfig } from "./config-service.js";
 import { localDateKey, yesterdayDateKey } from "./date-utils.js";
 import type { PricingService } from "./pricing.js";
 import { refreshFromRelay } from "./relay-loader.js";
@@ -68,6 +69,37 @@ describe("refreshFromRelay — cold-start / gap-fill orchestration", () => {
     const state = await refreshFromRelay(ctxFor(home), REF, warnings, false);
     expect(state.aggregates.size).toBe(0);
     expect(state.historySource).toBe("none");
+  });
+
+  test("empty relay does not seal a partial provider scan", async () => {
+    const sourceDir = join(home, ".ribhu", "sessions");
+    mkdirSync(sourceDir, { recursive: true });
+    const good = JSON.stringify({
+      ts: REF - DAY,
+      id: "before-limit",
+      model: "ribhu-x",
+      input_tokens: 100,
+      output_tokens: 10,
+    });
+    writeFileSync(
+      join(sourceDir, "oversized.jsonl"),
+      `${good}\n${JSON.stringify({ padding: "x".repeat(8 * 1024 * 1024 + 1) })}\n`
+    );
+    saveConfig(
+      {
+        ...DEFAULT_CONFIG,
+        modifiedBy: "user",
+        customSources: [{ path: sourceDir, format: "tokmeter-usage-jsonl", provider: "ribhu" }],
+      },
+      home
+    );
+
+    const warnings: import("./types.js").ScanWarning[] = [];
+    const state = await refreshFromRelay(ctxFor(home), REF, warnings, false);
+    expect(state.aggregates.size).toBe(0);
+    expect(listDaysOnDisk(home)).toEqual([]);
+    expect(warnings.some((warning) => warning.scope === "provider")).toBe(true);
+    expect(warnings.some((warning) => /not persisted/i.test(warning.message))).toBe(true);
   });
 
   test("relay current through yesterday → loads snapshot, no rescan/gap-fill", async () => {
@@ -139,7 +171,6 @@ describe("refreshFromRelay — bounded trailing-gap fill (no full rescan on a no
 // provider. These tests drive the REAL codex parser against a fixture corpus
 // in a temp home (codex keeps no record cache, so nothing leaks outside it).
 
-import { mkdirSync, writeFileSync } from "node:fs";
 import { type DailyAggregate, shouldKeepSealedDay } from "./aggregates.js";
 import { rebuildRecentWindow } from "./relay-loader.js";
 import type { ScanWarning } from "./types.js";
@@ -213,6 +244,21 @@ describe("rebuildRecentWindow — sealed days never shrink without force", () =>
     const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
     expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
     expect(warnings.some((w) => w.scope === "history" && w.message.includes(DAY_KEY))).toBe(true);
+  });
+
+  test("a known-partial provider scan persists no recent-window changes", async () => {
+    sealDay([50]);
+    writeCodexFixture(home, DAY_KEY, [100]);
+    const [y, m, d] = DAY_KEY.split("-");
+    const file = join(home, ".codex/sessions", y, m, d, `rollout-${DAY_KEY}-fixture.jsonl`);
+    appendFileSync(file, '\n{"type":"event_msg","payload":');
+
+    const warnings: ScanWarning[] = [];
+    const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(50);
+    expect(loadAggregates(home).get(DAY_KEY)?.totalTokens).toBe(50);
+    expect(warnings.some((warning) => warning.scope === "provider")).toBe(true);
+    expect(warnings.some((warning) => /not persisted/i.test(warning.message))).toBe(true);
   });
 
   test("force=true replaces the sealed day even when the rebuild is smaller", async () => {

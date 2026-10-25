@@ -6,6 +6,7 @@ import {
   filterFilesByMtime,
   findFiles,
   getCachedRecords,
+  MAX_JSONL_RECORDS,
   readJsonlFile,
   readJsonlFileFromOffset,
   setCachedRecords,
@@ -132,14 +133,26 @@ export class ClaudeCodeParser implements SessionParser {
 
       // Append mode: only parse new bytes from where we left off. Read faults
       // fail soft but surface via onWarning so a rebuild knows it's partial.
-      const readFault = (error: unknown) =>
+      let readFailed = false;
+      const readFault = (error: unknown) => {
+        readFailed = true;
         opts?.onWarning?.(
           `failed read of ${file}: ${error instanceof Error ? error.message : error}`
         );
+      };
+      let parsedStat = cacheResult.statHint;
+      const captureSnapshot = (snapshot: { mtimeMs: number; sizeBytes: number }) => {
+        parsedStat = snapshot;
+      };
       const lines =
         cacheResult.appendOffset > 0
-          ? await readJsonlFileFromOffset<ClaudeMessage>(file, cacheResult.appendOffset, readFault)
-          : await readJsonlFile<ClaudeMessage>(file, readFault);
+          ? await readJsonlFileFromOffset<ClaudeMessage>(
+              file,
+              cacheResult.appendOffset,
+              readFault,
+              captureSnapshot
+            )
+          : await readJsonlFile<ClaudeMessage>(file, readFault, captureSnapshot);
 
       const newRecords: TokenRecord[] = [];
       // Dedup: one record per API response. Claude Code writes an assistant
@@ -259,8 +272,17 @@ export class ClaudeCodeParser implements SessionParser {
       // parse and cache-set would otherwise cause the next exact-match check
       // to skip the new bytes (silent token loss).
       const allFileRecords = [...cacheResult.cachedRecords, ...newRecords];
-      await setCachedRecords(file, allFileRecords, cacheResult.statHint);
-      records.push(...allFileRecords);
+      const cacheWouldExceedLimit = allFileRecords.length > MAX_JSONL_RECORDS;
+      if (cacheWouldExceedLimit) {
+        readFailed = true;
+        opts?.onWarning?.(
+          `failed read of ${file}: cached record limit (${MAX_JSONL_RECORDS}) exceeded`
+        );
+      }
+      // Never seal a read failure as an empty/partial successful cache entry.
+      // The previous good cache remains usable and the next scan retries.
+      if (!readFailed) await setCachedRecords(file, allFileRecords, parsedStat);
+      records.push(...(cacheWouldExceedLimit ? cacheResult.cachedRecords : allFileRecords));
     }
     return records;
   }
