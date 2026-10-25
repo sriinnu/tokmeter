@@ -19,7 +19,6 @@ import {
   readFileSync,
   renameSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from "node:fs";
 import {
@@ -304,7 +303,7 @@ export function startDaemon(): void {
     // Write PID file (canonical + legacy /tmp shim for bar v1.4.0 compat).
     writeSecretFile(DAEMON_PID_FILE, String(process.pid));
     try {
-      writeFileSync(LEGACY_DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+      writeSecretFile(LEGACY_DAEMON_PID_FILE, String(process.pid));
     } catch {
       /* legacy path optional */
     }
@@ -630,7 +629,7 @@ function saveState(): void {
 function reassertLegacyShims(): void {
   try {
     if (!existsSync(LEGACY_DAEMON_PID_FILE)) {
-      writeFileSync(LEGACY_DAEMON_PID_FILE, String(process.pid), { mode: 0o600 });
+      writeSecretFile(LEGACY_DAEMON_PID_FILE, String(process.pid));
     }
   } catch {
     /* legacy path optional — canonical pidfile is the source of truth */

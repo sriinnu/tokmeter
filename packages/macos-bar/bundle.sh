@@ -222,8 +222,6 @@ if [[ -n "${SUPUBLIC_KEY}" ]]; then
     <!-- Sparkle: where to fetch the appcast and how to verify updates -->
     <key>SUFeedURL</key>
     <string>${SUFEED_URL}</string>
-    <key>SUEnableInstallerLauncherService</key>
-    <true/>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUScheduledCheckInterval</key>
@@ -239,6 +237,11 @@ cat >> "${CONTENTS}/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# Remove packaging metadata before any signature/notarization evidence is
+# collected. The distributed bundle must be byte-for-byte the state we verify.
+xattr -cr "${APP_DIR}" 2>/dev/null || true
+find "${APP_DIR}" -name '._*' -delete 2>/dev/null || true
 
 # ─── 7. Sign ────────────────────────────────────────────────────────────
 # Sparkle.framework has nested XPC services (Installer.xpc, Downloader.xpc)
@@ -289,7 +292,7 @@ case "${MODE}" in
             echo "       Example: DEV_ID='Developer ID Application: Your Name (TEAMID)'"
             exit 3
         fi
-        echo "==> Signing with Developer ID: ${DEV_ID}"
+        echo "==> Signing with configured Developer ID"
 
         sign_sparkle_nested "${DEV_ID}" "--options runtime --timestamp"
 
@@ -369,16 +372,12 @@ if [[ "${MODE}" == "release" ]]; then
     rm -f "${ZIP_PATH}"
     /usr/bin/ditto --norsrc -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
 
-    # Strip extended attributes that would create AppleDouble files
-    xattr -cr "${APP_DIR}" 2>/dev/null || true
-    find "${APP_DIR}" -name '._*' -delete 2>/dev/null || true
-
     echo "==> Submitting to Apple notary service (this can take 5-30 minutes)"
     NOTARY_FAILED=0
 
     if [[ "${USE_KEY_FILE}" == "1" ]]; then
         # API Key auth using key file path directly (local release build)
-        echo "==> Notarizing with key file: ${TOKMETER_API_KEY_FILE} (id: ${APP_STORE_CONNECT_KEY_ID})"
+        echo "==> Notarizing with configured API key file"
         xcrun notarytool submit "${ZIP_PATH}" \
             --key "${TOKMETER_API_KEY_FILE}" \
             --key-id "${APP_STORE_CONNECT_KEY_ID}" \
@@ -386,9 +385,13 @@ if [[ "${MODE}" == "release" ]]; then
             --wait || NOTARY_FAILED=1
     elif [[ "${USE_API_KEY}" == "1" ]]; then
         # API Key auth via env var (CI)
-        API_KEY_FILE=$(mktemp)
-        echo "${APP_STORE_CONNECT_API_KEY_P8}" | sed 's/\\n/\n/g' > "${API_KEY_FILE}"
-        trap "rm -f '${API_KEY_FILE}'" EXIT
+        API_KEY_FILE=$(mktemp "${TMPDIR:-/tmp}/tokmeter-api-key.XXXXXX")
+        API_KEY_CONTENT="${APP_STORE_CONNECT_API_KEY_P8//\\n/$'\n'}"
+        printf '%s' "${API_KEY_CONTENT}" > "${API_KEY_FILE}"
+        unset API_KEY_CONTENT
+        chmod 600 "${API_KEY_FILE}"
+        cleanup_api_key() { rm -f -- "${API_KEY_FILE}"; }
+        trap cleanup_api_key EXIT
 
         xcrun notarytool submit "${ZIP_PATH}" \
             --key "${API_KEY_FILE}" \

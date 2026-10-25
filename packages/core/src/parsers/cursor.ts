@@ -121,8 +121,10 @@ export class CursorParser implements SessionParser {
             })
           );
         }
-      } catch {
-        // skip unreadable files
+      } catch (error) {
+        throw new Error(
+          `Unable to read Cursor CSV ${file}: ${error instanceof Error ? error.message : error}`
+        );
       }
     }
     return records;
@@ -134,8 +136,9 @@ export class CursorParser implements SessionParser {
       let mtimeMs: number;
       try {
         mtimeMs = (await stat(dbPath)).mtimeMs;
-      } catch {
-        continue; // not installed here
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
       }
 
       const cached = this.localCache.get(dbPath);
@@ -154,8 +157,6 @@ export class CursorParser implements SessionParser {
   private async readLocalDatabase(dbPath: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
     const db = await openReadonlySqlite(dbPath);
-    if (!db) return records;
-
     try {
       const rows = db.all<{ key: string; value: string | Uint8Array }>(
         "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'"
@@ -204,8 +205,6 @@ export class CursorParser implements SessionParser {
           })
         );
       }
-    } catch {
-      // Cursor's schema moved — fail soft rather than crash the scan
     } finally {
       db.close();
     }

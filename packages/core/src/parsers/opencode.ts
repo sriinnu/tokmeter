@@ -44,14 +44,10 @@ export class OpenCodeParser implements SessionParser {
     // bun:sqlite under Bun; node:sqlite, then better-sqlite3, under Node.
     if (await fileExists(dbPath)) {
       const db = await openReadonlySqlite(dbPath);
-      if (db) {
-        try {
-          for (const rec of readOpenCodeDb(db, dbPath, "opencode")) add(rec);
-        } catch {
-          // Unknown schema — the legacy JSON below still contributes.
-        } finally {
-          db.close();
-        }
+      try {
+        for (const rec of readOpenCodeDb(db, dbPath, "opencode")) add(rec);
+      } finally {
+        db.close();
       }
     }
 

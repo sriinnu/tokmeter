@@ -138,6 +138,27 @@ describe("ClaudeCodeParser — one record per API response", () => {
     expect(a?.toolCalls).toEqual(["Read", "Bash", "Edit"]);
   });
 
+  it("retries a JSON object first observed during a torn append", async () => {
+    const complete = assistantLine(
+      "TORN",
+      "2026-09-18T10:03:00.000Z",
+      [{ type: "text" }],
+      usage(77)
+    );
+    const split = Math.floor(complete.length / 2);
+    writeFileSync(file, complete.slice(0, split));
+
+    const parser = new ClaudeCodeParser();
+    const warnings: string[] = [];
+    expect(await parser.scan(home, { onWarning: (warning) => warnings.push(warning) })).toEqual([]);
+    expect(warnings.some((warning) => /unterminated final JSON object/.test(warning))).toBe(true);
+
+    appendFileSync(file, `${complete.slice(split)}\n`);
+    const records = await parser.scan(home);
+    expect(records.map((record) => record.apiCallId)).toEqual(["msg_TORN"]);
+    expect(records[0]?.outputTokens).toBe(77);
+  });
+
   it("re-prices a cached record whose usage grows in a later scan", async () => {
     const placeholder = {
       input_tokens: 2,

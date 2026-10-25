@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Closed the legacy daemon PID-file symlink overwrite, bounded JSONL and MCP
+  inputs, and neutralized terminal control sequences in provider and alias
+  labels. Large ledgers now stream to an exact file snapshot without record
+  caps or append races, and compressed Codex rollouts have bounded inflation.
+  Zod is pinned to patched 4.6.7 across the dependency graph.
+- Destructive MCP cleanup and restore are now owner-disabled by default;
+  cleanup additionally requires a short-lived, one-use receipt bound to the
+  exact preview target set and collateral warnings, while its pre-delete
+  backup remains mandatory. Backup metadata is size- and schema-validated.
+- Release jobs now require the complete Apple/Sparkle signing chain, verify
+  owner-authorized hardware-signed annotated tags from trusted `main` code,
+  verify Sparkle before upload, separate unprivileged builds from OIDC publish,
+  pin build tools and publisher checksums, and refuse package/tag drift.
+- Removed unnecessary JIT and library-validation exceptions from the macOS
+  app's hardened runtime and the unused sandboxed Sparkle launcher service.
+
 ### Documentation
 
 - Synced the public Tokmeter site with the 1.19.2 wiki and clarified daemon

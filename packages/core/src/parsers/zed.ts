@@ -135,8 +135,6 @@ export class ZedParser implements SessionParser {
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);
-      if (!db) continue;
-
       try {
         const rows = db.all<ThreadRow>(
           "SELECT id, summary, updated_at, created_at, data_type, data, folder_paths, folder_paths_order FROM threads"
@@ -188,8 +186,6 @@ export class ZedParser implements SessionParser {
             })
           );
         }
-      } catch {
-        // Zed's schema moved — fail soft rather than crash the scan
       } finally {
         db.close();
       }

@@ -45,12 +45,14 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { recordFingerprint } from "./aggregates.js";
+import { isValidRecord, recordFingerprint } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
+import { sanitizeDataLabel } from "./display-safety.js";
 import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 import type { ProviderId, TokenRecord } from "./types.js";
 
@@ -64,6 +66,11 @@ const KEEP_DAYS = 7;
  * writing it every 12s tick would churn megabytes for nothing.
  */
 const SEEN_SAVE_INTERVAL_MS = 5 * 60_000;
+const MAX_JOURNAL_BYTES = 64 * 1024 * 1024;
+const MAX_JOURNAL_RECORDS = 600_000;
+
+class JournalLimitError extends Error {}
+class JournalIntegrityError extends Error {}
 
 /**
  * Providers whose files are shared databases: the file never vanishes, so a
@@ -140,22 +147,72 @@ function unitOf(r: TokenRecord): string | null {
 const sharedFileOf = (r: TokenRecord) => `${r.provider}|${r.sourceFile}`;
 
 function readJournal(homeDir: string, date: string): JournalFile | null {
+  const path = journalPath(homeDir, date);
+  ensurePrivateDirectory(journalDir(homeDir));
+  if (!existsSync(path)) return null;
   try {
-    const path = journalPath(homeDir, date);
-    ensurePrivateDirectory(journalDir(homeDir));
     ensurePrivateFile(path);
+    if (statSync(path).size > MAX_JOURNAL_BYTES) {
+      throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_BYTES} bytes: ${path}`);
+    }
     const raw = JSON.parse(readFileSync(path, "utf-8"));
-    if (raw?.version !== 1 || raw.date !== date || typeof raw.carried !== "object") return null;
+    if (
+      raw?.version !== 1 ||
+      raw.date !== date ||
+      !raw.carried ||
+      typeof raw.carried !== "object" ||
+      Array.isArray(raw.carried)
+    ) {
+      throw new JournalIntegrityError(`Invalid today journal schema: ${path}`);
+    }
     return raw as JournalFile;
-  } catch {
-    return null;
+  } catch (error) {
+    // Existing journals are authoritative for transcripts already deleted.
+    // Never turn corruption or an unsafe path into an apparently empty day.
+    if (error instanceof JournalLimitError || error instanceof JournalIntegrityError) throw error;
+    throw new JournalIntegrityError(
+      `Unable to read authoritative today journal ${path}: ${error instanceof Error ? error.message : error}`
+    );
   }
 }
 
 function toMap(obj: Record<string, TokenRecord[]> | undefined): Map<string, TokenRecord[]> {
   const out = new Map<string, TokenRecord[]>();
+  let validRecords = 0;
   for (const [unit, records] of Object.entries(obj ?? {})) {
-    if (Array.isArray(records) && records.length > 0) out.set(unit, records);
+    if (Array.isArray(records) && records.length > 0) {
+      const safeRecords = records.flatMap((rawRecord) => {
+        if (!rawRecord || typeof rawRecord !== "object" || Array.isArray(rawRecord)) return [];
+        const record = rawRecord as TokenRecord;
+        if (record.toolCalls !== undefined && !Array.isArray(record.toolCalls)) return [];
+        const normalized: TokenRecord = {
+          ...record,
+          // Journals survive parser upgrades and can contain labels written by
+          // older versions. Re-apply the display trust boundary on hydration,
+          // but preserve identity fields used for accounting and deduplication.
+          provider: (sanitizeDataLabel(record.provider, 128) || "custom") as ProviderId,
+          project: sanitizeDataLabel(record.project) || "unknown",
+          model: sanitizeDataLabel(record.model) || "unknown",
+          ...(record.cwd === undefined
+            ? {}
+            : { cwd: sanitizeDataLabel(record.cwd, 4096) || undefined }),
+          ...(record.toolCalls === undefined
+            ? {}
+            : {
+                toolCalls: record.toolCalls
+                  .map((tool) => sanitizeDataLabel(tool, 256))
+                  .filter(Boolean)
+                  .slice(0, 256),
+              }),
+        };
+        return isValidRecord(normalized) ? [normalized] : [];
+      });
+      validRecords += safeRecords.length;
+      if (validRecords > MAX_JOURNAL_RECORDS) {
+        throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_RECORDS} valid records`);
+      }
+      if (safeRecords.length > 0) out.set(unit, safeRecords);
+    }
   }
   return out;
 }
@@ -389,23 +446,45 @@ export class TodayJournal {
       carried: Object.fromEntries(carried),
       seen: saveSeen ? Object.fromEntries(this.lastSeen) : onDisk?.seen,
     };
-    if (saveSeen) this.seenSavedAt = now;
+    const recordCount = [...Object.values(body.carried), ...Object.values(body.seen ?? {})].reduce(
+      (sum, records) => sum + records.length,
+      0
+    );
+    if (recordCount > MAX_JOURNAL_RECORDS) {
+      throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_RECORDS} valid records`);
+    }
+    const serialized = JSON.stringify(body);
+    if (Buffer.byteLength(serialized) > MAX_JOURNAL_BYTES) {
+      throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_BYTES} bytes`);
+    }
+    let tmp: string | null = null;
     try {
       const dir = journalDir(this.homeDir);
       ensurePrivateDirectory(join(this.homeDir, ".cache", "tokmeter"));
       ensurePrivateDirectory(dir);
       const path = journalPath(this.homeDir, this.date);
-      const tmp = `${path}.${process.pid}.tmp`;
+      tmp = `${path}.${process.pid}.tmp`;
       const fd = openSync(tmp, "w", 0o600);
       try {
-        writeFileSync(fd, JSON.stringify(body), { encoding: "utf-8" });
+        writeFileSync(fd, serialized, { encoding: "utf-8" });
         fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
       renameSync(tmp, path);
-    } catch {
-      /* in memory it still counts; only a restart before the seal would lose it */
+      tmp = null;
+      if (saveSeen) this.seenSavedAt = now;
+    } catch (error) {
+      if (tmp) {
+        try {
+          unlinkSync(tmp);
+        } catch {
+          /* best effort */
+        }
+      }
+      throw new JournalIntegrityError(
+        `Unable to persist authoritative today journal: ${error instanceof Error ? error.message : error}`
+      );
     }
   }
 

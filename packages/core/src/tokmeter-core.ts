@@ -228,7 +228,13 @@ export class TokmeterCore {
       : todayRecords;
     const sealPrices = await this.pricesForSeal(referenceTimestamp, [], koshaChanged);
     this.recentRecords = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
-    this.refreshTodayAccumulator(stateToday, referenceTimestamp, [], sealPrices);
+    this.refreshTodayAccumulator(
+      stateToday,
+      referenceTimestamp,
+      [],
+      sealPrices,
+      !options?.providers?.length && !todayWarnings.some((warning) => warning.scope === "provider")
+    );
 
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
@@ -324,10 +330,11 @@ export class TokmeterCore {
     const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
     const sealingDate =
       this.todayAccumulator.date < localDateKey(now) ? this.todayAccumulator.date : null;
+    const rolloverAuthoritative = !todayWarnings.some((warning) => warning.scope === "provider");
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now, stragglers, sealPrices);
-    if (sealingDate && this.aggregates.has(sealingDate)) {
+    this.refreshTodayAccumulator(today, now, stragglers, sealPrices, rolloverAuthoritative);
+    if (rolloverAuthoritative && sealingDate && this.aggregates.has(sealingDate)) {
       // Off the tick: the walk is async and budgeted, and a failure must never
       // touch the seal that just happened.
       const readFiles = [...this.recentRecords, ...stragglers].map((r) => r.sourceFile ?? "");
@@ -391,7 +398,8 @@ export class TokmeterCore {
     todayRecords: TokenRecord[],
     referenceTimestamp: number,
     stragglers: TokenRecord[] = [],
-    sealPrices?: DayPrices
+    sealPrices?: DayPrices,
+    allowRolloverSeal = true
   ): void {
     const todayKey = localDateKey(referenceTimestamp);
 
@@ -400,6 +408,12 @@ export class TokmeterCore {
     // the day survives even if its raw JSONL is later deleted, instead of
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
+    if (prev && prev.date < todayKey && !allowRolloverSeal) {
+      // Keep the outgoing accumulator alive so the next authoritative tick can
+      // retry. Replacing it with today's partial scan would make the missed day
+      // dependent on a later process restart and raw-data retention.
+      return;
+    }
     if (prev) {
       // Re-derive the outgoing day from a DEDUPED aggregation of its records
       // rather than folding stragglers into the accumulator. `prev` is built

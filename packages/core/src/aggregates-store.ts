@@ -22,9 +22,10 @@
  * the on-disk LAYOUT + the live in-memory accumulator.
  */
 
+import { randomBytes } from "node:crypto";
 import {
   closeSync,
-  existsSync,
+  constants,
   fsyncSync,
   openSync,
   readdirSync,
@@ -56,6 +57,33 @@ import type { TokenRecord } from "./types.js";
 
 const STORE_DIR_NAME = ".cache/tokmeter/aggregates";
 const DATE_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.json$/;
+const MAX_AGGREGATE_FILE_BYTES = 64 * 1024 * 1024;
+const REQUIRED_BUCKET_FIELDS = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "reasoningTokens",
+] as const;
+const PRICE_RATE_FIELDS = [
+  "inputPerMillion",
+  "outputPerMillion",
+  "cacheReadPerMillion",
+  "cacheWritePerMillion",
+  "cacheWrite1hPerMillion",
+  "reasoningInputPerMillion",
+  "reasoningOutputPerMillion",
+] as const;
+const PRICE_SOURCES = new Set([
+  "override",
+  "kosha-exact",
+  "kosha-fuzzy",
+  "kosha-provider",
+  "manifest",
+  "seeded",
+  "unpriced",
+  "implied",
+]);
 
 /**
  * Validate a YYYY-MM-DD string against a real calendar date — the regex above
@@ -83,6 +111,9 @@ function ensureStoreDir(homeDir: string): string {
 }
 
 function dayFilePath(homeDir: string, date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !isValidDateKey(date)) {
+    throw new Error(`Invalid aggregate date key: ${JSON.stringify(date)}`);
+  }
   return join(aggregatesStoreDir(homeDir), `${date}.json`);
 }
 
@@ -94,38 +125,72 @@ function dayFilePath(homeDir: string, date: string): string {
  */
 export function listDaysOnDisk(homeDir: string): string[] {
   const dir = aggregatesStoreDir(homeDir);
-  if (!existsSync(dir)) return [];
-  ensurePrivateDirectory(dir);
   try {
-    const entries = readdirSync(dir);
-    const dates: string[] = [];
-    for (const e of entries) {
-      const m = DATE_FILE_PATTERN.exec(e);
-      if (m && isValidDateKey(m[1])) dates.push(m[1]);
-    }
-    dates.sort();
-    return dates;
-  } catch {
-    return [];
+    statSync(dir);
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+    throw error;
   }
+  ensurePrivateDirectory(dir);
+  const entries = readdirSync(dir);
+  const dates: string[] = [];
+  for (const e of entries) {
+    const m = DATE_FILE_PATTERN.exec(e);
+    if (m && isValidDateKey(m[1])) dates.push(m[1]);
+  }
+  dates.sort();
+  return dates;
 }
 
 // ─── Read ──────────────────────────────────────────────────────────────────
 
 /**
- * Read a single per-day aggregate file. Returns null when the file is missing
- * or unreadable — callers decide whether absence is an error.
+ * Read a single per-day aggregate file. A genuinely missing file returns null;
+ * an existing file that cannot be read or decoded is an accounting-integrity
+ * failure and is surfaced to the caller.
  */
 export function readDayFile(homeDir: string, date: string): DailyAggregate | null {
   const path = dayFilePath(homeDir, date);
-  if (!existsSync(path)) return null;
+  let size = 0;
   try {
+    size = statSync(path).size;
+  } catch (error) {
+    if (isMissingPathError(error)) return null;
+    throw error;
+  }
+  try {
+    if (size > MAX_AGGREGATE_FILE_BYTES) {
+      throw new Error(`file exceeds ${MAX_AGGREGATE_FILE_BYTES} bytes`);
+    }
     ensurePrivateFile(path);
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as DailyAggregate;
-    return forwardMigrateAggregate(parsed);
-  } catch {
-    return null;
+    if (parsed.date !== date) {
+      throw new Error(`embedded date ${JSON.stringify(parsed.date)} does not match filename`);
+    }
+    const migrated = forwardMigrateAggregate(parsed);
+    assertValidAggregate(migrated, date);
+    return migrated;
+  } catch (error) {
+    throw new Error(`Invalid sealed aggregate for ${date}`, { cause: error });
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
+function pathExistsOrThrow(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
   }
 }
 
@@ -159,11 +224,127 @@ function forwardMigrateAggregate(day: DailyAggregate): DailyAggregate {
   return day;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertFiniteNonnegative(value: unknown, field: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${field} must be a finite non-negative number`);
+  }
+}
+
+function assertBucket(value: unknown, field: string): asserts value is TokenBuckets {
+  if (!isRecord(value)) throw new Error(`${field} must be an object`);
+  for (const name of REQUIRED_BUCKET_FIELDS) {
+    assertFiniteNonnegative(value[name], `${field}.${name}`);
+  }
+  if (value.cacheWrite1hTokens !== undefined) {
+    assertFiniteNonnegative(value.cacheWrite1hTokens, `${field}.cacheWrite1hTokens`);
+    if (value.cacheWrite1hTokens > (value.cacheWriteTokens as number)) {
+      throw new Error(`${field}.cacheWrite1hTokens exceeds cacheWriteTokens`);
+    }
+  }
+  assertFiniteNonnegative(value.totalTokens, `${field}.totalTokens`);
+  const expected = REQUIRED_BUCKET_FIELDS.reduce((sum, name) => sum + (value[name] as number), 0);
+  if (value.totalTokens !== expected) throw new Error(`${field}.totalTokens is inconsistent`);
+  assertFiniteNonnegative(value.cost, `${field}.cost`);
+  assertFiniteNonnegative(value.recordCount, `${field}.recordCount`);
+  if (!Number.isSafeInteger(value.recordCount))
+    throw new Error(`${field}.recordCount must be an integer`);
+}
+
+function assertStringArray(value: unknown, field: string): asserts value is string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry)) {
+    throw new Error(`${field} must be an array of non-empty strings`);
+  }
+}
+
+function assertTimestampRange(value: unknown, field: string): void {
+  if (!isRecord(value)) throw new Error(`${field} must be an object`);
+  assertFiniteNonnegative(value.firstUsed, `${field}.firstUsed`);
+  assertFiniteNonnegative(value.lastUsed, `${field}.lastUsed`);
+  if (
+    (value.recordCount as number) > 0 &&
+    (value.firstUsed as number) > (value.lastUsed as number)
+  ) {
+    throw new Error(`${field} has an invalid timestamp range`);
+  }
+}
+
+function assertValidAggregate(day: DailyAggregate, expectedDate: string): void {
+  if (!isRecord(day)) throw new Error("aggregate must be an object");
+  if (day.date !== expectedDate) throw new Error("embedded date does not match filename");
+  assertBucket(day, "aggregate");
+  assertTimestampRange(day, "aggregate");
+
+  if (!isRecord(day.models) || !isRecord(day.projects) || !isRecord(day.providers)) {
+    throw new Error("aggregate breakdowns must be objects");
+  }
+  for (const [key, model] of Object.entries(day.models)) {
+    assertBucket(model, `models.${key}`);
+    if (model.model !== key) throw new Error(`models.${key}.model does not match its key`);
+    assertStringArray(model.providers, `models.${key}.providers`);
+  }
+  for (const [key, project] of Object.entries(day.projects)) {
+    assertBucket(project, `projects.${key}`);
+    if (project.project !== key) throw new Error(`projects.${key}.project does not match its key`);
+    assertTimestampRange(project, `projects.${key}`);
+    assertStringArray(project.models, `projects.${key}.models`);
+    if (!isRecord(project.modelBuckets)) {
+      throw new Error(`projects.${key}.modelBuckets must be an object`);
+    }
+    for (const [bucketKey, bucket] of Object.entries(project.modelBuckets)) {
+      assertBucket(bucket, `projects.${key}.modelBuckets.${bucketKey}`);
+      if (typeof bucket.model !== "string" || !bucket.model) {
+        throw new Error(`projects.${key}.modelBuckets.${bucketKey}.model must be non-empty`);
+      }
+      if (typeof bucket.provider !== "string" || !bucket.provider) {
+        throw new Error(`projects.${key}.modelBuckets.${bucketKey}.provider must be non-empty`);
+      }
+    }
+  }
+  for (const [key, provider] of Object.entries(day.providers)) {
+    assertBucket(provider, `providers.${key}`);
+    if (provider.provider !== key) {
+      throw new Error(`providers.${key}.provider does not match its key`);
+    }
+    assertTimestampRange(provider, `providers.${key}`);
+  }
+  if (day.costByHour !== undefined) {
+    if (day.costByHour.length !== 24) throw new Error("costByHour must contain 24 entries");
+    for (const [hour, cost] of day.costByHour.entries()) {
+      assertFiniteNonnegative(cost, `costByHour.${hour}`);
+    }
+  }
+  if (day.prices !== undefined) {
+    if (!isRecord(day.prices)) throw new Error("prices must be an object");
+    for (const [model, price] of Object.entries(day.prices)) {
+      if (!isRecord(price) || !isRecord(price.card)) {
+        throw new Error(`prices.${model} must contain a price card`);
+      }
+      if (!PRICE_SOURCES.has(price.source as string)) {
+        throw new Error(`prices.${model}.source is invalid`);
+      }
+      if (price.matchedId !== undefined && typeof price.matchedId !== "string") {
+        throw new Error(`prices.${model}.matchedId must be a string`);
+      }
+      for (const field of PRICE_RATE_FIELDS) {
+        if (price.card[field] !== undefined) {
+          assertFiniteNonnegative(price.card[field], `prices.${model}.card.${field}`);
+        }
+      }
+      assertFiniteNonnegative(price.card.inputPerMillion, `prices.${model}.card.inputPerMillion`);
+      assertFiniteNonnegative(price.card.outputPerMillion, `prices.${model}.card.outputPerMillion`);
+    }
+  }
+}
+
 /**
  * Load every per-day file present on disk, returning a Map keyed by date.
  * Optional `daysBack` cap loads only the N most-recent days (older files stay
- * on disk, lazy-load later). Files that fail to parse are silently skipped —
- * a single corrupt file must never poison the whole load.
+ * on disk, lazy-load later). Any listed file that cannot be read or parsed
+ * aborts the load: silently omitting a sealed day would under-report usage.
  */
 export function loadAggregates(
   homeDir: string,
@@ -201,22 +382,46 @@ export function loadAggregates(
  * overwrites (rollover may legitimately overwrite TODAY's tentative file on
  * the first rollover after a daemon restart that happened to write before
  * midnight), but every caller that expects immutability should check
- * {@link existsSync(dayFilePath(...))} first.
+ * the destination's existence first.
  */
 export function writeDayFile(homeDir: string, aggregate: DailyAggregate): void {
   const dir = ensureStoreDir(homeDir);
-  const path = join(dir, `${aggregate.date}.json`);
-  const tmp = `${path}.${process.pid}.tmp`;
+  const path = dayFilePath(homeDir, aggregate.date);
+  const tmp = join(dir, `.${randomBytes(12).toString("hex")}.tmp`);
+  const payload = JSON.stringify(aggregate);
+  if (Buffer.byteLength(payload, "utf-8") > MAX_AGGREGATE_FILE_BYTES) {
+    throw new Error(`Refusing to write an aggregate larger than ${MAX_AGGREGATE_FILE_BYTES} bytes`);
+  }
   // Write + fsync the data through an explicit fd before the rename so the
   // bytes are on stable storage when the rename makes them visible.
-  const fd = openSync(tmp, "w", 0o600);
+  const fd = openSync(
+    tmp,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+    0o600
+  );
   try {
-    writeFileSync(fd, JSON.stringify(aggregate), { encoding: "utf-8" });
+    writeFileSync(fd, payload, { encoding: "utf-8" });
     fsyncSync(fd);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Preserve the original persistence error.
+    }
+    throw error;
   } finally {
     closeSync(fd);
   }
-  renameSync(tmp, path);
+  try {
+    renameSync(tmp, path);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Preserve the original rename error.
+    }
+    throw error;
+  }
   // fsync the directory so the rename entry itself is durable, not just the
   // file contents. Best-effort: some filesystems reject directory fsync.
   try {
@@ -238,8 +443,8 @@ export function writeDayFile(homeDir: string, aggregate: DailyAggregate): void {
 export function deleteDayFile(homeDir: string, date: string): void {
   try {
     unlinkSync(dayFilePath(homeDir, date));
-  } catch {
-    // Already gone or not present — both fine.
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
   }
 }
 
@@ -247,8 +452,9 @@ export function deleteDayFile(homeDir: string, date: string): void {
 export function dayFileMtime(homeDir: string, date: string): number | null {
   try {
     return statSync(dayFilePath(homeDir, date)).mtimeMs;
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingPathError(error)) return null;
+    throw error;
   }
 }
 
@@ -260,9 +466,9 @@ export function dayFileMtime(homeDir: string, date: string): number | null {
  * the JSONL. Write-once — only persists when the day isn't already on disk, so
  * the immutable on-disk version always wins. Returns the sealed aggregate (so
  * the caller can splice it into its in-memory map) or null when nothing was
- * sealed (no rollover, empty day, or the day is already on disk). The disk
- * write is best-effort: a failure still returns the aggregate so live queries
- * stay correct, and the next cold-start gap-fill re-seals it from JSONL.
+ * sealed (no rollover, empty day, or the day is already on disk). Persistence
+ * failures propagate so the caller cannot discard the live accumulator while
+ * believing the immutable relay copy was safely committed.
  */
 export function sealRolledOverDay(
   homeDir: string,
@@ -280,11 +486,7 @@ export function sealRolledOverDay(
     for (const m of Object.keys(sealed.models)) if (prices[m]) used[m] = prices[m];
     if (Object.keys(used).length > 0) sealed.prices = used;
   }
-  try {
-    writeDayFile(homeDir, sealed);
-  } catch {
-    /* gap-fill on next cold start re-seals from JSONL if this write fails */
-  }
+  writeDayFile(homeDir, sealed);
   return sealed;
 }
 
@@ -578,11 +780,11 @@ export function migrateMonolithSnapshotIfNeeded(
 ): { migrated: boolean; daysWritten: number } {
   const dir = aggregatesStoreDir(homeDir);
   // If per-day files already exist, the daemon's already on the new world.
-  if (existsSync(dir)) {
+  if (pathExistsOrThrow(dir)) {
     const existing = listDaysOnDisk(homeDir);
     if (existing.length > 0) return { migrated: false, daysWritten: 0 };
   }
-  if (!existsSync(legacyFilePath)) return { migrated: false, daysWritten: 0 };
+  if (!pathExistsOrThrow(legacyFilePath)) return { migrated: false, daysWritten: 0 };
 
   const legacy = reader();
   if (!legacy) return { migrated: false, daysWritten: 0 };

@@ -55,20 +55,50 @@ final class DaemonClient {
     }
 
     private static let baseURL = URL(string: "http://127.0.0.1:9877")!
-    // Legacy file names, kept for compatibility: the daemon still writes its
-    // pid and token shims here, and daemons from before the rename write only
-    // these. Changing them would orphan every installed bar/daemon pair.
-    private let pidPath = "/tmp/drishti-daemon.pid"
+    // Prefer the private canonical file. The /tmp path is compatibility-only
+    // and is read with O_NOFOLLOW plus owner/type/size validation below.
+    private let pidPaths = [
+        NSHomeDirectory() + "/.tokmeter/daemon/daemon.pid",
+        "/tmp/drishti-daemon.pid",
+    ]
     private let tokenPaths = [
         NSHomeDirectory() + "/.tokmeter/daemon/daemon.token",
         "/tmp/drishti-daemon.token", // Compatibility with an older daemon.
     ]
     private let session: URLSession
 
+    /// Read a tiny, current-user-owned regular file without following a final
+    /// symlink. This keeps legacy /tmp shims from becoming an unbounded read
+    /// or a pointer into an unrelated local file.
+    static func readOwnedSmallFile(_ path: String, maxBytes: Int) -> (text: String, mtime: TimeInterval)? {
+        guard maxBytes > 0 else { return nil }
+        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        defer { Darwin.close(fd) }
+
+        var info = Darwin.stat()
+        guard Darwin.fstat(fd, &info) == 0,
+              (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == getuid(),
+              info.st_size > 0,
+              info.st_size <= maxBytes else {
+            return nil
+        }
+
+        var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
+        let count = bytes.withUnsafeMutableBytes { raw in
+            Darwin.read(fd, raw.baseAddress, raw.count)
+        }
+        guard count == bytes.count, let text = String(bytes: bytes, encoding: .utf8) else {
+            return nil
+        }
+        return (text, TimeInterval(info.st_mtimespec.tv_sec))
+    }
+
     /// Read on each request because a restarted daemon has a new token.
     private var bearerToken: String? {
         for path in tokenPaths {
-            if let token = try? String(contentsOfFile: path, encoding: .utf8)
+            if let token = Self.readOwnedSmallFile(path, maxBytes: 128)?.text
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                token.count == 64,
                token.allSatisfy({ $0.isHexDigit }) {
@@ -95,10 +125,9 @@ final class DaemonClient {
     /// that happened to inherit the PID, or an attacker that pre-wrote the
     /// PID file in /tmp).
     var isDaemonRunning: Bool {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: pidPath),
-              let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
-              let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard let pidFile = pidPaths.lazy.compactMap({ Self.readOwnedSmallFile($0, maxBytes: 32) }).first,
+              let pid = Int32(pidFile.text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0 else {
             return false
         }
         // Process must exist
@@ -131,13 +160,10 @@ final class DaemonClient {
             // proc_bsdinfo.pbi_start_tvsec is the process start time in
             // seconds since the epoch (kernel-supplied, can't be spoofed).
             let processStart = TimeInterval(bsdInfo.pbi_start_tvsec)
-            if let attrs = try? fm.attributesOfItem(atPath: pidPath),
-               let pidFileMtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 {
-                // Stale PID file: process started >60s AFTER the pidfile was
-                // written → the original daemon died and the PID was recycled.
-                if processStart > pidFileMtime + 60 {
-                    return false
-                }
+            // Stale PID file: process started >60s AFTER the pidfile was
+            // written → the original daemon died and the PID was recycled.
+            if processStart > pidFile.mtime + 60 {
+                return false
             }
         }
         return true

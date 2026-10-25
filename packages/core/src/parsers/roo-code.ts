@@ -62,8 +62,10 @@ export class RooCodeParser implements SessionParser {
             let data: RooApiReqStarted;
             try {
               data = JSON.parse(msg.text) as RooApiReqStarted;
-            } catch {
-              continue;
+            } catch (error) {
+              throw new Error(
+                `Malformed Roo usage payload in ${file}: ${error instanceof Error ? error.message : error}`
+              );
             }
             const hasCost = typeof data.cost === "number";
 
@@ -83,8 +85,10 @@ export class RooCodeParser implements SessionParser {
               })
             );
           }
-        } catch {
-          // skip
+        } catch (error) {
+          throw new Error(
+            `Unable to read Roo session ${file}: ${error instanceof Error ? error.message : error}`
+          );
         }
       }
     }

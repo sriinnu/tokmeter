@@ -6,10 +6,11 @@
 
 import type { Dirent } from "node:fs";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { type FileHandle, open, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "../config-service.js";
 import { localDateKey } from "../date-utils.js";
+import { sanitizeDataLabel } from "../display-safety.js";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, TokenRecord, UsageProvenance, UsageTelemetrySource } from "../types.js";
@@ -137,7 +138,12 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      custom-source lines served by a local runtime (Ollama, LM Studio, …).
 // 19 — codex reads compressed (.jsonl.zst) and archived rollouts, which it
 //      had skipped entirely; also covers #135's chitragupta provider label.
-const CACHE_VERSION = 20;
+// 20/21 — display hardening and bounded streaming parser revisions.
+// 22 — Claude append scans cache the exact descriptor snapshot boundary;
+//      older entries can double-count bytes appended during a scan.
+// 23 — bounded JSONL snapshots and cached-record totals prevent append-mode
+//      sessions from bypassing the per-read memory limits.
+const CACHE_VERSION = 23;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -389,52 +395,44 @@ export function clearRecordCache(): void {
 }
 
 /** Read only the tail of a file from a byte offset (for append-only parsing).
- *  A read failure returns [] (fail-soft) — pass `onError` to distinguish that
- *  from an empty tail when the caller seals history. */
+ *  A bounded-parser fault returns records completed before the fault and calls
+ *  `onError`; callers must treat that scan as incomplete and never seal it. */
 export async function readJsonlFileFromOffset<T>(
   path: string,
   offsetBytes: number,
-  onError?: (error: unknown) => void
+  onError?: (error: unknown) => void,
+  onSnapshot?: (snapshot: { mtimeMs: number; sizeBytes: number }) => void
 ): Promise<T[]> {
-  const { open } = await import("node:fs/promises");
-  let fd: Awaited<ReturnType<typeof open>> | null = null;
+  let fd: FileHandle | null = null;
   try {
     fd = await open(path, "r");
     const fileStat = await fd.stat();
-    // Back up one byte so we can KNOW whether the offset was newline-aligned
-    // instead of guessing from the first character. Sniffing for "{"/"[" drops
-    // a legitimate complete record whenever a line doesn't start with those
-    // (indentation, BOM, a future provider's format) — a silent token loss.
-    // Reading offset-1 lets us check the actual boundary byte.
-    const readFrom = offsetBytes > 0 ? offsetBytes - 1 : 0;
-    const tailSize = fileStat.size - readFrom;
-    if (tailSize <= 0) {
+    onSnapshot?.({ mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size });
+    if (fileStat.size > MAX_JSONL_INPUT_BYTES) {
+      throw new JsonlLimitError(
+        path,
+        `snapshot limit (${MAX_JSONL_INPUT_BYTES} bytes) exceeded`,
+        []
+      );
+    }
+    if (offsetBytes >= fileStat.size) {
       return [];
     }
-    const buf = Buffer.alloc(tailSize);
-    await fd.read(buf, 0, tailSize, readFrom);
-
-    const raw = buf.toString("utf-8");
-    // 10 === "\n". If the byte just before the offset is a newline (or we read
-    // from the very start), the tail begins on a clean line boundary and every
-    // parsed line is complete. Otherwise the offset landed mid-line and the
-    // first fragment is a partial JSON line that must be discarded.
-    const alignedAtNewline = offsetBytes === 0 || raw.charCodeAt(0) === 10;
-    let lines = raw.split("\n").filter((l: string) => l.trim());
-    if (!alignedAtNewline && lines.length > 0) {
-      lines = lines.slice(1);
+    let discardFirstFragment = false;
+    if (offsetBytes > 0) {
+      const boundary = Buffer.alloc(1);
+      await fd.read(boundary, 0, 1, offsetBytes - 1);
+      discardFirstFragment = boundary[0] !== 10;
     }
-
-    const results: T[] = [];
-    for (const line of lines) {
-      try {
-        results.push(JSON.parse(line) as T);
-      } catch {}
-    }
-    return results;
+    // Read from the same descriptor we statted and stop at that exact byte
+    // boundary. A provider can append while we parse; following a separately
+    // opened path beyond fileStat.size would cache bytes that the cache's
+    // statHint does not cover, then count them again on the next append scan.
+    return await streamJsonlFile<T>(fd, path, offsetBytes, fileStat.size - 1, discardFirstFragment);
   } catch (error) {
-    onError?.(error);
-    return [];
+    if (!onError) throw error;
+    onError(error);
+    return error instanceof JsonlLimitError ? (error.partialResults as T[]) : [];
   } finally {
     // Guarantee the fd is released even if read() threw mid-buffer. Without
     // the finally, repeated parse failures would leak fds and eventually
@@ -447,6 +445,110 @@ export async function readJsonlFileFromOffset<T>(
       }
     }
   }
+}
+
+const MAX_JSONL_LINE_CHARS = 8 * 1024 * 1024;
+export const MAX_JSONL_RECORDS = 600_000;
+const MAX_JSONL_INPUT_BYTES = 128 * 1024 * 1024;
+
+class JsonlLimitError extends Error {
+  readonly partialResults: unknown[];
+
+  constructor(path: string, problem: string, partialResults: unknown[]) {
+    super(`Refusing to parse ${path}: JSONL ${problem}`);
+    this.name = "JsonlLimitError";
+    this.partialResults = partialResults;
+  }
+}
+
+async function streamJsonlFile<T>(
+  fd: FileHandle,
+  path: string,
+  startBytes = 0,
+  endBytes = Number.POSITIVE_INFINITY,
+  discardFirstFragment = false
+): Promise<T[]> {
+  const results: T[] = [];
+  let pending = "";
+  let discarding = discardFirstFragment;
+  let inputBytes = 0;
+  const stream = fd.createReadStream({
+    encoding: "utf8",
+    start: startBytes,
+    ...(Number.isFinite(endBytes) ? { end: endBytes } : {}),
+    autoClose: false,
+  });
+
+  const parseLine = (line: string): void => {
+    if (!line.trim()) return;
+    if (line.length > MAX_JSONL_LINE_CHARS) {
+      throw new JsonlLimitError(
+        path,
+        `line limit (${MAX_JSONL_LINE_CHARS} characters) exceeded`,
+        results
+      );
+    }
+    if (results.length >= MAX_JSONL_RECORDS) {
+      throw new JsonlLimitError(path, `record limit (${MAX_JSONL_RECORDS}) exceeded`, results);
+    }
+    try {
+      results.push(JSON.parse(line) as T);
+    } catch {
+      throw new JsonlLimitError(path, "malformed complete JSON line", results);
+    }
+  };
+
+  for await (const chunk of stream) {
+    inputBytes += Buffer.byteLength(chunk);
+    if (inputBytes > MAX_JSONL_INPUT_BYTES) {
+      throw new JsonlLimitError(
+        path,
+        `input limit (${MAX_JSONL_INPUT_BYTES} bytes) exceeded`,
+        results
+      );
+    }
+    pending += chunk;
+    if (pending.length > MAX_JSONL_LINE_CHARS && !pending.includes("\n")) {
+      throw new JsonlLimitError(
+        path,
+        `line limit (${MAX_JSONL_LINE_CHARS} characters) exceeded`,
+        results
+      );
+    }
+
+    let newline = pending.indexOf("\n");
+    while (newline >= 0) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      if (discarding) discarding = false;
+      else parseLine(line);
+      newline = pending.indexOf("\n");
+    }
+  }
+
+  if (!discarding && pending.length > 0) {
+    // A valid JSON value does not require a trailing newline. A malformed
+    // unterminated tail is different from a malformed complete line: it can be
+    // an ordinary provider write caught in flight and must not advance caches.
+    if (pending.trim()) {
+      if (pending.length > MAX_JSONL_LINE_CHARS) {
+        throw new JsonlLimitError(
+          path,
+          `line limit (${MAX_JSONL_LINE_CHARS} characters) exceeded`,
+          results
+        );
+      }
+      if (results.length >= MAX_JSONL_RECORDS) {
+        throw new JsonlLimitError(path, `record limit (${MAX_JSONL_RECORDS}) exceeded`, results);
+      }
+      try {
+        results.push(JSON.parse(pending) as T);
+      } catch {
+        throw new JsonlLimitError(path, "unterminated final JSON object", results);
+      }
+    }
+  }
+  return results;
 }
 
 /**
@@ -575,83 +677,85 @@ export async function findFiles(
   dir: string,
   predicate: (name: string) => boolean,
   maxDepth = 5,
-  maxFiles = DEFAULT_MAX_FILES,
-  isRoot = true
+  maxFiles = DEFAULT_MAX_FILES
 ): Promise<string[]> {
   const results: string[] = [];
-  if (maxDepth <= 0 || results.length >= maxFiles) return results;
 
-  let entries: Dirent[];
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (error) {
-    // Distinguish "not there" from "there but unreadable". A missing root dir
-    // means the provider simply isn't installed → no data, not an error. But a
-    // root that EXISTS yet fails to read (permissions, I/O, an unmounted
-    // volume surfacing as EACCES/EIO) must NOT be silently treated as empty:
-    // that would seal a day omitting real usage and freeze a wrong low number.
-    // Propagate so the parser turns it into a provider warning, which makes
-    // gap-fill refuse to seal that day (fail-closed) instead of losing data.
-    // Nested subdir failures stay swallowed — one odd-permission subdir should
-    // not fail the whole provider scan.
-    const code = (error as NodeJS.ErrnoException).code;
-    if (isRoot && code && code !== "ENOENT") throw error;
-    return results;
-  }
-
-  for (const entry of entries) {
-    if (results.length >= maxFiles) break;
-
-    // Skip symlink directories to prevent path traversal attacks
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      const sub = await findFiles(
-        join(dir, entry.name),
-        predicate,
-        maxDepth - 1,
-        maxFiles - results.length,
-        false
-      );
-      results.push(...sub);
-    } else if (entry.isFile() && !entry.isSymbolicLink() && predicate(entry.name)) {
-      results.push(join(dir, entry.name));
+  const walk = async (current: string, depth: number): Promise<void> => {
+    if (depth <= 0) return;
+    let entries: Dirent[];
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // Missing provider roots mean "not installed"; nested ENOENT is a
+      // benign concurrent removal. Every other failure is an incomplete scan
+      // and must reach the provider warning/sealing guard.
+      if (code === "ENOENT") return;
+      throw error;
     }
-    // Silently skip symlinks and other special file types
-  }
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        await walk(join(current, entry.name), depth - 1);
+      } else if (entry.isFile() && !entry.isSymbolicLink() && predicate(entry.name)) {
+        results.push(join(current, entry.name));
+        if (results.length > maxFiles) {
+          throw new Error(`File discovery limit (${maxFiles}) exceeded under ${dir}`);
+        }
+      }
+      // Symlinks and special files are deliberately outside provider roots.
+    }
+  };
+
+  await walk(dir, maxDepth);
   return results;
 }
 
 /** Read and parse JSON safely. */
-export async function readJsonFile<T>(path: string): Promise<T | null> {
-  try {
-    const raw = await readFile(path, "utf-8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
+export async function readJsonFile<T>(path: string): Promise<T> {
+  const fileStat = await stat(path);
+  if (fileStat.size > MAX_JSONL_INPUT_BYTES) {
+    throw new Error(`JSON input limit (${MAX_JSONL_INPUT_BYTES} bytes) exceeded for ${path}`);
   }
+  const raw = await readFile(path, "utf-8");
+  return JSON.parse(raw) as T;
 }
 
-/** Read JSONL file and parse each line. Malformed lines are skipped; a read
- *  failure returns [] (fail-soft) — pass `onError` to distinguish that from a
- *  genuinely empty file when the caller seals history. */
+/** Read JSONL file and parse each line. Malformed input is incomplete. A bounded
+ *  parser fault returns completed records and calls `onError`; callers must
+ *  propagate that incomplete status before any authoritative sealing. */
 export async function readJsonlFile<T>(
   path: string,
-  onError?: (error: unknown) => void
+  onError?: (error: unknown) => void,
+  onSnapshot?: (snapshot: { mtimeMs: number; sizeBytes: number }) => void
 ): Promise<T[]> {
+  let fd: FileHandle | null = null;
   try {
-    const raw = await readFile(path, "utf-8");
-    const lines = raw.split("\n").filter((l: string) => l.trim());
-    const results: T[] = [];
-    for (const line of lines) {
+    fd = await open(path, "r");
+    const fileStat = await fd.stat();
+    onSnapshot?.({ mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size });
+    if (fileStat.size > MAX_JSONL_INPUT_BYTES) {
+      throw new JsonlLimitError(
+        path,
+        `snapshot limit (${MAX_JSONL_INPUT_BYTES} bytes) exceeded`,
+        []
+      );
+    }
+    if (fileStat.size === 0) return [];
+    return await streamJsonlFile<T>(fd, path, 0, fileStat.size - 1);
+  } catch (error) {
+    if (!onError) throw error;
+    onError(error);
+    return error instanceof JsonlLimitError ? (error.partialResults as T[]) : [];
+  } finally {
+    if (fd) {
       try {
-        results.push(JSON.parse(line) as T);
+        await fd.close();
       } catch {
-        // skip malformed lines
+        /* close failure is best-effort */
       }
     }
-    return results;
-  } catch (error) {
-    onError?.(error);
-    return [];
   }
 }
 
@@ -695,7 +799,7 @@ function withBusyTimeout(db: ReadonlySqlite): ReadonlySqlite {
  * `node:sqlite` needs no install; better-sqlite3 remains the fallback for
  * older Node. With none available the result is `null`, not a crash.
  */
-export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite | null> {
+export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     try {
       // @ts-expect-error — bun:sqlite only resolves under the Bun runtime
@@ -706,8 +810,10 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite |
         all: (sql, ...params) => db.query(sql).all(...params) as never,
         close: () => db.close(),
       });
-    } catch {
-      return null;
+    } catch (error) {
+      throw new Error(
+        `Unable to open SQLite database ${path}: ${error instanceof Error ? error.message : error}`
+      );
     }
   }
   try {
@@ -740,8 +846,10 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite |
       all: (sql, ...params) => db.prepare(sql).all(...params),
       close: () => db.close(),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(
+      `Unable to open SQLite database ${path}: ${error instanceof Error ? error.message : error}`
+    );
   }
 }
 
@@ -909,7 +1017,7 @@ export function createRecord(
       ? overrides.timestamp
       : Date.now();
   const usage = mergeUsageProvenance(overrides.provider, overrides.usage);
-  return {
+  const record: TokenRecord = {
     project: "unknown",
     inputTokens: 0,
     outputTokens: 0,
@@ -921,6 +1029,15 @@ export function createRecord(
     usage,
     timestamp: ts,
   };
+  record.model = sanitizeDataLabel(record.model, 256) || "unknown";
+  record.project = sanitizeDataLabel(record.project, 512) || "unknown";
+  if (record.cwd) record.cwd = sanitizeDataLabel(record.cwd, 1024);
+  if (record.toolCalls) {
+    record.toolCalls = record.toolCalls
+      .map((tool) => sanitizeDataLabel(tool, 256))
+      .filter((tool) => tool.length > 0);
+  }
+  return record;
 }
 
 /** Format a timestamp (ms) to YYYY-MM-DD. */
@@ -933,8 +1050,10 @@ export async function fileExists(path: string): Promise<boolean> {
   try {
     const s = await stat(path);
     return s.isFile();
-  } catch {
-    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
   }
 }
 
@@ -943,7 +1062,9 @@ export async function dirExists(path: string): Promise<boolean> {
   try {
     const s = await stat(path);
     return s.isDirectory();
-  } catch {
-    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
   }
 }

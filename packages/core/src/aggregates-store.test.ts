@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -78,6 +78,59 @@ describe("per-day store — write/read/list", () => {
     expect(readDayFile(home, "2026-01-01")).toBeNull();
   });
 
+  test("aggregate date keys cannot escape the private store", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    expect(() => writeDayFile(home, { ...day, date: "../../escaped" })).toThrow(
+      "Invalid aggregate date key"
+    );
+    expect(() => readDayFile(home, "../../escaped")).toThrow("Invalid aggregate date key");
+  });
+
+  test("the embedded day must match its immutable filename", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    writeDayFile(home, day);
+    const path = join(aggregatesStoreDir(home), "2026-05-20.json");
+    writeFileSync(path, JSON.stringify({ ...day, date: "2026-05-21" }));
+    expect(() => readDayFile(home, "2026-05-20")).toThrow(
+      "Invalid sealed aggregate for 2026-05-20"
+    );
+  });
+
+  test("an oversized sealed day is rejected before it can exhaust memory", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    writeDayFile(home, day);
+    truncateSync(join(aggregatesStoreDir(home), "2026-05-20.json"), 64 * 1024 * 1024 + 1);
+    expect(() => readDayFile(home, "2026-05-20")).toThrow(
+      "Invalid sealed aggregate for 2026-05-20"
+    );
+  });
+
+  test("a structurally valid JSON day with poisoned accounting totals is rejected", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    writeDayFile(home, day);
+    const path = join(aggregatesStoreDir(home), "2026-05-20.json");
+    writeFileSync(path, JSON.stringify({ ...day, totalTokens: day.totalTokens + 1 }));
+    expect(() => readDayFile(home, "2026-05-20")).toThrow(
+      "Invalid sealed aggregate for 2026-05-20"
+    );
+  });
+
+  test("a poisoned sealed price card is rejected before a rebuild can use it", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    writeDayFile(home, {
+      ...day,
+      prices: {
+        "claude-sonnet-4-5": {
+          source: "seeded",
+          card: { inputPerMillion: -1, outputPerMillion: 15 },
+        },
+      },
+    });
+    expect(() => readDayFile(home, "2026-05-20")).toThrow(
+      "Invalid sealed aggregate for 2026-05-20"
+    );
+  });
+
   test("loadAggregates returns a Map keyed by date with all days present", () => {
     for (const date of ["2026-05-20", "2026-05-21", "2026-05-22"]) {
       const [day] = aggregateRecordsByDay([r({ timestamp: ts(date), cost: 1 })]);
@@ -98,14 +151,12 @@ describe("per-day store — write/read/list", () => {
     expect([...recent.keys()].sort()).toEqual(["2026-05-21", "2026-05-22"]);
   });
 
-  test("a corrupt day-file is skipped, not poisonous", () => {
+  test("a corrupt sealed day aborts the load instead of under-reporting usage", () => {
     const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
     writeDayFile(home, day);
     // Write garbage in place of a valid day file.
     writeFileSync(join(aggregatesStoreDir(home), "2026-05-21.json"), "{not json");
-    const map = loadAggregates(home);
-    expect(map.has("2026-05-20")).toBe(true);
-    expect(map.has("2026-05-21")).toBe(false);
+    expect(() => loadAggregates(home)).toThrow("Invalid sealed aggregate for 2026-05-21");
   });
 
   test("deleteDayFile removes the file; subsequent reads return null", () => {
@@ -360,6 +411,15 @@ describe("sealRolledOverDay — midnight rollover persists yesterday", () => {
     const acc = new DailyAccumulator("2026-05-20");
     expect(sealRolledOverDay(home, acc, "2026-05-21")).toBeNull();
     expect(listDaysOnDisk(home)).toEqual([]);
+  });
+
+  test("a persistence failure aborts rollover instead of returning an unsealed day", () => {
+    const blockedHome = join(home, "not-a-directory");
+    writeFileSync(blockedHome, "occupied");
+    const acc = new DailyAccumulator("2026-05-20");
+    acc.fold(r({ timestamp: ts("2026-05-20"), cost: 2 }));
+
+    expect(() => sealRolledOverDay(blockedHome, acc, "2026-05-21")).toThrow();
   });
 });
 

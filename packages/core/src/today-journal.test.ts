@@ -123,14 +123,14 @@ describe("TodayJournal", () => {
     expect(j.reconcile([], NOON + 17000)).toEqual([a1]);
   });
 
-  test("old journals are pruned, a corrupt one is ignored", () => {
+  test("an existing corrupt journal fails closed instead of looking empty", () => {
     const dir = join(home, ".cache/tokmeter/today");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "2026-09-01.json"), "{}");
     writeFileSync(join(dir, "2026-10-20.json"), "not json");
     const j = new TodayJournal(home);
-    expect(j.reconcile([b1], NOON)).toEqual([b1]);
-    expect(existsSync(join(dir, "2026-09-01.json"))).toBe(false);
+    expect(() => j.reconcile([b1], NOON)).toThrow(/authoritative today journal/i);
+    expect(existsSync(join(dir, "2026-09-01.json"))).toBe(true);
     expect(readdirSync(dir)).toContain("2026-10-20.json");
   });
 
@@ -323,6 +323,58 @@ describe("TodayJournal", () => {
     rmSync(fa); // a deleted after the daemon died
     const got = carriedRecordsFor(home, "2026-10-20");
     expect(got.map((r) => r.apiCallId).sort()).toEqual(["ra", "resp_b1"]);
+  });
+
+  test("persisted journal labels are sanitized without changing record identity", () => {
+    const journalDir = join(home, ".cache/tokmeter/today");
+    mkdirSync(journalDir, { recursive: true });
+    const sourceFile = join(home, "identity\u001b]8;;https://example.test\u0007.jsonl");
+    writeFileSync(
+      join(journalDir, "2026-10-20.json"),
+      JSON.stringify({
+        version: 1,
+        date: "2026-10-20",
+        carried: {
+          old: [
+            rec({
+              sourceFile,
+              project: "demo\u001b]8;;https://example.test\u0007link\u001b]8;;\u0007",
+              model: "gpt\u202eexe",
+              cwd: "/tmp\u001b[31mred",
+              toolCalls: ["Read\u0007", "\u202eWrite"],
+              apiCallId: "response-identity",
+            }),
+          ],
+        },
+      })
+    );
+
+    const [record] = carriedRecordsFor(home, "2026-10-20");
+    expect(record.project).toBe("demolink");
+    expect(record.model).toBe("gpt exe");
+    expect(record.cwd).toBe("/tmpred");
+    expect(record.toolCalls).toEqual(["Read", "Write"]);
+    expect(record.sourceFile).toBe(sourceFile);
+    expect(record.apiCallId).toBe("response-identity");
+  });
+
+  test("malformed persisted records are ignored instead of crashing hydration", () => {
+    const journalDir = join(home, ".cache/tokmeter/today");
+    mkdirSync(journalDir, { recursive: true });
+    writeFileSync(
+      join(journalDir, "2026-10-20.json"),
+      JSON.stringify({
+        version: 1,
+        date: "2026-10-20",
+        carried: {
+          corrupt: [null, { toolCalls: "not-an-array" }, rec({ toolCalls: "bad" as never })],
+          valid: [rec({ apiCallId: "safe", toolCalls: ["Read"] })],
+        },
+      })
+    );
+
+    const records = carriedRecordsFor(home, "2026-10-20");
+    expect(records.map((record) => record.apiCallId)).toEqual(["safe"]);
   });
 });
 

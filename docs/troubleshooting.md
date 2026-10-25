@@ -218,8 +218,9 @@ automatically.
 `tokmeter_cleanup_execute` deletes whole source files; a file can hold records
 outside your filter. Always run `tokmeter_cleanup_preview` first and read its
 partial-file warnings. Everything is backed up to `~/.cache/tokmeter/backups/`
-first (unless you passed `backup: false`) — restore with `tokmeter_restore`
-(`confirm: "RESTORE"`). See
+first; over MCP, `backup: false` is ignored. Destructive MCP calls also require
+the machine-owner environment gate described in the backup guide. Restore with
+`tokmeter_restore` (`confirm: "RESTORE"`). See
 [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
 
 ## See also

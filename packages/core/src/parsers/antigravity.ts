@@ -176,8 +176,6 @@ export class AntigravityParser implements SessionParser {
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);
-      if (!db) continue;
-
       try {
         const row = db.get<{ value?: string }>(
           "SELECT value FROM ItemTable WHERE key = ?",
@@ -201,8 +199,6 @@ export class AntigravityParser implements SessionParser {
             })
           );
         }
-      } catch {
-        // Antigravity's schema moved — fail soft rather than crash the scan
       } finally {
         db.close();
       }

@@ -27,6 +27,7 @@ import {
   loadAliases,
   mergeAliases,
   removeAlias,
+  sanitizeDataLabel,
   saveAliases,
   setAlias,
   setHidden,
@@ -82,19 +83,20 @@ function writeAndPrint(map: AliasMap, note: string): void {
  * meaningless. Trims whitespace, disallows control characters, caps length.
  * Prints a friendly error and exits when invalid — callers assume valid.
  */
-function sanitizeDisplay(input: string, label = "display"): string {
+function sanitizeDisplay(input: string, label = "display", maxLength = 200): string {
   const trimmed = input.trim();
   if (!trimmed) {
     console.log(chalk.red(`${label} name cannot be empty.`));
     process.exit(2);
   }
-  // Control chars including \n \r \t break table rendering and logs. Reject.
-  if (/\p{Cc}/u.test(trimmed)) {
-    console.log(chalk.red(`${label} name cannot contain control characters.`));
+  // Control/format chars include terminal escapes, newlines and Unicode bidi
+  // overrides. None are meaningful in a single-line label or canonical key.
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(trimmed)) {
+    console.log(chalk.red(`${label} name cannot contain control or format characters.`));
     process.exit(2);
   }
-  if (trimmed.length > 200) {
-    console.log(chalk.red(`${label} name too long (max 200 chars).`));
+  if ([...trimmed].length > maxLength) {
+    console.log(chalk.red(`${label} name too long (max ${maxLength} chars).`));
     process.exit(2);
   }
   return trimmed;
@@ -178,11 +180,7 @@ function cmdSet(map: AliasMap, rest: string[]): void {
     console.log(chalk.red("Usage: tokmeter alias set <raw-key> <display>"));
     process.exit(2);
   }
-  const raw = rawIn.trim();
-  if (!raw) {
-    console.log(chalk.red("raw-key cannot be empty."));
-    process.exit(2);
-  }
+  const raw = sanitizeDisplay(rawIn, "raw-key", 512);
   const display = sanitizeDisplay(displayIn, "display");
   if (extra.length > 0) {
     console.log(chalk.dim("(extra arguments ignored — use `alias tag` to set tags after)"));
@@ -200,7 +198,10 @@ function cmdMerge(map: AliasMap, rest: string[]): void {
     process.exit(2);
   }
   const display = sanitizeDisplay(displayIn, "display");
-  const cleanKeys = keys.map((k) => k.trim()).filter((k) => k.length > 0);
+  const cleanKeys = keys
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0)
+    .map((k) => sanitizeDisplay(k, "raw-key", 512));
   if (cleanKeys.length === 0) {
     console.log(chalk.red("At least one non-empty raw-key required."));
     process.exit(2);
@@ -212,11 +213,12 @@ function cmdMerge(map: AliasMap, rest: string[]): void {
 // ─── remove ────────────────────────────────────────────────────────────────
 
 function cmdRemove(map: AliasMap, rest: string[]): void {
-  const [raw] = rest;
-  if (!raw) {
+  const [rawIn] = rest;
+  if (!rawIn) {
     console.log(chalk.red("Usage: tokmeter alias remove <raw-key>"));
     process.exit(2);
   }
+  const raw = sanitizeDisplay(rawIn, "raw-key", 512);
   if (!(raw in map)) {
     console.log(chalk.yellow(`No alias for "${raw}"`));
     return;
@@ -244,12 +246,14 @@ function cmdTag(map: AliasMap, rest: string[]): void {
   }
   const display = sanitizeDisplay(displayIn, "display");
   // Split comma-separated tag lists too: `work,client` == `work client`.
-  const expanded = tags.flatMap((t) =>
-    t
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
+  const expanded = tags
+    .flatMap((t) =>
+      t
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+    .map((tag) => sanitizeDisplay(tag, "tag", 100));
   const next = applyTagOp(map, display, op, expanded);
   writeAndPrint(next, `tag ${op} "${display}" → ${expanded.join(", ") || "(cleared)"}`);
 }
@@ -356,7 +360,10 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
   // claude-code slug-decoded). Fall back to the session log's parent dir only
   // when cwd is absent — that path is still better than nothing.
   const HOME = homedir();
-  const prettify = (p: string) => (p.startsWith(HOME) ? `~${p.slice(HOME.length)}` : p);
+  const prettify = (p: string) => {
+    const safe = sanitizeDataLabel(p, 4096);
+    return safe.startsWith(HOME) ? `~${safe.slice(HOME.length)}` : safe;
+  };
   const pathHint = (raw: string): string => {
     const m = metaByRaw.get(raw);
     if (m?.cwd) return chalk.dim(prettify(m.cwd));
@@ -442,7 +449,7 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
     let display = s.proposed;
     if (answer === "e" || answer === "edit") {
       const custom = await ask(`  custom display (default "${s.proposed}"): `);
-      if (custom.trim()) display = custom.trim();
+      if (custom.trim()) display = sanitizeDisplay(custom);
       edited++;
     } else {
       kept++;
@@ -466,10 +473,11 @@ async function cmdSuggest(initialMap: AliasMap): Promise<void> {
     if (answer === "e" || answer === "edit") {
       const custom = await ask("  new display: ");
       if (custom.trim()) {
-        workingMap = setAlias(workingMap, raw, { display: custom.trim() }, "user");
+        const display = sanitizeDisplay(custom);
+        workingMap = setAlias(workingMap, raw, { display }, "user");
         edited++;
         persist();
-        console.log(chalk.green(`  ✓ renamed to "${custom.trim()}"\n`));
+        console.log(chalk.green(`  ✓ renamed to "${display}"\n`));
       } else {
         skipped++;
         console.log(chalk.dim("  empty — skipped.\n"));

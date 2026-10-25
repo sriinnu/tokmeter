@@ -64,10 +64,8 @@ export async function scanRawRecords(
       try {
         return await parser.scan(ctx.homeDir, {
           ...(modifiedSinceMs !== undefined ? { modifiedSinceMs } : {}),
-          // Per-file fail-soft truncations surface as provider warnings so
-          // consumers can see the scan was partial. `partial: true` keeps the
-          // gap fill's abort reserved for whole-provider crashes — one
-          // persistently bad file must not block gap sealing forever.
+          // Per-file bounded-read faults surface as provider warnings so every
+          // persistence path can refuse to seal an incomplete provider scan.
           onWarning: (message) =>
             warnings.push({
               scope: "provider",

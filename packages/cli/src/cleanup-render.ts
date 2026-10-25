@@ -5,7 +5,7 @@
  * 450-LOC guardrail; these are pure, no I/O beyond console.log.
  */
 
-import type { CleanupPreview } from "@sriinnu/tokmeter";
+import { type CleanupPreview, sanitizeDataLabel } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 
 // ─── Formatters ──────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ export function fmtBytes(bytes: number): string {
 
 /** Trim a path to the trailing N segments for log readability. */
 export function shortPath(filePath: string, segmentCount = 2): string {
-  return filePath
+  return sanitizeDataLabel(filePath, 4096)
     .split(/[\\/]+/)
     .filter(Boolean)
     .slice(-segmentCount)
@@ -97,13 +97,13 @@ export function renderResult(result: {
   console.log(`  ✓ Deleted: ${result.deletedCount} targets, freed ${fmtBytes(result.bytesFreed)}`);
 
   if (result.backupPath) {
-    console.log(`  📦 Backup: ${result.backupPath}`);
+    console.log(`  📦 Backup: ${sanitizeDataLabel(result.backupPath, 4096)}`);
   }
 
   if (result.failedCount > 0) {
     console.log(`  ✗ Failed: ${result.failedCount}`);
     for (const e of result.errors.slice(0, 5)) {
-      console.log(`     ${e.target}: ${e.error}`);
+      console.log(`     ${sanitizeDataLabel(e.target, 4096)}: ${sanitizeDataLabel(e.error, 4096)}`);
     }
     if (result.errors.length > 5) {
       console.log(`     ... and ${result.errors.length - 5} more`);

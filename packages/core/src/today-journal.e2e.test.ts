@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -155,5 +164,46 @@ describe("grow-only today", () => {
     await daemon.refreshToday(at("2026-10-21T00:00:12"));
     const sealed = daemon.getDailyAggregates().find((d) => d.date === "2026-10-20");
     expect(sealed?.totalTokens).toBe(710);
+  });
+
+  test("a partial midnight read defers sealing until an authoritative retry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-20T23:50:00"));
+    const path = session("s.jsonl", "S", at("2026-10-20T23:40:00"), 700);
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+
+    const late = session("late-source.jsonl", "L", at("2026-10-20T23:59:00"), 90);
+    const lateLine = readFileSync(late, "utf8");
+    unlinkSync(late);
+    const split = Math.floor(lateLine.length / 2);
+    appendFileSync(path, lateLine.slice(0, split));
+
+    vi.setSystemTime(at("2026-10-21T00:00:12"));
+    await daemon.refreshToday(at("2026-10-21T00:00:12"));
+    expect(daemon.getDailyAggregates().some((day) => day.date === "2026-10-20")).toBe(false);
+
+    appendFileSync(path, lateLine.slice(split));
+    await daemon.refreshToday(at("2026-10-21T00:00:24"));
+    const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-20");
+    expect(sealed?.totalTokens).toBe(810);
+  });
+
+  test("a provider-filtered midnight scan defers sealing until a full retry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-20T23:50:00"));
+    session("early.jsonl", "EARLY", at("2026-10-20T23:40:00"), 700);
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+    const late = session("late.jsonl", "LATE", at("2026-10-20T23:59:00"), 90);
+
+    vi.setSystemTime(at("2026-10-21T00:00:12"));
+    await daemon.scan({ today: true, providers: ["codex"] });
+    expect(daemon.getDailyAggregates().some((day) => day.date === "2026-10-20")).toBe(false);
+
+    utimesSync(late, new Date(at("2026-10-21T00:00:20")), new Date(at("2026-10-21T00:00:20")));
+    await daemon.refreshToday(at("2026-10-21T00:00:24"));
+    const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-20");
+    expect(sealed?.totalTokens).toBe(810);
   });
 });

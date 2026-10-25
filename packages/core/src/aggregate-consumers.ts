@@ -10,6 +10,7 @@ import type { DailyAggregate, ProjectDayBucket } from "./aggregates.js";
 import type { DailyAccumulator } from "./aggregates-store.js";
 import { type AliasMap, isProjectHidden, resolveProjectName } from "./alias-service.js";
 import { localDateKey } from "./date-utils.js";
+import { sanitizeDataLabel } from "./display-safety.js";
 import { projectNameIncludes, projectNamesMatch } from "./project-name.js";
 import type {
   DailyEntry,
@@ -100,7 +101,7 @@ function recordDisplayVisibility(
   aliases: AliasMap,
   visible: Map<string, boolean>
 ): void {
-  const display = resolveProjectName(rawProject, aliases);
+  const display = sanitizeDataLabel(resolveProjectName(rawProject, aliases)) || "unknown";
   const isHidden = aliases[rawProject]?.hidden === true;
   if (!isHidden) visible.set(display, true);
   else if (!visible.has(display)) visible.set(display, false);
@@ -310,7 +311,7 @@ export function computeRawProjectNamesFromState(
 ): string[] {
   const names = new Set<string>();
   for (const day of iterateAllDays(aggregates, todayAccumulator)) {
-    for (const raw of Object.keys(day.projects)) names.add(raw);
+    for (const raw of Object.keys(day.projects)) names.add(sanitizeDataLabel(raw) || "unknown");
   }
   return [...names];
 }
@@ -324,7 +325,13 @@ interface ModelTotal extends CostedTokens {
 }
 
 function emptyModelTotal(provider: ProviderId, model: string): ModelTotal {
-  return { provider, model, totalTokens: 0, cost: 0, ...zeroTokens() };
+  return {
+    provider,
+    model: sanitizeDataLabel(model) || "unknown",
+    totalTokens: 0,
+    cost: 0,
+    ...zeroTokens(),
+  };
 }
 
 function modelTotalsToSummaries(
@@ -344,10 +351,11 @@ function foldCrossCut(
   totals: Map<string, ModelTotal>,
   mb: { provider: ProviderId; model: string; cost: number; totalTokens: number } & Tokens
 ): void {
-  const key = `${mb.provider} ${mb.model}`;
+  const safeModel = sanitizeDataLabel(mb.model) || "unknown";
+  const key = `${mb.provider} ${safeModel}`;
   let row = totals.get(key);
   if (!row) {
-    row = emptyModelTotal(mb.provider, mb.model);
+    row = emptyModelTotal(mb.provider, safeModel);
     totals.set(key, row);
   }
   row.cost += mb.cost;
@@ -417,10 +425,11 @@ export function computeModelCostsFromState(
     for (const model of Object.values(day.models)) {
       const n = model.providers.length;
       for (const provider of model.providers) {
-        const key = `${provider} ${model.model}`;
+        const safeModel = sanitizeDataLabel(model.model) || "unknown";
+        const key = `${provider} ${safeModel}`;
         let row = totals.get(key);
         if (!row) {
-          row = emptyModelTotal(provider, model.model);
+          row = emptyModelTotal(provider, safeModel);
           totals.set(key, row);
         }
         const share = n === 1 ? 1 : 1 / n;
@@ -463,7 +472,7 @@ export function computeProviderBreakdownFromState(
           entry = { cost: 0, totalTokens: 0, models: new Set() };
           totals.set(pid, entry);
         }
-        entry.models.add(model.model);
+        entry.models.add(sanitizeDataLabel(model.model) || "unknown");
       }
     }
   }
@@ -591,7 +600,7 @@ export function computeAllProjectsFromState(
   for (const day of iterateAllDays(aggregates, todayAccumulator)) {
     const onDay = new Map<string, ProjectDayBucket[]>();
     for (const [raw, pb] of Object.entries(day.projects)) {
-      const display = resolveProjectName(raw, aliases);
+      const display = sanitizeDataLabel(resolveProjectName(raw, aliases)) || "unknown";
       const list = onDay.get(display) ?? [];
       list.push(pb);
       onDay.set(display, list);

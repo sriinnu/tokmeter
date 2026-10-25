@@ -26,6 +26,7 @@
  * full input rate.
  */
 
+import { sanitizeDataLabel } from "../display-safety.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
@@ -148,8 +149,8 @@ export class MuseParser implements SessionParser {
       const project = canonicalizeProjectName(workspaceRoot, "muse");
       for (const r of records) {
         if (r.project === "muse") {
-          r.project = project;
-          r.cwd = workspaceRoot;
+          r.project = sanitizeDataLabel(project) || "muse";
+          r.cwd = sanitizeDataLabel(workspaceRoot, 4096);
         }
       }
     }

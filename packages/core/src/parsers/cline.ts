@@ -81,8 +81,10 @@ export class ClineParser implements SessionParser {
       let chunk: ClineUsageChunk;
       try {
         chunk = JSON.parse(line.chunk) as ClineUsageChunk;
-      } catch {
-        continue;
+      } catch (error) {
+        throw new Error(
+          `Malformed Cline usage payload in ${file}: ${error instanceof Error ? error.message : error}`
+        );
       }
 
       const ts = typeof line.ts === "number" && Number.isFinite(line.ts) ? line.ts : Date.now();

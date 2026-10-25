@@ -16,6 +16,13 @@ The `@sriinnu/tokmeter-mcp` server exposes **24 tools**, all prefixed
 The default command launches a terminal UI, so the MCP entry point is the
 `serve` subcommand.
 
+Project names, model names, paths, and other labels come from local agent
+transcripts. Tokmeter strips terminal/control sequences and marks rendered
+sections as untrusted data, but ordinary text can still resemble instructions.
+MCP hosts must keep tool output in the tool-result trust boundary rather than
+concatenating it into a privileged system prompt. Destructive tools remain
+disabled unless the machine owner explicitly enables them.
+
 ## Tools at a glance
 
 | Group | Tools |
@@ -136,11 +143,14 @@ Preview what session data would be deleted for the given filters. Shows affected
 
 ### tokmeter_cleanup_execute
 
-DESTRUCTIVE: Permanently delete session data matching the given filters. Always creates a tar.gz backup before deleting. Requires at least one filter: a project, providers, or a date range. ALWAYS call tokmeter_cleanup_preview first. Requires confirm='DELETE' as a safety guard.
+DESTRUCTIVE: Permanently delete session data matching the given filters. Disabled by default; the machine owner must set `TOKMETER_ENABLE_DESTRUCTIVE_MCP=1` in the server environment. Always creates a tar.gz backup before deleting. Requires at least one filter, confirm='DELETE', and the one-time receipt from a matching cleanup preview.
 
-> **Destructive.** Deletes raw session files. Requires `confirm: "DELETE"`
-> (enforced inside the server before anything is removed). Always call
-> `tokmeter_cleanup_preview` first. See [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
+> **Destructive and default-off.** Deletes raw session files. The machine owner
+> must enable it with `TOKMETER_ENABLE_DESTRUCTIVE_MCP=1`; the call then requires
+> `confirm: "DELETE"` and the one-time receipt returned by
+> `tokmeter_cleanup_preview`. The receipt binds the filters and exact
+> target/collateral set; if files change, execute requires a fresh preview.
+> See [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
 >
 > From 1.15.0, an empty filter (no `project`, no `providers`, no
 > `since`/`until` and no `today`/`week`/`month` scope) is refused, because it
@@ -151,7 +161,7 @@ DESTRUCTIVE: Permanently delete session data matching the given filters. Always 
 
 ### tokmeter_restore
 
-Restore session data from a cleanup backup. Requires confirm='RESTORE' as a safety guard.
+Restore session data from a cleanup backup. Disabled by default through the same owner environment gate and requires confirm='RESTORE'.
 
 > Requires `confirm: "RESTORE"` as a safety guard.
 >
