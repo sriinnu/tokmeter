@@ -102,7 +102,7 @@ const daily = core.getDailyBreakdown();
 const summary = await loadTokmeterSummary({ week: true, light: true });
 ```
 
-Reuse one core scan when querying several breakdowns. See [integration guidance](docs/consuming-tokmeter.md), [core API usage](packages/core/README.md), and [SKILL.md](skills/tokmeter/SKILL.md) for agent-facing integration instructions.
+Reuse one core scan when querying several breakdowns. See [integration guidance](docs/consuming-tokmeter.md), [core API usage](packages/core/README.md), and the [tokmeter agent skill](https://github.com/sriinnu/tokmeter-skill) (`npx skills add sriinnu/tokmeter-skill --skill tokmeter -g`) for agent-facing integration instructions.
 
 ## Daemon, MCP, and statusline
 
