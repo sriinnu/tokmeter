@@ -11,7 +11,8 @@
  * Invariants:
  *   - A `DailyAggregate` is FROZEN once a day is past. Same immutability rule
  *     as the raw-records snapshot it replaces: yesterday never reprices unless
- *     `rescanHistory` is explicitly invoked.
+ *     `rescanHistory` is explicitly invoked, and even then a sealed day only
+ *     grows (see {@link shouldKeepSealedDay}).
  *   - Aggregates are derived purely from records via {@link aggregateRecordsByDay}.
  *     The function is the SINGLE definition of "how a day rolls up", so every
  *     reader (cold scan, snapshot load, today-merge) sees the same shape.
