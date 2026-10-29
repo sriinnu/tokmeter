@@ -3,8 +3,10 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { localDateKey } from "@sriinnu/tokmeter";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import type { SessionPush } from "./daemon/push.js";
 import {
+  afterOutput,
   formatAge,
   isConnectionRefused,
   readLastGoodToday,
@@ -106,5 +108,49 @@ describe("repo commands", () => {
 
     expect(runGit(repo, ["status", "--porcelain"])).toContain("file.txt");
     expect(existsSync(marker)).toBe(false);
+  });
+});
+
+describe("afterOutput — the line first, the daemon push after", () => {
+  const push: SessionPush = {
+    session: { provider: "claude-code", sessionId: "s", model: "m" },
+    cost: 0,
+    tokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  };
+
+  test("pushes only after stdout has drained", async () => {
+    const order: string[] = [];
+    let pending = 1;
+    const length = vi
+      .spyOn(process.stdout, "writableLength", "get")
+      .mockImplementation(() => pending);
+    const done = afterOutput(push, async () => {
+      order.push(`push (buffered=${pending})`);
+      return true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    order.push("drain");
+    pending = 0;
+    process.stdout.emit("drain");
+    await done;
+    length.mockRestore();
+    expect(order).toEqual(["drain", "push (buffered=0)"]);
+  });
+
+  test("a push that never settles is abandoned at the hard cap", async () => {
+    const started = Date.now();
+    await afterOutput(push, () => new Promise<boolean>(() => {}), 60);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  test("a failing push is swallowed; no session means no push", async () => {
+    await expect(
+      afterOutput(push, async () => {
+        throw new Error("daemon exploded");
+      })
+    ).resolves.toBeUndefined();
+    const send = vi.fn(async () => true);
+    await afterOutput(null, send);
+    expect(send).not.toHaveBeenCalled();
   });
 });

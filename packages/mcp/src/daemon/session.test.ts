@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { TokenUsage } from "./protocol.js";
-import { SessionManager } from "./session.js";
+import { LIVE_IDLE_MS, SessionManager } from "./session.js";
 
 const tok = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   inputTokens: 0,
@@ -62,12 +62,37 @@ describe("SessionManager — lifecycle", () => {
     expect(mgr.get("claude-code", "a")?.contextWindow).toEqual({ usedTokens: 100, maxTokens: 200 });
   });
 
-  test("unregister/disconnect flip connected off but keep the session", () => {
+  test("unregister ends the session: kept for cleanup, but no longer live", () => {
     mgr.register({ provider: "gemini", sessionId: "g", model: "gemini-2.5-pro" });
     mgr.unregister("gemini", "g");
     expect(mgr.get("gemini", "g")?.connected).toBe(false);
     expect(mgr.getAll()).toHaveLength(1);
-    expect(mgr.getConnected()).toHaveLength(0);
+    expect(mgr.getLive()).toHaveLength(0);
+  });
+
+  test("a later push revives an unregistered session", () => {
+    mgr.update("gemini", "g", 1, tok());
+    mgr.unregister("gemini", "g");
+    mgr.update("gemini", "g", 2, tok());
+    expect(mgr.getLive()).toHaveLength(1);
+  });
+
+  test("a one-shot update registers with the model/project/cwd it carries", () => {
+    mgr.update("claude-code", "s", 0.5, tok(), 0, undefined, {
+      model: "claude-opus-5-5",
+      project: "tokmeter",
+      cwd: "/w/tokmeter",
+    });
+    const s = mgr.get("claude-code", "s");
+    expect(s?.model).toBe("claude-opus-5-5");
+    expect(s?.project).toBe("tokmeter");
+    expect(s?.cwd).toBe("/w/tokmeter");
+    // A /model switch arrives on the next push.
+    mgr.update("claude-code", "s", 0.6, tok(), 0, undefined, { model: "claude-sonnet-5" });
+    expect(mgr.get("claude-code", "s")?.model).toBe("claude-sonnet-5");
+    // An oversized model never lands; the previous one stays.
+    mgr.update("claude-code", "s", 0.7, tok(), 0, undefined, { model: "m".repeat(257) });
+    expect(mgr.get("claude-code", "s")?.model).toBe("claude-sonnet-5");
   });
 });
 
@@ -166,11 +191,27 @@ describe("SessionManager — getAggregated", () => {
     expect(agg.sessions).toBe(2); // sessions count is the connected total, unfiltered
   });
 
-  test("only connected sessions contribute", () => {
+  test("only live sessions contribute: unregistered and idle ones drop out", () => {
     mgr.update("claude-code", "a", 5, tok());
     mgr.update("claude-code", "b", 7, tok());
-    mgr.disconnect("claude-code", "b");
+    mgr.update("claude-code", "c", 11, tok());
+    mgr.unregister("claude-code", "b");
+    mgr.get("claude-code", "c")!.lastUpdate = Date.now() - LIVE_IDLE_MS - 1;
     expect(mgr.getAggregated().totalCost).toBe(5);
+    expect(mgr.getAggregated().sessions).toBe(1);
+  });
+
+  test("a one-shot client (update, then socket close) stays live until it goes quiet", () => {
+    mgr.update("claude-code", "one-shot", 3, tok(), 0, { usedTokens: 50, maxTokens: 100 });
+    mgr.disconnect("claude-code", "one-shot"); // the statusline closes after every push
+    expect(mgr.getAggregated().sessions).toBe(1);
+    expect(mgr.getAggregated().maxContextFillPct).toBeCloseTo(50, 6);
+
+    mgr.get("claude-code", "one-shot")!.lastUpdate = Date.now() - LIVE_IDLE_MS + 1_000;
+    expect(mgr.getAggregated().sessions).toBe(1); // still inside the window
+    mgr.get("claude-code", "one-shot")!.lastUpdate = Date.now() - LIVE_IDLE_MS - 1;
+    expect(mgr.getAggregated().sessions).toBe(0);
+    expect(mgr.getAggregated().maxContextFillPct).toBeUndefined();
   });
 });
 
@@ -198,9 +239,13 @@ describe("SessionManager — maxContextFillPct (worst session wins)", () => {
     expect(mgr.getAggregated().maxContextFillPct).toBeUndefined();
   });
 
-  test("a disconnected high-fill session does not count", () => {
+  test("an ended or idle high-fill session does not count", () => {
     mgr.update("codex", "b", 1, tok(), 0, { usedTokens: 190, maxTokens: 200 });
-    mgr.disconnect("codex", "b");
+    mgr.unregister("codex", "b");
+    expect(mgr.getAggregated().maxContextFillPct).toBeUndefined();
+
+    mgr.update("codex", "c", 1, tok(), 0, { usedTokens: 180, maxTokens: 200 });
+    mgr.get("codex", "c")!.lastUpdate = Date.now() - LIVE_IDLE_MS - 1;
     expect(mgr.getAggregated().maxContextFillPct).toBeUndefined();
   });
 });
@@ -211,24 +256,38 @@ describe("SessionManager — cleanupStale", () => {
     mgr = new SessionManager();
   });
 
-  test("removes disconnected + stale sessions, keeps connected and fresh ones", () => {
+  test("removes sessions idle past the live window, keeps fresh ones", () => {
     mgr.update("claude-code", "live", 1, tok());
     mgr.update("codex", "old", 1, tok());
     mgr.disconnect("codex", "old");
-    // Backdate the disconnected session past the staleness window (objects are
-    // returned by reference, so mutating lastUpdate simulates elapsed time).
-    mgr.get("codex", "old")!.lastUpdate = Date.now() - 120_000;
+    // Backdate past the window (objects are returned by reference, so mutating
+    // lastUpdate simulates elapsed time).
+    mgr.get("codex", "old")!.lastUpdate = Date.now() - LIVE_IDLE_MS - 1;
 
-    const cleaned = mgr.cleanupStale(60_000);
+    const cleaned = mgr.cleanupStale();
     expect(cleaned).toBe(1);
     expect(mgr.get("codex", "old")).toBeUndefined();
     expect(mgr.get("claude-code", "live")).toBeDefined();
   });
 
-  test("a disconnected-but-recent session is retained", () => {
+  test("a disconnected-but-recent session is retained (one-shot pushes)", () => {
     mgr.update("codex", "recent", 1, tok());
     mgr.disconnect("codex", "recent");
-    expect(mgr.cleanupStale(60_000)).toBe(0);
+    mgr.get("codex", "recent")!.lastUpdate = Date.now() - 120_000; // the old 60s cutoff
+    expect(mgr.cleanupStale()).toBe(0);
     expect(mgr.get("codex", "recent")).toBeDefined();
+  });
+
+  test("a connected socket that stopped pushing is reaped too", () => {
+    mgr.update("codex", "silent", 1, tok());
+    mgr.get("codex", "silent")!.lastUpdate = Date.now() - LIVE_IDLE_MS - 1;
+    expect(mgr.get("codex", "silent")?.connected).toBe(true);
+    expect(mgr.cleanupStale()).toBe(1);
+  });
+
+  test("an unregistered session is reaped on the next pass", () => {
+    mgr.update("codex", "bye", 1, tok());
+    mgr.unregister("codex", "bye");
+    expect(mgr.cleanupStale()).toBe(1);
   });
 });
