@@ -844,3 +844,169 @@ describe("compressed and archived rollouts", () => {
     expect(records).toHaveLength(3);
   });
 });
+
+describe("Codex — 2026-10-29 accounting audit", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "codex-audit-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const u = (input: number, cached: number, output: number, reasoning: number) => ({
+    input_tokens: input,
+    cached_input_tokens: cached,
+    output_tokens: output,
+    reasoning_output_tokens: reasoning,
+    total_tokens: input + output,
+  });
+
+  it("does not book a guardian_review continuation's inherited counter as new usage", async () => {
+    // Real shape (rollout 01a18179…, 2026-10-28): session_meta, a `compacted`
+    // carry-over, the PARENT turn's turn_context, then a token_count whose
+    // total is the predecessor rollout's final total (162,492) and whose
+    // last_token_usage is the predecessor's last response — already counted.
+    const file = join(dir, "rollout-2026-10-28T08-46-17-guardian.jsonl");
+    const events = [
+      {
+        timestamp: "2026-10-28T07:46:17.606Z",
+        type: "session_meta",
+        payload: { id: "g2", thread_source: "guardian_review", parent_thread_id: "p" },
+      },
+      { timestamp: "2026-10-28T07:46:17.606Z", type: "compacted", payload: { message: "" } },
+      {
+        timestamp: "2026-10-28T07:46:17.607Z",
+        type: "turn_context",
+        payload: { turn_id: "parent-turn", model: "codex-auto-review" },
+      },
+      {
+        timestamp: "2026-10-28T07:46:17.607Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: u(162_492, 111_872, 676, 346),
+            last_token_usage: u(49_824, 38_144, 83, 20),
+          },
+        },
+      },
+      {
+        timestamp: "2026-10-28T07:46:17.635Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "t1" },
+      },
+      {
+        timestamp: "2026-10-28T07:46:18.516Z",
+        type: "turn_context",
+        payload: { turn_id: "t1", model: "codex-auto-review" },
+      },
+      {
+        timestamp: "2026-10-28T07:46:20.344Z",
+        type: "token_usage_record",
+        payload: {
+          thread_id: "g2",
+          turn_id: "t1",
+          response_id: "resp_1",
+          usage: u(61_614, 49_664, 128, 66),
+          thread_token_usage: u(224_106, 161_536, 804, 412),
+        },
+      },
+      {
+        timestamp: "2026-10-28T07:46:20.348Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: u(224_106, 161_536, 804, 412),
+            last_token_usage: u(61_614, 49_664, 128, 66),
+          },
+        },
+      },
+    ];
+    writeFileSync(file, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`);
+    const records = await parseCodexFile(file, 1000);
+    // Only the rollout's own response: 61,614 − 49,664 uncached input.
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      apiCallId: "resp_1",
+      inputTokens: 11_950,
+      cacheReadTokens: 49_664,
+      outputTokens: 62,
+      reasoningTokens: 66,
+    });
+  });
+
+  it("still books a first counter that comes after the rollout's own task_started", async () => {
+    const file = join(dir, "rollout-plain.jsonl");
+    const events = [
+      { timestamp: "2026-10-28T10:00:00Z", type: "session_meta", payload: { id: "s1" } },
+      {
+        timestamp: "2026-10-28T10:00:01Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "t1" },
+      },
+      {
+        timestamp: "2026-10-28T10:00:01Z",
+        type: "turn_context",
+        payload: { turn_id: "t1", model: "gpt-x" },
+      },
+      {
+        timestamp: "2026-10-28T10:00:05Z",
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: u(5000, 1000, 300, 100) } },
+      },
+    ];
+    writeFileSync(file, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`);
+    const records = await parseCodexFile(file, 1000);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.inputTokens).toBe(4000);
+  });
+
+  it.each([false, true])(
+    "skips an oversized line and keeps every later response (compressed=%s)",
+    async (compressed) => {
+      // Real shape: line 580 of a 63 MB rollout was a 16 MB custom_tool_call_output;
+      // the reader threw there and dropped the 107 responses after it.
+      const receipt = (id: string, ts: string) =>
+        JSON.stringify({
+          timestamp: ts,
+          type: "token_usage_record",
+          payload: { thread_id: "s2", turn_id: "t1", response_id: id, usage: u(1000, 800, 50, 10) },
+        });
+      const lines = [
+        JSON.stringify({
+          timestamp: "2026-10-21T13:00:00Z",
+          type: "session_meta",
+          payload: { id: "s2" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-10-21T13:00:01Z",
+          type: "turn_context",
+          payload: { turn_id: "t1", model: "gpt-x" },
+        }),
+        receipt("r1", "2026-10-21T13:10:00Z"),
+        JSON.stringify({
+          timestamp: "2026-10-21T13:51:32Z",
+          type: "response_item",
+          payload: { type: "custom_tool_call_output", output: "o".repeat(9 * 1024 * 1024) },
+        }),
+        receipt("r2", "2026-10-22T09:00:00Z"),
+        receipt("r3", "2026-10-22T09:05:00Z"),
+      ];
+      const text = `${lines.join("\n")}\n`;
+      const file = join(dir, compressed ? "rollout-big.jsonl.zst" : "rollout-big.jsonl");
+      writeFileSync(file, compressed ? zstdCompressSync(Buffer.from(text)) : text);
+      const warnings: string[] = [];
+      const notices: string[] = [];
+      const records = await parseCodexFile(
+        file,
+        Buffer.byteLength(text),
+        (m) => warnings.push(m),
+        (m) => notices.push(m)
+      );
+      expect(records.map((r) => r.apiCallId)).toEqual(["r1", "r2", "r3"]);
+      expect(warnings).toEqual([]);
+      expect(notices.some((m) => /skipped 1 oversized line/.test(m))).toBe(true);
+    }
+  );
+});

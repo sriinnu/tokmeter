@@ -72,6 +72,7 @@ import type {
   TokmeterStats,
   TokmeterSummary,
 } from "./types.js";
+import { warningsBlockDay } from "./warning-coverage.js";
 
 /** Longest signal lookback. Bounds daemon RSS by record count, not lifetime. */
 const RECENT_RECORDS_WINDOW_DAYS = 14;
@@ -93,6 +94,14 @@ export class TokmeterCore {
   private aggregates: Map<string, DailyAggregate> = new Map();
   // Live accumulator for today; null before the first scan completes.
   private todayAccumulator: DailyAccumulator | null = null;
+  // When the tick that last fed the accumulator started reading files. Every
+  // record written since then lives in a file modified since then.
+  private lastTickStartedAt: number | null = null;
+  // The cards the accumulator's day was last priced with. Kosha rewrites its
+  // registry several times a day (every CLI, MCP server and the 00:05 cron
+  // can refresh it), so by the midnight tick the registry has usually moved
+  // on from the one that priced the outgoing day — see pricesForSeal.
+  private lastPricedCards: { date: string; prices: DayPrices } | null = null;
   // Last records of files that vanished today, so the day only grows.
   private readonly todayJournal: TodayJournal;
   private pricing: PricingService;
@@ -180,7 +189,8 @@ export class TokmeterCore {
       this.ctx(),
       options?.providers,
       referenceTimestamp,
-      todayWarnings
+      todayWarnings,
+      this.stragglerFloor(referenceTimestamp)
     );
     // A provider-filtered scan would make every other file look deleted, so it
     // only reads the journal.
@@ -226,15 +236,22 @@ export class TokmeterCore {
           ...todayRecords,
         ]
       : todayRecords;
-    const sealPrices = await this.pricesForSeal(referenceTimestamp, [], koshaChanged);
+    const outgoing = this.todayAccumulator?.date;
+    const sealPrices = await this.pricesForSeal(
+      referenceTimestamp,
+      scannedToday.stragglers,
+      koshaChanged
+    );
     this.recentRecords = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
     this.refreshTodayAccumulator(
       stateToday,
       referenceTimestamp,
-      [],
+      scannedToday.stragglers,
       sealPrices,
-      !options?.providers?.length && !todayWarnings.some((warning) => warning.scope === "provider")
+      !options?.providers?.length &&
+        !(outgoing !== undefined && warningsBlockDay(todayWarnings, outgoing))
     );
+    if (!options?.providers?.length) this.lastTickStartedAt = referenceTimestamp;
 
     const hasExplicitRange = Boolean(
       options?.since || options?.until || options?.week || options?.month || options?.year
@@ -272,6 +289,7 @@ export class TokmeterCore {
       unpricedRecords: unpricedTracker.records,
     };
 
+    await this.capturePricedCards();
     writeKoshaWishlist(this.homeDir, unpricedTracker, returned);
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
     if (summaryCacheWarnings.length > 0) {
@@ -311,7 +329,13 @@ export class TokmeterCore {
       );
     }
 
-    const scanned = await scanTodayRecordsWithStragglers(this.ctx(), undefined, now, todayWarnings);
+    const scanned = await scanTodayRecordsWithStragglers(
+      this.ctx(),
+      undefined,
+      now,
+      todayWarnings,
+      this.stragglerFloor(now)
+    );
     const stragglers = scanned.stragglers;
     // Grow-only: a file archived or deleted today keeps its records until the seal.
     const today = this.todayJournal.reconcile(scanned.today, now, stragglers);
@@ -330,10 +354,15 @@ export class TokmeterCore {
     const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
     const sealingDate =
       this.todayAccumulator.date < localDateKey(now) ? this.todayAccumulator.date : null;
-    const rolloverAuthoritative = !todayWarnings.some((warning) => warning.scope === "provider");
+    // Only a fault that can hide the outgoing day's records may hold its seal;
+    // any other fault (a broken file not written since before that day, or
+    // whose unread tail is newer) used to stall the rollover indefinitely.
+    const rolloverAuthoritative =
+      sealingDate === null || !warningsBlockDay(todayWarnings, sealingDate);
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
     this.refreshTodayAccumulator(today, now, stragglers, sealPrices, rolloverAuthoritative);
+    this.lastTickStartedAt = now;
     if (rolloverAuthoritative && sealingDate && this.aggregates.has(sealingDate)) {
       // Off the tick: the walk is async and budgeted, and a failure must never
       // touch the seal that just happened.
@@ -356,9 +385,42 @@ export class TokmeterCore {
       ],
     };
 
+    await this.capturePricedCards();
     // No saveSummaryCache here: that's an offline fallback, not per-tick —
     // serializing recentRecords every 12s would spike RSS by hundreds of MB.
     return this.recentRecords;
+  }
+
+  /** Remember the cards today's records are priced with, for the next seal. */
+  private async capturePricedCards(): Promise<void> {
+    const acc = this.todayAccumulator;
+    if (this.skipPricing || !acc || acc.isEmpty()) return;
+    try {
+      const models = Object.keys(acc.toAggregate().models);
+      this.lastPricedCards = { date: acc.date, prices: await priceCardsFor(models, this.pricing) };
+    } catch {
+      /* keep the previous capture; a seal falls back to no cards */
+    }
+  }
+
+  /**
+   * mtime floor for this tick's file scan. Normally today's local midnight.
+   * On the tick that crosses midnight it reaches back to when the previous
+   * tick started (never before the outgoing day began): a record written
+   * after that tick but before midnight sits in a file that may not be
+   * touched again after midnight, and a midnight floor never read it — the
+   * seal then froze the day without it. Measured on real data: 6 of 7 nights
+   * lost the Codex records of the last minutes before midnight (e.g. 4
+   * records, 36,240 input tokens on 2026-10-28) because the bar polls every
+   * 300 s and the first post-midnight tick sealed at 00:00:04.
+   */
+  private stragglerFloor(now: number): number {
+    const todayStart = startOfLocalDay(now);
+    const prev = this.todayAccumulator;
+    if (!prev || prev.date >= localDateKey(now)) return todayStart;
+    const outgoingStart = startOfLocalDay(new Date(`${prev.date}T00:00:00`).getTime());
+    const lastTick = this.lastTickStartedAt ?? outgoingStart;
+    return Math.max(outgoingStart, Math.min(lastTick, todayStart));
   }
 
   private sliceRecent(records: TokenRecord[], referenceTimestamp: number): TokenRecord[] {
@@ -381,8 +443,17 @@ export class TokmeterCore {
     koshaChanged: boolean
   ): Promise<DayPrices | undefined> {
     const prev = this.todayAccumulator;
-    if (!prev || this.skipPricing || koshaChanged) return undefined;
+    if (!prev || this.skipPricing) return undefined;
     if (prev.date >= localDateKey(referenceTimestamp)) return undefined;
+    if (koshaChanged) {
+      // The registry moved since the outgoing day was last priced, so the
+      // current cards can't vouch for its costs — but the cards captured at
+      // that last pricing can. Returning nothing here sealed EVERY rollover
+      // since cards were introduced without them (2026-10-21 → 10-28 all
+      // card-less): kosha rewrites registry.json during the day, so by the
+      // midnight tick it had nearly always changed.
+      return this.lastPricedCards?.date === prev.date ? this.lastPricedCards.prices : undefined;
+    }
     const models = new Set(Object.keys(prev.toAggregate().models));
     for (const r of [...this.recentRecords, ...stragglers]) {
       if (localDateKey(r.timestamp) === prev.date) models.add(r.model);

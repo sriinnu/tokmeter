@@ -38,6 +38,7 @@ import {
 import { join } from "node:path";
 import {
   aggregateRecordsByDay,
+  cacheWrite1hShare,
   type DailyAggregate,
   emptyCostByHour,
   foldCostByHour,
@@ -149,7 +150,11 @@ export function listDaysOnDisk(homeDir: string): string[] {
  * an existing file that cannot be read or decoded is an accounting-integrity
  * failure and is surfaced to the caller.
  */
-export function readDayFile(homeDir: string, date: string): DailyAggregate | null {
+export function readDayFile(
+  homeDir: string,
+  date: string,
+  onRepair?: (message: string) => void
+): DailyAggregate | null {
   const path = dayFilePath(homeDir, date);
   let size = 0;
   try {
@@ -169,11 +174,58 @@ export function readDayFile(homeDir: string, date: string): DailyAggregate | nul
       throw new Error(`embedded date ${JSON.stringify(parsed.date)} does not match filename`);
     }
     const migrated = forwardMigrateAggregate(parsed);
+    const repaired = repairSubBuckets(migrated);
     assertValidAggregate(migrated, date);
+    if (repaired.length > 0) {
+      onRepair?.(
+        `Sealed day ${date}: clamped the 1h cache-write share to its cache writes in ${repaired.length} bucket(s) (${repaired.slice(0, 3).join(", ")}${repaired.length > 3 ? ", …" : ""}). In memory only; the file is unchanged.`
+      );
+    }
     return migrated;
   } catch (error) {
     throw new Error(`Invalid sealed aggregate for ${date}`, { cause: error });
   }
+}
+
+/**
+ * In-memory repair of the one inconsistency that is safely repairable: a 1h
+ * cache-write share larger than the cache writes it is a subset of. Raw
+ * Claude Code data has carried exactly that (1h = 2050, total = 0), and days
+ * sealed before the parser clamped it hold the excess. Clamping only lowers a
+ * sub-bucket that is excluded from every total and from the day's cost, so no
+ * reported token or dollar figure moves. The file on disk is never rewritten.
+ * Returns the repaired bucket paths.
+ */
+function repairSubBuckets(day: DailyAggregate): string[] {
+  const repaired: string[] = [];
+  const clamp = (bucket: unknown, field: string) => {
+    if (!isRecord(bucket)) return;
+    const write1h = bucket.cacheWrite1hTokens;
+    const total = bucket.cacheWriteTokens;
+    if (
+      typeof write1h === "number" &&
+      typeof total === "number" &&
+      Number.isFinite(write1h) &&
+      Number.isFinite(total) &&
+      total >= 0 &&
+      write1h > total
+    ) {
+      bucket.cacheWrite1hTokens = total;
+      repaired.push(field);
+    }
+  };
+  clamp(day, "aggregate");
+  for (const [key, model] of Object.entries(day.models ?? {})) clamp(model, `models.${key}`);
+  for (const [key, provider] of Object.entries(day.providers ?? {})) {
+    clamp(provider, `providers.${key}`);
+  }
+  for (const [key, project] of Object.entries(day.projects ?? {})) {
+    clamp(project, `projects.${key}`);
+    for (const [bucketKey, bucket] of Object.entries(project?.modelBuckets ?? {})) {
+      clamp(bucket, `projects.${key}.modelBuckets.${bucketKey}`);
+    }
+  }
+  return repaired;
 }
 
 function isMissingPathError(error: unknown): boolean {
@@ -340,15 +392,29 @@ function assertValidAggregate(day: DailyAggregate, expectedDate: string): void {
   }
 }
 
+export interface LoadAggregatesOptions {
+  daysBack?: number;
+  /** Repairs and quarantines, phrased for the scan warnings. */
+  onWarning?: (message: string) => void;
+  /** Filled with the dates of sealed files that could not be read. */
+  quarantined?: Set<string>;
+}
+
 /**
  * Load every per-day file present on disk, returning a Map keyed by date.
  * Optional `daysBack` cap loads only the N most-recent days (older files stay
- * on disk, lazy-load later). Any listed file that cannot be read or parsed
- * aborts the load: silently omitting a sealed day would under-report usage.
+ * on disk, lazy-load later).
+ *
+ * A sealed day that cannot be read or validated is QUARANTINED: left out of
+ * the map, named in `quarantined`, and reported through `onWarning` — never
+ * silently dropped, never rewritten. It used to abort the whole load, so one
+ * bad bucket in one day (2026-09-16) took every history read down with it:
+ * the CLI exited 1 and the daemon could not start. Callers that write the
+ * relay must leave quarantined dates alone (the file is still the only copy).
  */
 export function loadAggregates(
   homeDir: string,
-  opts?: { daysBack?: number }
+  opts?: LoadAggregatesOptions
 ): Map<string, DailyAggregate> {
   const out = new Map<string, DailyAggregate>();
   const all = listDaysOnDisk(homeDir);
@@ -357,7 +423,18 @@ export function loadAggregates(
       ? all.slice(-opts.daysBack)
       : all;
   for (const date of slice) {
-    const day = readDayFile(homeDir, date);
+    let day: DailyAggregate | null;
+    try {
+      day = readDayFile(homeDir, date, opts?.onWarning);
+    } catch (error) {
+      opts?.quarantined?.add(date);
+      const cause =
+        error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : "";
+      opts?.onWarning?.(
+        `Sealed day ${date} could not be read and is left out of the totals (file kept as-is)${cause}`
+      );
+      continue;
+    }
     if (day) out.set(date, day);
   }
   return out;
@@ -385,8 +462,17 @@ export function loadAggregates(
  * the destination's existence first.
  */
 export function writeDayFile(homeDir: string, aggregate: DailyAggregate): void {
-  const dir = ensureStoreDir(homeDir);
   const path = dayFilePath(homeDir, aggregate.date);
+  // The reader rejects a day that fails these checks, so writing one would seal
+  // a file nobody can load. Refuse it here, where the caller can still react.
+  try {
+    assertValidAggregate(aggregate, aggregate.date);
+  } catch (error) {
+    throw new Error(`Refusing to seal an invalid aggregate for ${aggregate.date}`, {
+      cause: error,
+    });
+  }
+  const dir = ensureStoreDir(homeDir);
   const tmp = join(dir, `.${randomBytes(12).toString("hex")}.tmp`);
   const payload = JSON.stringify(aggregate);
   if (Buffer.byteLength(payload, "utf-8") > MAX_AGGREGATE_FILE_BYTES) {
@@ -509,8 +595,9 @@ function addBuckets(target: TokenBuckets, r: TokenRecord): void {
   target.cacheWriteTokens += r.cacheWriteTokens;
   target.reasoningTokens += r.reasoningTokens;
   // Subset of cacheWriteTokens — deliberately excluded from tokensTotal().
-  if (r.cacheWrite1hTokens) {
-    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + r.cacheWrite1hTokens;
+  const write1h = cacheWrite1hShare(r);
+  if (write1h) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + write1h;
   }
 }
 
