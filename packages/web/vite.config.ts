@@ -1,8 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import {
@@ -12,6 +14,12 @@ import {
   type TokmeterSummary,
 } from "../core/src/index.ts";
 import { appNoticesPlugin } from "./scripts/app-notices.js";
+
+// Single source for the version shown in the dashboard's About block:
+// scripts/bump-version.sh rewrites this package.json with every release.
+const packageVersion: string = JSON.parse(
+  readFileSync(resolve(__dirname, "package.json"), "utf8")
+).version;
 
 const DEV_SUMMARY_TTL_MS = 15_000;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
@@ -191,8 +199,16 @@ function toErrorMessage(error: unknown): string {
 }
 
 export default defineConfig({
+  define: {
+    __TOKMETER_VERSION__: JSON.stringify(packageVersion),
+  },
   publicDir: process.env.TOKMETER_APP_BUILD === "1" ? false : "public",
-  plugins: [react(), tokmeterSummaryDevPlugin(), appNoticesPlugin()],
+  plugins: [react(), tailwindcss(), tokmeterSummaryDevPlugin(), appNoticesPlugin()],
+  build: {
+    // The overview chunk (React + Recharts) is ~750 kB and three.js is a
+    // separate ~560 kB lazy chunk; warn only if either grows past that.
+    chunkSizeWarningLimit: 800,
+  },
   resolve: {
     alias: {
       "@sriinnu/tokmeter-core": resolve(__dirname, "../core/src/index.ts"),

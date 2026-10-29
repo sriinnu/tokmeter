@@ -291,4 +291,67 @@ describe("buildDashboardInsights", () => {
     expect(insights.topProjects[0]?.sparkline).toEqual([10, 20, 30]);
     expect(insights.kpis.find((kpi) => kpi.label === "Cache share")?.value).toBe("20%");
   });
+
+  it("only treats a daily entry dated today as today, and buckets today's records by hour", () => {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}`;
+    const data = createTokmeterData();
+
+    // The last entry is an older day: there is no "today" yet.
+    const stale = buildDashboardInsights(data, createLiveData());
+    expect(stale.today.date).toBe(key);
+    expect(stale.today.hasActivity).toBe(false);
+    expect(stale.kpis.find((kpi) => kpi.label === "Today")?.value).toBe("$0.00");
+
+    const at = (hour: number) =>
+      new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 15).getTime();
+    data.daily.push({
+      date: key,
+      totalTokens: 999,
+      inputTokens: 999,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      cost: 7,
+      records: 2,
+    });
+    data.records = [
+      {
+        timestamp: at(9),
+        model: "m-a",
+        provider: "p",
+        inputTokens: 10,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        cost: 3,
+      },
+      {
+        timestamp: at(9),
+        model: "m-b",
+        provider: "p",
+        inputTokens: 50,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        cost: 1,
+      },
+    ];
+    const live = buildDashboardInsights(data, createLiveData());
+    // Headline prefers the ledger entry; the hourly curve comes from records.
+    expect(live.today.cost).toBe(7);
+    expect(live.today.totalTokens).toBe(999);
+    expect(live.today.hourly[9]).toMatchObject({
+      cost: 4,
+      totalTokens: 60,
+      records: 2,
+      topModel: "m-a",
+    });
+    expect(live.today.hourly).toHaveLength(24);
+  });
 });

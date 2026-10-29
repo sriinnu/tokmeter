@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The web dashboard is rebuilt on Tailwind CSS v4 and shadcn/ui-style
+  components, with light and dark themes (follows the system, or pick one).
+  The overview leads with today (live), week-to-date, month-to-date and
+  all-time cost and tokens; every page marks sealed days apart from today's
+  live numbers, and every chart has a table view. Plotly is gone: the bundle
+  the dashboard loads first drops from about 5.0 MB to about 0.75 MB. Charts
+  use Recharts.
+- The 3D view is now a day × project (or day × hour) bar field drawn with
+  three.js, loaded only when the browser has WebGL. Without WebGL, the same
+  values show as a 2D grid.
+- The Overview header has a slow WebGL flow field whose tempo follows
+  today's spend rate against your typical sealed-day hour. Headline numbers
+  count up, the logo's ledger cells fill in and its "today" cell breathes
+  while the daemon is live, and empty and error states have illustrations.
+  A Motion setting (System / On / Off) sits next to the theme toggle; Off
+  stops all of it. Without hardware-accelerated WebGL the field stays still.
+- The sidebar (and the page footer on phones) shows the dashboard version,
+  linked to its GitHub release, and the project's repository.
+- Daily usage charts (Overview, Timeline, project pages) and the 3D day ×
+  project view offer an All time range. Past 180 days the bars become ISO
+  weeks, exact sums of the daily ledger, with partial edge weeks marked; the
+  table view still lists every day. The chosen range is remembered.
+- "Today, hour by hour" opens as a 24-hour dial: bar length is the hour's
+  cost, stacked by model, with the current hour highlighted and a dashed
+  ring for a typical day (median of the recent days in the summary). Bars
+  and Table views show the same numbers.
+- The Live sessions panel says "Connected · idle" and "No live sessions
+  reporting" when the daemon is reachable but nothing is reporting, instead
+  of a row of zeros under a Streaming badge.
+
+### Fixed
+
+- The web dashboard's project page labelled each model's share of all spend
+  as its share of the project. It now shows share-of-project, worked out
+  from the project's own cost.
+
 ## [1.19.4] - 2026-10-29
 
 ### Security
