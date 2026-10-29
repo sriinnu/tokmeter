@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-web",
-  "version": "1.19.3",
+  "version": "1.19.4",
   "private": true,
   "description": "Token usage tracking web dashboard — React + Plotly",
   "type": "module",
