@@ -124,7 +124,7 @@ Use `@sriinnu/tokmeter-mcp` when an AI assistant should answer token/cost questi
 ## See also
 
 - `README.md`
-- `skills/tokmeter/SKILL.md`
+- [sriinnu/tokmeter-skill](https://github.com/sriinnu/tokmeter-skill) — the agent skill (`skills/tokmeter/SKILL.md`)
 - `packages/core/src/index.ts`
 - `packages/mcp/src/index.ts`
 

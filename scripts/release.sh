@@ -113,6 +113,9 @@ pr_field() {  # pr_field <branch> <json field> — empty when there is no PR
 pr_open() { [[ "$(pr_field "$1" state)" == "OPEN" ]]; }
 # Right after a PR opens CI hasn't registered yet, and `gh pr checks` reports
 # "no checks" as a failure, so callers wait for rows to appear before watching.
+# Every wait is on the checks main's branch protection REQUIRES (--required):
+# an optional external check must not block a release. 1.19.5 died at stage 6
+# on a retired Cloudflare Pages project still building from a removed site/.
 # Capture the output first: under pipefail, `! gh … | grep -q` inverts gh's own
 # non-zero exit and reports "started" before any check exists (1.13.0).
 # Top level, not inside stage 6: a resumed run that skips stage 6 still needs
@@ -123,7 +126,7 @@ checks_started() {
   # "not started", so wait_for keeps polling and times out loudly instead of
   # printing a false ✓.
   local out
-  out="$(gh pr checks "$1" --repo "$REPO" 2>&1)" || true
+  out="$(gh pr checks "$1" --repo "$REPO" --required 2>&1)" || true
   printf '%s\n' "$out" | grep -qE $'^[^\t]+\t(pass|fail|pending|skipping|cancel)'
 }
 # The files bump-version.sh writes. A dirty tree made of only these, already
@@ -231,7 +234,7 @@ if [[ -z "$merged" ]]; then
   # Right after PR creation CI hasn't registered yet, and `gh pr checks` reports
   # "no checks" as a failure; wait for them to appear before watching.
   wait_for "CI checks to start" 300 checks_started "$branch"
-  run "gh pr checks '${branch}' --repo '${REPO}' --watch --fail-fast"
+  run "gh pr checks '${branch}' --repo '${REPO}' --required --watch --fail-fast"
   confirm "Squash-merge the release PR to main?" || die "merge declined — nothing tagged or published. Rerun to resume."
   if [[ $DRY -eq 0 ]]; then
     pr="$(pr_field "$branch" number)"
@@ -394,7 +397,7 @@ else
     gh pr reopen "$appcast" --repo "$REPO" >/dev/null
   fi
   wait_for "appcast PR checks to start" 300 checks_started "$appcast"
-  gh pr checks "$appcast" --repo "$REPO" --watch --fail-fast
+  gh pr checks "$appcast" --repo "$REPO" --required --watch --fail-fast
   head="$(appcast_pr_vetted_head "$appcast")" \
     || die "the ${appcast} PR is not the workflow's appcast-only PR — not merging. Inspect it by hand."
   echo "  ✓ ${appcast}: github-actions[bot], ${REPO} → main, appcast.xml only (head ${head:0:12})"
