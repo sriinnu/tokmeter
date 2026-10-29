@@ -32,6 +32,7 @@ echo "gh $*" >> "$S/log"
 sub="$1 $2"; shift 2
 key() { echo "${1//\//_}"; }
 opt() { local want="$1"; shift; while [[ $# -gt 0 ]]; do [[ "$1" == "$want" ]] && { echo "$2"; return; }; shift; done; }
+has_flag() { local want="$1"; shift; for a in "$@"; do [[ "$a" == "$want" ]] && return 0; done; return 1; }
 case "$sub" in
   "pr view")
     f="$S/pr/$(key "$1")"; [[ -f "$f" ]] || exit 1
@@ -51,6 +52,11 @@ case "$sub" in
   "pr checks")
     [[ -f "$S/pr/$(key "$1")" ]] || { echo "no pull requests found"; exit 1; }
     if [[ -f "$S/checks_fail" ]]; then printf 'build\tfail\t1s\tu\n'; exit 1; fi
+    # An optional external check (a Cloudflare Pages preview) failing: gh shows
+    # it, and exits 1, unless the caller asked for --required checks only.
+    if [[ -f "$S/optional_fail" ]] && ! has_flag --required "$@"; then
+      printf 'Cloudflare Pages\tfail\t0\tu\nbuild\tpass\t1s\tu\n'; exit 1
+    fi
     printf 'build\tpass\t1s\tu\n' ;;
   "pr diff") printf 'diff --git a/packages/macos-bar/appcast.xml b/packages/macos-bar/appcast.xml\n' ;;
   "pr merge")
@@ -226,6 +232,14 @@ rm "$GH_STATE/checks_fail"
 if release; then ok "rerun exits 0"; else bad "rerun exits 0"; show_out; fi
 check "one PR, not two" test "$(count 'gh pr create')" = 1
 check "rerun reports the open PR" grep -q 'already done: PR #100 is open' "$GH_STATE/out"
+check "GitHub release created" released
+
+echo "• an optional check fails (not required by main): the release still merges"
+sandbox optional_fail
+touch "$GH_STATE/optional_fail"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+rm "$GH_STATE/optional_fail"
+check "release commit landed" test "$(main_subject)" = "chore(release): v$V (#100)"
 check "GitHub release created" released
 
 echo "• --no-publish, then publish later from main"
