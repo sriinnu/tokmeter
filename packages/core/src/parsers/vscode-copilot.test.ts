@@ -130,6 +130,76 @@ describe("VSCodeCopilotParser", () => {
     expect(records[0].project).toBe("vscode-copilot");
   });
 
+  it("replays a multi-line empty-window session: sets, splices and truncations", async () => {
+    const dir = join(codeUserDir(), "globalStorage", "emptyWindowChatSessions");
+    mkdirSync(dir, { recursive: true });
+    const later = new Date("2026-06-02T12:00:00.000Z").getTime();
+    const lines = [
+      { kind: 0, v: { requests: [], pendingRequests: [] } },
+      { kind: 1, k: ["responderUsername"], v: "GitHub Copilot" },
+      // A request is pushed before it has a result…
+      { kind: 2, k: ["requests"], v: [fakeRequest({ result: undefined, response: [] })] },
+      { kind: 2, k: ["requests", 0, "response"], v: [] },
+      // …and the result lands later via a set.
+      { kind: 1, k: ["requests", 0, "result"], v: { metadata: {} } },
+      { kind: 2, k: ["requests"], v: [fakeRequest({ timestamp: later })] },
+      // A splice with `i` and no `v` truncates: the second request is undone.
+      { kind: 2, k: ["requests"], i: 1 },
+      { kind: 2, k: ["requests"], v: [fakeRequest({ modelId: "copilot/gpt-5.3-codex" })] },
+    ];
+    writeFileSync(
+      join(dir, "session.jsonl"),
+      `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`
+    );
+
+    const records = await new VSCodeCopilotParser().scan(tmpDir);
+    expect(records.map((r) => r.model)).toEqual(["claude-sonnet-4.5", "gpt-5.3-codex"]);
+  });
+
+  it("skips a torn last line (VS Code mid-append) but fails on a broken interior line", async () => {
+    const dir = join(codeUserDir(), "globalStorage", "emptyWindowChatSessions");
+    mkdirSync(dir, { recursive: true });
+    const head = JSON.stringify({ kind: 0, v: { requests: [fakeRequest()] } });
+    writeFileSync(join(dir, "session.jsonl"), `${head}\n{"kind":2,"k":["requ`);
+    expect((await new VSCodeCopilotParser().scan(tmpDir)).length).toBe(1);
+
+    writeFileSync(join(dir, "session.jsonl"), `${head}\n{"kind":2,"k":["requ\n{"kind":1}\n`);
+    await expect(new VSCodeCopilotParser().scan(tmpDir)).rejects.toThrow(/line 2/);
+  });
+
+  it("fails loudly on a mutation it can't apply instead of undercounting", async () => {
+    const dir = join(codeUserDir(), "globalStorage", "emptyWindowChatSessions");
+    mkdirSync(dir, { recursive: true });
+    const lines = [
+      { kind: 0, v: { requests: [] } },
+      { kind: 3, k: ["requests", 0] },
+    ];
+    writeFileSync(join(dir, "session.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n"));
+    await expect(new VSCodeCopilotParser().scan(tmpDir)).rejects.toThrow(/unknown mutation kind 3/);
+  });
+
+  it("reads workspace *.jsonl sessions, and counts a session written both ways once", async () => {
+    const chatSessionsDir = join(codeUserDir(), "workspaceStorage", "hash6", "chatSessions");
+    mkdirSync(chatSessionsDir, { recursive: true });
+    writeFileSync(
+      join(chatSessionsDir, "..", "workspace.json"),
+      JSON.stringify({ folder: "file:///Users/sriinnu/Personal/takumi" })
+    );
+    const log = [
+      { kind: 0, v: { requests: [fakeRequest()] } },
+      { kind: 2, k: ["requests"], v: [fakeRequest()] },
+    ];
+    writeFileSync(join(chatSessionsDir, "a.jsonl"), log.map((l) => JSON.stringify(l)).join("\n"));
+    // The pre-migration copy of the same session must not add to it.
+    writeFileSync(join(chatSessionsDir, "a.json"), JSON.stringify({ requests: [fakeRequest()] }));
+    writeFileSync(join(chatSessionsDir, "b.json"), JSON.stringify({ requests: [fakeRequest()] }));
+
+    const records = await new VSCodeCopilotParser().scan(tmpDir);
+    expect(records.length).toBe(3);
+    expect(records.filter((r) => r.sourceFile?.endsWith("a.jsonl")).length).toBe(2);
+    expect(records.every((r) => r.project.includes("takumi"))).toBe(true);
+  });
+
   it("returns no records when VS Code isn't installed", async () => {
     const records = await new VSCodeCopilotParser().scan(tmpDir);
     expect(records.length).toBe(0);
