@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- New logo, the sealed ledger: a 3×3 grid of days, eight sealed in violet and
+  today in amber, still live. It replaces the infinity mark on the macOS bar's
+  app icon, the README and the website, with a dedicated small-size version
+  for favicons and the 16–32 px app icons.
+
 ## [1.19.4] - 2026-10-29
 
 ### Security
