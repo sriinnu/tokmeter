@@ -85,18 +85,34 @@ export async function priceCardsFor(
   return out;
 }
 
+/** One rate for every bucket — the base for a model kosha no longer prices. */
+const UNIT_CARD: PriceCard = {
+  inputPerMillion: 1,
+  outputPerMillion: 1,
+  cacheReadPerMillion: 1,
+  cacheWritePerMillion: 1,
+  cacheWrite1hPerMillion: 1,
+  reasoningInputPerMillion: 1,
+  reasoningOutputPerMillion: 1,
+};
+
 /**
  * Cards for a day sealed before cards were stored: today's card scaled by
- * sealedCost ÷ todayCost(sealed tokens), per model. A model sealed at $0 or
- * unpriced today gets none — its records then price at today's rate, and the
- * no-shrink guard keeps the sealed cost if that comes out lower.
+ * sealedCost ÷ todayCost(sealed tokens), per model. A model sealed at $0 gets
+ * none.
+ *
+ * A model that was priced when the day sealed but is unpriced today (an alias
+ * kosha stopped resolving, a pruned id) gets a flat card instead: one rate
+ * for every bucket, scaled the same way, i.e. the day's average cost per
+ * token for that model. Without it a forced rebuild billed those records at
+ * $0 with not one token changed — `force` consents to a token shrink, never
+ * to losing a sealed day's cost.
  */
 export async function impliedPrices(day: DailyAggregate, pricing: CardSource): Promise<DayPrices> {
   const out: DayPrices = {};
   for (const [model, b] of Object.entries(day.models)) {
     if (!(b.cost > 0)) continue;
-    const { pricing: card } = await pricing.getPricingWithSource(model);
-    if (!card) continue;
+    const card = (await pricing.getPricingWithSource(model)).pricing ?? UNIT_CARD;
     const base = costFromCard(
       model,
       card,
