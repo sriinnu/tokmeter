@@ -14,7 +14,7 @@ import { getParsers } from "./parsers/index.js";
 import { saveRecordCacheToDisk } from "./parsers/utils.js";
 import type { PricingService } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
-import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface ScanContext {
   homeDir: string;
@@ -37,6 +37,22 @@ export function selectRecordsToPrice(
 ): TokenRecord[] {
   if (warningScope !== "today") return records;
   return records.filter((r) => !isBeforeToday(r.timestamp, referenceTimestamp));
+}
+
+/** A per-file parser fault as a provider-scoped, partial scan warning. */
+export function providerFault(
+  provider: ProviderId,
+  message: string,
+  detail?: ScanFaultDetail
+): ScanWarning {
+  return {
+    scope: "provider",
+    provider,
+    message: `${provider} partial scan: ${message}`,
+    partial: true,
+    ...(detail?.file ? { file: detail.file } : {}),
+    ...(detail?.readThroughMs !== undefined ? { readThroughMs: detail.readThroughMs } : {}),
+  };
 }
 
 /** Top-level parser fan-out: runs every parser, optional mtime watermark. */
@@ -66,12 +82,14 @@ export async function scanRawRecords(
           ...(modifiedSinceMs !== undefined ? { modifiedSinceMs } : {}),
           // Per-file bounded-read faults surface as provider warnings so every
           // persistence path can refuse to seal an incomplete provider scan.
-          onWarning: (message) =>
+          onWarning: (message, detail) =>
+            warnings.push(providerFault(parser.providerId, message, detail)),
+          onNotice: (message) =>
             warnings.push({
-              scope: "provider",
+              scope: warningScope,
               provider: parser.providerId,
-              message: `${parser.providerId} partial scan: ${message}`,
-              partial: true,
+              message: `${parser.providerId}: ${message}`,
+              notice: true,
             }),
         });
       } catch (error) {
@@ -145,15 +163,15 @@ export async function scanTodayRecordsWithStragglers(
   ctx: ScanContext,
   providers: ProviderId[] | undefined,
   referenceTimestamp: number,
-  warnings: ScanWarning[]
+  warnings: ScanWarning[],
+  /**
+   * mtime floor for the file scan; defaults to today's local midnight. The
+   * tick that crosses midnight passes an earlier one so files last written
+   * between the previous tick and midnight are read before the day seals.
+   */
+  modifiedSinceMs: number = startOfLocalDay(referenceTimestamp)
 ): Promise<{ today: TokenRecord[]; stragglers: TokenRecord[] }> {
-  const rawRecords = await scanRawRecords(
-    ctx,
-    providers,
-    "today",
-    warnings,
-    startOfLocalDay(referenceTimestamp)
-  );
+  const rawRecords = await scanRawRecords(ctx, providers, "today", warnings, modifiedSinceMs);
   const today: TokenRecord[] = [];
   const stragglers: TokenRecord[] = [];
   for (const record of rawRecords) {
@@ -179,7 +197,7 @@ export function resolveTodayState(
   todayWarnings: ScanWarning[],
   isTodayOnlyScan: boolean
 ): ScanMeta["todayState"] {
-  if (todayWarnings.length === 0) return "live";
+  if (!todayWarnings.some((warning) => !warning.notice)) return "live";
   if (records.length > 0 || isTodayOnlyScan) return "degraded";
   return "snapshot-only";
 }

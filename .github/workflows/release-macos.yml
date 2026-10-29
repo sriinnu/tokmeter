@@ -1,15 +1,40 @@
 # ============================================================================
-# Release macOS Bar — build, sign, notarize, and upload
+# Release macOS Bar — build, sign, notarize, and publish
 # ============================================================================
 #
-# Requires these secrets for code signing + notarization:
+# Four jobs, each holding only what it needs. The point of the split: every
+# step that executes third-party code (bun install, vite and its plugins,
+# swift build) runs where there is nothing to steal, and the jobs that hold
+# keys or write access run none of it.
+#
+#   verify-tag  Trusted `main` code checks the release: owner actor, a
+#               GitHub-verified annotated tag signed by the approved SSH key,
+#               pointing at a commit on main. Everything below builds,
+#               signs and publishes only that commit.
+#   build       UNPRIVILEGED. contents: read, no environment, no secrets.
+#               Assembles the UNSIGNED .app (bundle.sh --unsigned) from the
+#               verified commit, zips it, and publishes the zip's sha256 as
+#               a job output next to the artifact.
+#   sign        `release` environment: Developer ID, notary and Sparkle keys.
+#               contents: read. Runs no bun/vite/swift build. Gets its own
+#               sign_update from SwiftPM (pinned by Package.resolved, checksum
+#               checked by SwiftPM), refuses an artifact whose sha256 differs
+#               from build's output, signs with the hardened runtime
+#               (sign-app.sh), notarizes, staples, Sparkle-signs the zip,
+#               verifies that signature against the app's own SUPublicEDKey,
+#               and writes + signs the appcast feed.
+#   publish     contents: write + pull-requests: write. No signing secrets and
+#               no repository code at all. Re-checks both sha256s, uploads the
+#               zip, opens the appcast PR.
+#
+# Secrets (release environment, read only by `sign`):
 #   APPLE_DEVELOPER_ID_P12        — .p12 cert, base64-encoded
 #   APPLE_DEVELOPER_ID_PASSWORD   — password for the .p12
 #   APP_STORE_CONNECT_API_KEY_P8  — App Store Connect API key
 #   APP_STORE_CONNECT_KEY_ID      — API key ID
 #   APP_STORE_CONNECT_ISSUER_ID   — Issuer ID
-#   SPARKLE_PRIVATE_KEY           — Ed25519 key for Sparkle auto-updates
-#   SPARKLE_PUBLIC_KEY            — Public key embedded in the app
+#   SPARKLE_PRIVATE_KEY           — Ed25519 release key: signs the zip AND the feed
+#   SPARKLE_PUBLIC_KEY            — Public key embedded in the app at signing time
 #
 # Missing signing, notarization, or Sparkle material is fatal. CI must never
 # produce an artifact that looks like a release but lacks part of its trust chain.
@@ -30,26 +55,19 @@ env:
   BUNDLE_ID: com.sriinnu.tokmeterbar
   RELEASE_TAG: ${{ github.event.release.tag_name }}
 
-permissions:
-  contents: write
-  # The appcast step opens a PR rather than pushing to protected main;
-  # without this it fails with "Resource not accessible by integration".
-  pull-requests: write
+# Nothing by default; every job states its own.
+permissions: {}
 
 jobs:
-  build-sign-notarize:
-    # Required, not optional: the "release" environment only deploys from main
-    # and v* tags, and it holds the signing/notary secrets. Removing or renaming
-    # it lets any branch's run read them. Configured in Settings → Environments.
-    environment: release
-    # macos-14's SDK predates SwiftUI 6, so `onGeometryChange` (used in
-    # ContentSizedScrollView and TokmeterBarView) does not resolve and this
-    # job has never once completed — every release since 1.3.0 built the app
-    # locally instead. Pinned to an explicit image rather than macos-latest:
-    # a release pipeline should not change toolchains underneath you.
-    runs-on: macos-26
-    timeout-minutes: 30
-
+  verify-tag:
+    name: Verify signed release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.release-tag.outputs.commit }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout trusted verification code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,21 +85,136 @@ jobs:
           RELEASE_SIGNER_FINGERPRINT: ${{ vars.RELEASE_SIGNER_FINGERPRINT }}
         run: scripts/verify-release-tag.sh "$RELEASE_TAG"
 
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          # verify-release-tag.sh has already required vX.Y.Z.
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build unsigned app (no secrets)
+    needs: verify-tag
+    # macos-14's SDK predates SwiftUI 6 (`onGeometryChange`). Pinned to an
+    # explicit image rather than macos-latest: a release pipeline should not
+    # change toolchains underneath you.
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.package.outputs.commit }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      artifact: ${{ steps.package.outputs.artifact }}
+    env:
+      RELEASE_COMMIT: ${{ needs.verify-tag.outputs.commit }}
+    steps:
+      - name: Checkout verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-tag.outputs.commit }}
+          persist-credentials: false
+
+      # bundle.sh builds the in-app web dashboard with `bunx vite build`.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bundle unsigned .app
+        working-directory: packages/macos-bar
+        env:
+          CFBundleShortVersionString: ${{ needs.verify-tag.outputs.version }}
+          # CFBundleVersion deliberately NOT set: bundle.sh's committed
+          # BUILD_VERSION is the single source of truth, and scripts/bump-version.sh
+          # advances it monotonically. github.run_number counts workflow runs and
+          # has no relationship to release history — using it stamped build 26 onto
+          # 1.12.0 when 1.11.0 had shipped as 48, which Sparkle reads as a
+          # downgrade and never offers. `sign` re-checks it against bundle.sh.
+        run: ./bundle.sh --unsigned --no-install
+
+      - name: Package unsigned app
+        id: package
+        working-directory: packages/macos-bar
+        run: |
+          set -euo pipefail
+          COMMIT="$(git rev-parse HEAD)"
+          [[ "$COMMIT" == "$RELEASE_COMMIT" ]] || {
+            echo "::error::checked-out commit is not the verified release commit" >&2
+            exit 1
+          }
+          mkdir -p "$RUNNER_TEMP/unsigned"
+          ZIP="$RUNNER_TEMP/unsigned/${APP_NAME}-unsigned.zip"
+          # ditto keeps Sparkle.framework's symlinks and modes; upload-artifact
+          # alone would flatten them.
+          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$ZIP"
+          {
+            echo "commit=${COMMIT}"
+            echo "sha256=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+            echo "artifact=${APP_NAME}-unsigned-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload unsigned app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: ${{ runner.temp }}/unsigned/${{ env.APP_NAME }}-unsigned.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    name: Sign, notarize, Sparkle-sign
+    needs: [verify-tag, build]
+    # Required, not optional: the "release" environment only deploys from main
+    # and v* tags, and it holds the signing/notary secrets. Removing or renaming
+    # it lets any branch's run read them. Configured in Settings → Environments.
+    environment: release
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.digests.outputs.artifact }}
+      zip-name: ${{ steps.digests.outputs.zip-name }}
+      zip-sha256: ${{ steps.digests.outputs.zip-sha256 }}
+      appcast-sha256: ${{ steps.digests.outputs.appcast-sha256 }}
+      appcast-base: ${{ steps.digests.outputs.appcast-base }}
+      build-num: ${{ steps.digests.outputs.build-num }}
+    env:
+      VERSION: ${{ needs.verify-tag.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.verify-tag.outputs.commit }}
+      BUILT_COMMIT: ${{ needs.build.outputs.commit }}
+      UNSIGNED_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      # The verified commit supplies only trusted inputs here: sign-app.sh,
+      # entitlements.plist, bundle.sh's BUILD_VERSION and Package.resolved.
       - name: Checkout verified release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ steps.release-tag.outputs.commit }}
+          ref: ${{ needs.verify-tag.outputs.commit }}
           persist-credentials: false
 
-      - name: Resolve version
+      # Never take sign_update from the build artifact: it would run with the
+      # Sparkle private key. SwiftPM fetches the Sparkle release pinned in
+      # Package.resolved and checks its binary-artifact checksum. Runs before
+      # any secret or keychain exists in this job.
+      - name: Fetch sign_update pinned by Package.resolved
+        working-directory: packages/macos-bar
         run: |
-          VERSION="${RELEASE_TAG#v}"
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "Building version: ${VERSION}"
+          set -euo pipefail
+          swift package --disable-automatic-resolution resolve
+          SIGN_TOOL="$PWD/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+          [[ -x "$SIGN_TOOL" ]] || {
+            echo "::error::Sparkle sign_update was not fetched" >&2
+            exit 1
+          }
+          echo "SIGN_TOOL=$SIGN_TOOL" >> "$GITHUB_ENV"
 
       - name: Check signing secrets
-        id: check-secrets
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
@@ -100,15 +233,74 @@ jobs:
               exit 1
             fi
           done
-          echo "has_signing=true" >> "$GITHUB_OUTPUT"
           echo "All release signing inputs are present."
 
+      - name: Download unsigned app
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/unsigned
+
+      # Sign only what `build` produced from the verified commit: same commit,
+      # same bytes as the sha256 it recorded, and the identity, version and
+      # build number the verified source says it must have.
+      - name: Verify and unpack the unsigned app
+        run: |
+          set -euo pipefail
+          [[ "$BUILT_COMMIT" == "$RELEASE_COMMIT" ]] || {
+            echo "::error::build job built ${BUILT_COMMIT}, not the verified ${RELEASE_COMMIT}" >&2
+            exit 1
+          }
+          ZIP="$RUNNER_TEMP/unsigned/${APP_NAME}-unsigned.zip"
+          [[ "$UNSIGNED_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::build job reported no artifact digest" >&2
+            exit 1
+          }
+          ACTUAL="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+          [[ "$ACTUAL" == "$UNSIGNED_SHA256" ]] || {
+            echo "::error::unsigned artifact sha256 ${ACTUAL} != build output ${UNSIGNED_SHA256}" >&2
+            exit 1
+          }
+
+          # Every entry must sit inside TokmeterBar.app/ — no absolute paths,
+          # no "..", nothing beside the bundle.
+          python3 -I - "$ZIP" "${APP_NAME}.app/" <<'PY'
+          import pathlib, sys, zipfile
+          archive, prefix = sys.argv[1], sys.argv[2]
+          with zipfile.ZipFile(archive) as z:
+              for name in z.namelist():
+                  path = pathlib.PurePosixPath(name)
+                  if path.is_absolute() or ".." in path.parts or not (name + "/").startswith(prefix):
+                      raise SystemExit(f"unexpected entry in unsigned artifact: {name!r}")
+          PY
+          WORK="$RUNNER_TEMP/app"
+          rm -rf "$WORK" && mkdir -p "$WORK"
+          /usr/bin/ditto -x -k "$ZIP" "$WORK"
+          APP_PATH="$WORK/${APP_NAME}.app"
+          [[ "$(ls -A "$WORK")" == "${APP_NAME}.app" && -d "$APP_PATH" ]] || {
+            echo "::error::artifact did not unpack to exactly ${APP_NAME}.app" >&2
+            exit 1
+          }
+
+          PLIST="$APP_PATH/Contents/Info.plist"
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"; }
+          EXPECTED_BUILD="$(grep -E '^BUILD_VERSION=' packages/macos-bar/bundle.sh | grep -oE '[0-9]+' | head -1)"
+          [[ "$(pb CFBundleIdentifier)" == "$BUNDLE_ID" ]] || { echo "::error::wrong CFBundleIdentifier" >&2; exit 1; }
+          [[ "$(pb CFBundleExecutable)" == "$APP_NAME" ]] || { echo "::error::wrong CFBundleExecutable" >&2; exit 1; }
+          [[ "$(pb CFBundleShortVersionString)" == "$VERSION" ]] || { echo "::error::app version is not ${VERSION}" >&2; exit 1; }
+          [[ -n "$EXPECTED_BUILD" && "$(pb CFBundleVersion)" == "$EXPECTED_BUILD" ]] || {
+            echo "::error::CFBundleVersion does not match bundle.sh BUILD_VERSION at the verified commit" >&2
+            exit 1
+          }
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "BUILD_NUM=$EXPECTED_BUILD" >> "$GITHUB_ENV"
+
       - name: Import signing certificate
-        if: steps.check-secrets.outputs.has_signing == 'true'
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
         run: |
+          set -euo pipefail
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
           CERT_PATH=$(mktemp "$RUNNER_TEMP/tokmeter-cert.XXXXXX")
@@ -131,39 +323,18 @@ jobs:
           [[ -n "$DEV_ID" ]] || { echo "::error::Developer ID identity not found" >&2; exit 1; }
           echo "::add-mask::$DEV_ID"
           echo "DEV_ID=$DEV_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
-      # bundle.sh builds the in-app web dashboard with `bunx vite build`, so
-      # the runner needs Bun and the workspace's dependencies — without them
-      # bundling dies on `bunx: command not found`.
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.3.5
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build release binary
-        working-directory: packages/macos-bar
-        run: swift build -c release
-
-      - name: Bundle .app (signed)
-        if: steps.check-secrets.outputs.has_signing == 'true'
-        working-directory: packages/macos-bar
+      # sign-app.sh embeds SUPublicEDKey (the build job never had it), refuses
+      # an Info.plist without the Sparkle hardening keys, signs nested Sparkle
+      # code then the app with the hardened runtime + secure timestamp, and
+      # asserts both on the result.
+      - name: Sign the app (Developer ID, hardened runtime)
         env:
           SUPUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
-          CFBundleShortVersionString: ${{ env.VERSION }}
-          # CFBundleVersion deliberately NOT set: bundle.sh's committed
-          # BUILD_VERSION is the single source of truth, and scripts/bump-version.sh
-          # advances it monotonically. github.run_number counts workflow runs and
-          # has no relationship to release history — using it stamped build 26 onto
-          # 1.12.0 when 1.11.0 had shipped as 48, which Sparkle reads as a
-          # downgrade and never offers.
-        run: ./bundle.sh --signed --no-install
+        run: bash packages/macos-bar/sign-app.sh "$APP_PATH"
 
-      - name: Notarize
-        if: steps.check-secrets.outputs.has_signing == 'true'
-        working-directory: packages/macos-bar
+      - name: Notarize and staple
         env:
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -178,7 +349,7 @@ jobs:
           chmod 600 "$API_KEY_PATH"
           unset API_KEY_CONTENT
 
-          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$NOTARIZE_ZIP"
+          /usr/bin/ditto --norsrc -c -k --keepParent "$APP_PATH" "$NOTARIZE_ZIP"
 
           xcrun notarytool submit "$NOTARIZE_ZIP" \
             --key "$API_KEY_PATH" \
@@ -186,22 +357,21 @@ jobs:
             --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
             --wait
 
-          xcrun stapler staple "${APP_NAME}.app"
-          spctl -a -t exec -vv "${APP_NAME}.app"
-          xcrun stapler validate "${APP_NAME}.app"
+          xcrun stapler staple "$APP_PATH"
+          spctl -a -t exec -vv "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
 
       - name: Create distribution zip
-        working-directory: packages/macos-bar
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/signed"
           ZIP_NAME="${APP_NAME}-${VERSION}.zip"
-          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$ZIP_NAME"
-          echo "ZIP_PATH=${ZIP_NAME}" >> "$GITHUB_ENV"
-          echo "ZIP_SIZE=$(stat -f%z "$ZIP_NAME")" >> "$GITHUB_ENV"
+          ZIP_PATH="$RUNNER_TEMP/signed/$ZIP_NAME"
+          /usr/bin/ditto --norsrc -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
 
-      - name: Sign with Sparkle
-        if: steps.check-secrets.outputs.has_signing == 'true'
-        working-directory: packages/macos-bar
+      - name: Sign the zip with Sparkle
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -210,13 +380,7 @@ jobs:
           trap 'rm -f "$SPARKLE_KEY_PATH"' EXIT
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$SPARKLE_KEY_PATH"
           chmod 600 "$SPARKLE_KEY_PATH"
-
-          SIGN_TOOL=$(find .build -name "sign_update" -type f -perm +111 -print -quit 2>/dev/null)
-          if [[ -z "$SIGN_TOOL" ]]; then
-            echo "::error::Sparkle sign_update was not built" >&2
-            exit 1
-          fi
-          ED_SIG=$("$SIGN_TOOL" -f "$SPARKLE_KEY_PATH" "${APP_NAME}-${VERSION}.zip")
+          ED_SIG=$("$SIGN_TOOL" -f "$SPARKLE_KEY_PATH" "$ZIP_PATH")
           if [[ -z "$ED_SIG" ]]; then
             echo "::error::Sparkle produced an empty signature" >&2
             exit 1
@@ -230,18 +394,15 @@ jobs:
       #
       # So verify the signature exactly the way the user's Sparkle will: Ed25519
       # over the zip bytes against the SUPublicEDKey embedded in the app we just
-      # built. That round-trip catches a wrong private key, a wrong public key,
+      # signed. That round-trip catches a wrong private key, a wrong public key,
       # and a zip mutated after signing. Comparing key strings would catch only
       # the second.
       - name: Verify the Sparkle signature against the app's own key
-        id: verify-sparkle
-        if: steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != ''
-        working-directory: packages/macos-bar
         run: |
           set -euo pipefail
-          PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "${APP_NAME}.app/Contents/Info.plist")"
+          PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist")"
           # shellcheck disable=SC2016
-          SUPUB="$PUBKEY" ED_SIG="$ED_SIG" ZIP="${APP_NAME}-${VERSION}.zip" node -e '
+          SUPUB="$PUBKEY" ED_SIG="$ED_SIG" ZIP="$ZIP_PATH" node -e '
             const crypto = require("node:crypto");
             const fs = require("node:fs");
             const pub = Buffer.from(process.env.SUPUB ?? "", "base64");
@@ -264,96 +425,76 @@ jobs:
             }
             console.log("Sparkle signature validates against the app'"'"'s SUPublicEDKey.");
           '
-          echo "verified=true" >> "$GITHUB_OUTPUT"
 
       - name: Validate Sparkle build number before publishing bytes
-        if: vars.CI_PUBLISH == 'true' && steps.verify-sparkle.outputs.verified == 'true'
+        if: vars.CI_PUBLISH == 'true'
         run: |
           set -euo pipefail
-          BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
-            "packages/macos-bar/${APP_NAME}.app/Contents/Info.plist")"
           [[ "$BUILD_NUM" =~ ^[0-9]+$ ]] || {
             echo "::error::invalid CFBundleVersion" >&2
             exit 1
           }
           git fetch origin main
-          PREV_BUILD="$(git show origin/main:packages/macos-bar/appcast.xml \
+          APPCAST_BASE="$(git rev-parse origin/main)"
+          PREV_BUILD="$(git show "${APPCAST_BASE}:packages/macos-bar/appcast.xml" \
             | grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
             | head -1 | tr -dc '0-9')"
           if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
             echo "::error::build number is not newer than the published appcast; bump BUILD_VERSION in bundle.sh" >&2
             exit 1
           fi
-          echo "BUILD_NUM=$BUILD_NUM" >> "$GITHUB_ENV"
+          echo "APPCAST_BASE=$APPCAST_BASE" >> "$GITHUB_ENV"
 
-      # PUBLISH IS OPT-IN (vars.CI_PUBLISH == 'true'), OFF BY DEFAULT.
-      # The real release path is the local Titan-gated flow (bundle.sh --release
-      # + publish.sh), which uploads the LOCALLY-notarized zip and writes the
-      # appcast whose edSignature matches that exact zip. If CI also fired on the
-      # `release: created` event, this step's `gh release upload --clobber` would
-      # replace that zip with a CI-rebuilt one whose bytes differ — the appcast
-      # signature would no longer validate and EVERY user's auto-update would
-      # fail. Gating on CI_PUBLISH keeps the two flows from colliding; flip the
-      # repo variable on only if you make CI the sole publisher (and unify the
-      # build-number source). `--clobber` also dropped so a stray run can't
-      # silently overwrite a published asset.
-      - name: Upload to Release
-        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != '' && steps.verify-sparkle.outputs.verified == 'true'
+      # Sparkle resolves new versions from packages/macos-bar/appcast.xml on
+      # main. Builds carry SURequireSignedFeed (bundle.sh), so the feed itself
+      # is signed with the release key: sign_update replaces the trailing
+      # sparkle-signatures block with one over the new bytes. `publish` only
+      # commits these exact bytes (sha256-checked); it cannot re-sign.
+      # Gated on CI_PUBLISH like the upload: one publisher per release.
+      - name: Write and sign the appcast feed
+        if: vars.CI_PUBLISH == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-        working-directory: packages/macos-bar
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            "${APP_NAME}-${VERSION}.zip"
-
-      # Sparkle resolves new versions from packages/macos-bar/appcast.xml served
-      # from raw.githubusercontent.com/main. Auto-append a new <item> on real
-      # release events so existing users see the update on next poll. Skipped
-      # for workflow_dispatch (manual rebuilds shouldn't bump appcast).
-      # Same opt-in gate: the local flow already writes the appcast entry whose
-      # signature matches the locally-uploaded zip. Letting CI also append one
-      # would open a duplicate/mismatched appcast PR. Off unless CI_PUBLISH.
-      - name: Update appcast.xml
-        if: github.event_name == 'release' && vars.CI_PUBLISH == 'true' && steps.check-secrets.outputs.has_signing == 'true' && env.ED_SIG != '' && steps.verify-sparkle.outputs.verified == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+          APPCAST="$RUNNER_TEMP/signed/appcast.xml"
+          git show "${APPCAST_BASE}:packages/macos-bar/appcast.xml" > "$APPCAST"
+
           PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
-          export PUB_DATE
-          export BUILD_NUM
-          export TAG="$RELEASE_TAG"
-          export ZIP_NAME="${APP_NAME}-${VERSION}.zip"
-          export ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP_NAME}"
+          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ZIP_NAME}"
           # ED_SIG already contains sparkle:edSignature="…" length="…" as one
           # attribute string, ready to drop into the enclosure tag.
-
-          git fetch origin main
-          git checkout -B main origin/main
-
-          PREV_BUILD="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' \
-            packages/macos-bar/appcast.xml | head -1 | tr -dc '0-9')"
-          if [[ -n "$PREV_BUILD" && "$BUILD_NUM" -le "$PREV_BUILD" ]]; then
-            echo "::error::build number is no longer newer than the published appcast" >&2
-            exit 1
-          fi
-
-          python3 - <<'PY'
+          APPCAST="$APPCAST" PUB_DATE="$PUB_DATE" ZIP_URL="$ZIP_URL" python3 -I - <<'PY'
           import os, re, pathlib
-          path = pathlib.Path("packages/macos-bar/appcast.xml")
+          path = pathlib.Path(os.environ["APPCAST"])
           xml = path.read_text()
           version    = os.environ["VERSION"]
           build_num  = os.environ["BUILD_NUM"]
           pub_date   = os.environ["PUB_DATE"]
           zip_url    = os.environ["ZIP_URL"]
           ed_sig     = os.environ["ED_SIG"]
-          tag        = os.environ["TAG"]
+          tag        = os.environ["RELEASE_TAG"]
           repo       = os.environ["GITHUB_REPOSITORY"]
 
           # Idempotency — skip if this version is already in the feed.
           if f"<sparkle:shortVersionString>{version}</sparkle:shortVersionString>" in xml:
               print(f"appcast.xml already has {version}, skipping insert")
+              path.unlink()
               raise SystemExit(0)
+
+          # A hand edit silently breaks updates for every SURequireSignedFeed
+          # install, so say so in the file itself (once).
+          marker = "<!-- Signed Sparkle feed."
+          if marker not in xml:
+              note = (
+                  f"{marker} TokmeterBar builds with SURequireSignedFeed reject this file "
+                  "unless the signature comment Sparkle appends at the end matches its exact bytes. "
+                  "Change it only through release-macos.yml, or re-sign it with Sparkle's "
+                  "sign_update and the release key. -->\n"
+              )
+              decl = re.match(r"<\?xml[^>]*\?>\n", xml)
+              at = decl.end() if decl else 0
+              xml = xml[:at] + note + xml[at:]
 
           item = (
               "        <item>\n"
@@ -370,7 +511,7 @@ jobs:
           # Insert directly after <language>…</language> (top of channel).
           new_xml, n = re.subn(
               r"(<language>[^<]*</language>\n)",
-              r"\1" + item,
+              lambda m: m.group(1) + item,
               xml,
               count=1,
           )
@@ -380,35 +521,188 @@ jobs:
           print(f"Inserted {version} (build {build_num}) into appcast.xml")
           PY
 
-          if git diff --quiet packages/macos-bar/appcast.xml; then
-            echo "appcast.xml unchanged — already current"
+          if [[ ! -f "$APPCAST" ]]; then
+            echo "appcast.xml already current — no feed change to publish"
             exit 0
           fi
 
-          # Main requires signed commits and PRs. A `git commit` here is
-          # unsigned, so its PR can never merge (v1.12.0's didn't). Commit
-          # through the contents API instead: GitHub signs API commits made
-          # with the workflow token, so the PR is mergeable as-is.
-          BRANCH="release/appcast-${TAG}"
+          SPARKLE_KEY_PATH=$(mktemp "$RUNNER_TEMP/tokmeter-sparkle.XXXXXX")
+          trap 'rm -f "$SPARKLE_KEY_PATH"' EXIT
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$SPARKLE_KEY_PATH"
+          chmod 600 "$SPARKLE_KEY_PATH"
+          # --disable-signing-warning: otherwise sign_update re-serialises the
+          # whole document (every <enclosure/> rewritten) to add its comment;
+          # the marker above says the same thing without the churn.
+          "$SIGN_TOOL" -f "$SPARKLE_KEY_PATH" --disable-signing-warning "$APPCAST"
+
+      # Same round-trip as the zip: verify the feed the way Sparkle will
+      # (SPUExtractAppcastContent + Ed25519 over the content bytes) against the
+      # SUPublicEDKey in the app we signed, before anything is published.
+      - name: Verify the feed signature against the app's own key
+        if: vars.CI_PUBLISH == 'true'
+        run: |
+          set -euo pipefail
+          APPCAST="$RUNNER_TEMP/signed/appcast.xml"
+          [[ -f "$APPCAST" ]] || { echo "No feed change; nothing to verify."; exit 0; }
+          PUBKEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist")"
+          # shellcheck disable=SC2016
+          SUPUB="$PUBKEY" APPCAST="$APPCAST" node -e '
+            const crypto = require("node:crypto");
+            const fs = require("node:fs");
+            const data = fs.readFileSync(process.env.APPCAST);
+            const prefix = Buffer.from("<!-- sparkle-signatures:\n");
+            const at = data.lastIndexOf(prefix);
+            if (at < 0) throw new Error("appcast has no sparkle-signatures block");
+            const end = data.indexOf("-->", at + prefix.length);
+            if (end < 0) throw new Error("unterminated sparkle-signatures block");
+            if (data.subarray(end + 3).toString().trim() !== "") {
+              throw new Error("content follows the sparkle-signatures block");
+            }
+            const block = data.subarray(at + prefix.length, end).toString();
+            const sig = /^edSignature:\s*(\S+)\s*$/m.exec(block)?.[1];
+            const length = Number(/^length:\s*(\d+)\s*$/m.exec(block)?.[1]);
+            const content = data.subarray(0, at);
+            if (!sig) throw new Error("no edSignature in the feed block");
+            if (length !== content.length) {
+              throw new Error(`feed block says ${length} bytes, content is ${content.length}`);
+            }
+            const pub = Buffer.from(process.env.SUPUB ?? "", "base64");
+            if (pub.length !== 32) throw new Error("SUPublicEDKey is not a 32-byte key");
+            const der = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), pub]);
+            const key = crypto.createPublicKey({ key: der, format: "der", type: "spki" });
+            if (!crypto.verify(null, content, key, Buffer.from(sig, "base64"))) {
+              throw new Error("appcast feed signature does NOT validate against the app'"'"'s SUPublicEDKey");
+            }
+            console.log("Appcast feed signature validates against the app'"'"'s SUPublicEDKey.");
+          '
+
+      - name: Record signed artifact digests
+        id: digests
+        run: |
+          set -euo pipefail
+          APPCAST="$RUNNER_TEMP/signed/appcast.xml"
+          APPCAST_SHA=""
+          [[ -f "$APPCAST" ]] && APPCAST_SHA="$(shasum -a 256 "$APPCAST" | cut -d' ' -f1)"
+          {
+            echo "artifact=${APP_NAME}-signed-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "zip-name=${ZIP_NAME}"
+            echo "zip-sha256=$(shasum -a 256 "$ZIP_PATH" | cut -d' ' -f1)"
+            echo "appcast-sha256=${APPCAST_SHA}"
+            echo "appcast-base=${APPCAST_BASE:-}"
+            echo "build-num=${BUILD_NUM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.digests.outputs.artifact }}
+          path: |
+            ${{ runner.temp }}/signed/${{ steps.digests.outputs.zip-name }}
+            ${{ runner.temp }}/signed/appcast.xml
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+
+  # PUBLISH IS OPT-IN (vars.CI_PUBLISH == 'true'; on since 1.12.0). CI is the
+  # sole publisher: a second, locally built zip differs byte-for-byte, so the
+  # appcast signature would stop validating and every user's auto-update would
+  # fail. No --clobber anywhere: a stray rerun must not replace a published
+  # asset with different bytes.
+  publish:
+    name: Upload zip and open appcast PR
+    needs: [verify-tag, sign]
+    if: vars.CI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # The appcast step opens a PR rather than pushing to protected main;
+      # without this it fails with "Resource not accessible by integration".
+      pull-requests: write
+    env:
+      ZIP_NAME: ${{ needs.sign.outputs.zip-name }}
+      ZIP_SHA256: ${{ needs.sign.outputs.zip-sha256 }}
+      APPCAST_SHA256: ${{ needs.sign.outputs.appcast-sha256 }}
+      APPCAST_BASE: ${{ needs.sign.outputs.appcast-base }}
+      BUILD_NUM: ${{ needs.sign.outputs.build-num }}
+    steps:
+      - name: Download signed artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.sign.outputs.artifact }}
+          path: ${{ runner.temp }}/signed
+
+      - name: Verify signed artifacts are the bytes sign produced
+        run: |
+          set -euo pipefail
+          [[ "$ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no zip digest from sign" >&2; exit 1; }
+          echo "${ZIP_SHA256}  ${RUNNER_TEMP}/signed/${ZIP_NAME}" | sha256sum -c -
+          if [[ -n "$APPCAST_SHA256" ]]; then
+            [[ "$APPCAST_SHA256" =~ ^[0-9a-f]{64}$ && "$APPCAST_BASE" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "::error::malformed appcast digest or base from sign" >&2
+              exit 1
+            }
+            echo "${APPCAST_SHA256}  ${RUNNER_TEMP}/signed/appcast.xml" | sha256sum -c -
+          fi
+
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ZIP="${RUNNER_TEMP}/signed/${ZIP_NAME}"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+              | grep -qxF "$ZIP_NAME"; then
+            # Rerun after a successful upload: fine only if it is these bytes.
+            CHECK_DIR="$(mktemp -d)"
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" -p "$ZIP_NAME" -D "$CHECK_DIR"
+            echo "${ZIP_SHA256}  ${CHECK_DIR}/${ZIP_NAME}" | sha256sum -c - || {
+              echo "::error::${ZIP_NAME} is already on ${RELEASE_TAG} with different bytes; refusing to replace it" >&2
+              exit 1
+            }
+            echo "${ZIP_NAME} already uploaded with identical bytes."
+          else
+            gh release upload "$RELEASE_TAG" "$ZIP" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Open the appcast PR
+        if: needs.sign.outputs.appcast-sha256 != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Main requires signed commits and PRs, and this job has no git
+          # checkout at all. Commit through the contents API: GitHub signs API
+          # commits made with the workflow token, so the PR is mergeable as-is.
+          # The branch starts at the exact main commit the feed was built from;
+          # if main's appcast moved since, the PR conflicts instead of
+          # silently dropping an entry.
+          BRANCH="release/appcast-${RELEASE_TAG}"
           FILE=packages/macos-bar/appcast.xml
-          BASE_SHA=$(git rev-parse HEAD)
+          BASE_BLOB="$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE}?ref=${APPCAST_BASE}" --jq '.sha')"
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/heads/${BRANCH}" -f sha="${BASE_SHA}" >/dev/null
+            -f ref="refs/heads/${BRANCH}" -f sha="${APPCAST_BASE}" >/dev/null
           gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/${FILE}" \
-            -f message="chore(appcast): add ${TAG} (build ${BUILD_NUM})" \
-            -f content="$(base64 < "${FILE}" | tr -d '\n')" \
-            -f sha="$(git rev-parse "HEAD:${FILE}")" \
+            -f message="chore(appcast): add ${RELEASE_TAG} (build ${BUILD_NUM})" \
+            -f content="$(base64 < "${RUNNER_TEMP}/signed/appcast.xml" | tr -d '\n')" \
+            -f sha="${BASE_BLOB}" \
             -f branch="${BRANCH}" \
             --jq '.commit.verification.verified' | grep -qx true \
-            || { echo "ERROR: appcast commit is not signed; its PR could not merge"; exit 1; }
+            || { echo "::error::appcast commit is not signed; its PR could not merge" >&2; exit 1; }
 
-          gh pr create \
-            --title "chore(appcast): add ${TAG} entry" \
-            --body "Auto-generated by release-macos.yml after building and notarizing ${TAG}. Adds the Sparkle appcast item so existing TokmeterBar users see the update on next poll. The zip is already attached to release ${TAG}; this PR just publishes the signed appcast feed." \
+          gh pr create --repo "$GITHUB_REPOSITORY" \
+            --title "chore(appcast): add ${RELEASE_TAG} entry" \
+            --body "Auto-generated by release-macos.yml after signing and notarizing ${RELEASE_TAG}. Adds the Sparkle appcast item and re-signs the feed (SURequireSignedFeed) so existing TokmeterBar users see the update on next poll. The zip is already attached to release ${RELEASE_TAG}. Do not edit this file by hand: any change invalidates the feed signature." \
             --base main \
             --head "${BRANCH}"
 
           # Best-effort auto-merge — succeeds when the repo has auto-merge
           # enabled AND the PR satisfies branch protection. Falls through
-          # quietly otherwise so the human can squash-merge manually.
-          gh pr merge "${BRANCH}" --auto --squash --delete-branch || true
+          # quietly otherwise; scripts/release.sh verifies and merges it.
+          gh pr merge "${BRANCH}" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch || true

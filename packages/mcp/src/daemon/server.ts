@@ -32,6 +32,7 @@ import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter
 import {
   loadConfig,
   localDateKey,
+  nullMap,
   peekCachedRecords,
   pollAntigravityLiveStatus,
   refreshKoshaRegistry,
@@ -292,6 +293,18 @@ export function startDaemon(): void {
       process.exitCode = 1;
       return;
     }
+    // Bind the HTTP API port too BEFORE minting or publishing the token.
+    // Clients send `Authorization: Bearer <token>` to HTTP_PORT; if another
+    // process held it, publishing a token would hand every client's
+    // credential to that process.
+    startHttpApi({
+      onListening: () => publishAndRun(evidence),
+      onBindError: (err) => refuseStartup(err),
+    });
+  });
+
+  const publishAndRun = (evidence: NonNullable<ReturnType<typeof readProcessEvidence>>) => {
+    if (!wss) return; // stopped while the HTTP bind was in flight
     _ownsDaemonState = true;
     initAuthToken();
     writeSecretFile(
@@ -351,9 +364,6 @@ export function startDaemon(): void {
       }, scanIntervalMs);
     }
 
-    // Start HTTP API server alongside WebSocket
-    startHttpApi();
-
     // Warm the HTTP core asynchronously so the first user request doesn't
     // pay the full-disk-scan tax. We don't await — the WebSocket server is
     // already up so other clients aren't blocked.
@@ -364,7 +374,7 @@ export function startDaemon(): void {
       .catch((err) => {
         console.error("HTTP core warmup failed:", err);
       });
-  });
+  };
 
   wss.on("connection", (ws) => {
     if (wss && wss.clients.size > MAX_WS_CLIENTS) {
@@ -885,7 +895,36 @@ async function getHttpSummaryPayload(): Promise<{
   }
 }
 
-function startHttpApi(): void {
+/**
+ * The HTTP API port is held by another process (or unbindable): stop without
+ * ever having written a token, pid or identity file, and exit non-zero so a
+ * supervisor knows this was not a clean bow-out. The exit is delayed so that
+ * launchd's KeepAlive (respawn on non-zero exit, ThrottleInterval 10s)
+ * retries about once a minute — enough to recover when the port frees, not a
+ * tight respawn loop. Nothing is bound or published while waiting.
+ */
+const HTTP_BIND_FAILURE_EXIT_DELAY_MS = 60_000;
+
+function refuseStartup(err: Error & { code?: string }): void {
+  console.error(
+    err.code === "EADDRINUSE"
+      ? `HTTP API port ${DAEMON_HOST}:${HTTP_PORT} is already in use by another process. ` +
+          "Refusing to start: no auth token was written. Free the port " +
+          `(\`lsof -nP -iTCP:${HTTP_PORT} -sTCP:LISTEN\`) and start the daemon again.`
+      : `HTTP API could not bind ${DAEMON_HOST}:${HTTP_PORT} (${err.message}). ` +
+          "Refusing to start: no auth token was written."
+  );
+  stopDaemon();
+  process.exitCode = 1;
+  // Deliberately NOT unref'd: holding the (now port-less, token-less)
+  // process is what spaces out launchd's respawns.
+  setTimeout(() => process.exit(1), HTTP_BIND_FAILURE_EXIT_DELAY_MS);
+}
+
+function startHttpApi(handlers: {
+  onListening: () => void;
+  onBindError: (err: Error & { code?: string }) => void;
+}): void {
   httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS controls which browser origins can read responses; bearer auth
     // below controls whether the request is served at all.
@@ -1474,17 +1513,20 @@ function startHttpApi(): void {
   httpServer.headersTimeout = 5_000;
   httpServer.maxHeadersCount = 32;
 
+  let bound = false;
   httpServer.on("error", (err: Error & { code?: string }) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(`HTTP API port ${HTTP_PORT} already in use — API disabled`);
-    } else {
-      console.error("HTTP API error:", err.message);
+    if (!bound) {
+      handlers.onBindError(err);
+      return;
     }
+    console.error("HTTP API error:", err.message);
   });
 
   httpServer.listen(HTTP_PORT, DAEMON_HOST, () => {
+    bound = true;
     console.log(`【♾️】 HTTP API listening on http://${DAEMON_HOST}:${HTTP_PORT}`);
     console.log(`   Auth token: ${DAEMON_TOKEN_FILE}`);
+    handlers.onListening();
   });
 }
 
@@ -1612,7 +1654,8 @@ export function computeTodayFloor(computed: TodayTotals, prior: TodayTotals | nu
   // pinned to its own monotone-upward floor. Build a NEW snapshot rather
   // than mutating either side so callers can't see partial state.
   const allKeys = new Set([...Object.keys(computed.projects), ...Object.keys(prior.projects)]);
-  const projects: Record<string, { cost: number; in: number; out: number }> = {};
+  // Null prototype: a project literally named "__proto__" stays a key.
+  const projects = nullMap<{ cost: number; in: number; out: number }>();
   for (const k of allKeys) {
     const a = computed.projects[k] ?? { cost: 0, in: 0, out: 0 };
     const b = prior.projects[k] ?? { cost: 0, in: 0, out: 0 };
@@ -1706,7 +1749,8 @@ export function todayTotalsFrom(
   } | null,
   day: string
 ): TodayTotals {
-  const projects: Record<string, { cost: number; in: number; out: number }> = {};
+  // Null prototype: a project literally named "__proto__" stays a key.
+  const projects = nullMap<{ cost: number; in: number; out: number }>();
   if (today && (today.date === undefined || today.date === day)) {
     for (const [name, pb] of Object.entries(today.projects)) {
       projects[name || "unknown"] = {

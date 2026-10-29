@@ -40,7 +40,13 @@ import { stat } from "node:fs/promises";
 import * as zlib from "node:zlib";
 
 import { canonicalizeProjectName } from "../project-name.js";
-import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import type {
+  ProviderId,
+  ScanFaultDetail,
+  ScanFilterOptions,
+  SessionParser,
+  TokenRecord,
+} from "../types.js";
 import {
   createRecord,
   expandHome,
@@ -48,7 +54,7 @@ import {
   findFiles,
   getConfiguredProviderPaths,
   mapWithConcurrency,
-  readJsonlFile,
+  visitJsonlLines,
 } from "./utils.js";
 
 /**
@@ -167,6 +173,10 @@ interface CodexParseState {
   legacyRecordTurns: Map<number, string>;
   /** From this rollout's own (first) session_meta. */
   isSubagent: boolean;
+  /** Whether this rollout has started a turn of its own yet. */
+  taskStarted: boolean;
+  /** Whether this rollout opened with a `compacted` (carried-over) history. */
+  sawCompacted: boolean;
 }
 
 function defaultState(): CodexParseState {
@@ -180,6 +190,8 @@ function defaultState(): CodexParseState {
     responseIds: new Set(),
     legacyRecordTurns: new Map(),
     isSubagent: false,
+    taskStarted: false,
+    sawCompacted: false,
   };
 }
 
@@ -346,28 +358,29 @@ async function countZstContentSize(file: string): Promise<number> {
   }
 }
 
+/** Per-file counts of lines that could not be folded. */
+interface CodexLineCounts {
+  oversized: number;
+  malformed: number;
+  /** Malformed lines that looked like token telemetry: possible lost usage. */
+  malformedUsage: number;
+}
+
+/**
+ * Fold a decompressed (string) stream line by line. A line over the cap is
+ * skipped — dropped as it streams, never buffered — and parsing resumes at the
+ * next line; it used to throw and truncate the rest of the rollout.
+ */
 async function foldCodexStream(
   stream: NodeJS.ReadableStream & { destroy(): void },
-  file: string,
-  state: CodexParseState,
-  out: TokenRecord[],
+  foldLine: (line: string) => void,
+  counts: CodexLineCounts,
   maxBytes: number | undefined
 ): Promise<void> {
   let pending = "";
+  let discarding = false;
   let bytes = 0;
   stream.setEncoding?.("utf8");
-
-  const parseLine = (line: string): void => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    if (line.length > CODEX_MAX_LINE_CHARS) {
-      throw new Error(`JSONL line limit (${CODEX_MAX_LINE_CHARS} characters) exceeded`);
-    }
-    foldCodexEvent(JSON.parse(trimmed) as CodexEvent, state, file, out);
-    if (out.length > CODEX_MAX_RECORDS) {
-      throw new Error(`record limit (${CODEX_MAX_RECORDS}) exceeded`);
-    }
-  };
 
   for await (const rawChunk of stream) {
     const chunk = typeof rawChunk === "string" ? rawChunk : (rawChunk as Buffer).toString("utf8");
@@ -375,18 +388,25 @@ async function foldCodexStream(
     if (maxBytes !== undefined && bytes > maxBytes) {
       throw new Error(`decompressed read limit (${maxBytes} bytes) exceeded`);
     }
-    pending += chunk;
-    if (pending.length > CODEX_MAX_LINE_CHARS && !pending.includes("\n")) {
-      throw new Error(`JSONL line limit (${CODEX_MAX_LINE_CHARS} characters) exceeded`);
-    }
-    let newline = pending.indexOf("\n");
+    let from = 0;
+    let newline = chunk.indexOf("\n", from);
     while (newline >= 0) {
-      parseLine(pending.slice(0, newline));
-      pending = pending.slice(newline + 1);
-      newline = pending.indexOf("\n");
+      if (discarding) discarding = false;
+      else foldLine(pending + chunk.slice(from, newline));
+      pending = "";
+      from = newline + 1;
+      newline = chunk.indexOf("\n", from);
+    }
+    if (!discarding) {
+      pending += chunk.slice(from);
+      if (pending.length > CODEX_MAX_LINE_CHARS) {
+        counts.oversized++;
+        discarding = true;
+        pending = "";
+      }
     }
   }
-  parseLine(pending);
+  if (!discarding && pending.trim()) foldLine(pending);
 }
 
 /** First `limit` decompressed bytes of a .zst rollout, without inflating the rest. */
@@ -618,6 +638,7 @@ function foldCodexEvent(
   out: TokenRecord[]
 ): void {
   if (!evt.type) return;
+  if (evt.type === "compacted" && !state.taskStarted) state.sawCompacted = true;
   if (evt.type === "session_meta" && evt.payload?.id && !state.sessionId) {
     // FIRST session_meta only: a subagent rollout replays its parent's next.
     state.sessionId = evt.payload.id;
@@ -638,6 +659,7 @@ function foldCodexEvent(
   ) {
     if (payload.turn_id) state.currentTurn = payload.turn_id;
   }
+  if (evt.type === "event_msg" && payload.type === "task_started") state.taskStarted = true;
 
   let usage: CodexTokenUsage;
   const structured = evt.type === "token_usage_record";
@@ -660,6 +682,22 @@ function foldCodexEvent(
     if (evt.type !== "event_msg" || payload.type !== "token_count") return;
     const info = payload.info;
     if (!info) return;
+    if (info.total_token_usage && !state.taskStarted && state.sawCompacted) {
+      // A cumulative counter written before this rollout started any turn of
+      // its own is INHERITED, not spent here. A guardian_review thread that
+      // continues in a new rollout opens with a `compacted` history and then
+      // a token_count carrying the previous rollout's final totals (e.g.
+      // 162,492 = the predecessor's last total; its last_token_usage is the
+      // predecessor's last response, already counted there). Booking it as a
+      // delta from zero double-counted every continuation — 15 phantom
+      // records and 1.07M input / 7.3M cache-read tokens on 2026-10-24 alone.
+      // Across 3,971 rollouts, only these 29 continuations write a counter
+      // before their first task_started, and every one follows a `compacted`
+      // carry-over — the two signals together mark it as inherited. Take it
+      // as the baseline.
+      state.prevTotal = { ...info.total_token_usage };
+      return;
+    }
     if (info.total_token_usage) {
       usage = computeDelta(info.total_token_usage, state.prevTotal);
       state.prevTotal = { ...info.total_token_usage };
@@ -715,56 +753,81 @@ function foldCodexEvent(
 export async function parseCodexFile(
   file: string,
   sizeBytes: number,
-  onWarning?: (message: string) => void
+  onWarning?: (message: string, detail?: ScanFaultDetail) => void,
+  onNotice?: (message: string) => void
 ): Promise<TokenRecord[]> {
   const out: TokenRecord[] = [];
   const state = defaultState();
-  if (isZst(file) && sizeBytes < CODEX_LARGE_FILE_BYTES) {
+  const counts: CodexLineCounts = { oversized: 0, malformed: 0, malformedUsage: 0 };
+  const foldLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let evt: CodexEvent;
     try {
-      for (const line of readZstText(file).split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let evt: CodexEvent;
-        try {
-          evt = JSON.parse(trimmed) as CodexEvent;
-        } catch (error) {
-          throw new Error(
-            `malformed JSON line in ${file}: ${error instanceof Error ? error.message : error}`
-          );
-        }
-        foldCodexEvent(evt, state, file, out);
+      evt = JSON.parse(trimmed) as CodexEvent;
+    } catch {
+      // Skip, don't truncate: one bad line must not hide every later
+      // response in the rollout.
+      counts.malformed++;
+      if (/"(token_usage_record|token_count)"/.test(trimmed)) counts.malformedUsage++;
+      return;
+    }
+    foldCodexEvent(evt, state, file, out);
+    if (out.length > CODEX_MAX_RECORDS) {
+      throw new Error(`record limit (${CODEX_MAX_RECORDS}) exceeded`);
+    }
+  };
+  try {
+    if (isZst(file) && sizeBytes < CODEX_LARGE_FILE_BYTES) {
+      for (const line of readZstText(file).split("\n")) foldLine(line);
+    } else if (isZst(file)) {
+      // A large compressed rollout streams through the decompressor, so peak
+      // memory stays one line, not the inflated file.
+      const stream = (await zstStream(file)) as NodeJS.ReadableStream & { destroy(): void };
+      try {
+        await foldCodexStream(stream, foldLine, counts, CODEX_MAX_DECOMPRESSED_BYTES);
+      } finally {
+        stream.destroy();
       }
-    } catch (error) {
-      // Same fail-soft, never-silent contract as the plain reads below.
-      onWarning?.(`failed read of ${file}: ${error instanceof Error ? error.message : error}`);
+    } else {
+      // Plain rollouts of any size stream one bounded line at a time; an
+      // unterminated last line (a write in flight) is left for the next scan.
+      const visit = await visitJsonlLines(file, 0, foldLine);
+      counts.oversized += visit.oversizedLines;
+      if (visit.inFlightTail) {
+        // May be a response from before midnight: hold a seal of any day the
+        // unread tail could belong to (it is newer than every record read).
+        onWarning?.(`a line in ${file} is still being written`, {
+          file,
+          readThroughMs: out.at(-1)?.timestamp,
+        });
+      }
     }
-  } else if (sizeBytes >= CODEX_LARGE_FILE_BYTES) {
-    const { createReadStream } = await import("node:fs");
-    // A large compressed rollout streams through the decompressor, so peak
-    // memory stays one line, not the inflated file.
-    const stream = (
-      isZst(file) ? await zstStream(file) : createReadStream(file, { encoding: "utf-8" })
-    ) as NodeJS.ReadableStream & { destroy(): void };
-    try {
-      await foldCodexStream(stream, file, state, out, CODEX_MAX_DECOMPRESSED_BYTES);
-    } catch (error) {
-      // FAIL SOFT, per file — mirror readJsonlFile's contract. A mid-stream read
-      // error (the file rotated/deleted by an active session between stat() and
-      // read, EACCES/EIO, an evicted iCloud file) must NOT propagate: without
-      // this catch it aborts the ENTIRE codex provider. Return what we parsed
-      // before the fault instead — one bad file costs only that file. But the
-      // truncation must not be SILENT: a windowed rescan that doesn't know the
-      // result is partial overwrites a good sealed day with the truncated one
-      // (this exact failure shrank sealed history on 2026-07-12).
-      onWarning?.(`truncated read of ${file}: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      stream.destroy();
-    }
-  } else {
-    const events = await readJsonlFile<CodexEvent>(file, (error) => {
-      onWarning?.(`failed read of ${file}: ${error instanceof Error ? error.message : error}`);
+  } catch (error) {
+    // FAIL SOFT, per file. A mid-stream read error (the file rotated/deleted
+    // by an active session between stat() and read, EACCES/EIO, an evicted
+    // iCloud file) must NOT abort the whole codex provider: return what was
+    // parsed before the fault. The fault is never SILENT — a windowed rescan
+    // that didn't know the result was partial once overwrote a good sealed day
+    // with the truncated one (2026-07-12) — and it names the file and how far
+    // the read got, so a seal can tell whether the fault touches its day.
+    onWarning?.(`truncated read of ${file}: ${error instanceof Error ? error.message : error}`, {
+      file,
+      readThroughMs: out.at(-1)?.timestamp,
     });
-    for (const evt of events) foldCodexEvent(evt, state, file, out);
+  }
+  if (counts.oversized > 0) {
+    // Token telemetry lines are a few hundred bytes; an 8 MiB line is a tool
+    // output or a compaction payload, never usage.
+    onNotice?.(`skipped ${counts.oversized} oversized line(s) in ${file}`);
+  }
+  if (counts.malformedUsage > 0) {
+    onWarning?.(
+      `skipped ${counts.malformed} malformed line(s) in ${file}, ${counts.malformedUsage} of them token telemetry`,
+      { file }
+    );
+  } else if (counts.malformed > 0) {
+    onNotice?.(`skipped ${counts.malformed} malformed line(s) in ${file}`);
   }
   // Recent CLI versions mirror the same responses in BOTH event formats.
   // Choose the response ledger for each covered turn, independent of event
@@ -894,12 +957,12 @@ export class CodexParser implements SessionParser {
 
     // Big ones: strictly one at a time.
     for (const f of large) {
-      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning));
+      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning, opts?.onNotice));
     }
     // Small ones: a bounded concurrent batch. onFile's fold is synchronous, so
     // interleaved awaits here can't corrupt the caller's accumulators.
     await mapWithConcurrency(small, CODEX_SCAN_CONCURRENCY, async (f) => {
-      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning));
+      await onFile(await parseCodexFile(f.file, f.size, opts?.onWarning, opts?.onNotice));
     });
   }
 }

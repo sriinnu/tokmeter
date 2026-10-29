@@ -3342,6 +3342,16 @@ export function createServer(): McpServer {
           lines.push("");
         }
 
+        if (preview.unremovable && preview.unremovable.length > 0) {
+          lines.push("  LEFT IN PLACE:", separator());
+          for (const u of preview.unremovable) {
+            lines.push(
+              `  ${sanitizeDataLabel(u.path, 4096)} [${sanitizeDataLabel(u.provider, 64)}]: ${sanitizeDataLabel(u.reason, 256)}`
+            );
+          }
+          lines.push("");
+        }
+
         // No command is built from the filters: project names come from
         // untrusted transcripts and must never be handed back as shell input.
         lines.push(

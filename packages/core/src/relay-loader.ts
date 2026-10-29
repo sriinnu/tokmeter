@@ -30,9 +30,10 @@ import { attachDayPrices, type DayPrices, pricesForRebuild, priceWithCard } from
 import { getParsers } from "./parsers/index.js";
 import type { PriceCard } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
-import { type ScanContext, scanRawRecords } from "./scan-pipeline.js";
+import { providerFault, type ScanContext, scanRawRecords } from "./scan-pipeline.js";
 import { carriedRecordsFor, journalDates, withCarried } from "./today-journal.js";
-import type { ProviderId, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+import { warningsBlockDay } from "./warning-coverage.js";
 
 export interface RelayState {
   aggregates: Map<string, DailyAggregate>;
@@ -75,6 +76,27 @@ async function withPrices(
   }
 }
 
+/** Providers with a fault that may hide records (not notices). */
+function faultedProviders(warnings: readonly ScanWarning[]): string[] {
+  const out = new Set<string>();
+  for (const w of warnings) {
+    if (w.scope === "provider" && !w.notice) out.add(w.provider ?? "unknown");
+  }
+  return [...out].sort();
+}
+
+/** Load the relay, reporting repaired and quarantined days as history warnings. */
+function loadRelay(
+  homeDir: string,
+  warnings: ScanWarning[],
+  quarantined?: Set<string>
+): Map<string, DailyAggregate> {
+  return loadAggregates(homeDir, {
+    onWarning: (message) => warnings.push({ scope: "history", message }),
+    quarantined,
+  });
+}
+
 /**
  * Refresh historical aggregates from the per-day relay store.
  *
@@ -93,7 +115,7 @@ export async function refreshFromRelay(
 
   if (forceRebuild) return rebuildHistoricalFromScratch(ctx, referenceTimestamp, warnings);
 
-  const aggregates = loadAggregates(ctx.homeDir);
+  const aggregates = loadRelay(ctx.homeDir, warnings);
   const onDisk = listDaysOnDisk(ctx.homeDir);
   const maxOnDisk = onDisk.length > 0 ? onDisk[onDisk.length - 1] : null;
   const yesterday = yesterdayDateKey(referenceTimestamp);
@@ -120,11 +142,25 @@ export async function refreshFromRelay(
   const raw = await scanRawRecords(ctx, undefined, "history", warnings, floorMs);
   const todayKey = localDateKey(referenceTimestamp);
 
-  // Any provider fault, including a bounded per-file partial read, makes the
-  // gap non-authoritative. Retrying is preferable to permanently sealing a
-  // day that omitted a valid oversized line or truncated provider file.
-  const gapDegraded = warnings.slice(warnBefore).some((w) => w.scope === "provider");
-  if (gapDegraded) return { aggregates, historySource: "extended" };
+  // A provider fault makes a gap day non-authoritative only when the faulting
+  // file can hold records of that day. Seal the gap's leading run of days the
+  // faults can't touch and stop at the first one they can: sealing past it
+  // would leave an interior hole the next gap fill never revisits, so that
+  // day and everything after it wait for a scan that reads cleanly.
+  const gapWarnings = warnings.slice(warnBefore);
+  let heldFrom: string | null = null;
+  for (let date = gapStart; date < localDateKey(referenceTimestamp); date = nextDayKey(date)) {
+    if (warningsBlockDay(gapWarnings, date)) {
+      heldFrom = date;
+      break;
+    }
+  }
+  if (heldFrom) {
+    warnings.push({
+      scope: "history",
+      message: `Gap fill not persisted from ${heldFrom} on: a file that may hold those days' records could not be fully read.`,
+    });
+  }
 
   // A day the daemon never sealed (it was down at midnight) still has its
   // journal: fold in what was deleted while it ran, or while it was down.
@@ -142,6 +178,7 @@ export async function refreshFromRelay(
     // interior-hole day from them freezes a partial day permanently. Interior
     // holes are recovered by an explicit rescan, not the gap fill.
     if (day.date >= todayKey || day.date < gapStart || onDiskSet.has(day.date)) continue;
+    if (heldFrom && day.date >= heldFrom) continue;
     await withPrices(ctx, day, warnings);
     try {
       writeDayFile(ctx.homeDir, day);
@@ -224,12 +261,14 @@ async function foldRawIntoDays(
     // retain their per-day grow-only comparison as a second line of defense.
     const scanOpts = {
       ...(floorMs !== undefined ? { modifiedSinceMs: floorMs } : {}),
-      onWarning: (message: string) =>
+      onWarning: (message: string, detail?: ScanFaultDetail) =>
+        warnings.push(providerFault(parser.providerId, message, detail)),
+      onNotice: (message: string) =>
         warnings.push({
-          scope: "provider",
+          scope: "history",
           provider: parser.providerId,
-          message: `${parser.providerId} partial scan: ${message}`,
-          partial: true,
+          message: `${parser.providerId}: ${message}`,
+          notice: true,
         }),
     };
     try {
@@ -281,18 +320,26 @@ async function rebuildHistoricalFromScratch(
   referenceTimestamp: number,
   warnings: ScanWarning[]
 ): Promise<RelayState> {
-  const existing = loadAggregates(ctx.homeDir);
+  const quarantined = new Set<string>();
+  const existing = loadRelay(ctx.homeDir, warnings, quarantined);
   const warnBefore = warnings.length;
   const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings);
-  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
-    warnings.push({
-      scope: "history",
-      message: "Full rebuild was not persisted because at least one provider scan was incomplete.",
-    });
-    return { aggregates: existing, historySource: existing.size > 0 ? "snapshot" : "none" };
-  }
+  const rebuildWarnings = warnings.slice(warnBefore);
+  // Persist every day the scan covered completely. A day a faulting file may
+  // hold keeps whatever is sealed for it (or stays unsealed). This used to
+  // refuse the whole rebuild on any partial read — so on a corpus with one
+  // unreadable file a fresh install never got history, and redid the full
+  // rebuild on every start.
   const aggregates = new Map<string, DailyAggregate>();
+  const held: string[] = [];
   for (const [date, day] of days) {
+    if (quarantined.has(date)) continue; // unreadable sealed file: never overwrite it here
+    if (warningsBlockDay(rebuildWarnings, date)) {
+      held.push(date);
+      const sealed = existing.get(date);
+      if (sealed) aggregates.set(date, sealed);
+      continue;
+    }
     await withPrices(ctx, day, warnings);
     try {
       writeDayFile(ctx.homeDir, day);
@@ -303,6 +350,19 @@ async function rebuildHistoricalFromScratch(
         message: `Failed to persist day ${date} to relay: ${toErrorMessage(error)}`,
       });
     }
+  }
+  const faulted = faultedProviders(rebuildWarnings);
+  if (held.length === 0 && faulted.length > 0) {
+    warnings.push({
+      scope: "history",
+      message: `Full rebuild: ${faulted.join(", ")} scan incomplete; not persisted for any day it may touch.`,
+    });
+  }
+  if (held.length > 0) {
+    warnings.push({
+      scope: "history",
+      message: `Full rebuild not persisted for ${held.length} day(s) (${held.slice(0, 5).join(", ")}${held.length > 5 ? ", …" : ""}): a file that may hold their records could not be fully read. Every other day was rebuilt.`,
+    });
   }
   return { aggregates, historySource: days.size > 0 ? "rebuilt" : "none" };
 }
@@ -333,7 +393,8 @@ export async function rebuildRecentWindow(
   migrateV2IfNeeded(ctx.homeDir);
   const floorMs = startOfLocalDay(referenceTimestamp - windowDays * 86_400_000);
   const floorKey = localDateKey(floorMs);
-  const aggregates = loadAggregates(ctx.homeDir);
+  const quarantined = new Set<string>();
+  const aggregates = loadRelay(ctx.homeDir, warnings, quarantined);
   // Each sealed day in the window rebuilds at its OWN prices — the cards it
   // sealed with, or implied ones for a day sealed before cards existed — so a
   // rescan changes a day's cost only when its tokens change, never because
@@ -355,19 +416,28 @@ export async function rebuildRecentWindow(
   const cardFor = (r: TokenRecord) => kept.get(localDateKey(r.timestamp))?.[r.model]?.card;
   const warnBefore = warnings.length;
   const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs, cardFor);
-  // `force` consents to an intentional parser-driven shrink, never to a
-  // broken read. A known-incomplete provider fold cannot safely update any
-  // immutable day because a new provider bucket may itself be partial.
-  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
-    warnings.push({
-      scope: "history",
-      message: "Recent-window rebuild was not persisted because a provider scan was incomplete.",
-    });
-    return { aggregates, historySource: aggregates.size > 0 ? "snapshot" : "none" };
-  }
+  const rebuildWarnings = warnings.slice(warnBefore);
   // Start from what's already sealed, overwrite ONLY the window's days.
   for (const [date, day] of rebuilt) {
     const existing = aggregates.get(date);
+    // `force` consents to an intentional parser-driven shrink, never to a
+    // broken read: a day a faulting file may hold is left as sealed, since a
+    // new provider bucket for it may itself be partial.
+    if (warningsBlockDay(rebuildWarnings, date)) {
+      warnings.push({
+        scope: "history",
+        message: `Rebuild of ${date} not persisted: a file that may hold its records could not be fully read.`,
+      });
+      continue;
+    }
+    if (quarantined.has(date) && !force) {
+      // Unreadable, not absent: it may still be the only copy of that day.
+      warnings.push({
+        scope: "history",
+        message: `Kept sealed day ${date} — its file could not be read, so a rebuild may not replace it without force.`,
+      });
+      continue;
+    }
     if (existing && shouldKeepSealedDay(existing, day, { force })) {
       warnings.push({
         scope: "history",
@@ -426,14 +496,7 @@ export async function backfillProviderIntoRelay(
   const scanProviderId: ProviderId = CUSTOM_ELIGIBLE.has(providerId) ? "custom" : providerId;
   const warnBefore = warnings.length;
   const raw = await scanRawRecords(ctx, [scanProviderId], "history", warnings, floorMs);
-  if (warnings.slice(warnBefore).some((warning) => warning.scope === "provider")) {
-    const aggregates = loadAggregates(ctx.homeDir);
-    warnings.push({
-      scope: "history",
-      message: `Provider backfill (${providerId}) was not persisted because its scan was incomplete.`,
-    });
-    return { aggregates, historySource: aggregates.size > 0 ? "snapshot" : "none" };
-  }
+  const backfillWarnings = warnings.slice(warnBefore);
 
   // Keep only this provider's records that fall in the sealed window: on/after
   // the floor day and strictly before today (a multi-day file can carry records
@@ -453,10 +516,25 @@ export async function backfillProviderIntoRelay(
     (byDate.get(date) ?? byDate.set(date, []).get(date)!).push(r);
   }
 
-  const aggregates = loadAggregates(ctx.homeDir);
+  const quarantined = new Set<string>();
+  const aggregates = loadRelay(ctx.homeDir, warnings, quarantined);
   let added = 0;
   let skipped = 0;
   for (const [date, records] of byDate) {
+    if (quarantined.has(date)) {
+      skipped++;
+      continue; // unreadable sealed file: never overwrite the only copy
+    }
+    if (warningsBlockDay(backfillWarnings, date)) {
+      // Additive and idempotent per day: adding a partial slice would make a
+      // later re-run skip the day as "already backfilled". Leave it for one.
+      warnings.push({
+        scope: "history",
+        message: `Provider backfill (${providerId}) for ${date} was not persisted: a file that may hold its records could not be fully read.`,
+      });
+      skipped++;
+      continue;
+    }
     const existing = aggregates.get(date);
     if (existing) {
       if (existing.providers[providerId]) {
@@ -500,6 +578,12 @@ export async function backfillProviderIntoRelay(
     }
   }
 
+  if (faultedProviders(backfillWarnings).length > 0) {
+    warnings.push({
+      scope: "history",
+      message: `Provider backfill (${providerId}): scan incomplete; not persisted for any day it may touch.`,
+    });
+  }
   warnings.push({
     scope: "history",
     message: `Provider backfill (${providerId}): added ${added} day(s), skipped ${skipped} already-present day(s), window ${windowDays}d.`,

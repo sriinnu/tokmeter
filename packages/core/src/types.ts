@@ -281,6 +281,15 @@ export interface ScanWarning {
    * it ages out and those days are lost for every provider.
    */
   partial?: boolean;
+  /** The faulting file, when the parser could name it (see {@link ScanFaultDetail}). */
+  file?: string;
+  /** Newest record time read from `file` before the fault. */
+  readThroughMs?: number;
+  /**
+   * Informational only: nothing was lost (e.g. a skipped oversized tool-output
+   * line). Never blocks persistence and never marks today degraded.
+   */
+  notice?: boolean;
 }
 
 /** Scan metadata describing the stable-history/live-today composition state. */
@@ -585,7 +594,29 @@ export interface ScanFilterOptions {
    * truncated one. Callers that seal history should treat any invocation as
    * "this provider's scan is incomplete".
    */
-  onWarning?: (message: string) => void;
+  onWarning?: (message: string, detail?: ScanFaultDetail) => void;
+  /**
+   * Sink for conditions that lose NO usage — an oversized tool-output line
+   * skipped, a malformed line that wasn't a usage line. Reported to the user,
+   * but never treated as an incomplete scan, so it can't block a seal.
+   */
+  onNotice?: (message: string) => void;
+}
+
+/**
+ * Where a per-file fault sits, so a seal can tell whether it touches the day
+ * being sealed. A fault that names its file lets the rollover seal yesterday
+ * when the broken file can't hold any of yesterday's records; a fault without
+ * one is treated as touching every day.
+ */
+export interface ScanFaultDetail {
+  /** The file that could not be (fully) read. */
+  file?: string;
+  /**
+   * Newest record timestamp read from the file before the fault. Session
+   * files are append-only, so everything unread is at least this new.
+   */
+  readThroughMs?: number;
 }
 
 /** The interface every session parser must implement. */
@@ -600,6 +631,14 @@ export interface SessionParser {
    * scanner actually reads. Omitted by parsers that read nothing from disk.
    */
   sessionRoots?(homeDir: string): string[];
+  /**
+   * Where restore may write for this parser, when that is narrower than
+   * `sessionRoots` (e.g. a scan root that is a whole config directory, of
+   * which only the session subdirectories are session data). A segment equal
+   * to `ANY_PATH_SEGMENT` matches exactly one path segment. Defaults to
+   * `sessionRoots`.
+   */
+  restoreRoots?(homeDir: string): string[];
   /**
    * Optional memory-bounded variant: parse file-by-file, handing each file's
    * records to `onFile` so a caller (the relay rebuild) can fold + release them
@@ -704,6 +743,12 @@ export interface CleanupPreview {
   }[];
   /** Transparency: files with records outside the filter that will also be lost. */
   partialFileWarnings: PartialFileWarning[];
+  /**
+   * Matched source files cleanup will NOT delete, with the reason — e.g. a
+   * shared app database (Cursor's state.vscdb) that holds every session plus
+   * unrelated app state. Their records stay on disk.
+   */
+  unremovable?: { path: string; provider: ProviderId; reason: string }[];
 }
 
 /** Result after executing cleanup. */
@@ -778,4 +823,10 @@ export interface RestoreResult {
    * tasks, todos, session-env) consistently.
    */
   renamedCount?: number;
+  /**
+   * Archive entries deliberately not written back (e.g. Claude Code's
+   * `session-env` directory, which holds scripts Claude Code executes).
+   * Skipping is not an error: everything else in the archive still restores.
+   */
+  skipped?: { file: string; reason: string }[];
 }

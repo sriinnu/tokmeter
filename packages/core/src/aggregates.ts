@@ -167,9 +167,25 @@ function addBuckets(target: TokenBuckets, r: TokenRecord): void {
   target.cacheReadTokens += r.cacheReadTokens;
   target.cacheWriteTokens += r.cacheWriteTokens;
   target.reasoningTokens += r.reasoningTokens;
-  if (r.cacheWrite1hTokens) {
-    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + r.cacheWrite1hTokens;
+  const write1h = cacheWrite1hShare(r);
+  if (write1h) {
+    target.cacheWrite1hTokens = (target.cacheWrite1hTokens ?? 0) + write1h;
   }
+}
+
+/**
+ * The 1h-TTL share of a record's cache writes, clamped to the writes it is a
+ * subset of. Claude Code has emitted `ephemeral_1h_input_tokens: 2050` beside
+ * `cache_creation_input_tokens: 0` (three lines on 2026-09-16); folding that
+ * raw value sealed a bucket whose 1h share exceeded its total, which the
+ * relay reader then rejected — and with it every history read.
+ */
+export function cacheWrite1hShare(
+  r: Pick<TokenRecord, "cacheWriteTokens" | "cacheWrite1hTokens">
+): number {
+  const write1h = r.cacheWrite1hTokens ?? 0;
+  if (!(write1h > 0)) return 0;
+  return Math.min(write1h, r.cacheWriteTokens);
 }
 
 /** Fresh 24-slot hourly cost curve, all zero. */

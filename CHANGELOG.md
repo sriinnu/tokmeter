@@ -30,19 +30,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interactive terminal. A piped confirmation (`echo DELETE | tokmeter cleanup`)
   or `--force` from a non-terminal process is refused with a pointer to
   `--dry-run`, which still works anywhere.
-
-### Changed
-
-- The agent skill moved from the repository root to `skills/tokmeter/SKILL.md`.
-  With `SKILL.md` at the root, skill installers and directory audits treated
-  the whole repository as the skill, so release scripts and daemon code were
-  copied into `~/.claude/skills/tokmeter` and audited as skill content.
-  Reinstall with `npx skills add https://github.com/sriinnu/tokmeter --skill tokmeter`.
-- The README shows the sponsor links once, in the Support section, instead of
-  also as badges at the top (directory listings render the top of the README).
+- The macOS release workflow is split by privilege. An unprivileged job
+  (read-only token, no environment, no secrets) runs everything that executes
+  third-party code (`bun install`, vite and its plugins, `swift build`) and
+  uploads the unsigned app with its sha256. Only then does the `release`
+  environment job import the Developer ID certificate: it checks that sha256
+  and the app's identity, version and build number against the verified tag,
+  signs with the hardened runtime (new `sign-app.sh`, shared with local
+  builds), notarizes, staples, and Sparkle-signs using its own `sign_update`
+  pinned by `Package.resolved`. A last job with write access but no signing
+  secrets and no repository code uploads the zip and opens the appcast PR.
+- TokmeterBar now enables Sparkle's `SUVerifyUpdateBeforeExtraction` and
+  `SURequireSignedFeed` (Sparkle 2.10.0): updates are EdDSA-verified before
+  extraction, and the appcast itself is signed with the release key in CI and
+  verified against the app's own key before publishing. Builds with this
+  setting reject an unsigned or hand-edited `appcast.xml`.
+- The menubar's pricing refresh and cron install/uninstall run
+  `@sriinnu/tokmeter` pinned to the app's own version, like the daemon
+  bootstrap already did, instead of whatever `npx` resolved as latest.
+- `scripts/release.sh` verifies the appcast PR before merging it: opened by
+  github-actions[bot] from this repository into `main`, changing only
+  `packages/macos-bar/appcast.xml`. It shows the diff and pins the merge to
+  the head commit it checked.
+- Restoring a backup no longer writes into Claude Code's `session-env`
+  directory, whose hook scripts Claude Code runs; those entries are skipped and
+  listed, and the rest of the archive still restores. OpenClaw restores are
+  limited to its per-agent `sessions` folders, so config and credential files
+  in its config directories can't be overwritten from a snapshot.
+- A restored `config.json` keeps this machine's Antigravity live-polling
+  choice, and restored aliases can no longer hide projects that are visible
+  here.
+- Cleanup only derives a Claude Code session's side folders from a real
+  session id, and refuses (deleting nothing) any target that is the home
+  folder, `~/.claude`, `~/.claude/projects` or a session root, or contains
+  one. Roo Code and Kilo cleanup deletes only a task folder directly inside
+  its tasks folder, never the tasks folder itself.
+- Cleanup never deletes a shared app database (such as Cursor's
+  `state.vscdb`) as a whole file; the preview lists it as not removable and
+  leaves it in place.
+- The daemon refuses to start, without writing an auth token, when another
+  process holds its HTTP API port, so clients can't send their token to it.
+  It exits non-zero after a pause so launchd retries about once a minute.
+- The statusline cache moved out of the shared temp folder into a private
+  per-user directory (`$XDG_RUNTIME_DIR`, else `~/.cache/tokmeter/statusline`)
+  with owner-only, symlink-safe writes. Its repo commands no longer run a
+  repository's fsmonitor hook or take optional locks, and branch names are
+  stripped of terminal controls.
+- The Antigravity live poller only looks at your own processes, runs `ps` and
+  `lsof` by absolute path, caps the response size, and sanitizes model labels
+  and reset times.
+- Label sanitizing runs in linear time; crafted labels could previously stall
+  output for seconds.
+- A project named `__proto__` is no longer dropped from the daemon's
+  per-project totals, and file paths in `tokmeter coverage` output and TUI
+  warnings are stripped of terminal controls.
 
 ### Fixed
 
+- **One inconsistent sealed day no longer breaks every report.** Claude Code
+  wrote `ephemeral_1h_input_tokens: 2050` beside `cache_creation_input_tokens:
+  0`, so the sealed 2026-09-16 bucket held a 1h cache-write share (1,802,192)
+  larger than its total (1,800,142). Since 1.19.3 the relay reader rejected
+  that day and with it the whole history: `tokmeter daily --since …` exited 1
+  and the daemon could not start. The parser now clamps the 1h share, the
+  writer refuses an invalid day, and the reader repairs that sub-bucket in
+  memory (no total or cost moves; the file is never rewritten) and quarantines
+  a truly unreadable day with a warning instead of failing the load.
+- **The midnight seal no longer drops the last minutes of the day.** The
+  first tick after midnight only read files modified since midnight, so a
+  response written after the previous tick, in a file not touched again, was
+  never sealed. With the bar polling every 300 s that lost Codex records on 6
+  of 7 nights (e.g. 4 records, 36,240 input / 348,288 cache-read tokens on
+  2026-10-28). The rollover tick now reads back to the previous tick.
+- **Codex guardian reviews are no longer double-counted.** A guardian_review
+  thread that continues in a new rollout opens with a counter holding the
+  previous rollout's totals; it was booked as new usage. 28 phantom records
+  across 2026-10-22…10-29, e.g. 1.07M input and 7.3M cache-read tokens on
+  2026-10-24 (more where Codex later rewrote the rollout). The carried-over
+  counter is now taken as the baseline.
+- **Large session files keep counting.** Claude Code sessions are streamed
+  line by line from the cached offset, so a session past 128 MiB is no longer
+  refused (a rebuild of 2026-10-21 lost 955 records, 205M cache-read tokens).
+  An oversized line (a 16 MB tool output) is skipped instead of truncating
+  the rest of the file (107 Codex responses on 2026-10-22); the usage of an
+  oversized Claude assistant line is recovered from its head and tail.
+- **A partial read only holds the days it can affect.** A fault in a file
+  that cannot hold the outgoing day no longer stalls the midnight seal (which
+  froze "today" on yesterday), and a rebuild persists every day the faulting
+  file cannot touch instead of none — a fresh install on a corpus with one
+  bad file now gets its history.
+- **Fork subagents no longer double-bill their parent's turn.** A fork's
+  transcript opens with a copy of the parent's last message (same message id);
+  Claude Code records are now one per message id across all files (47 copies,
+  14.4M cache-read tokens since 2026-09-26).
+- **Date filters use local days.** A date-only `since`/`until` was parsed as
+  UTC midnight (in CET it dropped 00:00–01:00 of the first day and took
+  00:00–01:00 of the day after), and `week` was a rolling 168 h. This also
+  corrects the date window cleanup uses to select session files.
+- **Sealed days keep their price cards again.** Every rollover seal since
+  2026-10-21 was written without cards: kosha rewrites its registry during the
+  day, so at the midnight tick the cards had always "changed" and the seal
+  gave up. It now seals with the cards the day was last priced at.
 - MCP tools report numbers for the scope, project and providers they were asked
   for. They used to read core's lifetime getters, so `week` and `month`
   returned all-time totals under a "Last 7 Days"/"This Month" label,
@@ -61,6 +149,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP dates are local. Dates and timestamps were printed in UTC, so the evening's
   usage showed under the wrong day, and the streak and weekday maths in
   `tokmeter_streaks` used UTC days as well.
+
+### Changed
+
+- The agent skill moved from the repository root to `skills/tokmeter/SKILL.md`.
+  With `SKILL.md` at the root, skill installers and directory audits treated
+  the whole repository as the skill, so release scripts and daemon code were
+  copied into `~/.claude/skills/tokmeter` and audited as skill content.
+  Reinstall with `npx skills add https://github.com/sriinnu/tokmeter --skill tokmeter`.
+- The README shows the sponsor links once, in the Support section, instead of
+  also as badges at the top (directory listings render the top of the README).
 
 ## [1.19.3] - 2026-10-25
 

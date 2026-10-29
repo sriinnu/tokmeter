@@ -588,7 +588,7 @@ final class TokmeterLoader: ObservableObject {
         do {
             _ = try await runProcess(
                 executable: toolchain.npx,
-                arguments: ["-y", "@sriinnu/tokmeter", subcommand],
+                arguments: NodeToolchain.cliArguments(version: NodeToolchain.appVersion, subcommand: subcommand),
                 timeout: 30
             )
             // Refresh cronStatus from the daemon so the UI reflects the change.

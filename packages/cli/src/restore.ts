@@ -125,6 +125,14 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
     }
   } else {
     console.log(`\n✓ Restored ${result.restoredCount} items.`);
+    if (result.skipped && result.skipped.length > 0) {
+      console.log(`  ⏭ Skipped ${result.skipped.length} entries that restore never writes:`);
+      for (const sk of result.skipped.slice(0, 10)) {
+        console.log(
+          `     ${sanitizeDataLabel(sk.file, 4096)}: ${sanitizeDataLabel(sk.reason, 256)}`
+        );
+      }
+    }
     if (result.renamedCount && result.renamedCount > 0) {
       console.log(
         `  ↻ ${result.renamedCount} UUID(s) re-minted on conflict — local sessions with the same id stayed put; restored copies got fresh ids.`

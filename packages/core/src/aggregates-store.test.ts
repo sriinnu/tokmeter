@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -117,15 +117,22 @@ describe("per-day store — write/read/list", () => {
 
   test("a poisoned sealed price card is rejected before a rebuild can use it", () => {
     const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
-    writeDayFile(home, {
+    const poisoned = {
       ...day,
       prices: {
         "claude-sonnet-4-5": {
-          source: "seeded",
+          source: "seeded" as const,
           card: { inputPerMillion: -1, outputPerMillion: 15 },
         },
       },
-    });
+    };
+    // The writer refuses to seal it…
+    expect(() => writeDayFile(home, poisoned)).toThrow(
+      "Refusing to seal an invalid aggregate for 2026-05-20"
+    );
+    // …and a file that got onto disk anyway is rejected on read.
+    writeDayFile(home, day);
+    writeFileSync(join(aggregatesStoreDir(home), "2026-05-20.json"), JSON.stringify(poisoned));
     expect(() => readDayFile(home, "2026-05-20")).toThrow(
       "Invalid sealed aggregate for 2026-05-20"
     );
@@ -151,12 +158,82 @@ describe("per-day store — write/read/list", () => {
     expect([...recent.keys()].sort()).toEqual(["2026-05-21", "2026-05-22"]);
   });
 
-  test("a corrupt sealed day aborts the load instead of under-reporting usage", () => {
+  test("a corrupt sealed day is quarantined and reported, never silently dropped", () => {
     const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
     writeDayFile(home, day);
     // Write garbage in place of a valid day file.
-    writeFileSync(join(aggregatesStoreDir(home), "2026-05-21.json"), "{not json");
-    expect(() => loadAggregates(home)).toThrow("Invalid sealed aggregate for 2026-05-21");
+    const corrupt = join(aggregatesStoreDir(home), "2026-05-21.json");
+    writeFileSync(corrupt, "{not json");
+    const warnings: string[] = [];
+    const quarantined = new Set<string>();
+    const map = loadAggregates(home, { onWarning: (m) => warnings.push(m), quarantined });
+    // One bad day no longer takes the whole relay (and every report) down.
+    expect([...map.keys()]).toEqual(["2026-05-20"]);
+    expect([...quarantined]).toEqual(["2026-05-21"]);
+    expect(warnings.some((m) => /Sealed day 2026-05-21 could not be read/.test(m))).toBe(true);
+    expect(readFileSync(corrupt, "utf8")).toBe("{not json"); // never rewritten
+  });
+
+  test("a sealed day whose 1h cache-write share exceeds its total is repaired in memory", () => {
+    // The real 2026-09-16 shape: Claude Code reported ephemeral_1h = 2050 with
+    // cache_creation_input_tokens = 0 on three lines, and the sealed bucket
+    // carried 1,802,192 (1h) > 1,800,142 (total). The reader used to reject
+    // the day, and with it every history read.
+    const [day] = aggregateRecordsByDay([
+      r({
+        timestamp: ts("2026-09-16"),
+        cacheWriteTokens: 1_800_142,
+        cacheWrite1hTokens: 1_800_142,
+      }),
+    ]);
+    writeDayFile(home, day);
+    const path = join(aggregatesStoreDir(home), "2026-09-16.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    const bump = (b: { cacheWrite1hTokens?: number }) => {
+      b.cacheWrite1hTokens = 1_802_192;
+    };
+    bump(raw);
+    for (const m of Object.values(raw.models)) bump(m as never);
+    for (const p of Object.values(raw.providers)) bump(p as never);
+    for (const p of Object.values(raw.projects) as { modelBuckets: object }[]) {
+      bump(p as never);
+      for (const b of Object.values(p.modelBuckets)) bump(b as never);
+    }
+    writeFileSync(path, JSON.stringify(raw));
+    const before = readFileSync(path, "utf8");
+
+    const warnings: string[] = [];
+    const map = loadAggregates(home, { onWarning: (m) => warnings.push(m) });
+    const loaded = map.get("2026-09-16");
+    expect(loaded?.cacheWrite1hTokens).toBe(1_800_142);
+    expect(loaded?.models["claude-sonnet-4-5"]?.cacheWrite1hTokens).toBe(1_800_142);
+    expect(
+      loaded?.projects.demo?.modelBuckets["claude-code claude-sonnet-4-5"]?.cacheWrite1hTokens
+    ).toBe(1_800_142);
+    expect(loaded?.totalTokens).toBe(day.totalTokens); // totals untouched
+    expect(loaded?.cost).toBe(day.cost);
+    expect(warnings.some((m) => /2026-09-16: clamped the 1h cache-write share/.test(m))).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(before); // never rewritten on read
+  });
+
+  test("writeDayFile refuses a day the reader would reject", () => {
+    const [day] = aggregateRecordsByDay([r({ timestamp: ts("2026-05-20"), cost: 1 })]);
+    expect(() => writeDayFile(home, { ...day, totalTokens: day.totalTokens + 1 })).toThrow(
+      "Refusing to seal an invalid aggregate for 2026-05-20"
+    );
+    expect(listDaysOnDisk(home)).toEqual([]);
+  });
+
+  test("folding a record whose 1h share exceeds its writes clamps the share", () => {
+    const [day] = aggregateRecordsByDay([
+      r({ timestamp: ts("2026-09-16"), cacheWriteTokens: 0, cacheWrite1hTokens: 2050 }),
+      r({ timestamp: ts("2026-09-16") + 1, cacheWriteTokens: 500, cacheWrite1hTokens: 400 }),
+    ]);
+    expect(day.cacheWrite1hTokens).toBe(400);
+    expect(() => writeDayFile(home, day)).not.toThrow();
+    const acc = new DailyAccumulator("2026-09-16");
+    acc.fold(r({ timestamp: ts("2026-09-16"), cacheWriteTokens: 0, cacheWrite1hTokens: 2050 }));
+    expect(acc.toAggregate().cacheWrite1hTokens ?? 0).toBe(0);
   });
 
   test("deleteDayFile removes the file; subsequent reads return null", () => {

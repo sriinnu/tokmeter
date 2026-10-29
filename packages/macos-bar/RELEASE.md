@@ -32,7 +32,7 @@ set +a
 ./bundle.sh --release --no-install
 ```
 
-The bundler signs the app and nested Sparkle components, submits notarization, staples the accepted ticket, signs the final ZIP with Sparkle, and updates `appcast.xml`. Verify `codesign --verify --deep --strict`, `xcrun stapler validate`, `spctl --assess --type execute`, and the update signature against the bundled public key. Check the app version/build and bundled license/source archive.
+The bundler signs the app and nested Sparkle components (through `sign-app.sh`, the same script CI's signing job uses), submits notarization, staples the accepted ticket, signs the final ZIP with Sparkle, updates `appcast.xml`, and re-signs the feed. Since builds set `SURequireSignedFeed`, `appcast.xml` is a signed feed: any edit without re-signing (`sign_update -f <release key> --disable-signing-warning appcast.xml`) makes every such install reject it. Verify `codesign --verify --deep --strict`, `xcrun stapler validate`, `spctl --assess --type execute`, and the update signature against the bundled public key. Check the app version/build and bundled license/source archive.
 
 Create the GitHub release at the signed tag with the release-specific changelog and ZIP. Download the published ZIP and compare its SHA-256 to the verified local artifact. Verify both npm registry versions and tarball integrity.
 

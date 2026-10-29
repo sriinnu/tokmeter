@@ -12,8 +12,14 @@
  *      with lstat (no symlinks, regular files only, single link, no escapes).
  *   3. Only copy a file into place when its destination is inside an allowed
  *      root: the session paths the scanner itself reads (each parser's
- *      `sessionRoots`), the Claude Code side directories the cleaner backs up,
- *      tokmeter's own alias/config files, and this backup's SQL dump dir.
+ *      `restoreRoots`, else `sessionRoots`), the Claude Code side directories
+ *      the cleaner backs up, tokmeter's own alias/config files, and this
+ *      backup's SQL dump dir.
+ *
+ * Claude Code's `session-env` directory is backed up by cleanup but never
+ * restored: Claude Code executes the hook scripts it finds there, so writing
+ * archive bytes into it would let a snapshot plant code that runs on the next
+ * session start. Restore reports those entries as skipped.
  */
 
 import { execFileSync } from "node:child_process";
@@ -23,6 +29,7 @@ import { aliasFilePath } from "./alias-service.js";
 import { claudeSessionSideDirs } from "./cleaners/claude-code.js";
 import { configFilePath } from "./config-service.js";
 import { ALL_PARSERS } from "./parsers/index.js";
+import { ANY_PATH_SEGMENT } from "./parsers/utils.js";
 
 /** One archive member as reported by `tar -t`. */
 export interface ArchiveEntry {
@@ -154,18 +161,44 @@ export function isWithin(path: string, root: string): boolean {
 }
 
 /**
+ * True when `path` equals `root` or lies beneath it. A root segment equal to
+ * {@link ANY_PATH_SEGMENT} matches exactly one segment of `path`.
+ */
+export function isWithinRoot(path: string, root: string): boolean {
+  if (!root.includes(ANY_PATH_SEGMENT)) return isWithin(path, root);
+  const rootParts = resolve(root).split(sep);
+  const pathParts = resolve(path).split(sep);
+  if (pathParts.length < rootParts.length) return false;
+  return rootParts.every((seg, i) =>
+    seg === ANY_PATH_SEGMENT ? pathParts[i] !== "" : seg === pathParts[i]
+  );
+}
+
+/**
+ * Directories cleanup backs up that restore deliberately never writes into.
+ * Archive entries under these are skipped (and reported), not refused.
+ */
+export function restoreSkippedRoots(homeDir: string): string[] {
+  return [resolve(claudeSessionSideDirs(homeDir).sessionEnv)];
+}
+
+/**
  * Every path restore may write to for `homeDir`. Derived from the parsers'
- * own `sessionRoots` (the same functions their scans call) plus the paths
- * the cleaners and `createBackup` add to an archive.
+ * own `restoreRoots`/`sessionRoots` (the same functions their scans call)
+ * plus the paths the cleaners and `createBackup` add to an archive.
  */
 export function restoreAllowedRoots(homeDir: string, sqlDumpDir?: string): string[] {
   const roots = new Set<string>();
   for (const parser of ALL_PARSERS) {
-    for (const root of parser.sessionRoots?.(homeDir) ?? []) {
+    const parserRoots = parser.restoreRoots?.(homeDir) ?? parser.sessionRoots?.(homeDir) ?? [];
+    for (const root of parserRoots) {
       if (root) roots.add(resolve(root));
     }
   }
-  for (const dir of Object.values(claudeSessionSideDirs(homeDir))) roots.add(resolve(dir));
+  const skipped = restoreSkippedRoots(homeDir);
+  for (const dir of Object.values(claudeSessionSideDirs(homeDir))) {
+    if (!skipped.includes(resolve(dir))) roots.add(resolve(dir));
+  }
   roots.add(resolve(aliasFilePath(homeDir)));
   roots.add(resolve(configFilePath(homeDir)));
   if (sqlDumpDir) roots.add(resolve(sqlDumpDir));
@@ -173,18 +206,25 @@ export function restoreAllowedRoots(homeDir: string, sqlDumpDir?: string): strin
   // root — any of those would turn the allowlist into "anything". A
   // misconfigured providerPath like "~" or "/" is dropped, not honoured.
   const home = resolve(homeDir);
-  return [...roots].filter((r) => r !== resolve("/") && !isWithin(home, r));
+  // Nor may a root reach into a skipped directory (a providerPath pointing at
+  // ~/.claude/session-env would otherwise re-open it).
+  return [...roots].filter(
+    (r) =>
+      r !== resolve("/") &&
+      !isWithin(home, r) &&
+      !skipped.some((s) => isWithin(r, s) || isWithin(s, r))
+  );
 }
 
 /** True when `path` sits inside one of `roots`. */
 export function isAllowedRestorePath(path: string, roots: string[]): boolean {
-  return roots.some((root) => isWithin(path, root));
+  return roots.some((root) => isWithinRoot(path, root));
 }
 
 /** Do not let an existing parent symlink redirect a lexically allowed copy. */
 export function assertNoSymlinkParents(dest: string, homeDir: string, roots: string[]): void {
   const home = resolve(homeDir);
-  const root = roots.find((candidate) => isWithin(dest, candidate));
+  const root = roots.find((candidate) => isWithinRoot(dest, candidate));
   if (!root) throw new UnsafeArchiveError(`Restore destination is not allowlisted: ${dest}`);
   // Under HOME, trust only the already-open home path and inspect every child.
   // For an explicitly configured external root, inspect from the filesystem

@@ -151,7 +151,9 @@ describe("ClaudeCodeParser — one record per API response", () => {
     const parser = new ClaudeCodeParser();
     const warnings: string[] = [];
     expect(await parser.scan(home, { onWarning: (warning) => warnings.push(warning) })).toEqual([]);
-    expect(warnings.some((warning) => /unterminated final JSON object/.test(warning))).toBe(true);
+    // A line caught mid-write is left unconsumed and read once it completes;
+    // it is reported (it may be a pre-midnight record a seal must wait for).
+    expect(warnings.some((warning) => /still being written/.test(warning))).toBe(true);
 
     appendFileSync(file, `${complete.slice(split)}\n`);
     const records = await parser.scan(home);
@@ -219,5 +221,122 @@ describe("ClaudeCodeParser — one record per API response", () => {
     const records = await new ClaudeCodeParser().scan(home);
     expect(records).toHaveLength(2);
     expect(records.every((r) => r.apiCallId === undefined)).toBe(true);
+  });
+});
+
+describe("ClaudeCodeParser — 2026-10-29 accounting audit", () => {
+  it("clamps the 1h cache-write share to the cache writes it is a subset of", async () => {
+    // Raw Claude Code on 2026-09-16: ephemeral_1h = 2050 beside a total of 0.
+    writeFileSync(
+      file,
+      `${assistantLine("H", "2026-09-16T14:07:47.283Z", [{ type: "text" }], {
+        input_tokens: 5,
+        output_tokens: 10,
+        cache_read_input_tokens: 100,
+        cache_creation_input_tokens: 0,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2050 },
+      })}\n`
+    );
+    const [record] = await new ClaudeCodeParser().scan(home);
+    expect(record?.cacheWriteTokens).toBe(0);
+    expect(record?.cacheWrite1hTokens ?? 0).toBe(0);
+  });
+
+  it("folds a fork subagent's copy of its parent's last message into the original", async () => {
+    // Real shape: subagents/agent-*.jsonl opens with fork-context-ref, then a
+    // copy of the parent's last assistant message (same id, new timestamp).
+    const parent = assistantLine("P", "2026-10-29T08:38:49.770Z", [{ type: "text" }], usage(1250));
+    writeFileSync(file, `${parent}\n`);
+    const sub = join(dir, "sess-1", "subagents");
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(
+      join(sub, "agent-a60a.jsonl"),
+      `${[
+        JSON.stringify({ type: "fork-context-ref", agentId: "a60a", parentSessionId: "sess-1" }),
+        assistantLine("P", "2026-10-29T08:38:57.488Z", [{ type: "text" }], usage(1250)),
+        toolResultLine("2026-10-29T08:38:58.000Z"),
+        assistantLine("F", "2026-10-29T08:39:08.070Z", [{ type: "text" }], usage(300)),
+      ].join("\n")}\n`
+    );
+    const records = await new ClaudeCodeParser().scan(home);
+    expect(records.map((r) => r.apiCallId).sort()).toEqual(["msg_F", "msg_P"]);
+    const p = records.find((r) => r.apiCallId === "msg_P");
+    expect(p?.timestamp).toBe(Date.parse("2026-10-29T08:38:49.770Z")); // the original
+    expect(p?.isSubagent).toBeUndefined();
+  });
+
+  it("skips an oversized tool-output line and keeps counting after it", async () => {
+    const huge = JSON.stringify({
+      type: "user",
+      timestamp: "2026-10-21T13:51:32.024Z",
+      message: { content: [{ type: "tool_result", content: "x".repeat(9 * 1024 * 1024) }] },
+    });
+    writeFileSync(
+      file,
+      `${[
+        assistantLine("B1", "2026-10-21T13:50:00.000Z", [{ type: "text" }], usage(100)),
+        huge,
+        assistantLine("B2", "2026-10-21T13:52:00.000Z", [{ type: "text" }], usage(200)),
+      ].join("\n")}\n`
+    );
+    const warnings: string[] = [];
+    const notices: string[] = [];
+    const records = await new ClaudeCodeParser().scan(home, {
+      onWarning: (m) => warnings.push(m),
+      onNotice: (m) => notices.push(m),
+    });
+    expect(records.map((r) => r.outputTokens)).toEqual([100, 200]);
+    expect(warnings).toEqual([]); // a tool output carries no usage: not a partial scan
+    expect(notices.some((m) => /skipped 1 oversized line/.test(m))).toBe(true);
+  });
+
+  it("recovers the usage of an oversized assistant line from its head and tail", async () => {
+    const bigInput = "y".repeat(9 * 1024 * 1024);
+    writeFileSync(
+      file,
+      `${assistantLine("BIG", "2026-10-21T14:00:00.000Z", [{ type: "tool_use", name: "Write", input: bigInput } as never], usage(4321))}\n`
+    );
+    const warnings: string[] = [];
+    const records = await new ClaudeCodeParser().scan(home, { onWarning: (m) => warnings.push(m) });
+    expect(records).toHaveLength(1);
+    expect(records[0]?.apiCallId).toBe("msg_BIG");
+    expect(records[0]?.outputTokens).toBe(4321);
+    expect(records[0]?.cacheReadTokens).toBe(1000);
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps counting a session past 128 MiB, reading only the appended bytes", async () => {
+    // A whole-file 128 MiB refusal used to freeze such sessions: on real data
+    // a rebuild of 2026-10-21 lost 955 records (205M cache-read tokens).
+    writeFileSync(
+      file,
+      `${assistantLine("S1", "2026-10-21T10:00:00.000Z", [{ type: "text" }], usage(100))}\n`
+    );
+    const parser = new ClaudeCodeParser();
+    expect(await parser.scan(home)).toHaveLength(1);
+    const pad = `${JSON.stringify({ type: "user", message: { content: "z".repeat(1_000_000) } })}\n`;
+    const chunk = pad.repeat(10);
+    for (let i = 0; i < 14; i++) appendFileSync(file, chunk); // ~140 MB
+    appendFileSync(
+      file,
+      `${assistantLine("S2", "2026-10-21T11:00:00.000Z", [{ type: "text" }], usage(5000))}\n`
+    );
+    const warnings: string[] = [];
+    const records = await parser.scan(home, { onWarning: (m) => warnings.push(m) });
+    expect(records.map((r) => r.outputTokens)).toEqual([100, 5000]);
+    expect(warnings).toEqual([]);
+  }, 60_000);
+
+  it("skips a malformed non-usage line instead of dropping the rest of the file", async () => {
+    writeFileSync(
+      file,
+      `${[
+        assistantLine("M1", "2026-10-21T10:00:00.000Z", [{ type: "text" }], usage(100)),
+        '{"type":"assistant","broken":',
+        assistantLine("M2", "2026-10-21T10:01:00.000Z", [{ type: "text" }], usage(200)),
+      ].join("\n")}\n`
+    );
+    const records = await new ClaudeCodeParser().scan(home);
+    expect(records.map((r) => r.outputTokens)).toEqual([100, 200]);
   });
 });

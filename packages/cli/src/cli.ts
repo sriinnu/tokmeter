@@ -16,7 +16,7 @@ process.on("uncaughtException", (error) => {
 
 import { homedir } from "node:os";
 import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
-import { localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
+import { localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { readOwnVersion } from "./cron.js";
 import {
@@ -1119,7 +1119,7 @@ async function main() {
     for (const f of report.unread.slice(0, 50)) {
       const kb = `${Math.max(1, Math.round(f.bytes / 1024))} KB`.padStart(9);
       console.log(
-        `  ${kb}  ${f.kind === "compressed" ? "compressed" : "usage     "}  ${tilde(f.path)}  [${f.providers.join(", ")}]`
+        `  ${kb}  ${f.kind === "compressed" ? "compressed" : "usage     "}  ${sanitizeDataLabel(tilde(f.path), 4096)}  [${f.providers.map((p) => sanitizeDataLabel(p, 64)).join(", ")}]`
       );
     }
     if (report.unread.length > 50)

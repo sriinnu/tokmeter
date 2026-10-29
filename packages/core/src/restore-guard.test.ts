@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadAliases } from "./alias-service.js";
 import { CleanupService, EMPTY_FILTER_MESSAGE, isEmptyCleanupFilter } from "./cleanup-service.js";
 import { loadConfig } from "./config-service.js";
 import {
@@ -442,6 +443,131 @@ describe("restoreAllowedRoots", () => {
     expect(roots).toContain(join(home, ".claude", "todos"));
     expect(roots.some((r) => isWithin(home, r))).toBe(false);
     expect(roots).not.toContain("/");
+  });
+});
+
+describe("CleanupService.restore — never writes executable or config paths", () => {
+  it("skips Claude Code session-env hook scripts and still restores the transcript", () => {
+    const hook = join(home, ".claude", "session-env", UUID, "sessionstart-hook-0.sh");
+    writeBackup([
+      { name: member(transcript()), content: '{"ok":1}\n' },
+      { name: member(hook), content: "#!/bin/sh\necho planted\n" },
+    ]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(transcript(), "utf-8")).toBe('{"ok":1}\n');
+    expect(existsSync(hook)).toBe(false);
+    expect(result.skipped?.map((s) => s.file)).toEqual([hook]);
+    expect(restoreAllowedRoots(home)).not.toContain(join(home, ".claude", "session-env"));
+  });
+
+  it("skips session-env on a cross-home restore too", () => {
+    writeBackup(
+      [
+        { name: `home/alice/.claude/projects/-work-p/${UUID}.jsonl`, content: "from alice\n" },
+        { name: `home/alice/.claude/session-env/${UUID}/sessionstart-hook-0.sh`, content: "x" },
+      ],
+      { sourceHomeDir: "/home/alice" }
+    );
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(transcript(), "utf-8")).toBe("from alice\n");
+    expect(existsSync(join(home, ".claude", "session-env"))).toBe(false);
+    expect(result.skipped).toHaveLength(1);
+  });
+
+  it("refuses an OpenClaw config file in a legacy config dir and writes nothing", () => {
+    const config = join(home, ".clawdbot", "clawdbot.json");
+    writeBackup([
+      { name: member(transcript()), content: "legit\n" },
+      { name: member(config), content: '{"gateway":"evil"}' },
+    ]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.errors[0].error).toMatch(/outside the known agent session paths/);
+    expect(existsSync(config)).toBe(false);
+    expect(existsSync(transcript())).toBe(false);
+  });
+
+  it("refuses OpenClaw agent files outside its sessions folder", () => {
+    const auth = join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    writeBackup([{ name: member(auth), content: "{}" }]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.errors[0].error).toMatch(/outside the known agent session paths/);
+    expect(existsSync(auth)).toBe(false);
+  });
+
+  it("still restores OpenClaw session files", () => {
+    const session = join(home, ".clawdbot", "agents", "main", "sessions", "s1.jsonl");
+    const index = join(home, ".openclaw", "agents", "main", "sessions", "sessions.json");
+    writeBackup([
+      { name: member(session), content: '{"type":"message"}\n' },
+      { name: member(index), content: "{}" },
+    ]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+
+    expect(result.errors).toEqual([]);
+    expect(readFileSync(session, "utf-8")).toBe('{"type":"message"}\n');
+    expect(readFileSync(index, "utf-8")).toBe("{}");
+  });
+});
+
+describe("CleanupService.restore — security settings stay this machine's", () => {
+  it("keeps the local antigravityLivePolling value and never hides a visible project", () => {
+    const cfgPath = join(home, ".tokmeter", "config.json");
+    const aliasPath = join(home, ".tokmeter", "aliases.json");
+    mkdirSync(join(home, ".tokmeter"), { recursive: true });
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({ daemon: { antigravityLivePolling: false }, modifiedBy: "tokmeter" })
+    );
+    const at = "2026-01-01T00:00:00.000Z";
+    writeFileSync(
+      aliasPath,
+      JSON.stringify({
+        visible: { display: "Visible", hidden: false, modifiedBy: "tokmeter", modifiedAt: at },
+        quiet: { display: "Quiet", hidden: true, modifiedBy: "user", modifiedAt: at },
+      })
+    );
+    const later = "2099-01-01T00:00:00.000Z";
+    writeBackup([
+      { name: member(transcript()), content: '{"ok":1}\n' },
+      {
+        name: member(cfgPath),
+        content: JSON.stringify({
+          daemon: { antigravityLivePolling: true, scanIntervalSeconds: 120 },
+          modifiedBy: "user",
+          modifiedAt: later,
+        }),
+      },
+      {
+        name: member(aliasPath),
+        content: JSON.stringify({
+          visible: { display: "Visible", hidden: true, modifiedBy: "user", modifiedAt: later },
+          fresh: { display: "Fresh", hidden: true, modifiedBy: "user", modifiedAt: later },
+          quiet: { display: "Quiet", hidden: true, modifiedBy: "user", modifiedAt: later },
+        }),
+      },
+    ]);
+
+    const result = service().restore(BACKUP_ID, backupDir);
+    const aliases = loadAliases(home);
+
+    expect(result.errors).toEqual([]);
+    expect(loadConfig(home).daemon.antigravityLivePolling).toBe(false);
+    // Non-security settings still merge from the newer archive.
+    expect(loadConfig(home).daemon.scanIntervalSeconds).toBe(120);
+    expect(aliases.visible.hidden).toBe(false);
+    expect(aliases.fresh.hidden).toBe(false);
+    expect(aliases.quiet.hidden).toBe(true);
   });
 });
 
