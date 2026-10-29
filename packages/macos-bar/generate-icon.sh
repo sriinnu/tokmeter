@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-icon.sh — create AppIcon.icns with a twilight infinity glyph.
+# generate-icon.sh — create AppIcon.icns: the sealed-ledger mark (logo.svg).
 #
 # Draws the icon programmatically via Core Graphics (embedded Swift script)
 # so there's no dependency on rsvg-convert / Inkscape / ImageMagick. Every
@@ -27,9 +27,12 @@ cat > "${SWIFT_SRC}" <<'SWIFT'
 import AppKit
 import CoreGraphics
 
-// I render at 1024 because that's the largest macOS icon size (@2x of 512).
+// Same 64-unit geometry as logo.svg and site/public/icon.svg, so every
+// surface shows one mark. `small` draws the 16–32 px master: a brighter ramp
+// and a solid live cell, because an outline blurs away at those sizes.
 let size: CGFloat = 1024
 let outPath = CommandLine.arguments[1]
+let small = CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "small"
 
 guard let ctx = CGContext(
     data: nil,
@@ -44,110 +47,67 @@ guard let ctx = CGContext(
     exit(1)
 }
 
-// Clear to transparent so the squircle mask shows through.
+func hex(_ v: UInt32) -> CGColor {
+    CGColor(
+        srgbRed: CGFloat((v >> 16) & 0xff) / 255,
+        green: CGFloat((v >> 8) & 0xff) / 255,
+        blue: CGFloat(v & 0xff) / 255,
+        alpha: 1
+    )
+}
+
 ctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
 
-// Twilight gradient background (same palette as the statusline).
-// Stops: indigo -> violet -> lighter violet, top-left to bottom-right.
-let cs = CGColorSpace(name: CGColorSpace.sRGB)!
-let colors: CFArray = [
-    CGColor(srgbRed: 0.263, green: 0.220, blue: 0.792, alpha: 1.0),  // #4338ca
-    CGColor(srgbRed: 0.427, green: 0.157, blue: 0.851, alpha: 1.0),  // #6d28d9
-    CGColor(srgbRed: 0.545, green: 0.361, blue: 0.965, alpha: 1.0),  // #8b5cf6
-] as CFArray
-let locations: [CGFloat] = [0.0, 0.5, 1.0]
-let gradient = CGGradient(colorsSpace: cs, colors: colors, locations: locations)!
-
-// macOS squircle: ~22.5% corner radius, 64px margin to match the Apple
-// icon grid.
+// Flip to SVG's top-left origin, then map the 64-unit tile onto the Apple
+// icon grid: 64 px margin, 896 px tile, so 1 unit = 14 px.
 let margin: CGFloat = 64
-let rect = CGRect(x: margin, y: margin, width: size - 2 * margin, height: size - 2 * margin)
-let radius: CGFloat = 200
-let squircle = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+let unit = (size - 2 * margin) / 64
+ctx.translateBy(x: 0, y: size)
+ctx.scaleBy(x: 1, y: -1)
+ctx.translateBy(x: margin, y: margin)
+ctx.scaleBy(x: unit, y: unit)
 
-ctx.saveGState()
-ctx.addPath(squircle)
-ctx.clip()
-ctx.drawLinearGradient(
-    gradient,
-    start: CGPoint(x: 0, y: size),
-    end: CGPoint(x: size, y: 0),
-    options: []
-)
-ctx.restoreGState()
+func rounded(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ r: CGFloat) -> CGPath {
+    CGPath(roundedRect: CGRect(x: x, y: y, width: w, height: h), cornerWidth: r, cornerHeight: r, transform: nil)
+}
 
-// Subtle white inner stroke for depth.
-ctx.saveGState()
-ctx.addPath(squircle)
-ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.15))
-ctx.setLineWidth(2)
-ctx.strokePath()
-ctx.restoreGState()
-
-// The infinity glyph, drawn as two overlapping circles that form a lemniscate
-// via a single continuous stroke. I centre it slightly below-middle so the
-// visual weight sits right.
-ctx.saveGState()
-ctx.translateBy(x: size / 2, y: size / 2 - 28)
-
-let infinity = CGMutablePath()
-// Left lobe
-infinity.move(to: CGPoint(x: -240, y: 0))
-infinity.addCurve(
-    to: CGPoint(x: -80, y: 40),
-    control1: CGPoint(x: -240, y: -100),
-    control2: CGPoint(x: -140, y: -100)
-)
-infinity.addLine(to: CGPoint(x: 0, y: -40))
-infinity.addLine(to: CGPoint(x: 80, y: 40))
-infinity.addCurve(
-    to: CGPoint(x: 240, y: 0),
-    control1: CGPoint(x: 140, y: -100),
-    control2: CGPoint(x: 240, y: -100)
-)
-infinity.addCurve(
-    to: CGPoint(x: 80, y: -40),
-    control1: CGPoint(x: 240, y: 100),
-    control2: CGPoint(x: 140, y: 100)
-)
-infinity.addLine(to: CGPoint(x: 0, y: 40))
-infinity.addLine(to: CGPoint(x: -80, y: -40))
-infinity.addCurve(
-    to: CGPoint(x: -240, y: 0),
-    control1: CGPoint(x: -140, y: 100),
-    control2: CGPoint(x: -240, y: 100)
-)
-infinity.closeSubpath()
-
-// Soft glow underneath: draw the path twice with decreasing blur.
-ctx.setShadow(offset: .zero, blur: 24, color: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.4))
-ctx.addPath(infinity)
-ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-ctx.setLineWidth(56)
-ctx.setLineCap(.round)
-ctx.setLineJoin(.round)
-ctx.strokePath()
-ctx.restoreGState()
-
-// Amber sparkle accent in the upper-right corner.
-ctx.saveGState()
-ctx.translateBy(x: 760, y: size - 280)  // flip y because CG is bottom-up
-let sparkle = CGMutablePath()
-sparkle.move(to: CGPoint(x: 0, y: -40))
-sparkle.addLine(to: CGPoint(x: 8, y: -8))
-sparkle.addLine(to: CGPoint(x: 40, y: 0))
-sparkle.addLine(to: CGPoint(x: 8, y: 8))
-sparkle.addLine(to: CGPoint(x: 0, y: 40))
-sparkle.addLine(to: CGPoint(x: -8, y: 8))
-sparkle.addLine(to: CGPoint(x: -40, y: 0))
-sparkle.addLine(to: CGPoint(x: -8, y: -8))
-sparkle.closeSubpath()
-ctx.addPath(sparkle)
-ctx.setFillColor(CGColor(srgbRed: 0.961, green: 0.690, blue: 0.255, alpha: 0.9))  // #f5b041
+// Tile, with the hairline edge the SVG master carries.
+ctx.addPath(rounded(0, 0, 64, 64, 14))
+ctx.setFillColor(hex(0x171B25))
 ctx.fillPath()
-ctx.restoreGState()
+if !small {
+    ctx.addPath(rounded(0.5, 0.5, 63, 63, 13.5))
+    ctx.setStrokeColor(hex(0x2A3142))
+    ctx.setLineWidth(1)
+    ctx.strokePath()
+}
 
-// Serialize to PNG.
+// Eight sealed days, row by row; the ninth cell is today.
+let detail: [UInt32] = [0x3B2F7A, 0x5B45C9, 0x8B7CFF, 0x5B45C9, 0xB4A8FF, 0x3B2F7A, 0x8B7CFF, 0x5B45C9]
+let bright: [UInt32] = [0x5B45C9, 0x8B7CFF, 0xB4A8FF, 0x8B7CFF, 0xB4A8FF, 0x5B45C9, 0xB4A8FF, 0x8B7CFF]
+let ramp = small ? bright : detail
+let origins: [CGFloat] = [7, 25, 43]
+for (i, color) in ramp.enumerated() {
+    ctx.addPath(rounded(origins[i % 3], origins[i / 3], 14, 14, small ? 3 : 3.5))
+    ctx.setFillColor(hex(color))
+    ctx.fillPath()
+}
+
+let amber = hex(0xF5B841)
+if small {
+    ctx.addPath(rounded(43, 43, 14, 14, 3))
+    ctx.setFillColor(amber)
+    ctx.fillPath()
+} else {
+    ctx.addPath(rounded(44.25, 44.25, 11.5, 11.5, 2.5))
+    ctx.setStrokeColor(amber)
+    ctx.setLineWidth(2.5)
+    ctx.strokePath()
+    ctx.addEllipse(in: CGRect(x: 50 - 2.6, y: 50 - 2.6, width: 5.2, height: 5.2))
+    ctx.setFillColor(amber)
+    ctx.fillPath()
+}
+
 guard let image = ctx.makeImage() else {
     fputs("failed to snapshot CGImage\n", stderr)
     exit(1)
@@ -160,11 +120,13 @@ guard let data = rep.representation(using: .png, properties: [:]) else {
 try data.write(to: URL(fileURLWithPath: outPath))
 SWIFT
 
-echo "==> Rendering base 1024x1024 PNG via Core Graphics"
+SMALL_PNG=$(mktemp -t tokmeter-icon-small-XXXXXX).png
+echo "==> Rendering 1024x1024 masters via Core Graphics"
 swift "${SWIFT_SRC}" "${BASE_PNG}"
+swift "${SWIFT_SRC}" "${SMALL_PNG}" small
 
-# macOS .iconset layout: 10 PNGs at the standard sizes. sips handles the
-# downscale cleanly from the 1024px master.
+# macOS .iconset layout: 10 PNGs at the standard sizes, downscaled by sips.
+# 16 and 32 px come from the small master; everything larger from the detail one.
 declare -a sizes=(
     "16 icon_16x16.png"
     "32 icon_16x16@2x.png"
@@ -181,11 +143,13 @@ declare -a sizes=(
 for entry in "${sizes[@]}"; do
     size="${entry%% *}"
     name="${entry#* }"
+    src="${BASE_PNG}"
+    [[ "${size}" -le 32 ]] && src="${SMALL_PNG}"
     echo "==> Writing ${name} (${size}px)"
-    sips -z "${size}" "${size}" "${BASE_PNG}" --out "${ICONSET}/${name}" >/dev/null
+    sips -z "${size}" "${size}" "${src}" --out "${ICONSET}/${name}" >/dev/null
 done
 
-rm -f "${SWIFT_SRC}" "${BASE_PNG}"
+rm -f "${SWIFT_SRC}" "${BASE_PNG}" "${SMALL_PNG}"
 
 # Compile the .iconset folder into a single .icns file.
 echo "==> Compiling ${OUT}"

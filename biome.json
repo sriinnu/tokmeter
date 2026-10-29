@@ -67,16 +67,6 @@
       "linter": {
         "enabled": false
       }
-    },
-    {
-      "includes": ["packages/web/src/charts/TodayHourlyChart.tsx"],
-      "linter": {
-        "rules": {
-          "a11y": {
-            "noStaticElementInteractions": "off"
-          }
-        }
-      }
     }
   ]
 }

@@ -134,7 +134,6 @@ export function useTokmeterData(): {
   const [source, setSource] = useState<TokmeterSummarySource | null>(cachedSource);
 
   useEffect(() => {
-    const controller = new AbortController();
     let cancelled = false;
 
     async function loadData(isBackgroundRefresh: boolean): Promise<void> {
@@ -143,7 +142,7 @@ export function useTokmeterData(): {
       }
 
       try {
-        const { data: nextData, source: nextSource } = await fetchTokmeterData(controller.signal);
+        const { data: nextData, source: nextSource } = await fetchTokmeterData();
         const loadedAt = Date.now();
 
         cachedData = nextData;
@@ -198,16 +197,20 @@ export function useTokmeterData(): {
       cancelled = true;
       window.clearInterval(refreshTimer);
       document.removeEventListener("visibilitychange", refreshOnVisibilityChange);
-      controller.abort();
     };
   }, []);
 
   return { data, loading, error, warning, lastLoadedAt, source };
 }
 
-async function fetchTokmeterData(
-  signal: AbortSignal
-): Promise<{ data: TokmeterData; source: TokmeterSummarySource }> {
+/**
+ * One request shared by every mounted subscriber. It deliberately carries no
+ * subscriber's AbortSignal: when the subscriber that started it unmounted
+ * (StrictMode's double mount, a route change), aborting it failed every other
+ * subscriber with "Request aborted". A subscriber that goes away just ignores
+ * the result; the dashboard server bounds the request with its own timeout.
+ */
+async function fetchTokmeterData(): Promise<{ data: TokmeterData; source: TokmeterSummarySource }> {
   if (inflightRequest) {
     return inflightRequest;
   }
@@ -219,7 +222,6 @@ async function fetchTokmeterData(
       try {
         const response = await fetch(endpoint, {
           cache: "no-store",
-          signal,
           headers: { Accept: "application/json" },
         });
 
@@ -238,13 +240,11 @@ async function fetchTokmeterData(
     }
 
     throw new Error(errors.join(" | "));
-  })();
-
-  try {
-    return await inflightRequest;
-  } finally {
+  })().finally(() => {
     inflightRequest = null;
-  }
+  });
+
+  return inflightRequest;
 }
 
 async function readJsonResponse(

@@ -126,13 +126,14 @@ describe("refreshFromRelay — cold-start / gap-fill orchestration", () => {
     expect(state.historySource).toBe("extended");
   });
 
-  test("forceRebuild ignores the on-disk relay and rebuilds from the (empty) corpus", async () => {
-    seedDay(home, REF - DAY, 9.99);
+  test("forceRebuild keeps sealed days the corpus no longer holds", async () => {
+    // Raw ages out in weeks; the relay is the only copy of most sealed days.
+    // A full rebuild over an empty corpus used to return no history at all.
+    const date = seedDay(home, REF - DAY, 9.99);
     const warnings: never[] = [];
     const state = await refreshFromRelay(ctxFor(home), REF, warnings, true);
-    // A forced rebuild derives purely from the corpus (empty here) — the seeded
-    // day is not carried over.
-    expect(state.aggregates.size).toBe(0);
+    expect(state.aggregates.get(date)?.cost).toBe(9.99);
+    expect(listDaysOnDisk(home)).toContain(date);
     expect(listDaysOnDisk(home)).not.toContain(localDateKey(REF));
   });
 });
@@ -285,6 +286,46 @@ describe("rebuildRecentWindow — sealed days never shrink without force", () =>
     const warnings: ScanWarning[] = [];
     const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
     expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+  });
+});
+
+describe("full rebuild (rescanHistory) — sealed days only grow", () => {
+  let home: string;
+  const DAY_KEY = "2026-06-13";
+  const OLD_KEY = "2026-05-01"; // raw long gone
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "tokmeter-full-rescan-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function sealDay(key: string, tokenCounts: number[]): void {
+    const ts = Date.parse(`${key}T12:00:00`);
+    const [day] = aggregateRecordsByDay(tokenCounts.map((n, i) => codexRecord(ts + i, n)));
+    writeDayFile(home, day);
+  }
+
+  test("partial raw → sealed day kept on disk and in memory, with a warning", async () => {
+    sealDay(DAY_KEY, [100, 200]);
+    writeCodexFixture(home, DAY_KEY, [100]);
+    const warnings: ScanWarning[] = [];
+    const state = await refreshFromRelay(ctxFor(home), REF, warnings, true);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+    expect(loadAggregates(home).get(DAY_KEY)?.totalTokens).toBe(300);
+    expect(warnings.some((w) => /kept 1 sealed day\(s\) \(2026-06-13\)/.test(w.message))).toBe(
+      true
+    );
+  });
+
+  test("a day with no raw left survives; a grown day is replaced", async () => {
+    sealDay(OLD_KEY, [500]);
+    sealDay(DAY_KEY, [100]);
+    writeCodexFixture(home, DAY_KEY, [100, 200]);
+    const state = await refreshFromRelay(ctxFor(home), REF, [], true);
+    expect(state.aggregates.get(OLD_KEY)?.totalTokens).toBe(500);
+    expect(state.aggregates.get(DAY_KEY)?.totalTokens).toBe(300);
+    expect(loadAggregates(home).get(DAY_KEY)?.totalTokens).toBe(300);
   });
 });
 
