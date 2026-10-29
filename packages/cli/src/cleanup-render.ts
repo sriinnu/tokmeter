@@ -84,6 +84,15 @@ export function renderPreview(preview: CleanupPreview): void {
       );
     }
   }
+
+  if (preview.unremovable && preview.unremovable.length > 0) {
+    console.log("\n  ⓘ  LEFT IN PLACE:");
+    for (const u of preview.unremovable) {
+      console.log(
+        `     ${shortPath(u.path)} [${sanitizeDataLabel(u.provider, 64)}]: ${sanitizeDataLabel(u.reason, 256)}`
+      );
+    }
+  }
 }
 
 /** Print the result summary after a cleanup execution. */

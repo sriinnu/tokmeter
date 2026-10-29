@@ -607,6 +607,13 @@ export async function mapWithConcurrency<T, R>(
 /** Default maximum number of files returned by findFiles. */
 const DEFAULT_MAX_FILES = 10_000;
 
+/**
+ * Placeholder segment for `SessionParser.restoreRoots`: matches exactly one
+ * path segment (e.g. an agent id). It contains a NUL byte, so no real path
+ * segment can ever equal it.
+ */
+export const ANY_PATH_SEGMENT = "\u0000*";
+
 /** Expand ~ to home directory. */
 export function expandHome(path: string, homeDir: string): string {
   if (path.startsWith("~")) {

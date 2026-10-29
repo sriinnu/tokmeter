@@ -10,16 +10,18 @@
  * Cross-provider aggregation comes from the Tokmeter daemon.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import {
   claudeCodeQuota,
+  ensurePrivateDirectory,
   getKoshaRegistryMtime,
   localDateKey,
   recordQuotaSamples,
+  writePrivateFile,
 } from "@sriinnu/tokmeter";
 import type { TokenUsage } from "./daemon/protocol.js";
 import { C, FALLBACK_STATUSLINE } from "./formatter.js";
@@ -32,27 +34,51 @@ import {
 
 // ─── Hot-path caches ────────────────────────────────────────────────────
 // The statusline runs as a fresh subprocess every ~200ms. To avoid
-// re-doing expensive work (git execSync, full disk scan), we persist
+// re-doing expensive work (repo subprocesses, full disk scan), we persist
 // short-lived results to a per-user cache dir and read them back if fresh.
 //
 // Per-user dir is critical: a shared /tmp file would leak one user's
-// totals to another on multi-user systems. Mode 0700 on the dir.
+// totals to another on multi-user systems, and on Linux a predictable name in
+// the sticky /tmp lets another user pre-create it (or a symlink) first. The
+// cache lives in $XDG_RUNTIME_DIR (per-user, 0700, set by systemd/logind) when
+// present, else under ~/.cache/tokmeter. The dir is forced to 0700 and owned by
+// us; files are written atomically as 0600 without following symlinks.
 
-function getCacheDir(): string {
-  let uid = "unknown";
-  try {
-    uid = String(userInfo().uid);
-  } catch {}
-  const dir = join(tmpdir(), `tokmeter-${uid}`);
-  if (!existsSync(dir)) {
-    try {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-    } catch {}
-  }
-  return dir;
+/** Where the statusline keeps its hot-path caches for this user. */
+export function statuslineCacheDir(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir()
+): string {
+  const runtime = env.XDG_RUNTIME_DIR;
+  if (runtime && isAbsolute(runtime)) return join(runtime, "tokmeter-statusline");
+  return join(home, ".cache", "tokmeter", "statusline");
 }
 
-const CACHE_DIR = getCacheDir();
+let cacheDirResolved = false;
+let cacheDir: string | null = null;
+
+/**
+ * The private cache dir, created on first use; null when it can't be made
+ * safe (wrong owner, a symlink, unwritable) — the statusline then runs
+ * uncached rather than writing somewhere another user controls.
+ */
+function getCacheDir(): string | null {
+  if (cacheDirResolved) return cacheDir;
+  cacheDirResolved = true;
+  const dir = statuslineCacheDir();
+  try {
+    ensurePrivateDirectory(dir);
+    cacheDir = dir;
+  } catch {
+    cacheDir = null;
+  }
+  return cacheDir;
+}
+
+function cacheFile(name: string): string | null {
+  const dir = getCacheDir();
+  return dir ? join(dir, name) : null;
+}
 
 interface CacheWrapper<T> {
   ts: number;
@@ -61,8 +87,8 @@ interface CacheWrapper<T> {
   key?: string;
 }
 
-function readCache<T>(path: string, ttlMs: number, expectedKey?: string): T | null {
-  if (!existsSync(path)) return null;
+function readCache<T>(path: string | null, ttlMs: number, expectedKey?: string): T | null {
+  if (!path || !existsSync(path)) return null;
   try {
     const raw = readFileSync(path, "utf-8");
     const wrapper = JSON.parse(raw) as CacheWrapper<T>;
@@ -80,11 +106,12 @@ function readCache<T>(path: string, ttlMs: number, expectedKey?: string): T | nu
   }
 }
 
-function writeCache<T>(path: string, data: T, key?: string): void {
+function writeCache<T>(path: string | null, data: T, key?: string): void {
+  if (!path) return;
   try {
     const wrapper: CacheWrapper<T> = { ts: Date.now(), data };
     if (key !== undefined) wrapper.key = key;
-    writeFileSync(path, JSON.stringify(wrapper), { encoding: "utf-8", mode: 0o600 });
+    writePrivateFile(path, JSON.stringify(wrapper));
   } catch {}
 }
 
@@ -241,13 +268,12 @@ export function estimateTurnsLeft(history: number[], pct: number): number | null
 }
 
 function trackContextTurns(sessionId: string, pct: number): number | null {
-  const path = join(
-    CACHE_DIR,
+  const path = cacheFile(
     `ctx-${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}.json`
   );
   let history: number[] = [];
   try {
-    history = JSON.parse(readFileSync(path, "utf-8")) as number[];
+    if (path) history = JSON.parse(readFileSync(path, "utf-8")) as number[];
     if (!Array.isArray(history)) history = [];
   } catch {}
   const last = history[history.length - 1];
@@ -255,7 +281,7 @@ function trackContextTurns(sessionId: string, pct: number): number | null {
   if (last === undefined || pct !== last) history.push(pct);
   history = history.slice(-8);
   try {
-    writeFileSync(path, JSON.stringify(history), { mode: 0o600 });
+    if (path) writePrivateFile(path, JSON.stringify(history));
   } catch {}
   return estimateTurnsLeft(history, pct);
 }
@@ -336,6 +362,20 @@ interface GitInfo {
 }
 
 /**
+ * Run git in the session's repo without letting that repo run code or take
+ * locks: the cwd is whatever project Claude Code has open, and its
+ * .git/config could name an fsmonitor hook that `git status` would execute.
+ */
+export function runGit(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-c", "core.fsmonitor=false", ...args], {
+    cwd,
+    timeout: 1500,
+    stdio: ["ignore", "pipe", "ignore"],
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+  }).toString();
+}
+
+/**
  * Get git branch + dirty count for a repo.
  *
  * Cache invalidation is content-aware: we key on the mtime of `.git/HEAD`,
@@ -343,7 +383,7 @@ interface GitInfo {
  * switch is reflected instantly (no polling delay) AND we still get the
  * cache hit benefit when nothing changed. TTL is a safety net at 10s.
  *
- * Two execSync calls would otherwise block the statusline ~50–300ms on a
+ * Two git subprocesses would otherwise block the statusline ~50–300ms on a
  * busy repo; the cache cuts that to a single fs read on the hot path.
  */
 function getGitInfo(cwd: string): GitInfo | null {
@@ -352,27 +392,15 @@ function getGitInfo(cwd: string): GitInfo | null {
   if (!existsSync(headPath)) return null;
 
   const headKey = safeMtimeKey(headPath);
-  const cachePath = join(CACHE_DIR, `git-${cwdHash(cwd)}.json`);
+  const cachePath = cacheFile(`git-${cwdHash(cwd)}.json`);
   const cached = readCache<GitInfo>(cachePath, 10_000, headKey);
   if (cached) return cached;
 
   try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-      cwd,
-      timeout: 1500,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
+    const branch = runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
     let dirty = 0;
     try {
-      const status = execSync("git status --porcelain", {
-        cwd,
-        timeout: 1500,
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-        .toString()
-        .trim();
+      const status = runGit(cwd, ["status", "--porcelain"]).trim();
       if (status) dirty = status.split("\n").length;
     } catch {}
     const info = { branch, dirty };
@@ -462,7 +490,7 @@ export function isConnectionRefused(err: unknown): boolean {
 }
 
 async function getTodayTotalsCached(): Promise<TodayRead> {
-  const cachePath = join(CACHE_DIR, "today.json");
+  const cachePath = cacheFile("today.json");
   const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}`;
   const now = Date.now();
   const cached = readCache<TodayTotals>(cachePath, 20_000, contentKey);
@@ -504,7 +532,7 @@ async function getTodayTotalsCached(): Promise<TodayRead> {
 
   if (refused) await startDaemonThrottled();
 
-  const lastGood = readLastGoodToday(cachePath);
+  const lastGood = cachePath ? readLastGoodToday(cachePath) : null;
   if (lastGood)
     return { state: "stale", totals: lastGood.totals, ageMs: Math.max(0, now - lastGood.ts) };
   return { state: "down" };
@@ -522,13 +550,19 @@ async function getTodayTotalsCached(): Promise<TodayRead> {
  * tunable via TOKMETER_DAEMON_HEAP_MB to match the daemon's own constant.
  */
 async function startDaemonThrottled(): Promise<void> {
-  const marker = join(CACHE_DIR, "daemon-spawn.at");
+  const marker = cacheFile("daemon-spawn.at");
+  // No safe place for the throttle marker → don't spawn at all; an
+  // unthrottled spawn every ~200ms tick would be far worse than waiting for
+  // the next real `daemon start`.
+  if (!marker) return;
   try {
     if (Date.now() - statSync(marker).mtimeMs < DAEMON_SPAWN_THROTTLE_MS) return;
   } catch {}
   try {
-    writeFileSync(marker, String(Date.now()), { mode: 0o600 });
-  } catch {}
+    writePrivateFile(marker, String(Date.now()));
+  } catch {
+    return;
+  }
   try {
     const { spawn } = await import("node:child_process");
     const daemonHeapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";

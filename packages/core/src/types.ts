@@ -601,6 +601,14 @@ export interface SessionParser {
    */
   sessionRoots?(homeDir: string): string[];
   /**
+   * Where restore may write for this parser, when that is narrower than
+   * `sessionRoots` (e.g. a scan root that is a whole config directory, of
+   * which only the session subdirectories are session data). A segment equal
+   * to `ANY_PATH_SEGMENT` matches exactly one path segment. Defaults to
+   * `sessionRoots`.
+   */
+  restoreRoots?(homeDir: string): string[];
+  /**
    * Optional memory-bounded variant: parse file-by-file, handing each file's
    * records to `onFile` so a caller (the relay rebuild) can fold + release them
    * instead of holding the whole corpus. Parsers that omit this fall back to
@@ -704,6 +712,12 @@ export interface CleanupPreview {
   }[];
   /** Transparency: files with records outside the filter that will also be lost. */
   partialFileWarnings: PartialFileWarning[];
+  /**
+   * Matched source files cleanup will NOT delete, with the reason — e.g. a
+   * shared app database (Cursor's state.vscdb) that holds every session plus
+   * unrelated app state. Their records stay on disk.
+   */
+  unremovable?: { path: string; provider: ProviderId; reason: string }[];
 }
 
 /** Result after executing cleanup. */
@@ -778,4 +792,10 @@ export interface RestoreResult {
    * tasks, todos, session-env) consistently.
    */
   renamedCount?: number;
+  /**
+   * Archive entries deliberately not written back (e.g. Claude Code's
+   * `session-env` directory, which holds scripts Claude Code executes).
+   * Skipping is not an error: everything else in the archive still restores.
+   */
+  skipped?: { file: string; reason: string }[];
 }

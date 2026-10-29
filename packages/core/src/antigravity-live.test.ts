@@ -14,9 +14,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type AntigravitySnapshot,
   computeCreditsUsedToday,
+  MAX_RESPONSE_BYTES,
+  parseLanguageServerCandidates,
+  processListArgs,
   pruneSnapshotHistory,
+  readCappedText,
   readLatestSnapshot,
   readSnapshotHistory,
+  toSnapshot,
 } from "./antigravity-live.js";
 
 let tmpDir: string;
@@ -140,5 +145,65 @@ describe("pruneSnapshotHistory", () => {
     seedSnapshots([snapshot({ timestamp: 1 }), snapshot({ timestamp: 2 })]);
     pruneSnapshotHistory(10, tmpDir);
     expect(readSnapshotHistory(tmpDir).length).toBe(2);
+  });
+});
+
+describe("live poller trust boundaries", () => {
+  it("lists only the current user's processes", () => {
+    expect(processListArgs(501)).toEqual(["-ww", "-U", "501", "-o", "pid=,args="]);
+  });
+
+  it("parses language_server candidates from ps output", () => {
+    const out = [
+      "  123 /Applications/Antigravity.app/language_server --csrf_token abc-123 --port 1",
+      "  456 /usr/bin/other --csrf_token deadbeef",
+      "  789 language_server --extension_server_csrf_token f00d --csrf_token beef",
+    ].join("\n");
+    expect(parseLanguageServerCandidates(out)).toEqual([
+      { pid: "123", csrfToken: "abc-123" },
+      { pid: "789", csrfToken: "f00d" },
+    ]);
+  });
+
+  it("refuses a response body over the cap, by header or by streamed size", async () => {
+    const big = "x".repeat(MAX_RESPONSE_BYTES + 1);
+    expect(await readCappedText(new Response(big), MAX_RESPONSE_BYTES)).toBeNull();
+    const streamed = new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < 3; i++) controller.enqueue(new Uint8Array(600 * 1024));
+          controller.close();
+        },
+      })
+    );
+    expect(await readCappedText(streamed, MAX_RESPONSE_BYTES)).toBeNull();
+    expect(await readCappedText(new Response('{"ok":1}'), MAX_RESPONSE_BYTES)).toBe('{"ok":1}');
+  });
+
+  it("strips terminal controls from model labels and reset times before logging", () => {
+    const snap = toSnapshot(
+      {
+        userStatus: {
+          planStatus: { availablePromptCredits: 10, availableFlowCredits: Number.NaN },
+          cascadeModelConfigData: {
+            clientModelConfigs: [
+              {
+                label: "Gemini\u001b]0;owned\u0007 Pro‮",
+                quotaInfo: { resetTime: "2026-01-01\u001b[2J", remainingFraction: 0.5 },
+              },
+              { label: "\u001b[31m" },
+            ],
+          },
+        },
+      },
+      42
+    );
+    expect(snap).toEqual({
+      timestamp: 42,
+      availablePromptCredits: 10,
+      availableFlowCredits: 0,
+      models: [{ label: "Gemini Pro", resetTime: "2026-01-01", remainingFraction: 0.5 }],
+    });
+    expect(toSnapshot({})).toBeNull();
   });
 });

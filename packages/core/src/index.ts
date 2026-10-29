@@ -5,6 +5,7 @@
  *   import { TokmeterCore } from "@sriinnu/tokmeter-core";
  */
 
+export { nullMap } from "./aggregates.js";
 export {
   aggregateByDate,
   aggregateByModel,
@@ -45,6 +46,7 @@ export {
   getCleaner,
   getCleaners,
 } from "./cleaners/index.js";
+export { UnsafeCleanupTargetError } from "./cleanup-guard.js";
 export {
   CleanupService,
   cleanupPreviewDigest,
@@ -99,6 +101,7 @@ export {
   PricingService,
   refreshKoshaRegistry,
 } from "./pricing.js";
+export { ensurePrivateDirectory, writePrivateFile } from "./private-files.js";
 export {
   canonicalizeProjectName,
   projectMatchKey,

@@ -8,6 +8,7 @@
  */
 
 import { lstat, rm } from "node:fs/promises";
+import { isSharedDatabaseFile } from "../cleanup-guard.js";
 import type { CleanupResult, CleanupTarget, ProviderId, SessionCleaner } from "../types.js";
 
 export class SimpleFileCleaner implements SessionCleaner {
@@ -21,9 +22,14 @@ export class SimpleFileCleaner implements SessionCleaner {
     const targets: CleanupTarget[] = [];
 
     for (const file of sourceFiles) {
+      // A shared app database (e.g. Cursor's state.vscdb) holds every session
+      // and unrelated app state; it is never deleted as a whole file.
+      // CleanupService reports it as not removable.
+      if (isSharedDatabaseFile(file)) continue;
       let sizeBytes = 0;
       try {
         const s = await lstat(file);
+        if (!s.isFile()) continue;
         sizeBytes = s.size;
       } catch {
         // File may already be gone — skip

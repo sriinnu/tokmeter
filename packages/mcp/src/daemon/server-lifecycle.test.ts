@@ -141,3 +141,112 @@ test("a competing bind cannot replace or remove the winner's token and identity"
   expect(readFileSync(files.DAEMON_IDENTITY_FILE, "utf8")).toBe(identity);
   expect(readFileSync(files.DAEMON_PID_FILE, "utf8")).toBe(String(process.pid));
 }, 10_000);
+
+test("a held HTTP port stops startup before any token, pid or identity is published", async () => {
+  const root = mkdtempSync(join(tmpdir(), "drishti-http-squat-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const files = {
+    DAEMON_STATE_DIR: root,
+    DAEMON_PID_FILE: join(root, "daemon.pid"),
+    DAEMON_IDENTITY_FILE: join(root, "identity.json"),
+    DAEMON_TOKEN_FILE: join(root, "daemon.token"),
+    DAEMON_STATE_FILE: join(root, "state.json"),
+    LEGACY_DAEMON_PID_FILE: join(root, "legacy.pid"),
+    LEGACY_DAEMON_TOKEN_FILE: join(root, "legacy.token"),
+  };
+  vi.doMock("./protocol.js", () => ({
+    ...files,
+    DAEMON_PORT: 0,
+    DAEMON_HOST: "127.0.0.1",
+    DAEMON_URL: "ws://127.0.0.1:0",
+  }));
+  vi.doMock("node:os", async () => ({
+    ...(await vi.importActual<object>("node:os")),
+    setPriority: vi.fn(),
+  }));
+  vi.doMock("./identity.js", async () => ({
+    ...(await vi.importActual<object>("./identity.js")),
+    readProcessEvidence: () => ({ startedAt: "fixture lifetime", command: "fixture daemon" }),
+  }));
+  vi.doMock("@sriinnu/tokmeter", () => ({
+    loadConfig: () => ({ daemon: { antigravityLivePolling: false } }),
+    localDateKey: () => "2026-09-08",
+    pollAntigravityLiveStatus: vi.fn(),
+    refreshKoshaRegistry: vi.fn(),
+    TokmeterCore: class {
+      async scan() {}
+    },
+  }));
+  // Another process owns the HTTP port: listen() fails with EADDRINUSE.
+  vi.doMock("node:http", () => ({
+    createServer: () => {
+      const server = new EventEmitter() as EventEmitter & {
+        listen: (...args: unknown[]) => void;
+        close: () => void;
+      };
+      server.listen = () => {
+        setImmediate(() =>
+          server.emit(
+            "error",
+            Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" })
+          )
+        );
+      };
+      server.close = () => {};
+      return server;
+    },
+  }));
+  const sockets: EventEmitter[] = [];
+  vi.doMock("ws", async () => {
+    const real = await vi.importActual<typeof import("ws")>("ws");
+    return {
+      ...real,
+      WebSocketServer: class extends real.WebSocketServer {
+        constructor(options: import("ws").ServerOptions) {
+          super({ ...options, port: 0 });
+          sockets.push(this);
+        }
+      },
+    };
+  });
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  const errors: string[] = [];
+  vi.spyOn(console, "error").mockImplementation((...args) => {
+    errors.push(args.map(String).join(" "));
+  });
+  // Capture the delayed exit instead of waiting a minute for it.
+  const realSetTimeout = globalThis.setTimeout;
+  const delayed: Array<() => void> = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    fn: (...args: unknown[]) => void,
+    ms?: number,
+    ...rest: unknown[]
+  ) => {
+    if (ms === 60_000) {
+      delayed.push(fn);
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }
+    return realSetTimeout(() => fn(...rest), ms);
+  }) as typeof setTimeout);
+  const previousExitCode = process.exitCode;
+  cleanups.push(() => {
+    process.exitCode = previousExitCode;
+  });
+
+  const server = await import("./server.js");
+  cleanups.push(() => server.stopDaemon());
+  server.startDaemon();
+  await once(sockets[0], "listening");
+  await new Promise((resolve) => realSetTimeout(resolve, 20));
+
+  for (const f of Object.values(files).filter((f) => f !== root)) {
+    expect(existsSync(f), f).toBe(false);
+  }
+  expect(errors.join("\n")).toMatch(/already in use by another process.*no auth token/s);
+  expect(process.exitCode).toBe(1);
+  // Exit is non-zero (a supervisor sees a failure) but spaced out, not a tight loop.
+  expect(delayed).toHaveLength(1);
+  delayed[0]();
+  expect(exit).toHaveBeenCalledWith(1);
+}, 10_000);

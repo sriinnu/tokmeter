@@ -33,6 +33,11 @@ import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
 import {
+  assertSafeCleanupTargets,
+  isSharedDatabaseFile,
+  SHARED_DATABASE_REASON,
+} from "./cleanup-guard.js";
+import {
   configFilePath,
   loadConfig,
   mergeConfigs,
@@ -54,6 +59,7 @@ import {
   isWithin,
   listArchiveEntries,
   restoreAllowedRoots,
+  restoreSkippedRoots,
   UnsafeArchiveError,
 } from "./restore-guard.js";
 import { invalidateSummaryCache } from "./summary-cache.js";
@@ -256,10 +262,28 @@ export class CleanupService {
       };
     }
 
-    // 3. Group matched records by sourceFile
+    // 3. Group matched records by sourceFile. A shared app database (one
+    //    file holding every session plus unrelated app state) is never
+    //    handed to a cleaner: deleting it would take far more than the match.
     const sourceFilesByProvider = new Map<ProviderId, Set<string>>();
+    const unremovable = new Map<string, { path: string; provider: ProviderId; reason: string }>();
+    const sharedDb = new Map<string, boolean>();
     for (const r of matchedRecords) {
       if (!r.sourceFile) continue;
+      if (unremovable.has(r.sourceFile)) continue;
+      let isShared = sharedDb.get(r.sourceFile);
+      if (isShared === undefined) {
+        isShared = isSharedDatabaseFile(r.sourceFile);
+        sharedDb.set(r.sourceFile, isShared);
+      }
+      if (isShared) {
+        unremovable.set(r.sourceFile, {
+          path: r.sourceFile,
+          provider: r.provider,
+          reason: SHARED_DATABASE_REASON,
+        });
+        continue;
+      }
       const files = sourceFilesByProvider.get(r.provider) || new Set();
       files.add(r.sourceFile);
       sourceFilesByProvider.set(r.provider, files);
@@ -273,18 +297,40 @@ export class CleanupService {
       const files = sourceFilesByProvider.get(cleaner.providerId);
       if (!files || files.size === 0) continue;
       const targets = await cleaner.resolveTargets([...files], this.homeDir);
-      allTargets.push(...targets);
+      for (const t of targets) {
+        // Belt and braces: whatever a cleaner derives, a database file is
+        // reported, never deleted.
+        if (t.type === "file" && isSharedDatabaseFile(t.path)) {
+          if (!unremovable.has(t.path)) {
+            unremovable.set(t.path, {
+              path: t.path,
+              provider: t.provider,
+              reason: SHARED_DATABASE_REASON,
+            });
+          }
+          continue;
+        }
+        allTargets.push(t);
+      }
     }
 
-    // 5. Detect partial files (transparency)
-    const partialFileWarnings = this.detectPartialFiles(matchedRecords, allRecords);
+    // Containment: no target may be (or contain) the home dir, ~/.claude, or
+    // a session root. Throws before anything is shown as deletable.
+    assertSafeCleanupTargets(allTargets, this.homeDir);
+
+    // 5. Detect partial files (transparency). Files left in place lose
+    //    nothing, so they don't warn.
+    const deletableRecords = matchedRecords.filter(
+      (r) => !r.sourceFile || !unremovable.has(r.sourceFile)
+    );
+    const partialFileWarnings = this.detectPartialFiles(deletableRecords, allRecords);
 
     // 6. Build breakdowns
     const byProvider = this.buildProviderBreakdown(matchedRecords, allTargets);
     const byProject = this.buildProjectBreakdown(matchedRecords);
 
     const totalBytes = allTargets.reduce((s, t) => s + t.sizeBytes, 0);
-    const sourceFileCount = new Set(matchedRecords.map((r) => r.sourceFile).filter(Boolean)).size;
+    const sourceFileCount = new Set(deletableRecords.map((r) => r.sourceFile).filter(Boolean)).size;
 
     return {
       recordCount: matchedRecords.length,
@@ -294,6 +340,7 @@ export class CleanupService {
       byProvider,
       byProject,
       partialFileWarnings,
+      ...(unremovable.size > 0 ? { unremovable: [...unremovable.values()] } : {}),
     };
   }
 
@@ -359,6 +406,10 @@ export class CleanupService {
       }
       backupPath = path;
     }
+
+    // Re-check containment immediately before deleting: the backup step
+    // above took time, and this is the last point where refusing is free.
+    assertSafeCleanupTargets(preview.targets, this.homeDir);
 
     // Execute deletion per provider
     const cleaners = getCleaners(filter.providers);
@@ -516,6 +567,9 @@ export class CleanupService {
         join(dirname(archivePath), `${backupId}-sql-dumps`)
       );
 
+      const skippedRoots = restoreSkippedRoots(currentHome);
+      const skipped: { file: string; reason: string }[] = [];
+
       let renamedCount = 0;
 
       // Capture the user's current aliases BEFORE the extract so we can
@@ -568,6 +622,20 @@ export class CleanupService {
             plan.push({ src, rel: relative(sourceHomeInSandbox, src) });
           }
         }
+
+        // Drop entries restore never writes (Claude Code's session-env holds
+        // hook scripts Claude Code executes). Reported, not fatal.
+        const writable = plan.filter((p) => {
+          const dest = destFor(p.rel);
+          if (!skippedRoots.some((root) => isWithin(dest, root))) return true;
+          skipped.push({
+            file: dest,
+            reason: "Claude Code session-env is never restored (it holds executable hook scripts)",
+          });
+          return false;
+        });
+        plan.length = 0;
+        plan.push(...writable);
 
         const assertAllowed = (dest: string, rel: string) => {
           const insideHome = sameHome || !sourceHome || isWithin(dest, currentHome);
@@ -651,7 +719,10 @@ export class CleanupService {
       //   1. `modifiedBy: "user"` wins over `"tokmeter"`.
       //   2. If both have same flag, latest `modifiedAt` wins.
       const aliasesAfterRestore: AliasMap = loadAliases(currentHome);
-      const mergedAliases = mergeAliasMaps(aliasesBeforeRestore, aliasesAfterRestore);
+      const mergedAliases = keepLocalHiddenState(
+        mergeAliasMaps(aliasesBeforeRestore, aliasesAfterRestore),
+        aliasesBeforeRestore
+      );
       if (Object.keys(mergedAliases).length > 0) {
         saveAliases(mergedAliases, currentHome);
       }
@@ -664,8 +735,16 @@ export class CleanupService {
       // win even when the archive's config is newer. Otherwise a hostile
       // snapshot could name ~/Library/LaunchAgents and the next restore
       // would treat it as an allowed root.
+      // Same for security opt-ins: antigravityLivePolling makes the daemon
+      // read another app's process command line and call its internal RPC,
+      // which must stay an explicit choice made on this machine.
+      const merged = mergeConfigs(configBeforeRestore, configAfterRestore);
       const mergedConfig: UserConfig = {
-        ...mergeConfigs(configBeforeRestore, configAfterRestore),
+        ...merged,
+        daemon: {
+          ...merged.daemon,
+          antigravityLivePolling: configBeforeRestore.daemon.antigravityLivePolling,
+        },
         providerPaths: configBeforeRestore.providerPaths,
         customSources: configBeforeRestore.customSources,
       };
@@ -682,7 +761,12 @@ export class CleanupService {
       invalidateHistorySnapshot(this.homeDir);
       invalidateSummaryCache(this.homeDir);
 
-      return { restoredCount: meta.recordCount, errors: [], renamedCount };
+      return {
+        restoredCount: meta.recordCount,
+        errors: [],
+        renamedCount,
+        ...(skipped.length > 0 ? { skipped } : {}),
+      };
     } catch (err) {
       return {
         restoredCount: 0,
@@ -1025,6 +1109,20 @@ function mergeAliasMaps(a: AliasMap, b: AliasMap): AliasMap {
     const leftTs = Date.parse(left.modifiedAt) || 0;
     const rightTs = Date.parse(right.modifiedAt) || 0;
     out[key] = rightTs >= leftTs ? right : left;
+  }
+  return out;
+}
+
+/**
+ * An archive may hide a project only if it is already hidden here: a restored
+ * alias map must never make spend disappear from this machine's totals.
+ */
+function keepLocalHiddenState(merged: AliasMap, local: AliasMap): AliasMap {
+  // Null prototype: a project literally named "__proto__" stays a key.
+  const out: AliasMap = Object.assign(Object.create(null) as AliasMap, merged);
+  for (const [key, entry] of Object.entries(merged)) {
+    const hiddenHere = Object.hasOwn(local, key) && Boolean(local[key]?.hidden);
+    if (entry.hidden && !hiddenHere) out[key] = { ...entry, hidden: false };
   }
   return out;
 }
