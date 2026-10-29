@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- VS Code Copilot Chat sessions saved as `*.jsonl` are read again. VS Code now
+  writes each session as a mutation log (an initial state, then sets and
+  array splices), and tokmeter parsed the file as a single JSON document. Any
+  session longer than one line threw, which failed the whole VS Code Copilot
+  provider — and because a failed provider blocks every day it might touch, a
+  Deep Rescan or `tokmeter backfill` could not correct any sealed day. Session
+  logs under `workspaceStorage/*/chatSessions/` are read too; before, only the
+  older `*.json` sessions there were. Copilot still reports request counts
+  only, no tokens or cost.
+- `tokmeter backfill` (a window rebuild on a fresh process) loads kosha before
+  it prices anything. It implied each sealed day's price cards with kosha's
+  runtime not yet loaded, so models that only resolve there — aliases such as
+  ribhu's `fable`/`opus`, fuzzy matches — got no card, and a forced rebuild
+  billed them $0 with not one token changed. The daemon's Deep Rescan was not
+  affected.
+- A forced rebuild of a day sealed before price cards existed no longer zeroes
+  a model kosha has since dropped. It gets an implied flat card at that day's
+  average cost per token, so unchanged tokens keep exactly their sealed cost.
+
 ## [1.19.4] - 2026-10-29
 
 ### Security

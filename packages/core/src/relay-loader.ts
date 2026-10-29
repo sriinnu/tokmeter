@@ -395,6 +395,17 @@ export async function rebuildRecentWindow(
   const floorKey = localDateKey(floorMs);
   const quarantined = new Set<string>();
   const aggregates = loadRelay(ctx.homeDir, warnings, quarantined);
+  // Load kosha before implying cards. scanRawRecords inits pricing, but it runs
+  // after the cards below, and on a fresh core (`tokmeter backfill`) nothing
+  // had loaded kosha's runtime yet: no aliases, no fuzzy matches, so a sealed
+  // model such as ribhu's "fable" got no card and a forced rebuild billed it $0.
+  if (!ctx.skipPricing) {
+    try {
+      await ctx.pricing.init();
+    } catch {
+      /* scanRawRecords reports a pricing init failure */
+    }
+  }
   // Each sealed day in the window rebuilds at its OWN prices — the cards it
   // sealed with, or implied ones for a day sealed before cards existed — so a
   // rescan changes a day's cost only when its tokens change, never because

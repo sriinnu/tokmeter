@@ -149,7 +149,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      of refusing the file, and folds a fork-subagent's copy of its parent's
 //      message into the original. v23 caches can hold 1h > total, nothing for
 //      sessions past 128 MiB, and fork duplicates; rebuild.
-const CACHE_VERSION = 24;
+// 25 — vscode-copilot replays *.jsonl chat sessions as mutation logs and reads
+//      them under workspaceStorage too. v24 threw on any multi-line session
+//      (failing the whole provider) and never saw workspace *.jsonl sessions.
+const CACHE_VERSION = 25;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
