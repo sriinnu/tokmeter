@@ -322,25 +322,40 @@ async function rebuildHistoricalFromScratch(
 ): Promise<RelayState> {
   const quarantined = new Set<string>();
   const existing = loadRelay(ctx.homeDir, warnings, quarantined);
+  // Each sealed day rebuilds at its own prices, as in the window rebuild.
+  const kept = await keptPrices(ctx, existing, warnings);
+  const cardFor = (r: TokenRecord) => kept.get(localDateKey(r.timestamp))?.[r.model]?.card;
   const warnBefore = warnings.length;
-  const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings);
+  const days = await foldRawIntoDays(ctx, referenceTimestamp, warnings, undefined, cardFor);
   const rebuildWarnings = warnings.slice(warnBefore);
-  // Persist every day the scan covered completely. A day a faulting file may
-  // hold keeps whatever is sealed for it (or stays unsealed). This used to
-  // refuse the whole rebuild on any partial read — so on a corpus with one
-  // unreadable file a fresh install never got history, and redid the full
-  // rebuild on every start.
-  const aggregates = new Map<string, DailyAggregate>();
+  // Start from everything sealed. Raw ages out in weeks, so most sealed days
+  // have nothing left to rebuild from: the relay is their only copy. This
+  // used to start from an empty map and overwrite every rebuilt day, so a
+  // full rescan dropped those days from history and shrank any day whose raw
+  // had partly aged out.
+  const aggregates = new Map(existing);
   const held: string[] = [];
+  const keptSealed: string[] = [];
   for (const [date, day] of days) {
     if (quarantined.has(date)) continue; // unreadable sealed file: never overwrite it here
+    // Persist every day the scan covered completely. A day a faulting file may
+    // hold keeps whatever is sealed for it (or stays unsealed). This used to
+    // refuse the whole rebuild on any partial read — so on a corpus with one
+    // unreadable file a fresh install never got history, and redid the full
+    // rebuild on every start.
     if (warningsBlockDay(rebuildWarnings, date)) {
       held.push(date);
-      const sealed = existing.get(date);
-      if (sealed) aggregates.set(date, sealed);
       continue;
     }
-    await withPrices(ctx, day, warnings);
+    // Grow-only, like the window rebuild without force: a full rescan is the
+    // wrong tool to shrink a sealed day — that takes an explicit forced
+    // window rebuild after a backup.
+    const sealed = existing.get(date);
+    if (sealed && shouldKeepSealedDay(sealed, day, { force: false })) {
+      keptSealed.push(date);
+      continue;
+    }
+    await withPrices(ctx, day, warnings, kept.get(date));
     try {
       writeDayFile(ctx.homeDir, day);
       aggregates.set(date, day);
@@ -361,10 +376,57 @@ async function rebuildHistoricalFromScratch(
   if (held.length > 0) {
     warnings.push({
       scope: "history",
-      message: `Full rebuild not persisted for ${held.length} day(s) (${held.slice(0, 5).join(", ")}${held.length > 5 ? ", …" : ""}): a file that may hold their records could not be fully read. Every other day was rebuilt.`,
+      message: `Full rebuild not persisted for ${held.length} day(s) (${listDays(held)}): a file that may hold their records could not be fully read. Every other day was rebuilt.`,
+    });
+  }
+  if (keptSealed.length > 0) {
+    warnings.push({
+      scope: "history",
+      message: `Full rebuild kept ${keptSealed.length} sealed day(s) (${listDays(keptSealed)}) whose rebuild carried less data — usually raw that has aged out. Sealed days only grow; a forced window rebuild is the way to shrink one.`,
     });
   }
   return { aggregates, historySource: days.size > 0 ? "rebuilt" : "none" };
+}
+
+function listDays(days: string[]): string {
+  return `${days.slice(0, 5).join(", ")}${days.length > 5 ? ", …" : ""}`;
+}
+
+/**
+ * The cards each sealed day on/after `floorKey` rebuilds with — the ones it
+ * sealed with, or implied ones for a day sealed before cards existed — so a
+ * rebuild changes a day's cost only when its tokens change, never because
+ * kosha's rates moved since.
+ */
+async function keptPrices(
+  ctx: ScanContext,
+  aggregates: Map<string, DailyAggregate>,
+  warnings: ScanWarning[],
+  floorKey?: string
+): Promise<Map<string, DayPrices>> {
+  const kept = new Map<string, DayPrices>();
+  if (ctx.skipPricing) return kept;
+  // Load kosha before implying cards. scanRawRecords inits pricing, but it runs
+  // after this, and on a fresh core (`tokmeter backfill`) nothing had loaded
+  // kosha's runtime yet: no aliases, no fuzzy matches, so a sealed model such
+  // as ribhu's "fable" got no card and a forced rebuild billed it $0.
+  try {
+    await ctx.pricing.init();
+  } catch {
+    /* scanRawRecords reports a pricing init failure */
+  }
+  for (const [date, day] of aggregates) {
+    if (floorKey !== undefined && date < floorKey) continue;
+    try {
+      kept.set(date, await pricesForRebuild(day, ctx.pricing));
+    } catch (error) {
+      warnings.push({
+        scope: "history",
+        message: `Couldn't read the prices ${date} sealed at — its rebuild uses today's: ${toErrorMessage(error)}`,
+      });
+    }
+  }
+  return kept;
 }
 
 /**
@@ -395,35 +457,8 @@ export async function rebuildRecentWindow(
   const floorKey = localDateKey(floorMs);
   const quarantined = new Set<string>();
   const aggregates = loadRelay(ctx.homeDir, warnings, quarantined);
-  // Load kosha before implying cards. scanRawRecords inits pricing, but it runs
-  // after the cards below, and on a fresh core (`tokmeter backfill`) nothing
-  // had loaded kosha's runtime yet: no aliases, no fuzzy matches, so a sealed
-  // model such as ribhu's "fable" got no card and a forced rebuild billed it $0.
-  if (!ctx.skipPricing) {
-    try {
-      await ctx.pricing.init();
-    } catch {
-      /* scanRawRecords reports a pricing init failure */
-    }
-  }
-  // Each sealed day in the window rebuilds at its OWN prices — the cards it
-  // sealed with, or implied ones for a day sealed before cards existed — so a
-  // rescan changes a day's cost only when its tokens change, never because
-  // kosha's rates moved since.
-  const kept = new Map<string, DayPrices>();
-  if (!ctx.skipPricing) {
-    for (const [date, day] of aggregates) {
-      if (date < floorKey) continue;
-      try {
-        kept.set(date, await pricesForRebuild(day, ctx.pricing));
-      } catch (error) {
-        warnings.push({
-          scope: "history",
-          message: `Couldn't read the prices ${date} sealed at — its rebuild uses today's: ${toErrorMessage(error)}`,
-        });
-      }
-    }
-  }
+  // Each sealed day in the window rebuilds at its OWN prices.
+  const kept = await keptPrices(ctx, aggregates, warnings, floorKey);
   const cardFor = (r: TokenRecord) => kept.get(localDateKey(r.timestamp))?.[r.model]?.card;
   const warnBefore = warnings.length;
   const rebuilt = await foldRawIntoDays(ctx, referenceTimestamp, warnings, floorMs, cardFor);
