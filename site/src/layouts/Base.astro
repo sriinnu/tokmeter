@@ -21,6 +21,7 @@ const canonical = new URL(path, 'https://tokmeter.srinivas.dev').href;
     <title>{full}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="icon" type="image/png" href="/icon.png" />
     <link rel="apple-touch-icon" href="/icon.png" />
     <meta property="og:title" content={full} />
@@ -35,7 +36,7 @@ const canonical = new URL(path, 'https://tokmeter.srinivas.dev').href;
   <body>
     <a class="skip" href="#main">Skip to content</a>
     <header class="top">
-      <a class="brand" href="/"><img src="/icon.png" width="28" height="28" alt="" /><span>Tokmeter</span></a>
+      <a class="brand" href="/"><img src="/icon.svg" width="28" height="28" alt="" /><span>Tokmeter</span></a>
       <nav aria-label="Main">
         {nav.map(([href, label]) => <a href={href} aria-current={path === href ? 'page' : undefined}>{label}</a>)}
       </nav>
@@ -46,7 +47,7 @@ const canonical = new URL(path, 'https://tokmeter.srinivas.dev').href;
     <footer class="site-foot">
       <div class="foot-grid">
         <div class="foot-brand">
-          <a class="brand" href="/"><img src="/icon.png" width="32" height="32" alt="" /><span>Tokmeter</span></a>
+          <a class="brand" href="/"><img src="/icon.svg" width="32" height="32" alt="" /><span>Tokmeter</span></a>
           <p>Token and cost totals for every AI coding agent you run, read from your own disk. No account, no telemetry.</p>
         </div>
         <nav aria-label="Use">
