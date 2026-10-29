@@ -9,26 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The daemon's live-session feed (`/api/live`, the dashboard's Live sessions
-  card, and the menubar's context-fill colour via `liveContextFillPct`) was
-  always empty. The statusline did push each session, but it is a one-shot
-  process: it connects, sends, and closes, and the daemon treated that close as
-  the end of the session, so it was gone within milliseconds and deleted a
-  minute later. Liveness now means "still pushing": a session stays live for
-  five minutes after its last push, or until it unregisters, and a silent
-  socket no longer keeps one live forever.
-- The statusline sends that push after its line is written and flushed, not
-  before rendering, and caps it at 150 ms. It no longer waits for the daemon's
-  reply, which it never used.
-- The pushed context fill is Claude Code's own `used_percentage`, the same
-  number the statusline shows, so the menubar and the statusline agree.
-
-### Added
-
-- `TOKMETER_DAEMON_PORT` runs an isolated daemon on another port (HTTP on port
-  + 1) beside the real one, for tests and end-to-end checks. A daemon on an
-  overridden port keeps its compatibility shims in its own state dir, not
-  `/tmp`, and never drives the launchd agent.
+- VS Code Copilot Chat sessions saved as `*.jsonl` are read again. VS Code now
+  writes each session as a mutation log (an initial state, then sets and
+  array splices), and tokmeter parsed the file as a single JSON document. Any
+  session longer than one line threw, which failed the whole VS Code Copilot
+  provider — and because a failed provider blocks every day it might touch, a
+  Deep Rescan or `tokmeter backfill` could not correct any sealed day. Session
+  logs under `workspaceStorage/*/chatSessions/` are read too; before, only the
+  older `*.json` sessions there were. Copilot still reports request counts
+  only, no tokens or cost.
+- `tokmeter backfill` (a window rebuild on a fresh process) loads kosha before
+  it prices anything. It implied each sealed day's price cards with kosha's
+  runtime not yet loaded, so models that only resolve there — aliases such as
+  ribhu's `fable`/`opus`, fuzzy matches — got no card, and a forced rebuild
+  billed them $0 with not one token changed. The daemon's Deep Rescan was not
+  affected.
+- A forced rebuild of a day sealed before price cards existed no longer zeroes
+  a model kosha has since dropped. It gets an implied flat card at that day's
+  average cost per token, so unchanged tokens keep exactly their sealed cost.
 
 ## [1.19.4] - 2026-10-29
 
