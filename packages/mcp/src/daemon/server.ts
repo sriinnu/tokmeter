@@ -60,6 +60,7 @@ import {
   kickstartAgent,
   uninstallAgent,
 } from "./launchd.js";
+import { DAEMON_PORT_ENV, daemonPortOverride } from "./port.js";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
   DAEMON_HOST,
@@ -477,7 +478,14 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         msg.tokens,
         msg.durationMs,
         msg.contextWindow,
-        { transcriptPath: msg.session.transcriptPath }
+        // The whole SessionInfo, so a one-shot `update` (the statusline sends
+        // nothing else) registers with its real model/project/cwd.
+        {
+          model: msg.session.model,
+          project: msg.session.project,
+          cwd: msg.session.cwd,
+          transcriptPath: msg.session.transcriptPath,
+        }
       );
 
       if (session) {
@@ -1816,9 +1824,20 @@ async function readBody(req: IncomingMessage): Promise<any> {
  * isn't left hanging.
  */
 export async function runDaemonCLI(command: string): Promise<void> {
+  // The launchd agent supervises the default-port daemon. A daemon on an
+  // overridden port (port.ts) is an isolated sandbox and must never kickstart,
+  // stop or reinstall the real one.
+  const portOverridden = daemonPortOverride() !== null;
+  if (portOverridden && ["install-agent", "uninstall-agent"].includes(command)) {
+    console.log(
+      `launchd supervision applies to the default daemon port only; unset ${DAEMON_PORT_ENV}.`
+    );
+    return;
+  }
+  const agentLoaded = () => !portOverridden && isAgentLoaded();
   if (
     ["stop", "restart", "install-agent"].includes(command) &&
-    !isAgentLoaded() &&
+    !agentLoaded() &&
     getDaemonStatus().identity === "unverified"
   ) {
     throw new Error(
@@ -1841,7 +1860,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       // instead of stranding the user offline on a kickstart that errors.
       // The daemon-child env guard lets launchd's OWN `daemon start` fall
       // through to the foreground path below.
-      if (!isDaemonChildEnv() && isAgentLoaded()) {
+      if (!isDaemonChildEnv() && agentLoaded()) {
         try {
           kickstartAgent();
           await new Promise((r) => setTimeout(r, 800));
@@ -1911,7 +1930,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       // abnormal exit. Bail with the real instruction instead of looking like
       // the stop failed. Gate on isAgentLoaded() (actually managing it), not a
       // stale plist on disk.
-      if (isAgentLoaded()) {
+      if (agentLoaded()) {
         console.log(
           "Daemon is launchd-supervised — stopping it directly won't stick.\n" +
             "    To stop it, run: tokmeter-mcp daemon uninstall-agent"
@@ -1943,7 +1962,7 @@ export async function runDaemonCLI(command: string): Promise<void> {
       // launchd-managed: a single kickstart -k kills + restarts atomically,
       // and avoids a SIGTERM the agent would just respawn anyway. Gate on
       // loaded, and fall through to the manual path if the kickstart errors.
-      if (isAgentLoaded()) {
+      if (agentLoaded()) {
         try {
           kickstartAgent();
           await new Promise((r) => setTimeout(r, 800));

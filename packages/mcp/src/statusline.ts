@@ -24,6 +24,7 @@ import {
   writePrivateFile,
 } from "@sriinnu/tokmeter";
 import type { TokenUsage } from "./daemon/protocol.js";
+import type { SessionPush } from "./daemon/push.js";
 import { C, FALLBACK_STATUSLINE } from "./formatter.js";
 import {
   type RateWindowView,
@@ -616,6 +617,7 @@ export async function runStatusline(): Promise<void> {
   // alive if everything finished cleanly first.
   const watchdog = setTimeout(() => process.exit(0), 4000);
   watchdog.unref();
+  let pendingPush: SessionPush | null = null;
 
   try {
     let input: StatuslineInput;
@@ -667,30 +669,35 @@ export async function runStatusline(): Promise<void> {
     // unhandled rejection in between would kill the process.
     const todayPromise = getTodayTotalsCached().catch((): TodayRead => ({ state: "down" }));
 
-    // ── Daemon sync (background, non-blocking) ──
+    // ── Daemon push: built now, sent only after the line is on stdout ──
+    // Without a real session id there is nothing to keep live; a synthetic
+    // per-render id would only mint a junk session every tick.
     const sessionId = input.session_id ?? `session-${now}`;
-    try {
-      const { syncUpdate } = await import("./daemon/client.js");
-      await syncUpdate(
-        {
+    if (input.session_id) {
+      // Push the fill the line shows: Claude Code's used_percentage (what
+      // triggers compaction) against its window, else the raw token ratio.
+      // Only when both a fill and a window size exist — never a guessed fill.
+      const fillUsed =
+        ctxMax > 0 && cw?.used_percentage !== null && cw?.used_percentage !== undefined
+          ? Math.round((cw.used_percentage / 100) * ctxMax)
+          : ctxUsed;
+      pendingPush = {
+        session: {
           provider: "claude-code",
-          sessionId,
+          sessionId: input.session_id,
           model: modelId ?? "unknown",
           project: projectName,
           cwd: projectDir,
-          // Lets the daemon answer with this session's ledger totals — the
-          // payload itself never carries session-cumulative tokens.
           ...(input.transcript_path ? { transcriptPath: input.transcript_path } : {}),
         },
-        sessionCost,
+        cost: sessionCost,
         tokens,
         durationMs,
-        // Live context-window occupancy — only when Claude Code reports both a
-        // used-token count and a window size, so the daemon never derives a
-        // fill % from partial data.
-        ctxUsed > 0 && ctxMax > 0 ? { usedTokens: ctxUsed, maxTokens: ctxMax } : undefined
-      );
-    } catch {}
+        ...(fillUsed > 0 && ctxMax > 0
+          ? { contextWindow: { usedTokens: fillUsed, maxTokens: ctxMax } }
+          : {}),
+      };
+    }
 
     // Claude Code hands its plan windows to this command and writes them
     // nowhere else; keep them so /api/quota and the bar can show them.
@@ -763,17 +770,64 @@ export async function runStatusline(): Promise<void> {
     // ALWAYS exit promptly once output is written. A backgrounded daemon
     // fire-and-forget spawn or a lingering socket handle could otherwise keep
     // the event loop alive and leave an orphan squatting RAM — the exact
-    // failure mode that stacked into a kernel panic. Flush, then exit.
+    // failure mode that stacked into a kernel panic. Flush, push, then exit.
+    await afterOutput(pendingPush);
     clearTimeout(watchdog);
-    const done = () => process.exit(0);
-    if (process.stdout.writableLength > 0) {
-      process.stdout.once("drain", done);
-      // Belt-and-suspenders: if drain never fires, the watchdog already
-      // unref'd would normally cover it, but it's been cleared — so guard
-      // with a short timer too.
-      setTimeout(done, 500).unref();
-    } else {
-      done();
-    }
+    process.exit(0);
   }
+}
+
+/** Resolves once stdout has handed everything written so far to the OS. */
+function flushStdout(capMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (process.stdout.writableLength === 0) return resolve();
+    const timer = setTimeout(resolve, capMs);
+    process.stdout.once("drain", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/**
+ * The statusline's exit path: the line is already written, so first make sure
+ * it has left the process, then tell the daemon this session is live — bounded
+ * by PUSH_BUDGET_MS, silent on every failure. Output order is the contract the
+ * "never blank" fix depends on: nothing here can delay or replace the line.
+ */
+export async function afterOutput(
+  push: SessionPush | null,
+  send: (push: SessionPush) => Promise<boolean> = defaultSend,
+  capMs = PUSH_HARD_CAP_MS
+): Promise<void> {
+  try {
+    await flushStdout(500);
+  } catch {}
+  if (!push) return;
+  let capTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      // send may throw synchronously or reject; neither may escape.
+      Promise.resolve()
+        .then(() => send(push))
+        .catch(() => false),
+      new Promise<void>((resolve) => {
+        capTimer = setTimeout(resolve, capMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(capTimer);
+  }
+}
+
+/**
+ * Outer bound on the push, module load included. pushSessionUpdate holds its
+ * own 150 ms budget (PUSH_BUDGET_MS); this only catches what happens before
+ * that clock starts.
+ */
+const PUSH_HARD_CAP_MS = 200;
+
+async function defaultSend(push: SessionPush): Promise<boolean> {
+  const { pushSessionUpdate } = await import("./daemon/push.js");
+  return pushSessionUpdate(push);
 }

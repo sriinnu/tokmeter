@@ -22,12 +22,25 @@ function boundedOptionalString(value: unknown, max: number): boolean {
 
 // ─── Session State ─────────────────────────────────────────────────────
 
+/**
+ * How long a session stays live after its last push. Liveness is "still
+ * pushing", not "socket still open": the statusline is a one-shot process
+ * (connect, send one update, close) that Claude Code re-runs on every render,
+ * so a socket close says nothing about whether the session is still going.
+ * Five minutes covers a long tool call or a pause between turns; a session
+ * that stops pushing for longer drops out of /api/live and maxContextFillPct.
+ */
+export const LIVE_IDLE_MS = 5 * 60_000;
+
 export interface Session extends SessionInfo {
   cost: number;
   tokens: TokenUsage;
   durationMs: number;
   lastUpdate: number;
+  /** A socket that touched this session is still open. Informational only. */
   connected: boolean;
+  /** The client said goodbye (`unregister`): not live, whatever its age. */
+  ended?: boolean;
   /** Live context-window occupancy, when the provider reports it. */
   contextWindow?: ContextWindowInfo;
 }
@@ -58,8 +71,12 @@ export class SessionManager {
     if (!existing && this.sessions.size >= SessionManager.MAX_SESSIONS) return false;
 
     if (existing) {
-      // Reconnect existing session
+      // Reconnect existing session; a register is also how a model switch lands.
+      existing.model = info.model;
+      if (info.project !== undefined) existing.project = info.project;
+      if (info.cwd !== undefined) existing.cwd = info.cwd;
       existing.connected = true;
+      existing.ended = false;
       existing.lastUpdate = Date.now();
     } else {
       // New session
@@ -87,7 +104,7 @@ export class SessionManager {
     tokens: TokenUsage,
     durationMs?: number,
     contextWindow?: ContextWindowInfo,
-    info?: Pick<SessionInfo, "transcriptPath">
+    info?: Partial<Omit<SessionInfo, "provider" | "sessionId">>
   ): Session | null {
     // Identity + numeric hygiene: a malformed client could otherwise push a huge/negative/NaN cost or
     // a partial tokens object (undefined fields → NaN) that then propagates into
@@ -114,8 +131,17 @@ export class SessionManager {
     const session = this.sessions.get(key);
 
     if (!session) {
-      // Auto-register if not found
-      if (!this.register({ provider, sessionId, model: "unknown" })) return null;
+      // Auto-register if not found. A one-shot client (the statusline) sends
+      // only `update`, so take its model/project/cwd when they pass the same
+      // bounds register enforces; anything malformed falls back to "unknown".
+      const registered = this.register({
+        provider,
+        sessionId,
+        model: boundedString(info?.model, 256) ? info.model : "unknown",
+        ...(boundedString(info?.project, 4096) ? { project: info.project } : {}),
+        ...(boundedString(info?.cwd, 4096) ? { cwd: info.cwd } : {}),
+      });
+      if (!registered) return null;
       return this.update(provider, sessionId, safeCost, safeTokens, durationMs, safeContext, info);
     }
 
@@ -127,21 +153,31 @@ export class SessionManager {
     if (boundedString(info?.transcriptPath, 4096)) {
       session.transcriptPath = info.transcriptPath;
     }
+    // /model mid-session: the next push carries the new model.
+    if (boundedString(info?.model, 256) && info.model !== "unknown") session.model = info.model;
     session.durationMs = nonNeg(durationMs ?? session.durationMs);
     session.lastUpdate = Date.now();
     session.connected = true;
+    session.ended = false;
 
     return session;
   }
 
+  /** Explicit goodbye: the session leaves the live set immediately. */
   unregister(provider: string, sessionId: string): void {
     const key = this.key(provider, sessionId);
     const session = this.sessions.get(key);
     if (session) {
       session.connected = false;
+      session.ended = true;
     }
   }
 
+  /**
+   * A socket closed. That is NOT the end of the session: one-shot clients
+   * close after every push. The session stays live until it goes quiet for
+   * LIVE_IDLE_MS (see isLive) or unregisters.
+   */
   disconnect(provider: string, sessionId: string): void {
     const key = this.key(provider, sessionId);
     const session = this.sessions.get(key);
@@ -156,8 +192,13 @@ export class SessionManager {
     return this.sessions.get(this.key(provider, sessionId));
   }
 
-  getConnected(): Session[] {
-    return [...this.sessions.values()].filter((s) => s.connected);
+  /** Live = pushed within LIVE_IDLE_MS and never unregistered. */
+  isLive(session: Session, now = Date.now()): boolean {
+    return !session.ended && now - session.lastUpdate <= LIVE_IDLE_MS;
+  }
+
+  getLive(now = Date.now()): Session[] {
+    return [...this.sessions.values()].filter((s) => this.isLive(s, now));
   }
 
   getAll(): Session[] {
@@ -167,7 +208,7 @@ export class SessionManager {
   // ─── Aggregation ─────────────────────────────────────────────────────
 
   getAggregated(excludeSession?: { provider: string; sessionId: string }): AggregatedStats {
-    const sessions = this.getConnected();
+    const sessions = this.getLive();
 
     let totalCost = 0;
     let totalInputTokens = 0;
@@ -238,12 +279,18 @@ export class SessionManager {
 
   // ─── Cleanup ─────────────────────────────────────────────────────────
 
-  cleanupStale(maxAgeMs = 60_000): number {
+  /**
+   * Drop sessions that are no longer live. Connected-but-silent sessions go
+   * too: an open socket that stopped pushing is not a live session, and a
+   * later push re-registers it. Liveness is checked at read time (isLive), so
+   * the cleanup cadence only bounds memory, never what /api/live shows.
+   */
+  cleanupStale(maxAgeMs = LIVE_IDLE_MS): number {
     const now = Date.now();
     let cleaned = 0;
 
     for (const [key, session] of this.sessions) {
-      if (!session.connected && now - session.lastUpdate > maxAgeMs) {
+      if (session.ended || now - session.lastUpdate > maxAgeMs) {
         this.sessions.delete(key);
         cleaned++;
       }
