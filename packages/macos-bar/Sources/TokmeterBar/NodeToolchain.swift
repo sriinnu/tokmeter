@@ -91,10 +91,31 @@ struct NodeToolchain: Equatable {
     /// clean stop+start — the daemon CLI decides; we just invoke it.
     static func daemonArguments(version: String?, subcommand: String) -> [String] {
         guard let version else { return ["--yes", "@sriinnu/tokmeter-mcp", "daemon", subcommand] }
-        // A local build labelled "1.14.1-dev" has no npm release of that name;
-        // pin the base version it was cut from.
-        let release = String(version.split(separator: "-", maxSplits: 1).first ?? Substring(version))
+        let release = releaseVersion(version)
         return ["--yes", "\(daemonPackage(version: release))@\(release)", "daemon", subcommand]
+    }
+
+    /// npx args for a one-shot Tokmeter CLI command (`update`, `install-cron`,
+    /// `uninstall-cron`). Pinned to the app's own version exactly like the
+    /// daemon bootstrap: unpinned, `npx -y @sriinnu/tokmeter` runs whatever
+    /// is `latest` on npm at that moment — code the user never chose to
+    /// install, from a release this app was never tested against. The CLI
+    /// ships in lockstep with the bar (scripts/release.sh publishes both at
+    /// the same version), so that version always exists.
+    static func cliArguments(version: String?, subcommand: String) -> [String] {
+        guard let version else { return ["--yes", "@sriinnu/tokmeter", subcommand] }
+        return ["--yes", "@sriinnu/tokmeter@\(releaseVersion(version))", subcommand]
+    }
+
+    /// The bar's own version, as Info.plist reports it.
+    static var appVersion: String? {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    }
+
+    /// A local build labelled "1.14.1-dev" has no npm release of that name;
+    /// pin the base version it was cut from.
+    static func releaseVersion(_ version: String) -> String {
+        String(version.split(separator: "-", maxSplits: 1).first ?? Substring(version))
     }
 
     /// The daemon shipped as @sriinnu/drishti through 1.12.x and as

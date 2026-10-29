@@ -36,7 +36,15 @@ case "$sub" in
   "pr view")
     f="$S/pr/$(key "$1")"; [[ -f "$f" ]] || exit 1
     read -r num state < "$f"
-    case "$(opt --json "$@")" in number) echo "$num" ;; state) echo "$state" ;; esac ;;
+    case "$(opt --json "$@")" in
+      number) echo "$num" ;;
+      state) echo "$state" ;;
+      # The appcast vetting query. A scenario overrides it with "$f.meta".
+      *files*)
+        if [[ -f "$f.meta" ]]; then cat "$f.meta"; else
+          printf '{"author":{"is_bot":true,"login":"app/github-actions"},"baseRefName":"main","files":[{"path":"packages/macos-bar/appcast.xml"}],"headRefName":"%s","headRefOid":"%s","headRepository":{"nameWithOwner":"sriinnu/tokmeter"},"isCrossRepository":false}\n' "$1" "$APPCAST_HEAD"
+        fi ;;
+    esac ;;
   "pr create")
     n=$(( $(find "$S/pr" -type f | wc -l) + 100 ))
     echo "$n OPEN" > "$S/pr/$(key "$(opt --head "$@")")"; echo "https://example.test/pull/$n" ;;
@@ -44,8 +52,13 @@ case "$sub" in
     [[ -f "$S/pr/$(key "$1")" ]] || { echo "no pull requests found"; exit 1; }
     if [[ -f "$S/checks_fail" ]]; then printf 'build\tfail\t1s\tu\n'; exit 1; fi
     printf 'build\tpass\t1s\tu\n' ;;
+  "pr diff") printf 'diff --git a/packages/macos-bar/appcast.xml b/packages/macos-bar/appcast.xml\n' ;;
   "pr merge")
-    br="$1"; w="$(mktemp -d)"
+    br="$1"
+    if [[ "$br" == release/appcast-* ]]; then  # opened by CI, not in the sandbox origin
+      read -r num _ < "$S/pr/$(key "$br")"; echo "$num MERGED" > "$S/pr/$(key "$br")"; exit 0
+    fi
+    w="$(mktemp -d)"
     git clone -q "$ORIGIN" "$w"
     git -C "$w" merge -q --squash "origin/$br" >/dev/null
     git -C "$w" -c commit.gpgsign=false commit -q -m "$(opt --subject "$@")"
@@ -66,7 +79,9 @@ EOF
 cat > "$BIN/curl" <<'EOF'
 #!/usr/bin/env bash
 url="${*: -1}"
-if [[ "$url" == *registry* ]]; then
+if [[ "$url" == *appcast.xml && -f "$GH_STATE/appcast_pending" ]]; then
+  echo "<sparkle:shortVersionString>0.0.0</sparkle:shortVersionString>"  # not merged yet
+elif [[ "$url" == *registry* ]]; then
   echo "{\"servers\":[{\"server\":{\"name\":\"io.github.sriinnu/tokmeter\",\"version\":\"$FAKE_VERSION\"}}]}"
 else
   echo "<sparkle:shortVersionString>$FAKE_VERSION</sparkle:shortVersionString>"
@@ -109,6 +124,7 @@ EOF
 sandbox() {
   local d="$TMP/$1"; rm -rf "$d"; mkdir -p "$d"
   export GH_STATE="$d/gh" ORIGIN="$d/origin.git" SIGN_FAILS_FILE="$d/sign_fails" FAKE_VERSION="$V"
+  export APPCAST_HEAD=0123456789abcdef0123456789abcdef01234567
   export HOME="$d" GIT_CONFIG_GLOBAL="$TMP/gitconfig" GIT_CONFIG_NOSYSTEM=1 PATH="$BIN:$PATH"
   mkdir -p "$GH_STATE"
   git init -q --bare "$ORIGIN"
@@ -216,6 +232,52 @@ git -C "$R" switch -q main 2>/dev/null || true
 if release; then ok "second run exits 0"; else bad "second run exits 0"; show_out; fi
 check "release created" released
 check "no second merge" test "$(count 'gh pr merge')" = 1
+
+# The workflow opened release/appcast-vX; the feed on main doesn't list X yet.
+appcast_pending() {  # appcast_pending [meta-json] — seed the CI-opened PR
+  touch "$GH_STATE/appcast_pending"; mkdir -p "$GH_STATE/pr"
+  echo "200 OPEN" > "$GH_STATE/pr/release_appcast-v$V"
+  [[ -z "${1:-}" ]] || echo "$1" > "$GH_STATE/pr/release_appcast-v$V.meta"
+}
+appcast_merged() { grep -q "gh pr merge release/appcast-v$V" "$GH_STATE/log"; }
+pr_meta() {  # pr_meta <author login> <files JSON> <head repo> <isCrossRepository>
+  printf '{"author":{"login":"%s"},"baseRefName":"main","files":%s,"headRefName":"release/appcast-v%s","headRefOid":"%s","headRepository":{"nameWithOwner":"%s"},"isCrossRepository":%s}' \
+    "$1" "$2" "$V" "$APPCAST_HEAD" "$3" "$4"
+}
+APPCAST_ONLY='[{"path":"packages/macos-bar/appcast.xml"}]'
+
+echo "• the workflow's appcast PR is vetted, shown, and merged pinned to its head"
+sandbox appcast_ok
+appcast_pending
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "shows the diff before merging" grep -q "gh pr diff release/appcast-v$V" "$GH_STATE/log"
+check "merge is pinned to the vetted head" \
+  grep -q "gh pr merge release/appcast-v$V .*--match-head-commit $APPCAST_HEAD" "$GH_STATE/log"
+
+echo "• a fork's same-named appcast PR is refused"
+sandbox appcast_fork
+appcast_pending "$(pr_meta app/github-actions "$APPCAST_ONLY" mallory/tokmeter true)"
+if release; then bad "refuses"; else ok "refuses"; fi
+if appcast_merged; then bad "does not merge it"; else ok "does not merge it"; fi
+check "names the head repo" grep -q 'head repo is mallory/tokmeter' "$GH_STATE/out"
+
+echo "• an appcast PR by someone other than the Actions bot is refused"
+sandbox appcast_author
+appcast_pending "$(pr_meta mallory "$APPCAST_ONLY" sriinnu/tokmeter false)"
+if release; then bad "refuses"; else ok "refuses"; fi
+if appcast_merged; then bad "does not merge it"; else ok "does not merge it"; fi
+check "names the author" grep -q 'author is mallory' "$GH_STATE/out"
+
+echo "• an appcast PR that touches anything besides appcast.xml is refused"
+sandbox appcast_files
+appcast_pending "$(pr_meta app/github-actions '[{"path":"packages/macos-bar/appcast.xml"},{"path":"scripts/release.sh"}]' sriinnu/tokmeter false)"
+if release; then bad "refuses"; else ok "refuses"; fi
+if appcast_merged; then bad "does not merge it"; else ok "does not merge it"; fi
+check "names the extra file" grep -q 'scripts/release.sh, not only' "$GH_STATE/out"
+rm "$GH_STATE/pr/release_appcast-v$V.meta"
+if release; then ok "rerun once the PR is clean exits 0"; else bad "rerun once the PR is clean exits 0"; show_out; fi
+check "…and merges it pinned to the vetted head" \
+  grep -q "gh pr merge release/appcast-v$V .*--match-head-commit $APPCAST_HEAD" "$GH_STATE/log"
 
 echo "• a non-bump change in the tree is refused"
 sandbox dirty

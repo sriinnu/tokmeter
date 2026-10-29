@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # bundle.sh — build, sign, notarize, and package TokmeterBar.app
 #
-# Three modes:
+# Four modes:
 #
-#   ./bundle.sh                  # dev:     ad-hoc signed (no Apple ID needed)
-#   ./bundle.sh --signed         # signed:  Developer ID signed (no notarization)
-#   ./bundle.sh --release        # release: signed + notarized + stapled + zipped
-#                                #          + appcast.xml entry generated
+#   ./bundle.sh                  # dev:      ad-hoc signed (no Apple ID needed)
+#   ./bundle.sh --unsigned       # unsigned: assembled .app, NO signature at all.
+#                                #           The release workflow's secret-free
+#                                #           build job; sign-app.sh signs it in
+#                                #           a separate job. Never installs.
+#   ./bundle.sh --signed         # signed:   Developer ID signed (no notarization)
+#   ./bundle.sh --release        # release:  signed + notarized + stapled + zipped
+#                                #           + appcast.xml entry generated + feed signed
+#
+# Signing itself lives in sign-app.sh, shared by every mode and by CI.
 #
 # Required environment variables for --signed and --release:
 #   DEV_ID                       # "Developer ID Application: Your Name (TEAMID)"
@@ -45,12 +51,17 @@ for arg in "$@"; do
     case "${arg}" in
         --release)    MODE="release" ;;
         --signed)     MODE="signed" ;;
+        --unsigned)   MODE="unsigned" ;;
         --install)    INSTALL=1 ;;          # explicit, but it's the default
         --no-install) INSTALL=0 ;;
         "")           ;;
         *)            echo "Unknown flag: ${arg}"; exit 2 ;;
     esac
 done
+# An unsigned bundle is an intermediate for sign-app.sh, not something to run.
+if [[ "${MODE}" == "unsigned" ]]; then
+    INSTALL=0
+fi
 
 # ─── Config ─────────────────────────────────────────────────────────────
 APP_NAME="${APP_NAME:-TokmeterBar}"
@@ -217,7 +228,20 @@ PLIST
 # updater. A keyless build (dev without a key) must therefore ship with no
 # auto-update config at all — it simply never checks. The signed/release guards
 # above guarantee a distributable build always reaches this branch with a key.
-if [[ -n "${SUPUBLIC_KEY}" ]]; then
+#
+# --unsigned is the exception: CI's build job holds no secrets, so it writes
+# the config without SUPublicEDKey and sign-app.sh embeds the key in the
+# privileged job — refusing to sign if it is still missing afterwards.
+#
+# Hardening (Sparkle 2.9+; pinned 2.10.0 in Package.resolved):
+#   SUVerifyUpdateBeforeExtraction  check the archive's EdDSA signature
+#                                   before unpacking any of it
+#   SURequireSignedFeed             reject an appcast whose trailing
+#                                   sparkle-signatures block does not verify
+#                                   (Sparkle refuses it without the key above)
+# Every appcast.xml change must therefore be re-signed: release-macos.yml
+# and --release below do it with sign_update.
+if [[ -n "${SUPUBLIC_KEY}" || "${MODE}" == "unsigned" ]]; then
     cat >> "${CONTENTS}/Info.plist" <<PLIST
     <!-- Sparkle: where to fetch the appcast and how to verify updates -->
     <key>SUFeedURL</key>
@@ -226,9 +250,17 @@ if [[ -n "${SUPUBLIC_KEY}" ]]; then
     <true/>
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
+PLIST
+    if [[ -n "${SUPUBLIC_KEY}" ]]; then
+        cat >> "${CONTENTS}/Info.plist" <<PLIST
     <key>SUPublicEDKey</key>
     <string>${SUPUBLIC_KEY}</string>
 PLIST
+    fi
 else
     echo "==> No SUPUBLIC_KEY: omitting Sparkle auto-update config (build will not self-update)"
 fi
@@ -243,66 +275,17 @@ PLIST
 xattr -cr "${APP_DIR}" 2>/dev/null || true
 find "${APP_DIR}" -name '._*' -delete 2>/dev/null || true
 
-# ─── 7. Sign ────────────────────────────────────────────────────────────
-# Sparkle.framework has nested XPC services (Installer.xpc, Downloader.xpc)
-# that MUST be signed before the framework itself, which must be signed before
-# the parent .app. We use Versions/Current (a symlink) instead of hardcoding
-# Versions/B because Sparkle bumps the version letter periodically.
-
-sign_sparkle_nested() {
-    local sign_id="$1"
-    local extra_args="$2"  # e.g. "--options runtime --timestamp" for Developer ID
-    [[ -d "${FRAMEWORKS_DIR}/Sparkle.framework" ]] || return 0
-
-    local sparkle_current="${FRAMEWORKS_DIR}/Sparkle.framework/Versions/Current"
-    [[ -d "${sparkle_current}" ]] || sparkle_current="${FRAMEWORKS_DIR}/Sparkle.framework/Versions/B"
-
-    # 1. Sign every XPC service inside the framework first (deepest first)
-    if [[ -d "${sparkle_current}/XPCServices" ]]; then
-        for xpc in "${sparkle_current}/XPCServices/"*.xpc; do
-            [[ -d "${xpc}" ]] || continue
-            # shellcheck disable=SC2086
-            codesign --force ${extra_args} --sign "${sign_id}" "${xpc}"
-        done
-    fi
-    # 2. Sign the Updater.app and Autoupdate helpers
-    for helper in "${sparkle_current}/Updater.app" \
-                  "${sparkle_current}/Autoupdate"; do
-        [[ -e "${helper}" ]] || continue
-        # shellcheck disable=SC2086
-        codesign --force ${extra_args} --sign "${sign_id}" "${helper}"
-    done
-    # 3. Sign the framework itself
-    # shellcheck disable=SC2086
-    codesign --force ${extra_args} --sign "${sign_id}" "${FRAMEWORKS_DIR}/Sparkle.framework"
-}
-
+# ─── 7. Sign (sign-app.sh) ──────────────────────────────────────────────
 case "${MODE}" in
+    unsigned)
+        echo "==> Not signing (--unsigned): sign-app.sh signs this bundle later"
+        ;;
     dev)
-        echo "==> Signing (ad-hoc, dev mode)"
-        # Sign Sparkle's nested components first — even ad-hoc requires this
-        # because dyld refuses to load an unsigned framework on macOS 13+.
-        sign_sparkle_nested "-" ""
-        # Then the main app
-        codesign --force --sign - "${APP_DIR}"
+        ./sign-app.sh --adhoc "${APP_DIR}"
         ;;
     signed|release)
-        if [[ -z "${DEV_ID:-}" ]]; then
-            echo "ERROR: --${MODE} requires DEV_ID env var"
-            echo "       Example: DEV_ID='Developer ID Application: Your Name (TEAMID)'"
-            exit 3
-        fi
-        echo "==> Signing with configured Developer ID"
-
-        sign_sparkle_nested "${DEV_ID}" "--options runtime --timestamp"
-
-        # Sign the main app with hardened runtime + entitlements
-        codesign --force --options runtime --timestamp \
-            --entitlements "${ENTITLEMENTS}" \
-            --sign "${DEV_ID}" "${APP_DIR}"
-
-        # Verify (--deep is deprecated but still informative for diagnostics)
-        codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
+        SUPUBLIC_KEY="${SUPUBLIC_KEY}" SUFEED_URL="${SUFEED_URL}" \
+            ENTITLEMENTS="${ENTITLEMENTS}" ./sign-app.sh "${APP_DIR}"
         ;;
 esac
 
@@ -518,6 +501,14 @@ ET.indent(tree, space="    ")
 tree.write(appcast_path, encoding="utf-8", xml_declaration=True)
 print("==> appcast.xml updated with new <item>")
 PY
+
+    # Builds carry SURequireSignedFeed, so an edited feed must be re-signed or
+    # every such install rejects it. sign_update strips the old trailing
+    # sparkle-signatures block and appends a fresh one over the new bytes.
+    # --disable-signing-warning: without it sign_update re-serialises the
+    # whole document (every <enclosure/> rewritten) just to add a comment.
+    "${SIGN_TOOL}" -f "${PRIV_KEY_PATH}" --disable-signing-warning appcast.xml
+    echo "==> appcast.xml feed signature updated"
 fi
 
 # ─── 10. Install to /Applications + relaunch ────────────────────────────
@@ -552,6 +543,9 @@ fi
 echo ""
 echo "Done."
 case "${MODE}" in
+    unsigned)
+        echo "Status: UNSIGNED ./${APP_DIR}, an input for sign-app.sh; not runnable or distributable."
+        ;;
     dev)
         if [[ "${INSTALL}" == "1" ]]; then
             echo "Status: installed to /Applications/${APP_DIR} and launched."
