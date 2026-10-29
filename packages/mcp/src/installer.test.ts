@@ -24,7 +24,9 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, execFileSync };
 });
 
-const { installMCP, uninstallMCP } = await import("./installer.js");
+const { installAll, installHooks, installMCP, uninstallHooks, uninstallMCP } = await import(
+  "./installer.js"
+);
 
 const settingsPath = join(home, ".claude", "settings.json");
 
@@ -178,5 +180,88 @@ describe("installMCP — OpenCode", () => {
     uninstallMCP(["opencode"]);
 
     expect(read(configPath).mcp).toBeUndefined();
+  });
+});
+
+describe("guard hooks — legacy cleanup", () => {
+  // What releases up to 1.19.3 wrote, for some other user's home.
+  const dir = "/Users/someone/Sriinnu/Personal/script-helpers";
+  const legacy = [
+    {
+      matcher: "Bash",
+      hooks: [
+        { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"` },
+        { type: "command", command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"` },
+      ],
+    },
+    {
+      matcher: "",
+      hooks: [
+        {
+          type: "command",
+          command: `bash ${dir}/sensitive-guard.sh "$CLAUDE_TOOL_NAME" "$CLAUDE_TOOL_INPUT"`,
+        },
+        { type: "command", command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"` },
+      ],
+    },
+  ];
+  const mine = { matcher: "Edit", hooks: [{ type: "command", command: "prettier --check" }] };
+  const mixed = {
+    matcher: "Write",
+    hooks: [
+      { type: "command", command: `bash ${dir}/danger-guard.sh x` },
+      { type: "command", command: "my-own-check.sh" },
+    ],
+  };
+
+  function writeSettings(data: unknown) {
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(data));
+  }
+  const readSettings = () => JSON.parse(readFileSync(settingsPath, "utf-8"));
+
+  it("install-hooks writes nothing", () => {
+    installHooks();
+    expect(() => readFileSync(settingsPath)).toThrow();
+  });
+
+  it("install-all no longer adds hooks", () => {
+    execFileSync.mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+    installAll();
+    expect(JSON.stringify(readSettings())).not.toContain("guard.sh");
+  });
+
+  it("removes only the legacy guards and keeps every hook the user set", () => {
+    const stop = [{ matcher: "", hooks: [{ type: "command", command: "say done" }] }];
+    writeSettings({ model: "opus", hooks: { PreToolUse: [...legacy, mine, mixed], Stop: stop } });
+
+    uninstallHooks();
+
+    expect(readSettings()).toEqual({
+      model: "opus",
+      hooks: {
+        PreToolUse: [
+          mine,
+          { matcher: "Write", hooks: [{ type: "command", command: "my-own-check.sh" }] },
+        ],
+        Stop: stop,
+      },
+    });
+  });
+
+  it("drops the hooks key once only legacy guards were in it", () => {
+    writeSettings({ model: "opus", hooks: { PreToolUse: legacy } });
+    uninstallHooks();
+    expect(readSettings()).toEqual({ model: "opus" });
+  });
+
+  it("leaves the file untouched when there are no legacy guards", () => {
+    const raw = JSON.stringify({ hooks: { PreToolUse: [mine] } });
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(settingsPath, raw);
+    uninstallHooks();
+    expect(readFileSync(settingsPath, "utf-8")).toBe(raw);
   });
 });

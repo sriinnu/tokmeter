@@ -15,11 +15,10 @@
  *   tokmeter-mcp daemon uninstall-agent Remove the launchd agent
  *   tokmeter-mcp install-statusline     Install statusline hook for ALL editors
  *   tokmeter-mcp install-mcp            Install MCP server for ALL editors
- *   tokmeter-mcp install-hooks          Install guard hooks (Claude Code)
- *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP + hooks
+ *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP
  *   tokmeter-mcp uninstall-statusline   Remove statusline hook from all editors
  *   tokmeter-mcp uninstall-mcp          Remove MCP server from all editors
- *   tokmeter-mcp uninstall-hooks        Remove guard hooks (Claude Code)
+ *   tokmeter-mcp uninstall-hooks        Remove guard hooks older releases added
  *   tokmeter-mcp editors                List all supported editors
  *   tokmeter-mcp help                   Show usage instructions
  */
@@ -232,11 +231,10 @@ ${b("COMMANDS")}
   ${a("daemon uninstall-agent")} Remove the launchd agent
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
-  ${a("install-hooks")}     Install guard hooks (Claude Code)
-  ${a("install-all")}       Restore everything — statusline + MCP + hooks
+  ${a("install-all")}       Restore everything — statusline + MCP
   ${a("uninstall-statusline")} Remove statusline hook from all editors
   ${a("uninstall-mcp")}     Remove MCP server from all editors
-  ${a("uninstall-hooks")}   Remove guard hooks (Claude Code)
+  ${a("uninstall-hooks")}   Remove guard hooks older releases added
   ${a("editors")}           List all supported editors
   ${a("help")}              Show this help message
   ${a("--version")}         Print the installed version

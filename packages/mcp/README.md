@@ -32,9 +32,9 @@ npx @sriinnu/tokmeter-mcp
 | `tokmeter-mcp daemon uninstall-agent`  | Remove the launchd agent                    |
 | `tokmeter-mcp install-statusline`      | Install statusline hook for all editors     |
 | `tokmeter-mcp install-mcp`             | Install MCP server for all editors          |
-| `tokmeter-mcp install-hooks`           | Install guard hooks (Claude Code)           |
-| `tokmeter-mcp install-all`             | Restore everything — statusline + MCP + hooks |
-| `tokmeter-mcp uninstall-statusline`, `uninstall-mcp`, `uninstall-hooks` | Remove what the installers added |
+| `tokmeter-mcp install-all`             | Restore everything — statusline + MCP       |
+| `tokmeter-mcp uninstall-statusline`, `uninstall-mcp` | Remove what the installers added |
+| `tokmeter-mcp uninstall-hooks`         | Remove guard hooks a release ≤ 1.19.3 added |
 | `tokmeter-mcp editors`                 | List all supported editors                  |
 
 ## Usage

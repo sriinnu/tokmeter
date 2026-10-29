@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `tokmeter-mcp install-hooks` and `install-all` no longer write Claude Code
+  PreToolUse hooks. They pointed at guard scripts under a folder that existed
+  only on the author's machine, so on anyone else's every tool call ran a
+  missing file, and anything later placed at that path would have run on every
+  call. `install-hooks` is now a no-op that says so.
+- `tokmeter-mcp uninstall-hooks` removes only those legacy guard entries. It
+  used to delete the whole `hooks` key, taking every hook the user had set up
+  in Claude Code with it.
+- `release.sh` refuses branch names outside `[A-Za-z0-9._/-]` before they reach
+  `eval`, and its MCP-registry check no longer pipes `curl` output into `node`.
+
 ## [1.19.3] - 2026-10-25
 
 ### Security
