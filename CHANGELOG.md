@@ -42,6 +42,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-project totals, and file paths in `tokmeter coverage` output and TUI
   warnings are stripped of terminal controls.
 
+### Fixed
+
+- **One inconsistent sealed day no longer breaks every report.** Claude Code
+  wrote `ephemeral_1h_input_tokens: 2050` beside `cache_creation_input_tokens:
+  0`, so the sealed 2026-09-16 bucket held a 1h cache-write share (1,802,192)
+  larger than its total (1,800,142). Since 1.19.3 the relay reader rejected
+  that day and with it the whole history: `tokmeter daily --since …` exited 1
+  and the daemon could not start. The parser now clamps the 1h share, the
+  writer refuses an invalid day, and the reader repairs that sub-bucket in
+  memory (no total or cost moves; the file is never rewritten) and quarantines
+  a truly unreadable day with a warning instead of failing the load.
+- **The midnight seal no longer drops the last minutes of the day.** The
+  first tick after midnight only read files modified since midnight, so a
+  response written after the previous tick, in a file not touched again, was
+  never sealed. With the bar polling every 300 s that lost Codex records on 6
+  of 7 nights (e.g. 4 records, 36,240 input / 348,288 cache-read tokens on
+  2026-10-28). The rollover tick now reads back to the previous tick.
+- **Codex guardian reviews are no longer double-counted.** A guardian_review
+  thread that continues in a new rollout opens with a counter holding the
+  previous rollout's totals; it was booked as new usage. 28 phantom records
+  across 2026-10-22…10-29, e.g. 1.07M input and 7.3M cache-read tokens on
+  2026-10-24 (more where Codex later rewrote the rollout). The carried-over
+  counter is now taken as the baseline.
+- **Large session files keep counting.** Claude Code sessions are streamed
+  line by line from the cached offset, so a session past 128 MiB is no longer
+  refused (a rebuild of 2026-10-21 lost 955 records, 205M cache-read tokens).
+  An oversized line (a 16 MB tool output) is skipped instead of truncating
+  the rest of the file (107 Codex responses on 2026-10-22); the usage of an
+  oversized Claude assistant line is recovered from its head and tail.
+- **A partial read only holds the days it can affect.** A fault in a file
+  that cannot hold the outgoing day no longer stalls the midnight seal (which
+  froze "today" on yesterday), and a rebuild persists every day the faulting
+  file cannot touch instead of none — a fresh install on a corpus with one
+  bad file now gets its history.
+- **Fork subagents no longer double-bill their parent's turn.** A fork's
+  transcript opens with a copy of the parent's last message (same message id);
+  Claude Code records are now one per message id across all files (47 copies,
+  14.4M cache-read tokens since 2026-09-26).
+- **Date filters use local days.** A date-only `since`/`until` was parsed as
+  UTC midnight (in CET it dropped 00:00–01:00 of the first day and took
+  00:00–01:00 of the day after), and `week` was a rolling 168 h. This also
+  corrects the date window cleanup uses to select session files.
+- **Sealed days keep their price cards again.** Every rollover seal since
+  2026-10-21 was written without cards: kosha rewrites its registry during the
+  day, so at the midnight tick the cards had always "changed" and the seal
+  gave up. It now seals with the cards the day was last priced at.
+
 ## [1.19.3] - 2026-10-25
 
 ### Security

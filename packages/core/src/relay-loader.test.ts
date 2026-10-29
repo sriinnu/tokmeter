@@ -251,7 +251,10 @@ describe("rebuildRecentWindow — sealed days never shrink without force", () =>
     writeCodexFixture(home, DAY_KEY, [100]);
     const [y, m, d] = DAY_KEY.split("-");
     const file = join(home, ".codex/sessions", y, m, d, `rollout-${DAY_KEY}-fixture.jsonl`);
-    appendFileSync(file, '\n{"type":"event_msg","payload":');
+    // A complete but malformed token line: possible lost usage, so the day it
+    // may belong to must not be rewritten. (An unterminated tail is a write in
+    // flight, not a fault, and no longer blocks anything.)
+    appendFileSync(file, '\n{"type":"event_msg","payload":{"type":"token_count"\n');
 
     const warnings: ScanWarning[] = [];
     const state = await rebuildRecentWindow(ctxFor(home), REF, warnings, 7);
