@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The macOS release workflow is split by privilege. An unprivileged job
+  (read-only token, no environment, no secrets) runs everything that executes
+  third-party code (`bun install`, vite and its plugins, `swift build`) and
+  uploads the unsigned app with its sha256. Only then does the `release`
+  environment job import the Developer ID certificate: it checks that sha256
+  and the app's identity, version and build number against the verified tag,
+  signs with the hardened runtime (new `sign-app.sh`, shared with local
+  builds), notarizes, staples, and Sparkle-signs using its own `sign_update`
+  pinned by `Package.resolved`. A last job with write access but no signing
+  secrets and no repository code uploads the zip and opens the appcast PR.
+- TokmeterBar now enables Sparkle's `SUVerifyUpdateBeforeExtraction` and
+  `SURequireSignedFeed` (Sparkle 2.10.0): updates are EdDSA-verified before
+  extraction, and the appcast itself is signed with the release key in CI and
+  verified against the app's own key before publishing. Builds with this
+  setting reject an unsigned or hand-edited `appcast.xml`.
+- The menubar's pricing refresh and cron install/uninstall run
+  `@sriinnu/tokmeter` pinned to the app's own version, like the daemon
+  bootstrap already did, instead of whatever `npx` resolved as latest.
+- `scripts/release.sh` verifies the appcast PR before merging it: opened by
+  github-actions[bot] from this repository into `main`, changing only
+  `packages/macos-bar/appcast.xml`. It shows the diff and pins the merge to
+  the head commit it checked.
 - Restoring a backup no longer writes into Claude Code's `session-env`
   directory, whose hook scripts Claude Code runs; those entries are skipped and
   listed, and the rest of the archive still restores. OpenClaw restores are

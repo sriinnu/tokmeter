@@ -338,6 +338,37 @@ appcast_on_main() {
   curl -fsS "https://raw.githubusercontent.com/${REPO}/main/packages/macos-bar/appcast.xml" \
     | grep -q "<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>"
 }
+# The PR is found by branch name, and `gh pr view <branch>` also matches a
+# fork's PR from a same-named branch. Merging it is what ships the feed to
+# every Sparkle user, so first prove it is the workflow's own PR: opened by
+# the Actions bot (gh reports github-actions[bot] as "app/github-actions"),
+# from this repo, into main, changing appcast.xml and nothing else. Prints the
+# head commit it vetted; the merge is pinned to it, so a push after the check
+# fails the merge instead of shipping bytes nobody looked at.
+appcast_pr_vetted_head() {  # appcast_pr_vetted_head <branch>
+  local meta
+  meta="$(gh pr view "$1" --repo "$REPO" \
+    --json author,headRepository,isCrossRepository,baseRefName,headRefName,headRefOid,files)" || return 1
+  # shellcheck disable=SC2016  # JavaScript template literals, not shell
+  node -e '
+    let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+      const [repo, branch] = process.argv.slice(1);
+      const pr = JSON.parse(s);
+      const files = (pr.files ?? []).map(f => f.path);
+      const problems = [];
+      if (pr.headRepository?.nameWithOwner !== repo || pr.isCrossRepository !== false)
+        problems.push(`head repo is ${pr.headRepository?.nameWithOwner ?? "unknown"}, not ${repo}`);
+      if (pr.author?.login !== "app/github-actions")
+        problems.push(`author is ${pr.author?.login ?? "unknown"}, not github-actions[bot]`);
+      if (pr.baseRefName !== "main") problems.push(`base is ${pr.baseRefName}, not main`);
+      if (pr.headRefName !== branch) problems.push(`head branch is ${pr.headRefName}, not ${branch}`);
+      if (files.length === 0 || files.some(f => f !== "packages/macos-bar/appcast.xml"))
+        problems.push(`changes ${files.join(", ") || "no files"}, not only packages/macos-bar/appcast.xml`);
+      if (!/^[0-9a-f]{40}$/.test(pr.headRefOid ?? "")) problems.push("no head commit");
+      if (problems.length) { for (const p of problems) console.error(`  ✗ ${p}`); process.exit(1); }
+      console.log(pr.headRefOid);
+    });' "$REPO" "$1" <<<"$meta"
+}
 if [[ $DRY -eq 1 ]]; then
   echo "DRY: wait for ${appcast}, start its checks, merge it"
 elif appcast_on_main; then
@@ -350,9 +381,14 @@ else
   fi
   wait_for "appcast PR checks to start" 300 checks_started "$appcast"
   gh pr checks "$appcast" --repo "$REPO" --watch --fail-fast
-  if confirm "Merge the appcast PR? Sparkle users get ${VERSION} on their next check."; then
+  head="$(appcast_pr_vetted_head "$appcast")" \
+    || die "the ${appcast} PR is not the workflow's appcast-only PR — not merging. Inspect it by hand."
+  echo "  ✓ ${appcast}: github-actions[bot], ${REPO} → main, appcast.xml only (head ${head:0:12})"
+  gh pr diff "$appcast" --repo "$REPO" --color never
+  if confirm "Merge the appcast PR above? Sparkle users get ${VERSION} on their next check."; then
     pr="$(pr_field "$appcast" number)"
-    gh pr merge "$appcast" --repo "$REPO" --squash --delete-branch --subject "chore(appcast): add ${TAG} (#${pr})" --body ""
+    gh pr merge "$appcast" --repo "$REPO" --squash --delete-branch --match-head-commit "$head" \
+      --subject "chore(appcast): add ${TAG} (#${pr})" --body ""
     echo "  ✓ appcast merged"
   else
     echo "  appcast not merged. Rerun to finish, or merge ${appcast} by hand."

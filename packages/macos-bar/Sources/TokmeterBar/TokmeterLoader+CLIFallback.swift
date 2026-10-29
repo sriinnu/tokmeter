@@ -170,7 +170,7 @@ extension TokmeterLoader {
         }
         do {
             _ = try await runProcess(executable: toolchain.npx,
-                                     arguments: ["-y", "@sriinnu/tokmeter", "update"],
+                                     arguments: NodeToolchain.cliArguments(version: NodeToolchain.appVersion, subcommand: "update"),
                                      timeout: 30)
             await reloadAfterChange()
         } catch {

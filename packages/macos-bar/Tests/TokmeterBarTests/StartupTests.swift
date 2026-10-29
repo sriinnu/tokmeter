@@ -15,6 +15,21 @@ final class StartupTests: XCTestCase {
                        ["--yes", "@sriinnu/tokmeter-mcp", "daemon", "start"])
     }
 
+    /// One-shot CLI commands must run the CLI release that matches this app,
+    /// never whatever `latest` npm serves at that moment.
+    func testCLICommandsArePinnedToTheAppVersion() {
+        XCTAssertEqual(NodeToolchain.cliArguments(version: "1.19.3", subcommand: "update"),
+                       ["--yes", "@sriinnu/tokmeter@1.19.3", "update"])
+        XCTAssertEqual(NodeToolchain.cliArguments(version: "1.20.0", subcommand: "install-cron"),
+                       ["--yes", "@sriinnu/tokmeter@1.20.0", "install-cron"])
+        // A local "-dev" build pins the release it was cut from.
+        XCTAssertEqual(NodeToolchain.cliArguments(version: "1.14.1-dev", subcommand: "uninstall-cron"),
+                       ["--yes", "@sriinnu/tokmeter@1.14.1", "uninstall-cron"])
+        // No Info.plist (swift run): same fallback as the daemon bootstrap.
+        XCTAssertEqual(NodeToolchain.cliArguments(version: nil, subcommand: "update"),
+                       ["--yes", "@sriinnu/tokmeter", "update"])
+    }
+
     func testNpxWithoutPairedNodeIsNotAnInstallation() {
         let files: Set<String> = ["/broken/npx", "/working/npx", "/working/node"]
         XCTAssertEqual(NodeToolchain.firstAvailable(directories: ["/broken", "/working"],

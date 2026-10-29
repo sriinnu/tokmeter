@@ -27,8 +27,11 @@ let package = Package(
     ],
     dependencies: [
         // Sparkle 2.x — auto-update framework for macOS apps.
-        // Pinned to the 2.x major to avoid breaking API changes.
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        // Pinned to the 2.x major to avoid breaking API changes. Floor 2.10.0:
+        // bundle.sh sets SURequireSignedFeed (Sparkle 2.9+) and
+        // SUVerifyUpdateBeforeExtraction (2.7+); an older Sparkle would
+        // silently ignore both. Package.resolved pins the exact release.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0"),
     ],
     targets: [
         .executableTarget(
