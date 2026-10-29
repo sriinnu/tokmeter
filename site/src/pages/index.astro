@@ -7,9 +7,11 @@ import pkg from '../../../packages/tokmeter/package.json';
 const agents = [
   'Claude Code', 'Codex', 'Codex Desktop', 'Gemini CLI', 'Cursor', 'OpenCode', 'Amp', 'Droid',
   'OpenClaw', 'Pi', 'Kimi', 'Qwen Code', 'Roo Code', 'Kilo Code', 'Kilo CLI', 'Mux',
-  'VS Code Copilot', 'Copilot CLI', 'Antigravity', 'Zed', 'Muse', 'Cline', 'Augment', 'Synthetic',
-  'Ribhu', 'Chitragupta',
+  'VS Code Copilot', 'Copilot CLI', 'Antigravity', 'Zed', 'Muse', 'Cline', 'Augment',
 ];
+// Tracked through a registered custom source, not a built-in parser.
+const registered = ['Ribhu', 'Chitragupta'];
+const shown = [...agents, ...registered];
 
 const themes = [
   ['paper', 'Paper', 'A broadsheet, set in serif', '#e8dfc8'],
@@ -28,14 +30,14 @@ const themes = [
 const surfaces = [
   ['/cli/', 'Terminal', 'CLI and TUI', 'Today, this week, any project or model. <code>tokmeter --today</code>, a weekly digest, and a full-screen terminal UI.'],
   ['/menu-bar/', 'macOS', 'Menu bar app', 'Today’s tokens in the menu bar. Open it for cost, models, projects and a $/M rates panel, in eleven themes.'],
-  ['/mcp/', 'Agents', 'MCP server', '24 tools, so an agent can ask what it has spent, compare models or forecast the month. 22 only read; the two that delete need a typed confirmation.'],
+  ['/mcp/', 'Agents', 'MCP server', '22 read-only tools, so an agent can ask what it has spent, compare models or forecast the month. Nothing it can call deletes your data.'],
   ['/daemon/', 'Local API', 'Daemon', 'One process scans once and serves every surface over <code>127.0.0.1</code>, token-protected.'],
   ['/install/', 'Editors', 'Statusline', 'This session’s tokens and cost under your prompt in Claude Code, OpenCode and Ribhu, plus today’s total across every agent. It never waits on the daemon: a late number shows dimmed with its age.'],
   ['/install/', 'Browser', 'Web dashboard', 'Larger charts on demand, started and stopped by the menu bar app.'],
 ];
 ---
 <Base path="/">
-  <TokenStream lanes={agents.length}>
+  <TokenStream lanes={shown.length}>
     <div class="hero">
       <p class="eyebrow">Open source · local first <span class="ver">v{pkg.version}</span></p>
       <h1>Every AI coding agent,<br /><em>on one ledger.</em></h1>
@@ -58,11 +60,11 @@ const surfaces = [
   </TokenStream>
 
   <div class="agents" aria-label="Supported agents">
-    <p>Built-in parsers for {agents.length} agents, plus any you register</p>
+    <p>Built-in parsers for {agents.length} agents, plus any you register, like Ribhu and Chitragupta</p>
     <div class="marquee" aria-hidden="true">
-      {[...agents, ...agents].map((a) => <span>{a}</span>)}
+      {[...shown, ...shown].map((a) => <span>{a}</span>)}
     </div>
-    <ul class="sr-only">{agents.map((a) => <li>{a}</li>)}</ul>
+    <ul class="sr-only">{shown.map((a) => <li>{a}</li>)}</ul>
   </div>
 
   <div class="wrap">

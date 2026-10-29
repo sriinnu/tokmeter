@@ -18,6 +18,7 @@ import type {
 import { CleanupService, localDateKey, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { fmtCost, fmtNum, renderPreview, renderResult } from "./cleanup-render.js";
+import { requireInteractiveTerminal } from "./interactive-guard.js";
 
 // ─── Readline helpers ────────────────────────────────────────────────────
 
@@ -157,6 +158,7 @@ async function runFilteredCleanup(
     return;
   }
 
+  if (!requireInteractiveTerminal("cleanup")) return;
   if (!args.force) {
     const answer = await ask("\n⚠  Type DELETE to confirm: ");
     if (answer !== "DELETE") {
@@ -307,6 +309,7 @@ async function runInteractiveCleanup(
 
   renderPreview(preview);
 
+  if (!requireInteractiveTerminal("cleanup")) return;
   if (!args.force) {
     const confirm = await ask("\n⚠  Type DELETE to confirm: ");
     if (confirm !== "DELETE") {

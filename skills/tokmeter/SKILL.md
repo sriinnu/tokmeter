@@ -69,11 +69,12 @@ Tools are prefixed `tokmeter_`. Start with `tokmeter_pulse`; it answers most
 | Breakdowns | `tokmeter_models`, `tokmeter_providers`, `tokmeter_projects`, `tokmeter_search` |
 | Analysis | `tokmeter_compare`, `tokmeter_forecast`, `tokmeter_efficiency`, `tokmeter_leaderboard`, `tokmeter_anomaly`, `tokmeter_cache_efficiency` |
 | Advice | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips`, `tokmeter_budget`, `tokmeter_budget_alert` |
-| Data management | `tokmeter_export`, `tokmeter_backups`, `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_restore` |
+| Data management | `tokmeter_export`, `tokmeter_backups`, `tokmeter_cleanup_preview` |
 
-`tokmeter_cleanup_execute` **deletes source session files**. Always run
-`tokmeter_cleanup_preview` first and get explicit human confirmation; back up
-with `tokmeter_backups` before destructive work.
+Every MCP tool is read-only. `tokmeter_cleanup_preview` shows what a cleanup
+would delete, but deleting and restoring are not available over MCP: the user
+runs `tokmeter cleanup` / `tokmeter restore` in a terminal, which previews
+again, writes a backup, and asks for confirmation.
 
 ## Daemon HTTP
 
@@ -82,7 +83,9 @@ Start it with `tokmeter-mcp daemon start`; `daemon status`, `daemon stop`, and
 installs a launchd LaunchAgent (`RunAtLoad` + crash-respawn) so it auto-starts
 at login and survives reboots — the robust way to keep it always-on. Read-only
 JSON on `127.0.0.1:9877` (WebSocket on `9876` is for live session registration,
-not queries):
+not queries). Since 1.19.2 every route except `/api/ready` needs
+`Authorization: Bearer <token>`, with the token read at request time from
+`~/.tokmeter/daemon/daemon.token`; never log it or pass it as a command argument:
 
 | Endpoint | Returns |
 | --- | --- |
@@ -95,6 +98,8 @@ not queries):
 | `/api/health`, `/api/pricing-status`, `/api/cron-status` | Daemon, pricing-freshness, and cron health |
 | `/api/today-models`, `/api/cross-tool`, `/api/anomalies`, `/api/session-ledger` | Today's models, cross-tool projection, anomalies, and the per-session ledger |
 | `/api/backups`, `/api/themes` | Cleanup backups and available bar themes |
+| `/api/quota` | Plan windows per agent (Codex weekly, Claude Code 5h and 7d): used %, reset time, and whether the current pace runs out first |
+| `/api/coverage` | The last week's coverage reports: session files that changed on a sealed day and fed no usage |
 | `/api/rates` (`?scope=all`) | Per-model list price per million tokens (input, output, cache read/write), the price source, and the effective rate. Added after v1.14.1 |
 
 An unknown path returns `{"error":"Not found","endpoints":[…]}` listing the
@@ -229,4 +234,4 @@ and `web` are private implementation packages — do not depend on them directly
 ## Licenses
 
 Applications are AGPL-3.0-only; core source is MPL-2.0. See
-[licenses and source](docs/licensing.md).
+[licenses and source](https://github.com/sriinnu/tokmeter/blob/main/docs/licensing.md).

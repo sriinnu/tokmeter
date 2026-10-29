@@ -18,10 +18,13 @@ All tools are prefixed `tokmeter_`. Start with `tokmeter_pulse` — it answers m
 "what am I spending" questions in one call. Full list grouped by purpose:
 [MCP tool reference](https://github.com/sriinnu/tokmeter/blob/main/docs/mcp-tools.md).
 
-**Cleanup is gated server-side.** `tokmeter_cleanup_execute` refuses to run
-unless passed `confirm: "DELETE"` and writes a backup first by default; always
-call `tokmeter_cleanup_preview` first. The human "are you sure?" over MCP comes
-from your client's tool-approval UI, not from inside the server. See
+**Every MCP tool is read-only.** All 22 declare `readOnlyHint: true`. An agent
+can preview a cleanup with `tokmeter_cleanup_preview` and list backups with
+`tokmeter_backups`, but deleting and restoring are not available over MCP: the
+user runs `tokmeter cleanup` or `tokmeter restore` in a terminal, or uses the
+TUI. Releases up to 1.19.3 had owner-gated `tokmeter_cleanup_execute` and
+`tokmeter_restore` tools behind `TOKMETER_ENABLE_DESTRUCTIVE_MCP=1`; both, and
+the variable, are gone. See
 [Backup & restore](https://github.com/sriinnu/tokmeter/blob/main/docs/backup-restore.md#confirmation-and-backup-where-the-gate-lives).
 
 ## Daemon HTTP
@@ -44,6 +47,7 @@ clients must do the same and must not log it.
 | `/api/live` | Current bounded live aggregate |
 | `/api/stats`, `/api/daily`, `/api/models`, `/api/providers`, `/api/projects`, `/api/sessions` | Scoped aggregates |
 | `/api/statbar-signals` | Burn rate, cache hit, pace, billing window |
+| `/api/quota` | Plan windows per agent (Codex weekly, Claude Code 5h and 7d): used %, reset time, and whether the current pace runs out first |
 | `/api/coverage` | The last week's coverage reports: session files that changed on a sealed day and fed no usage (1.17.0+) |
 | `/api/rates` | Per-model $/M rates (input, output, cache read/write) with the price source; `?scope=all` for every model with usage |
 

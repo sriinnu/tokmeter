@@ -140,7 +140,7 @@ tokmeter models --json
 tokmeter pricing claude-sonnet-4-20250514
 
 # Cleanup old session data
-tokmeter cleanup --project old-app --backup
+tokmeter cleanup --project old-app --dry-run   # preview; a real run always backs up first
 tokmeter restore --latest
 ```
 
@@ -155,7 +155,7 @@ The TUI provides a real-time interactive view with navigable project/model/daily
 
 ## Supported Providers
 
-Claude Code, OpenCode, Codex CLI, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo Code, Kilo CLI, Mux, Muse, Cline, Augment, Copilot CLI, and other implemented parsers, plus any agent registered as a custom source. See [integration coverage](https://github.com/sriinnu/tokmeter/blob/main/docs/compatibility.md) for validation scope.
+Claude Code, OpenCode, Codex CLI, Codex Desktop, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo Code, Kilo CLI, Mux, VS Code Copilot, Antigravity, Zed, Muse, Cline, Augment, and Copilot CLI, plus any agent registered as a custom source. See [integration coverage](https://github.com/sriinnu/tokmeter/blob/main/docs/compatibility.md) for validation scope.
 
 Editor MCP installer targets are separate from session-parser support; Windsurf is an installer target, not a usage parser.
 

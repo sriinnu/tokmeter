@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { CleanupService, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
+import { requireInteractiveTerminal } from "./interactive-guard.js";
 
 function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -108,6 +109,7 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
     console.log(`   Target:    ${sanitizeDataLabel(currentHome, 4096)}`);
   }
 
+  if (!requireInteractiveTerminal("restore")) return;
   const confirm = await ask("\n⚠  This will overwrite current data. Type RESTORE to confirm: ");
   if (confirm !== "RESTORE") {
     console.log("Cancelled.\n");

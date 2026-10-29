@@ -12,8 +12,6 @@ Tokmeter reads the session files your agents already write to disk and turns the
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
-[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sriinnu)
-[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/sriinnu)
 
 </div>
 
@@ -104,7 +102,7 @@ const daily = core.getDailyBreakdown();
 const summary = await loadTokmeterSummary({ week: true, light: true });
 ```
 
-Reuse one core scan when querying several breakdowns. See [integration guidance](docs/consuming-tokmeter.md), [core API usage](packages/core/README.md), and [SKILL.md](SKILL.md) for agent-facing integration instructions.
+Reuse one core scan when querying several breakdowns. See [integration guidance](docs/consuming-tokmeter.md), [core API usage](packages/core/README.md), and [SKILL.md](skills/tokmeter/SKILL.md) for agent-facing integration instructions.
 
 ## Daemon, MCP, and statusline
 
@@ -118,7 +116,7 @@ tokmeter-mcp live              # live terminal UI
 
 The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. Private reads and WebSocket connections require the per-user token in `~/.tokmeter/daemon/daemon.token`; `/api/ready` is the public health check. The macOS app, statusline, and MCP server read that credential at use time. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
 
-MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and confirmed cleanup/restore operations. See the [MCP tool reference](docs/mcp-tools.md) for all 24 tools grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
+MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and cleanup previews. All 22 are read-only: deleting and restoring sessions stays in the CLI and TUI, where you confirm it. See the [MCP tool reference](docs/mcp-tools.md) for every tool grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
 
 `tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. For Claude Code, register the MCP server with `claude mcp add tokmeter --scope user -- npx -y @sriinnu/tokmeter-mcp serve` (from 1.15.0, `install-mcp` runs `claude mcp add` itself; 1.14.1 and earlier wrote the entry to `~/.claude/settings.json`, which Claude Code doesn't read). See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
@@ -141,13 +139,13 @@ bun install
 bun run dev:web
 ```
 
-Open `http://localhost:3000`. See [web setup and data sources](packages/web/README.md).
+Vite opens the dashboard in your browser on `127.0.0.1:3000` with a per-launch session link; a plain request to that port can't read your usage. See [web setup and data sources](packages/web/README.md).
 
 ## macOS app
 
 Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also required for the local daemon.
 
-Install `@sriinnu/tokmeter-mcp`, run `tokmeter-mcp daemon start`, then open TokmeterBar from `/Applications`. Download the app from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases).
+Install it with `brew install --cask sriinnu/homebrew-tap/tokmeterbar`, or download `TokmeterBar-<version>.zip` from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases) and move it to `/Applications`. The app starts the version-matched `@sriinnu/tokmeter-mcp` daemon itself when none is running, and updates through Sparkle.
 
 The popup gives today's tokens and estimated API cost equal prominence, with models and projects below. Chart hover cards show exact daily tokens and cost. **Usage details** expands lifetime totals, trends, and signals. Themes: Terminal, Paper, Prism, Lagoon, Carbon, Glass, and (since 1.15.0) the instrument themes Meter, Pump, Rams, Deck, and Passbook. A **$/M** button in the models header shows each model's list price per million tokens (input, output, cache read, cache write) and where that price came from, and the dashboard port is configurable. The Hub provides larger breakdowns and settings. Settings → **Open web dashboard** starts its local server on demand; **Stop web dashboard** or quitting the app stops it.
 
@@ -157,7 +155,7 @@ The [synthetic walkthrough](docs/assets/demo/README.md) documents how the exampl
 
 ## Documentation
 
-- [MCP tool reference](docs/mcp-tools.md) — all 24 `tokmeter_` tools, grouped
+- [MCP tool reference](docs/mcp-tools.md) — all 22 `tokmeter_` tools, grouped
 - [Consuming tokmeter](docs/consuming-tokmeter.md) — MCP, daemon HTTP, CLI, and in-process integration
 - [How the numbers work](docs/how-the-numbers-work.md) — bucket semantics and where estimates enter
 - [Backup, snapshot & restore](docs/backup-restore.md) — the confirmation/backup model and cross-machine restore
@@ -168,9 +166,9 @@ The [synthetic walkthrough](docs/assets/demo/README.md) documents how the exampl
 
 Everything runs on your machine. Tokmeter reads session files your agents
 already wrote, needs **no provider credentials**, sends **no telemetry**, and
-requires **no account**. The only outbound request is an optional fetch of a
-public model-price catalog, which `--light` skips entirely. Your usage data
-never leaves the device.
+requires **no account**. The CLI's only outbound request is an optional fetch
+of a public model-price catalog, which `--light` skips entirely; the macOS app
+also checks GitHub for app updates. Your usage data never leaves the device.
 
 ## Support
 

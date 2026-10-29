@@ -19,6 +19,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in Claude Code with it.
 - `release.sh` refuses branch names outside `[A-Za-z0-9._/-]` before they reach
   `eval`, and its MCP-registry check no longer pipes `curl` output into `node`.
+- The MCP server no longer exposes `tokmeter_cleanup_execute` or
+  `tokmeter_restore`. All 22 MCP tools are now read-only: an agent can preview
+  a cleanup and list backups, but deleting or restoring session files is done
+  by a person with `tokmeter cleanup` / `tokmeter restore` or the TUI, which
+  keep their preview, mandatory backup and confirmation. The tools were already
+  off unless `TOKMETER_ENABLE_DESTRUCTIVE_MCP=1` was set; that variable is gone.
+
+- `tokmeter cleanup` and `tokmeter restore` only change files when run from an
+  interactive terminal. A piped confirmation (`echo DELETE | tokmeter cleanup`)
+  or `--force` from a non-terminal process is refused with a pointer to
+  `--dry-run`, which still works anywhere.
+
+### Changed
+
+- The agent skill moved from the repository root to `skills/tokmeter/SKILL.md`.
+  With `SKILL.md` at the root, skill installers and directory audits treated
+  the whole repository as the skill, so release scripts and daemon code were
+  copied into `~/.claude/skills/tokmeter` and audited as skill content.
+  Reinstall with `npx skills add https://github.com/sriinnu/tokmeter --skill tokmeter`.
+- The README shows the sponsor links once, in the Support section, instead of
+  also as badges at the top (directory listings render the top of the README).
+
+### Fixed
+
+- MCP tools report numbers for the scope, project and providers they were asked
+  for. They used to read core's lifetime getters, so `week` and `month`
+  returned all-time totals under a "Last 7 Days"/"This Month" label,
+  `providers` was ignored (pulse filtered to `codex` reported 14 providers), and
+  `tokmeter_projects` ignored the project filter. Every tool now reads the
+  sealed daily ledger plus today through core's `getSummary`, narrowed to local
+  calendar days, and the scope label shows the exact days covered.
+  `tokmeter_projects` gains a `project` filter and `tokmeter_providers` a
+  `providers` filter.
+- MCP tools no longer re-parse raw history on every call. The default scope
+  asked for 14 days of raw transcripts and `week` scanned all of them (37–110 s
+  on a large corpus). Ledger-backed tools now read only today's files and the
+  relay. Tools that need individual requests (search, heatmap, record export,
+  per-request anomalies, sessions) read raw files only from the scope's first
+  day, capped at the last 14 days for all-time, and say so in their output.
+- MCP dates are local. Dates and timestamps were printed in UTC, so the evening's
+  usage showed under the wrong day, and the streak and weekday maths in
+  `tokmeter_streaks` used UTC days as well.
 
 ## [1.19.3] - 2026-10-25
 

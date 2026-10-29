@@ -9,9 +9,16 @@ tokmeter models          # per-model cost/tokens
 tokmeter projects        # per-project breakdown
 tokmeter daily           # day-by-day
 tokmeter stats           # summary stats
-tokmeter digest          # narrative report card
+tokmeter digest          # narrative report card (--period today|week|month)
 tokmeter pricing <model> # price lookup
+tokmeter quota           # plan windows: Codex weekly, Claude Code 5h/7d, reset time, pace
+tokmeter alias list      # merge, rename, tag or hide projects (set/merge/tag/hide/suggest)
+tokmeter config list     # knobs in ~/.tokmeter/config.json (get/set/reset/path)
 ```
+
+`live`, `statusline`, `daemon`, `install-mcp`, `install-statusline` and
+`editors` are forwarded to `@sriinnu/tokmeter-mcp`, so install that package for
+them; they're also available as `tokmeter-mcp <command>`.
 
 ## Filters
 
@@ -44,6 +51,9 @@ before restoring. See
 > **Scope cleanup to `--until` yesterday or older.** Sealed past days live in the
 > relay ledger even after raw transcripts age out, but *today* isn't sealed yet —
 > deleting today's raw before midnight rollover loses it.
+
+Deleting and restoring are yours to run. Over MCP an agent can preview a
+cleanup (`tokmeter_cleanup_preview`) and list backups, nothing more.
 
 ## Checking history
 

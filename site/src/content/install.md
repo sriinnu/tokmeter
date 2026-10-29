@@ -50,6 +50,15 @@ Since 1.15.0, `tokmeter-mcp install-mcp` runs `claude mcp add` for you. Older
 versions wrote the entry to `~/.claude/settings.json`, which Claude Code doesn't
 load MCP servers from; if you set it up that way, delete that entry.
 
+`tokmeter-mcp install-all` sets up the statusline and the MCP server for every
+supported editor (`tokmeter-mcp editors` lists them). Releases up to 1.19.3
+also added Claude Code PreToolUse "guard" hooks that pointed at scripts which
+don't exist on your machine; nothing installs them any more, and
+`tokmeter-mcp install-hooks` is now a no-op. If you ran `install-hooks` or
+`install-all` on one of those releases, upgrade first, then run
+`tokmeter-mcp uninstall-hooks`: it removes only those guard entries and leaves
+your own hooks alone.
+
 The default command launches a terminal UI, so the MCP entry point is the
 `serve` subcommand. On macOS, `tokmeter-mcp daemon install-agent` installs a
 launchd LaunchAgent so the daemon auto-starts at login and respawns on crash.

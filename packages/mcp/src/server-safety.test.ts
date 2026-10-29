@@ -1,10 +1,10 @@
 /**
- * MCP tool safety: annotations on every tool, the empty-filter refusal and
- * the mandatory backup on tokmeter_cleanup_execute.
+ * MCP tool safety: every tool is read-only, nothing that deletes or restores
+ * session files is exposed, and the cleanup preview never executes.
  *
- * HOME points at an empty temp dir and CleanupService.execute is wrapped so a
- * non-empty filter never reaches the real implementation — nothing here can
- * scan or delete real session files.
+ * HOME points at an empty temp dir and CleanupService.execute is wrapped to
+ * record any call, so a preview that tried to delete would be caught — nothing
+ * here can scan or delete real session files.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -75,8 +75,6 @@ vi.mock("@sriinnu/tokmeter", async (importOriginal) => {
   };
 });
 
-const DESTRUCTIVE = new Set(["tokmeter_cleanup_execute", "tokmeter_restore"]);
-
 let client: Client;
 
 beforeAll(async () => {
@@ -88,12 +86,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  process.env.TOKMETER_ENABLE_DESTRUCTIVE_MCP = "1";
+  executeCalls.length = 0;
 });
 
 afterAll(async () => {
   await client?.close();
-  delete process.env.TOKMETER_ENABLE_DESTRUCTIVE_MCP;
   rmSync(fakeHome, { recursive: true, force: true });
 });
 
@@ -102,49 +99,30 @@ function text(result: Awaited<ReturnType<Client["callTool"]>>): string {
   return content.map((c) => c.text).join("\n");
 }
 
-async function previewReceipt(args: Record<string, unknown>): Promise<string> {
-  const result = await client.callTool({ name: "tokmeter_cleanup_preview", arguments: args });
-  const receipt = /Preview receipt: ([0-9a-f-]+)/.exec(text(result))?.[1];
-  if (!receipt) throw new Error(`missing preview receipt in: ${text(result)}`);
-  return receipt;
-}
-
 describe("MCP tool annotations", () => {
-  it("annotates every tool", async () => {
+  it("annotates every tool read-only and closed-world", async () => {
     const { tools } = await client.listTools();
-    expect(tools.length).toBe(24);
+    expect(tools).toHaveLength(22);
     for (const tool of tools) {
-      expect(tool.annotations, tool.name).toBeDefined();
-      expect(tool.annotations?.openWorldHint, tool.name).toBe(false);
-    }
-  });
-
-  it("marks the read-only tools readOnly", async () => {
-    const { tools } = await client.listTools();
-    const readOnly = tools.filter((t) => !DESTRUCTIVE.has(t.name));
-    expect(readOnly).toHaveLength(22);
-    for (const tool of readOnly) {
-      expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+      expect(tool.annotations, tool.name).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
       expect(tool.annotations?.destructiveHint, tool.name).toBeUndefined();
     }
   });
 
-  it("marks cleanup_execute and restore destructive and non-idempotent", async () => {
-    const { tools } = await client.listTools();
-    for (const name of DESTRUCTIVE) {
-      const tool = tools.find((t) => t.name === name);
-      expect(tool?.annotations).toMatchObject({
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: false,
-      });
-    }
+  it("exposes nothing that deletes or restores session files", async () => {
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("tokmeter_cleanup_execute");
+    expect(names).not.toContain("tokmeter_restore");
+    expect(names).toContain("tokmeter_cleanup_preview");
+    expect(names).toContain("tokmeter_backups");
   });
 });
 
-describe("tokmeter_cleanup_execute guards", () => {
-  it("shows the exact target manifest before issuing a receipt", async () => {
+describe("tokmeter_cleanup_preview", () => {
+  it("shows the exact target manifest, sanitized", async () => {
     const result = await client.callTool({
       name: "tokmeter_cleanup_preview",
       arguments: { project: "manifest" },
@@ -155,84 +133,15 @@ describe("tokmeter_cleanup_execute guards", () => {
     expect(text(result)).not.toContain("\u202e");
   });
 
-  it("is disabled unless the machine owner opts in through the server environment", async () => {
-    delete process.env.TOKMETER_ENABLE_DESTRUCTIVE_MCP;
+  it("never deletes, and points the user at the CLI instead", async () => {
     const result = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", project: "x" },
+      name: "tokmeter_cleanup_preview",
+      arguments: { project: "manifest" },
     });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/machine owner/i);
-  });
-
-  it("refuses an empty filter with guidance on what to specify", async () => {
-    const result = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE" },
-    });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/empty filter/);
-    expect(text(result)).toMatch(/project/);
-  });
-
-  it("refuses scope 'all' with a blank project (both mean match-everything)", async () => {
-    const result = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", project: "", scope: "all" },
-    });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/empty filter/);
-  });
-
-  it("always backs up, and says so when backup:false was passed", async () => {
-    executeCalls.length = 0;
-    const preview_id = await previewReceipt({ project: "no-such-project" });
-    const result = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", project: "no-such-project", backup: false, preview_id },
-    });
-    expect(result.isError).toBeFalsy();
-    expect(executeCalls).toHaveLength(1);
-    expect(executeCalls[0].options.backup).toBe(true);
-    expect(executeCalls[0].options.expectedPreviewDigest).toMatch(/^[0-9a-f]{64}$/);
-    expect(text(result)).toMatch(/backup:false was ignored/);
-  });
-
-  it("does not add the note when backup is left at its default", async () => {
-    const preview_id = await previewReceipt({ providers: ["codex"] });
-    const result = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", providers: ["codex"], preview_id },
-    });
-    expect(text(result)).not.toMatch(/backup:false/);
-  });
-
-  it("requires a one-time preview receipt bound to the exact filters", async () => {
-    const preview_id = await previewReceipt({ project: "one" });
-    const mismatch = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", project: "two", preview_id },
-    });
-    expect(mismatch.isError).toBe(true);
-    expect(text(mismatch)).toMatch(/preview receipt/i);
-
-    const replay = await client.callTool({
-      name: "tokmeter_cleanup_execute",
-      arguments: { confirm: "DELETE", project: "one", preview_id },
-    });
-    expect(replay.isError).toBe(true);
-  });
-});
-
-describe("tokmeter_restore guards", () => {
-  it("is disabled unless the machine owner opts in through the server environment", async () => {
-    delete process.env.TOKMETER_ENABLE_DESTRUCTIVE_MCP;
-    const result = await client.callTool({
-      name: "tokmeter_restore",
-      arguments: { confirm: "RESTORE", backup_id: "2026-10-25T12-00-00" },
-    });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/machine owner/i);
+    expect(executeCalls).toHaveLength(0);
+    expect(text(result)).toMatch(/not available over MCP/);
+    expect(text(result)).toContain("tokmeter cleanup");
+    expect(text(result)).not.toMatch(/receipt/i);
   });
 });
 
