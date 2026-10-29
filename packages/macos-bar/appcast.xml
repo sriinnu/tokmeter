@@ -1,10 +1,20 @@
 <?xml version='1.0' encoding='utf-8'?>
+<!-- Signed Sparkle feed. TokmeterBar builds with SURequireSignedFeed reject this file unless the signature comment Sparkle appends at the end matches its exact bytes. Change it only through release-macos.yml, or re-sign it with Sparkle's sign_update and the release key. -->
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>TokmeterBar</title>
         <link>https://github.com/sriinnu/tokmeter</link>
         <description>Auto-update feed for TokmeterBar.app</description>
         <language>en</language>
+        <item>
+            <title>TokmeterBar 1.19.4</title>
+            <pubDate>Thu, 29 Oct 2026 12:18:19 +0000</pubDate>
+            <sparkle:version>68</sparkle:version>
+            <sparkle:shortVersionString>1.19.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;p&gt;See release notes at &lt;a href="https://github.com/sriinnu/tokmeter/releases/tag/v1.19.4"&gt;v1.19.4&lt;/a&gt;.&lt;/p&gt;</description>
+            <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.19.4/TokmeterBar-1.19.4.zip" type="application/octet-stream" sparkle:edSignature="uKLu8lkflk7ZxZZ7ggEoxtav5A/PNZWfFpQn2IGYZ7skPWwGjpQkR/f18rkdfKgjah9IyaRZbiDlsPEbFWTbCQ==" length="8485920" />
+        </item>
         <item>
             <title>TokmeterBar 1.19.3</title>
             <pubDate>Sun, 25 Oct 2026 21:13:14 +0000</pubDate>
@@ -123,4 +133,7 @@
             <enclosure url="https://github.com/sriinnu/tokmeter/releases/download/v1.14.0/TokmeterBar-1.14.0.zip" type="application/octet-stream" sparkle:edSignature="pa39+GrliWixSUhM90hoR12HT8LmALNp/2KzaKq2qi5Ik3FDLjQpUoubKMalRoGW/O6/Ek1C+45sFd+MqitLDw==" length="6996790" />
         </item>
     </channel>
-</rss>
+</rss><!-- sparkle-signatures:
+edSignature: UMts9KF20DZUrNDEXEJR2meQqUvhgTEdmhUg6f9vmVMQunY/gi3EU4BxUU5FZ8fREJbVbFcyc2QLn0cdkDUOBg==
+length: 11722
+-->
