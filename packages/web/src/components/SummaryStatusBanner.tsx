@@ -1,7 +1,8 @@
-import type { CSSProperties } from "react";
+import { AlertTriangle, ChevronDown, CircleDot, Lock, Radio } from "lucide-react";
 import type { LiveConnectionStatus } from "../hooks/useLiveData.js";
 import type { TokmeterScanMeta, TokmeterSummarySource } from "../hooks/useTokmeterData.js";
-import { applyTypography, webTheme, withAlpha } from "../theme.js";
+import { cn } from "../lib/utils.js";
+import { Badge } from "./ui/badge.js";
 
 interface SummaryStatusBannerProps {
   meta: TokmeterScanMeta;
@@ -12,8 +13,9 @@ interface SummaryStatusBannerProps {
 }
 
 /**
- * Presents the current summary freshness, frozen-history boundary, and any
- * degraded live-state warnings without blocking the rest of the dashboard.
+ * Summary freshness, the sealed-history boundary, and any degraded live-state
+ * warnings, without blocking the rest of the dashboard. Healthy state folds to
+ * one line; anything degraded opens itself so it can't be missed.
  */
 export function SummaryStatusBanner({
   meta,
@@ -23,80 +25,89 @@ export function SummaryStatusBanner({
   daemonStatus,
 }: SummaryStatusBannerProps) {
   const tone = getTodayStateTone(meta.todayState);
+  const joinedMetaWarnings = meta.warnings.map((entry) => entry.message).join(" · ");
+  // A refresh failure replaces the meta summary in `warning`; show it on its own.
+  const extraWarning = warning && warning !== joinedMetaWarnings ? warning : null;
+  const hasWarnings = meta.warnings.length > 0 || extraWarning !== null;
+  const degraded = meta.todayState !== "live" || hasWarnings;
   const historyMessage = meta.stableThrough
-    ? `History is frozen through ${formatDate(meta.stableThrough)}.`
-    : "Historical snapshot is warming up.";
-  const liveMessage = getTodayStateMessage(meta.todayState);
+    ? `History sealed through ${formatDate(meta.stableThrough)}`
+    : "Historical snapshot is warming up";
 
   return (
-    <section style={containerStyle}>
-      <div style={headerRowStyle}>
-        <div>
-          <div style={eyebrowStyle}>{" Summary health"}</div>
-          <div style={headlineStyle}>{historyMessage}</div>
-          <div style={sublineStyle}>{liveMessage}</div>
-        </div>
-        <StatusPill label={tone.label} tone={tone} />
-      </div>
+    <details
+      open={degraded}
+      className={cn("group rounded-xl border bg-card text-sm", degraded && "border-warning/50")}
+    >
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl px-4 py-2.5 sm:px-5 [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
+          <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="truncate">{historyMessage}</span>
+        </span>
+        <Badge variant={tone.variant}>
+          <tone.icon aria-hidden /> {tone.label}
+        </Badge>
+        {hasWarnings && (
+          <Badge variant="warning">
+            <AlertTriangle aria-hidden />
+            {meta.warnings.length + (extraWarning ? 1 : 0)} warning
+            {meta.warnings.length + (extraWarning ? 1 : 0) === 1 ? "" : "s"}
+          </Badge>
+        )}
+        <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+          Scanned {formatTimestamp(meta.lastScanAt)}
+          <ChevronDown
+            className="size-3.5 transition-transform group-open:rotate-180"
+            aria-hidden
+          />
+          <span className="sr-only">Toggle summary details</span>
+        </span>
+      </summary>
 
-      <div style={metricGridStyle}>
-        <Metric label="Summary source" value={getSummarySourceLabel(summarySource)} />
-        <Metric label="Daemon stream" value={getDaemonStatusLabel(daemonStatus)} />
-        <Metric label="History source" value={getHistorySourceLabel(meta.historySource)} />
-        <Metric label="Last scan" value={formatTimestamp(meta.lastScanAt)} />
-        <Metric label="Browser refresh" value={formatTimestamp(lastLoadedAt)} />
+      <div className="grid gap-3 border-t px-4 py-3 sm:px-5">
+        <p className="text-xs text-muted-foreground">{getTodayStateMessage(meta.todayState)}</p>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-5">
+          <Metric label="Summary source" value={getSummarySourceLabel(summarySource)} />
+          <Metric label="Daemon stream" value={getDaemonStatusLabel(daemonStatus)} />
+          <Metric label="History source" value={getHistorySourceLabel(meta.historySource)} />
+          <Metric label="Last scan" value={formatTimestamp(meta.lastScanAt)} />
+          <Metric label="Browser refresh" value={formatTimestamp(lastLoadedAt)} />
+        </dl>
+        {hasWarnings && (
+          <ul className="grid gap-1.5 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
+            {extraWarning && <WarningItem message={extraWarning} />}
+            {meta.warnings.map((entry, index) => (
+              <WarningItem
+                // biome-ignore lint/suspicious/noArrayIndexKey: warnings have no id and may repeat
+                key={`${entry.scope}-${index}`}
+                message={entry.message}
+                scope={entry.provider ? `${entry.scope} · ${entry.provider}` : entry.scope}
+              />
+            ))}
+          </ul>
+        )}
       </div>
+    </details>
+  );
+}
 
-      {warning && <div style={warningStyle}>{warning}</div>}
-    </section>
+function WarningItem({ message, scope }: { message: string; scope?: string }) {
+  return (
+    <li className="flex items-start gap-2">
+      <AlertTriangle className="mt-px size-3.5 shrink-0 text-warning" aria-hidden />
+      <span className="min-w-0 break-words">
+        {scope && <span className="mr-1 font-medium uppercase tracking-wide">{scope}</span>}
+        {message}
+      </span>
+    </li>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div style={metricCardStyle}>
-      <div style={metricLabelStyle}>{label}</div>
-      <div style={metricValueStyle}>{value}</div>
-    </div>
-  );
-}
-
-function StatusPill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: { background: string; border: string; color: string };
-}) {
-  return (
-    <div
-      style={{
-        alignItems: "center",
-        background: tone.background,
-        border: `1px solid ${tone.border}`,
-        borderRadius: webTheme.radii.pill,
-        color: tone.color,
-        display: "inline-flex",
-        ...applyTypography(webTheme.typography.caption),
-        fontWeight: 700,
-        gap: webTheme.spacing.sm,
-        letterSpacing: "0.04em",
-        padding: `${webTheme.spacing.sm} ${webTheme.spacing.md}`,
-        textTransform: "uppercase",
-        transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
-      }}
-    >
-      <span
-        style={{
-          background: tone.color,
-          borderRadius: "50%",
-          boxShadow: `0 0 12px ${tone.color}`,
-          display: "inline-block",
-          height: 8,
-          width: 8,
-        }}
-      />
-      {label}
+    <div className="min-w-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="truncate font-medium">{value}</dd>
     </div>
   );
 }
@@ -104,37 +115,22 @@ function StatusPill({
 function getTodayStateTone(todayState: TokmeterScanMeta["todayState"]) {
   switch (todayState) {
     case "live":
-      return {
-        label: "Live today",
-        background: withAlpha(webTheme.colors.olive, 0.16),
-        border: withAlpha(webTheme.colors.olive, 0.34),
-        color: webTheme.status.live,
-      };
+      return { label: "Today live", variant: "live" as const, icon: CircleDot };
     case "degraded":
-      return {
-        label: "Partial live",
-        background: withAlpha(webTheme.colors.rose, 0.18),
-        border: withAlpha(webTheme.colors.rose, 0.34),
-        color: webTheme.status.warning,
-      };
+      return { label: "Today partial", variant: "warning" as const, icon: AlertTriangle };
     default:
-      return {
-        label: "Snapshot only",
-        background: withAlpha(webTheme.colors.teal, 0.18),
-        border: withAlpha(webTheme.colors.cream, 0.22),
-        color: webTheme.status.info,
-      };
+      return { label: "Snapshot only", variant: "warning" as const, icon: Radio };
   }
 }
 
 function getTodayStateMessage(todayState: TokmeterScanMeta["todayState"]): string {
   switch (todayState) {
     case "live":
-      return "Today is updating live, while earlier days stay stable until you rescan or clean up data.";
+      return "Today is updating live. Sealed days are immutable; a rescan can only ever add to them.";
     case "degraded":
-      return "Historical data is stable, but one or more live providers are temporarily unavailable.";
+      return "Sealed history is stable, but one or more live providers are temporarily unavailable, so today may be incomplete.";
     default:
-      return "Showing the last known summary only. Live updates will appear again when a fresh scan succeeds.";
+      return "Showing the last known summary only. Today will update again when a fresh scan succeeds.";
   }
 }
 
@@ -190,7 +186,7 @@ function formatDate(value: string): string {
 
 function formatTimestamp(value: number | null): string {
   if (!value) {
-    return "Waiting for data";
+    return "—";
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -200,95 +196,3 @@ function formatTimestamp(value: number | null): string {
     month: "short",
   }).format(value);
 }
-
-/** Container with fadeUp entrance animation */
-const containerStyle: CSSProperties = {
-  animation: `fadeUp ${webTheme.motion.duration.slow} ${webTheme.motion.easing.decelerate} both`,
-  backdropFilter: "blur(18px)",
-  background: `linear-gradient(135deg, ${withAlpha(webTheme.colors.pine, 0.94)}, ${withAlpha(
-    webTheme.colors.teal,
-    0.76
-  )})`,
-  border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: webTheme.radii.xl,
-  boxShadow: webTheme.elevation.high,
-  marginBottom: webTheme.spacing.xl,
-  padding: webTheme.spacing.xl,
-  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
-};
-
-const headerRowStyle: CSSProperties = {
-  alignItems: "flex-start",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: webTheme.spacing.lg,
-  justifyContent: "space-between",
-  marginBottom: webTheme.spacing.lg,
-};
-
-/** Eyebrow label with micro typography */
-const eyebrowStyle: CSSProperties = {
-  color: webTheme.text.muted,
-  ...applyTypography(webTheme.typography.micro),
-  fontWeight: 700,
-  letterSpacing: "0.08em",
-  marginBottom: webTheme.spacing.sm,
-  textTransform: "uppercase",
-};
-
-/** Headline with h2 typography */
-const headlineStyle: CSSProperties = {
-  color: webTheme.text.primary,
-  ...applyTypography(webTheme.typography.h2),
-  marginBottom: webTheme.spacing.xs,
-};
-
-/** Subline with body typography */
-const sublineStyle: CSSProperties = {
-  color: webTheme.text.secondary,
-  ...applyTypography(webTheme.typography.body),
-  lineHeight: 1.6,
-  maxWidth: 720,
-};
-
-const metricGridStyle: CSSProperties = {
-  display: "grid",
-  gap: webTheme.spacing.md,
-  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-};
-
-/** Metric card with theme radii and spacing */
-const metricCardStyle: CSSProperties = {
-  background: webTheme.surfaces.cardBackground,
-  border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: webTheme.radii.lg,
-  padding: `${webTheme.spacing.md} ${webTheme.spacing.lg}`,
-  transition: `box-shadow ${webTheme.motion.duration.fast} ${webTheme.motion.easing.default}`,
-};
-
-/** Metric label with caption typography */
-const metricLabelStyle: CSSProperties = {
-  color: webTheme.text.muted,
-  ...applyTypography(webTheme.typography.caption),
-  marginBottom: webTheme.spacing.xs,
-  textTransform: "uppercase",
-};
-
-/** Metric value with h3 typography */
-const metricValueStyle: CSSProperties = {
-  color: webTheme.text.primary,
-  fontSize: "15px",
-  fontWeight: webTheme.typography.h3.weight,
-};
-
-/** Warning banner with theme tokens */
-const warningStyle: CSSProperties = {
-  background: withAlpha(webTheme.colors.rose, 0.16),
-  border: `1px solid ${withAlpha(webTheme.colors.rose, 0.28)}`,
-  borderRadius: webTheme.radii.lg,
-  color: webTheme.text.primary,
-  ...applyTypography(webTheme.typography.mono),
-  lineHeight: 1.6,
-  marginTop: webTheme.spacing.lg,
-  padding: `${webTheme.spacing.md} ${webTheme.spacing.md}`,
-};

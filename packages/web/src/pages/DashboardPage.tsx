@@ -1,96 +1,75 @@
-import type { CSSProperties } from "react";
-import { SummaryStatusBanner } from "../components/SummaryStatusBanner.js";
-import type { LiveData } from "../hooks/useLiveData.js";
-import { useTokmeterData } from "../hooks/useTokmeterData.js";
-import { webTheme, withAlpha } from "../theme.js";
+import { useMemo } from "react";
+import { AmbientBand } from "../ambient/AmbientBand.js";
+import { DataGate } from "../components/DataGate.js";
+import { EstimateNote } from "../components/EstimateNote.js";
+import { PageHeader } from "../components/PageHeader.js";
+import type { TokmeterData } from "../hooks/useTokmeterData.js";
+import { useDashboardData } from "../lib/data-context.js";
+import { localDateKey } from "../lib/dates.js";
+import { formatTimestamp } from "../lib/format.js";
+import { buildPeriodTotals } from "../lib/periods.js";
+import { computeSpendTempo } from "../lib/tempo.js";
+import { ModelsCard, ProvidersCard } from "./dashboard/BreakdownCards.js";
 import { buildDashboardInsights } from "./dashboard/buildDashboardInsights.js";
-import { DashboardOverviewSection } from "./dashboard/DashboardOverviewSection.js";
-import { DashboardTablesSection } from "./dashboard/DashboardTablesSection.js";
+import { DailySpendCard } from "./dashboard/DailySpendCard.js";
+import { EfficiencyStrip } from "./dashboard/EfficiencyStrip.js";
+import { LiveSessionsCard } from "./dashboard/LiveSessionsCard.js";
+import { PeriodTiles } from "./dashboard/PeriodTiles.js";
+import { TodayCard } from "./dashboard/TodayCard.js";
+import { TopProjectsCard } from "./dashboard/TopProjectsCard.js";
 
-interface DashboardPageProps {
-  liveData: LiveData;
+export function DashboardPage() {
+  return <DataGate>{(data) => <Overview data={data} />}</DataGate>;
 }
 
-/**
- * Route-level orchestration for Tokmeter's transparent, multi-panel dashboard.
- */
-export function DashboardPage({ liveData }: DashboardPageProps) {
-  const { data, loading, error, warning, lastLoadedAt, source } = useTokmeterData();
+function Overview({ data }: { data: TokmeterData }) {
+  const { live } = useDashboardData();
+  const todayKey = localDateKey(Date.now());
+  const sessions = live.aggregated?.sessions ?? 0;
+  // The live stream ticks every 2s; only its status and session count feed
+  // the insights, so the ledger charts don't re-render on every tick.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately keyed on status/sessions
+  const insights = useMemo(() => buildDashboardInsights(data, live), [data, live.status, sessions]);
+  const periods = useMemo(() => buildPeriodTotals(data.daily, data.stats), [data]);
+  const tempo = useMemo(() => computeSpendTempo(data.daily, data.meta), [data]);
 
-  if (loading) {
-    return renderStateCard("Loading dashboard", "Building the latest Tokmeter summary...");
-  }
-
-  if (error) {
-    return renderStateCard(
-      "Dashboard unavailable",
-      `Tokmeter could not load a summary yet. ${error}`,
-      webTheme.text.danger
-    );
-  }
-
-  if (!data) {
-    return renderStateCard(
-      "No usage data yet",
-      "Run Tokmeter once or keep the daemon open for a moment so the first summary can be generated."
-    );
-  }
-
-  const insights = buildDashboardInsights(data, liveData);
+  const ledger = useMemo(
+    () => (
+      <>
+        <PeriodTiles data={data} periods={periods} today={insights.today} todayKey={todayKey} />
+        <EfficiencyStrip insights={insights} />
+        <DailySpendCard
+          daily={data.daily}
+          meta={data.meta}
+          todayKey={todayKey}
+          storageKey="tokmeter.range.overview"
+        />
+        <div className="grid gap-5 lg:grid-cols-2">
+          <TodayCard insights={insights} records={data.records} />
+          <ProvidersCard insights={insights} />
+          <ModelsCard insights={insights} />
+          <TopProjectsCard insights={insights} />
+        </div>
+      </>
+    ),
+    [data, insights, periods, todayKey]
+  );
 
   return (
-    <div style={pageStyle}>
-      <SummaryStatusBanner
-        meta={data.meta}
-        warning={warning}
-        lastLoadedAt={lastLoadedAt}
-        summarySource={source}
-        daemonStatus={liveData.status}
-      />
-
-      <DashboardOverviewSection data={data} insights={insights} liveData={liveData} />
-      <DashboardTablesSection insights={insights} />
-    </div>
+    <>
+      <AmbientBand tempo={tempo}>
+        <PageHeader
+          title="Overview"
+          description={
+            data.stats.lastUsed
+              ? `Last activity ${formatTimestamp(data.stats.lastUsed)} · ${data.stats.projects} projects · ${data.stats.providers} providers`
+              : "Waiting for the first tracked request"
+          }
+        />
+      </AmbientBand>
+      {ledger}
+      <LiveSessionsCard live={live} />
+      <EstimateNote />
+    </>
   );
 }
-
-function renderStateCard(title: string, message: string, accent = webTheme.text.muted) {
-  return (
-    <section style={stateCardStyle}>
-      <div style={stateTitleStyle}>{title}</div>
-      <div style={{ ...stateMessageStyle, color: accent }}>{message}</div>
-    </section>
-  );
-}
-
-const pageStyle: CSSProperties = {
-  display: "grid",
-  gap: webTheme.spacing.xl,
-};
-
-const stateCardStyle: CSSProperties = {
-  background: `radial-gradient(circle at top left, ${withAlpha(
-    webTheme.colors.olive,
-    0.12
-  )}, transparent 32%), linear-gradient(180deg, ${withAlpha(webTheme.colors.pine, 0.92)}, ${withAlpha(
-    webTheme.colors.teal,
-    0.72
-  )})`,
-  border: `1px solid ${webTheme.surfaces.cardBorder}`,
-  borderRadius: webTheme.radii.xl,
-  boxShadow: webTheme.elevation.high,
-  padding: webTheme.spacing["2xl"],
-};
-
-const stateTitleStyle: CSSProperties = {
-  color: webTheme.text.primary,
-  fontSize: webTheme.typography.h1.size,
-  fontWeight: webTheme.typography.h1.weight,
-  marginBottom: webTheme.spacing.md,
-};
-
-const stateMessageStyle: CSSProperties = {
-  fontSize: 15,
-  lineHeight: 1.7,
-  maxWidth: 720,
-};

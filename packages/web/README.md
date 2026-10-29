@@ -1,6 +1,6 @@
 # Web dashboard
 
-Browser dashboard for token and cost data. Built with React and Plotly.js.
+Browser dashboard for token and cost data. Built with React, Tailwind CSS v4 and shadcn/ui-style components, with Recharts for 2D charts and three.js for the 3D view.
 
 ## Setup
 
@@ -39,16 +39,20 @@ python3 -m http.server 3000 --bind 127.0.0.1 --directory packages/web/dist
 
 Open http://127.0.0.1:3000. This static server serves the built `data.json` and has no scan endpoint. Re-export and rebuild to update the snapshot. The JSON can contain private project names and usage; review it before sharing the built site.
 
-## Charts
+## Pages
 
-| Chart | Description |
-|-------|-------------|
-| Model cost bars | Horizontal bar chart comparing model costs |
-| Provider pie | Donut chart of cost split by provider |
-| Daily trend | Dual-axis line chart (tokens + cost) |
-| Token breakdown | Stacked bars (input/output/cache per model) |
-| Contribution heatmap | GitHub-style calendar heatmap |
-| 3D surface | Isometric contribution graph |
+| Route | What it shows |
+|-------|---------------|
+| `/` | Today (live), this week, this month and all-time cost and tokens; daily usage (30/90/180 days or all time, weekly bars past 180 days); today as a 24-hour dial, bars or table; providers; top models and projects; live daemon sessions |
+| `/projects`, `/projects/:name` | Sortable, filterable project table; per-project daily usage, token composition, providers and models |
+| `/models` | Cost and token buckets per model, a sortable table of every model, provider totals |
+| `/timeline` | Daily usage, a one-year calendar heatmap, monthly sums, and the full daily ledger |
+| `/3d-view` | Day × project or day × hour bar field (three.js, loaded only with WebGL), plus the same values as a 2D grid |
+
+Sealed days carry a lock badge; today is marked live. Every chart has a table
+view. Costs are estimates and are labelled as such. A Motion setting (System /
+On / Off) next to the theme toggle controls the animated header, count-ups and
+transitions; System follows the OS reduced-motion setting.
 
 ## License
 

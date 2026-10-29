@@ -4,7 +4,6 @@ import type {
   TokmeterData,
   TokmeterProjectSummary,
 } from "../../hooks/useTokmeterData.js";
-import { webTheme } from "../../theme.js";
 import {
   formatDashboardCostPerMillion,
   formatDashboardCurrency,
@@ -37,6 +36,7 @@ export interface DashboardKpi {
   label: string;
   value: string;
   helper: string;
+  /** CSS colour (a theme token) for the tile's identity mark. */
   accent: string;
 }
 
@@ -243,7 +243,7 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       label: "Total cost",
       value: formatDashboardCurrency(stats.totalCost),
       helper: `${formatDashboardCurrency(getAverageDailyCost(daily))} / active day`,
-      accent: webTheme.colors.olive,
+      accent: "var(--series-1)",
     },
     {
       label: "Total tokens",
@@ -251,31 +251,31 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       helper: `${formatDashboardNumber(stats.inputTokens)} in · ${formatDashboardNumber(
         stats.outputTokens
       )} out`,
-      accent: webTheme.colors.cream,
+      accent: "var(--series-2)",
     },
     {
       label: "Longest streak",
       value: `${stats.longestStreak}d`,
       helper: `${stats.activeDays} active days`,
-      accent: webTheme.colors.teal,
+      accent: "var(--series-3)",
     },
     {
       label: "Cache share",
       value: formatDashboardPercent(cacheShare),
       helper: `${formatDashboardNumber(cacheTokens)} cached tokens`,
-      accent: webTheme.colors.rose,
+      accent: "var(--series-5)",
     },
     {
       label: "Reasoning share",
       value: formatDashboardPercent(reasoningShare),
       helper: `${formatDashboardNumber(stats.reasoningTokens)} reasoning tokens`,
-      accent: webTheme.colors.cream,
+      accent: "var(--series-2)",
     },
     {
       label: "Cost / 1M tokens",
       value: formatDashboardCostPerMillion(costPerMillion),
       helper: "Useful for cross-model efficiency",
-      accent: webTheme.colors.rose,
+      accent: "var(--series-5)",
     },
     {
       label: "Projects",
@@ -283,7 +283,7 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
       helper: topProject
         ? `${topProject.project} is currently leading`
         : "Waiting for project breakdown",
-      accent: webTheme.colors.teal,
+      accent: "var(--series-3)",
     },
     {
       label: "Today",
@@ -295,7 +295,7 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
             today.cacheReadTokens + today.cacheWriteTokens
           )} cached`
         : "No activity today yet",
-      accent: webTheme.colors.olive,
+      accent: "var(--series-1)",
     },
   ];
 
