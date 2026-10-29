@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VS Code Copilot Chat sessions saved as `*.jsonl` are read again. VS Code now
+  writes each session as a mutation log (an initial state, then sets and
+  array splices), and tokmeter parsed the file as a single JSON document. Any
+  session longer than one line threw, which failed the whole VS Code Copilot
+  provider — and because a failed provider blocks every day it might touch, a
+  Deep Rescan or `tokmeter backfill` could not correct any sealed day. Session
+  logs under `workspaceStorage/*/chatSessions/` are read too; before, only the
+  older `*.json` sessions there were. Copilot still reports request counts
+  only, no tokens or cost.
+- `tokmeter backfill` (a window rebuild on a fresh process) loads kosha before
+  it prices anything. It implied each sealed day's price cards with kosha's
+  runtime not yet loaded, so models that only resolve there — aliases such as
+  ribhu's `fable`/`opus`, fuzzy matches — got no card, and a forced rebuild
+  billed them $0 with not one token changed. The daemon's Deep Rescan was not
+  affected.
+- A forced rebuild of a day sealed before price cards existed no longer zeroes
+  a model kosha has since dropped. It gets an implied flat card at that day's
+  average cost per token, so unchanged tokens keep exactly their sealed cost.
 - A full history rescan (`rescanHistory`, `tokmeter --rescan-history`) no
   longer shrinks or drops sealed days. It started from an empty history and
   overwrote every day it could rebuild, at today's prices: a day whose raw had
@@ -17,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger, bills each day at its own prices, and replaces a day only when the
   rebuild carries at least as much data — the same grow-only rule as Deep
   Rescan. Shrinking a day still takes a forced window rebuild.
+||||||| b8b60a3
 
 ## [1.19.4] - 2026-10-29
 

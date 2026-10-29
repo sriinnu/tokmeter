@@ -406,6 +406,15 @@ async function keptPrices(
 ): Promise<Map<string, DayPrices>> {
   const kept = new Map<string, DayPrices>();
   if (ctx.skipPricing) return kept;
+  // Load kosha before implying cards. scanRawRecords inits pricing, but it runs
+  // after this, and on a fresh core (`tokmeter backfill`) nothing had loaded
+  // kosha's runtime yet: no aliases, no fuzzy matches, so a sealed model such
+  // as ribhu's "fable" got no card and a forced rebuild billed it $0.
+  try {
+    await ctx.pricing.init();
+  } catch {
+    /* scanRawRecords reports a pricing init failure */
+  }
   for (const [date, day] of aggregates) {
     if (floorKey !== undefined && date < floorKey) continue;
     try {

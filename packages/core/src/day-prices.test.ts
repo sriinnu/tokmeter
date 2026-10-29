@@ -150,6 +150,46 @@ describe("rebuilds bill a sealed day at its own prices", () => {
     expect(day?.prices?.["gpt-5"]?.card.inputPerMillion).toBeCloseTo(3, 10);
   });
 
+  test("a legacy day's model kosha no longer prices keeps its cost through a forced rebuild", async () => {
+    // Sealed at $3 for 1M tokens (priced through an alias back then); kosha
+    // has no card for it today. Force consents to a token shrink, not to $0.
+    writeDayFile(home, sealed([rec("codex", "gpt-5", M, 3)]));
+    writeRollout(home, "gpt-5", [M]);
+
+    const same = await rebuildRecentWindow(ctx, REF, [], 7, true);
+    expect(same.aggregates.get(DAY_KEY)?.cost).toBeCloseTo(3, 10);
+    expect(same.aggregates.get(DAY_KEY)?.prices?.["gpt-5"]).toMatchObject({ source: "implied" });
+
+    // A grown day bills the new tokens at the day's own average rate.
+    writeDayFile(home, sealed([rec("codex", "gpt-5", M, 3)]));
+    writeRollout(home, "gpt-5", [M, M]);
+    const grown = await rebuildRecentWindow(ctx, REF, [], 7, true);
+    expect(grown.aggregates.get(DAY_KEY)?.cost).toBeCloseTo(6, 10);
+  });
+
+  test("a rebuild loads kosha before implying cards (aliases resolve only once loaded)", async () => {
+    // A legacy $3 day for a model kosha prices at $5/M — but only after init,
+    // the way runtime-only matches (aliases, fuzzy) behave on a fresh core.
+    writeDayFile(home, sealed([rec("codex", "gpt-5", M, 3)]));
+    writeRollout(home, "gpt-5", [M, M]);
+    let loaded = false;
+    kosha.init = async () => {
+      loaded = true;
+    };
+    const lookup = kosha.getPricingWithSource.bind(kosha);
+    // Before init, every model looks unpriced.
+    kosha.getPricingWithSource = async (model: string) => lookup(loaded ? model : "not-loaded");
+    kosha.cards["gpt-5"] = card(5);
+
+    const state = await rebuildRecentWindow(ctx, REF, [], 7, true);
+    const day = state.aggregates.get(DAY_KEY);
+    // Implied from today's $5 card scaled to the sealed $3 — the day's own
+    // per-bucket level — not a flat card guessed for an "unpriced" model.
+    expect(day?.prices?.["gpt-5"]?.card.inputPerMillion).toBeCloseTo(3, 10);
+    expect(day?.prices?.["gpt-5"]?.card.outputPerMillion).toBeCloseTo(12, 10);
+    expect(day?.cost).toBeCloseTo(6, 10);
+  });
+
   test("a model the day had no card for is billed and carded at today's rate", async () => {
     writeDayFile(
       home,
@@ -204,9 +244,23 @@ describe("implied cards", () => {
     );
   });
 
-  test("none for a model sealed at $0 or unpriced today", async () => {
-    const day = sealed([rec("codex", "gpt-5", M, 0, 0), rec("codex", "mystery", M, 4, 1)]);
+  test("none for a model sealed at $0", async () => {
+    const day = sealed([rec("codex", "gpt-5", M, 0, 0)]);
     expect(await impliedPrices(day, kosha)).toEqual({});
+  });
+
+  test("a flat card at the day's average rate for a model unpriced today", async () => {
+    const day = sealed([
+      { ...rec("codex", "mystery", M, 0), outputTokens: M, cacheReadTokens: 2 * M, cost: 4 },
+    ]);
+    const p = await impliedPrices(day, kosha);
+    expect(p.mystery).toMatchObject({ source: "implied" });
+    expect(p.mystery?.card.inputPerMillion).toBeCloseTo(1, 10); // $4 over 4M tokens
+    expect(p.mystery?.card.outputPerMillion).toBeCloseTo(1, 10);
+    const b = day.models.mystery;
+    expect(
+      costFromCard("mystery", p.mystery!.card, b.inputTokens, b.outputTokens, b.cacheReadTokens)
+    ).toBeCloseTo(4, 10);
   });
 });
 
