@@ -2,7 +2,7 @@
   <title id="title">Tokmeter</title>
   <!-- The sealed ledger: eight past days in violet (sealed, immutable) and
        today in amber, still live. Detail master for 64 px and up; small
-       sizes use site/public/icon.svg. -->
+       sizes use logo-small.svg. -->
   <rect width="64" height="64" rx="14" fill="#171B25"/>
   <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="none" stroke="#2A3142"/>
   <rect x="7" y="7" width="14" height="14" rx="3.5" fill="#3B2F7A"/>

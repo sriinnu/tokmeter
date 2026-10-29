@@ -1,6 +1,6 @@
 import { cn } from "../../lib/utils.js";
 
-// The sealed-ledger mark at its small size (site/public/icon.svg): eight
+// The sealed-ledger mark at its small size (logo-small.svg): eight
 // sealed days in violet, today in amber. Geometry is fixed; only motion and
 // the today cell's state vary.
 export const LEDGER_CELLS = [

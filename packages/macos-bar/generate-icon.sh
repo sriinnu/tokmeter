@@ -27,7 +27,7 @@ cat > "${SWIFT_SRC}" <<'SWIFT'
 import AppKit
 import CoreGraphics
 
-// Same 64-unit geometry as logo.svg and site/public/icon.svg, so every
+// Same 64-unit geometry as logo.svg and logo-small.svg, so every
 // surface shows one mark. `small` draws the 16–32 px master: a brighter ramp
 // and a solid live cell, because an outline blurs away at those sizes.
 let size: CGFloat = 1024
