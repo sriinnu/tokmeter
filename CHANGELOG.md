@@ -5,7 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.19.5] - 2026-10-29
+
+### Added
+
+- `TOKMETER_DAEMON_PORT` runs an isolated daemon on another port (HTTP on port
+  + 1) beside the real one, for tests and end-to-end checks. A daemon on an
+  overridden port keeps its compatibility shims in its own state dir, not
+  `/tmp`, and never drives the launchd agent.
+
+### Changed
+
+- Clearer MCP tool descriptions for the tools that overlap:
+  `tokmeter_budget` vs `tokmeter_budget_alert`, `tokmeter_efficiency` vs
+  `tokmeter_cache_efficiency`, plus `tokmeter_leaderboard` and
+  `tokmeter_search`. Each now says what it returns, what window it reads and
+  when to use its sibling instead. `tokmeter_cache_efficiency` says plainly
+  that its dollar figures are estimates. No tool was renamed or removed.
+- New logo, the sealed ledger: a 3×3 grid of days, eight sealed in violet and
+  today in amber, still live. It replaces the infinity mark on the macOS bar's
+  app icon, the README and the website, with a dedicated small-size version
+  for favicons and the 16–32 px app icons.
+- The web dashboard is rebuilt on Tailwind CSS v4 and shadcn/ui-style
+  components, with light and dark themes (follows the system, or pick one).
+  The overview leads with today (live), week-to-date, month-to-date and
+  all-time cost and tokens; every page marks sealed days apart from today's
+  live numbers, and every chart has a table view. Plotly is gone: the bundle
+  the dashboard loads first drops from about 5.0 MB to about 0.75 MB. Charts
+  use Recharts.
+- The 3D view is now a day × project (or day × hour) bar field drawn with
+  three.js, loaded only when the browser has WebGL. Without WebGL, the same
+  values show as a 2D grid.
+- The Overview header has a slow WebGL flow field whose tempo follows
+  today's spend rate against your typical sealed-day hour. Headline numbers
+  count up, the logo's ledger cells fill in and its "today" cell breathes
+  while the daemon is live, and empty and error states have illustrations.
+  A Motion setting (System / On / Off) sits next to the theme toggle; Off
+  stops all of it. Without hardware-accelerated WebGL the field stays still.
+- The sidebar (and the page footer on phones) shows the dashboard version,
+  linked to its GitHub release, and the project's repository.
+- Daily usage charts (Overview, Timeline, project pages) and the 3D day ×
+  project view offer an All time range. Past 180 days the bars become ISO
+  weeks, exact sums of the daily ledger, with partial edge weeks marked; the
+  table view still lists every day. The chosen range is remembered.
+- "Today, hour by hour" opens as a 24-hour dial: bar length is the hour's
+  cost, stacked by model, with the current hour highlighted and a dashed
+  ring for a typical day (median of the recent days in the summary). Bars
+  and Table views show the same numbers.
+- The Live sessions panel says "Connected · idle" and "No live sessions
+  reporting" when the daemon is reachable but nothing is reporting, instead
+  of a row of zeros under a Streaming badge.
 
 ### Fixed
 
@@ -36,6 +85,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuild carries at least as much data — the same grow-only rule as Deep
   Rescan. Shrinking a day still takes a forced window rebuild.
 ||||||| b8b60a3
+- The web dashboard's project page labelled each model's share of all spend
+  as its share of the project. It now shows share-of-project, worked out
+  from the project's own cost.
+- The daemon's live-session feed (`/api/live`, the dashboard's Live sessions
+  card, and the menubar's context-fill colour via `liveContextFillPct`) was
+  always empty. The statusline did push each session, but it is a one-shot
+  process: it connects, sends, and closes, and the daemon treated that close as
+  the end of the session, so it was gone within milliseconds and deleted a
+  minute later. Liveness now means "still pushing": a session stays live for
+  five minutes after its last push, or until it unregisters, and a silent
+  socket no longer keeps one live forever.
+- The statusline sends that push after its line is written and flushed, not
+  before rendering, and caps it at 150 ms. It no longer waits for the daemon's
+  reply, which it never used.
+- The pushed context fill is Claude Code's own `used_percentage`, the same
+  number the statusline shows, so the menubar and the statusline agree.
 
 ## [1.19.4] - 2026-10-29
 
