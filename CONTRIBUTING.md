@@ -77,7 +77,7 @@ These come from real bugs, each of which shipped wrong numbers once.
 An agent Tokmeter has no parser for can still report usage without code
 changes: register it under `customSources` in `~/.tokmeter/config.json` and
 have it write the `tokmeter-usage-jsonl` line format described in
-[SKILL.md](skills/tokmeter/SKILL.md) (see "Custom sources" in
+the [tokmeter skill](https://github.com/sriinnu/tokmeter-skill/blob/main/skills/tokmeter/SKILL.md) (see "Custom sources" in
 [docs/compatibility.md](docs/compatibility.md)).
 
 ## Pull requests

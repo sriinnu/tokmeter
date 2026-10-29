@@ -14,7 +14,7 @@ def source_files():
     # Explicit source/build inputs only: never sweep the working directory,
     # credentials, local usage, personal notes, or generated build trees.
     files = set()
-    for name in ("LICENSE", "README.md", "skills/tokmeter/SKILL.md", "CHANGELOG.md", "package.json", "bun.lock",
+    for name in ("LICENSE", "README.md", "CHANGELOG.md", "package.json", "bun.lock",
                  "tsconfig.base.json", "biome.json", "vitest.config.ts",
                  "docs/licensing.md", "docs/macos/themes.md", "docs/macos/web-dashboard.md",
                  "packages/macos-bar/RELEASE.md", "docs/assets/demo/snapshots.json"):

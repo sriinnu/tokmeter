@@ -236,7 +236,7 @@ jobs:
           echo "All release signing inputs are present."
 
       - name: Download unsigned app
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}/unsigned
@@ -633,7 +633,7 @@ jobs:
       BUILD_NUM: ${{ needs.sign.outputs.build-num }}
     steps:
       - name: Download signed artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.sign.outputs.artifact }}
           path: ${{ runner.temp }}/signed
