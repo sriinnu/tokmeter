@@ -6,10 +6,11 @@ import {
   filterFilesByMtime,
   findFiles,
   getCachedRecords,
+  type JsonlVisitResult,
   MAX_JSONL_RECORDS,
-  readJsonlFile,
-  readJsonlFileFromOffset,
+  type OversizedLine,
   setCachedRecords,
+  visitJsonlLines,
 } from "./utils.js";
 
 interface ClaudeContentBlock {
@@ -95,6 +96,128 @@ function decodeClaudeSlugDir(filePath: string): string | undefined {
   return slug.startsWith("-") ? `/${slug.slice(1).replace(/-/g, "/")}` : undefined;
 }
 
+/** Newest record timestamp in a file's cached records (append-only ⇒ the last). */
+function lastTimestamp(records: TokenRecord[]): number | undefined {
+  const last = records.at(-1);
+  return last ? last.timestamp : undefined;
+}
+
+/** The JSON object starting at `start` (a `{`), or null if it doesn't close. */
+function balancedObject(text: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
+/**
+ * Best-effort recovery of an assistant line too long to buffer (a huge tool
+ * input). Claude Code writes `message.model` and `message.id` first and
+ * `usage`, `type` and `timestamp` last, so the kept head and tail hold every
+ * field a record needs. Returns null when any of them is missing — the caller
+ * then reports the line as a possible gap instead of guessing.
+ */
+/**
+ * The top-level `type` of a line too long to parse. Claude Code writes it near
+ * the end, after `message`, so the LAST role-valued `type` in the tail is the
+ * line's own (a pasted transcript inside a tool result sits before it); a
+ * writer that puts `type` first has it as the first one in the head.
+ */
+function oversizedRole(line: OversizedLine): string | undefined {
+  const role = /"type":"(assistant|user|system|summary)"/g;
+  const inTail = [...line.tail.matchAll(role)].at(-1)?.[1];
+  return inTail ?? /"type":"(assistant|user|system|summary)"/.exec(line.head)?.[1];
+}
+
+function recoverOversizedAssistant(line: OversizedLine): ClaudeMessage | null {
+  const { head, tail } = line;
+  if (oversizedRole(line) !== "assistant") return null;
+  const usageIn = (text: string, fromEnd: boolean) => {
+    const at = fromEnd ? text.lastIndexOf('"usage":{') : text.indexOf('"usage":{');
+    return at < 0 ? null : balancedObject(text, at + '"usage":'.length);
+  };
+  // Claude Code's own key order puts usage after the content (tail); other
+  // writers may put it first (head). Prefer the tail, fall back to the head.
+  const usageJson = usageIn(tail, true) ?? usageIn(head, false);
+  const id =
+    /"id":"(msg_[A-Za-z0-9_-]+)"/.exec(head)?.[1] ?? /"id":"(msg_[A-Za-z0-9_-]+)"/.exec(tail)?.[1];
+  const model =
+    /"model":"([^"]{1,200})"/.exec(head)?.[1] ?? /"model":"([^"]{1,200})"/.exec(tail)?.[1];
+  const stamps = [...tail.matchAll(/"timestamp":"([^"]{1,64})"/g)];
+  const timestamp = stamps.at(-1)?.[1] ?? /"timestamp":"([^"]{1,64})"/.exec(head)?.[1];
+  if (!usageJson || !id || !timestamp) return null;
+  try {
+    const usage = JSON.parse(usageJson) as NonNullable<ClaudeMessage["message"]>["usage"];
+    return { type: "assistant", timestamp, message: { id, model, usage, content: [] } };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One record per API response across a session's whole family of files.
+ * `message.id` is the API's own response id, unique by construction, so the
+ * same id in two files is the same charge. Claude Code's fork subagents open
+ * their transcript with a `fork-context-ref` line followed by a copy of the
+ * parent's last assistant message — same id, same usage, a new timestamp — and
+ * counting both double-billed one parent turn per fork (47 forks, 14.4M
+ * cache-read tokens over a month). Keyed on the id rather than on the
+ * fork-context-ref shape, so a future version that copies more context, or
+ * any other replay, folds the same way. The earliest copy is kept (the
+ * original response, in the day it happened); the max per bucket is taken in
+ * case a copy was written from a later line of the same response.
+ */
+export function dedupAcrossFiles(records: TokenRecord[]): TokenRecord[] {
+  const byId = new Map<string, number>();
+  const out: TokenRecord[] = [];
+  for (const r of records) {
+    if (!r.apiCallId) {
+      out.push(r);
+      continue;
+    }
+    const at = byId.get(r.apiCallId);
+    if (at === undefined) {
+      byId.set(r.apiCallId, out.length);
+      out.push(r);
+      continue;
+    }
+    const kept = out[at]!;
+    const first = r.timestamp < kept.timestamp ? r : kept;
+    const other = first === r ? kept : r;
+    const grown =
+      other.inputTokens > first.inputTokens ||
+      other.outputTokens > first.outputTokens ||
+      other.cacheReadTokens > first.cacheReadTokens ||
+      other.cacheWriteTokens > first.cacheWriteTokens ||
+      (other.cacheWrite1hTokens ?? 0) > (first.cacheWrite1hTokens ?? 0);
+    if (!grown) {
+      out[at] = first;
+      continue;
+    }
+    // Never mutate a cached record: copy, take the max, re-price.
+    const merged: TokenRecord = {
+      ...first,
+      inputTokens: Math.max(first.inputTokens, other.inputTokens),
+      outputTokens: Math.max(first.outputTokens, other.outputTokens),
+      cacheReadTokens: Math.max(first.cacheReadTokens, other.cacheReadTokens),
+      cacheWriteTokens: Math.max(first.cacheWriteTokens, other.cacheWriteTokens),
+    };
+    const write1h = Math.max(first.cacheWrite1hTokens ?? 0, other.cacheWrite1hTokens ?? 0);
+    if (write1h > 0) merged.cacheWrite1hTokens = Math.min(write1h, merged.cacheWriteTokens);
+    if (merged.usage?.cost !== "direct") merged.cost = 0;
+    out[at] = merged;
+  }
+  return out;
+}
+
 export class ClaudeCodeParser implements SessionParser {
   readonly providerId = "claude-code" as const;
 
@@ -131,29 +254,6 @@ export class ClaudeCodeParser implements SessionParser {
       const cwd = decodeClaudeSlugDir(file);
       const isSubagent = file.includes("/subagents/");
 
-      // Append mode: only parse new bytes from where we left off. Read faults
-      // fail soft but surface via onWarning so a rebuild knows it's partial.
-      let readFailed = false;
-      const readFault = (error: unknown) => {
-        readFailed = true;
-        opts?.onWarning?.(
-          `failed read of ${file}: ${error instanceof Error ? error.message : error}`
-        );
-      };
-      let parsedStat = cacheResult.statHint;
-      const captureSnapshot = (snapshot: { mtimeMs: number; sizeBytes: number }) => {
-        parsedStat = snapshot;
-      };
-      const lines =
-        cacheResult.appendOffset > 0
-          ? await readJsonlFileFromOffset<ClaudeMessage>(
-              file,
-              cacheResult.appendOffset,
-              readFault,
-              captureSnapshot
-            )
-          : await readJsonlFile<ClaudeMessage>(file, readFault, captureSnapshot);
-
       const newRecords: TokenRecord[] = [];
       // Dedup: one record per API response. Claude Code writes an assistant
       // turn as one line per content block (thinking, text, each tool_use),
@@ -177,7 +277,7 @@ export class ClaudeCodeParser implements SessionParser {
       const cachedTail = cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
       let lastAssistantRecord: TokenRecord | null =
         cachedTail && cachedTail.kind === "compaction" ? null : cachedTail;
-      for (const msg of lines) {
+      const handle = (msg: ClaudeMessage): void => {
         if (msg.type === "system" && msg.subtype === "compact_boundary") {
           if (lastAssistantRecord) {
             lastAssistantRecord.kind = "compaction";
@@ -186,9 +286,9 @@ export class ClaudeCodeParser implements SessionParser {
             // turn in between (defensive — shouldn't happen in practice).
             lastAssistantRecord = null;
           }
-          continue;
+          return;
         }
-        if (msg.type !== "assistant" || !msg.message?.usage) continue;
+        if (msg.type !== "assistant" || !msg.message?.usage) return;
 
         const usage = msg.message.usage;
         // Tool names on this assistant turn. Multiple tool_use blocks in one
@@ -213,7 +313,13 @@ export class ClaudeCodeParser implements SessionParser {
           (msg.timestamp
             ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
             : "");
-        const write1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+        // The 1h-TTL share is a subset of cache_creation_input_tokens. Claude
+        // Code has written 1h = 2050 beside a total of 0 (2026-09-16); keep
+        // the subset invariant here so no bucket downstream can exceed it.
+        const write1h = Math.min(
+          usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+          usage.cache_creation_input_tokens ?? 0
+        );
         if (usageKey && usageKey === lastUsageKey) {
           // Same API response, later content block. Main transcripts repeat
           // the identical usage on every line, but subagent transcripts write
@@ -240,7 +346,7 @@ export class ClaudeCodeParser implements SessionParser {
               rec.toolCalls = [...(rec.toolCalls ?? []), ...toolCalls];
             }
           }
-          continue;
+          return;
         }
         if (usageKey) lastUsageKey = usageKey;
 
@@ -264,6 +370,69 @@ export class ClaudeCodeParser implements SessionParser {
         });
         newRecords.push(record);
         lastAssistantRecord = record;
+      };
+
+      // Stream only the bytes past the cached offset, one line at a time:
+      // memory is one line, never the file, so a session of any size keeps
+      // counting (a whole-file 128 MiB refusal froze sessions past that size).
+      // Only lines that can carry usage or a compaction boundary are parsed.
+      let readFailed = false;
+      let malformedLines = 0;
+      let malformedUsageLines = 0;
+      let unrecoveredOversized = 0;
+      const onLine = (line: string) => {
+        if (!line.includes('"assistant"') && !line.includes("compact_boundary")) return;
+        let msg: ClaudeMessage;
+        try {
+          msg = JSON.parse(line) as ClaudeMessage;
+        } catch {
+          malformedLines++;
+          if (line.includes('"usage"')) malformedUsageLines++;
+          return;
+        }
+        handle(msg);
+      };
+      const onOversized = (line: OversizedLine) => {
+        const recovered = recoverOversizedAssistant(line);
+        if (recovered) handle(recovered);
+        else if (oversizedRole(line) === "assistant") unrecoveredOversized++;
+      };
+      let visit: JsonlVisitResult | null = null;
+      try {
+        visit = await visitJsonlLines(file, cacheResult.appendOffset, onLine, { onOversized });
+      } catch (error) {
+        readFailed = true;
+        opts?.onWarning?.(
+          `failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file, readThroughMs: lastTimestamp(cacheResult.cachedRecords) }
+        );
+      }
+      if (visit?.inFlightTail) {
+        // Not a failure (the cache resumes at the line's start), but the line
+        // may be a record from before midnight: the rollover must not seal
+        // the day without it. Everything unread is newer than what was read,
+        // so a seal of a day before the last record read is not held.
+        opts?.onWarning?.(`a line in ${file} is still being written`, {
+          file,
+          readThroughMs: lastTimestamp([...cacheResult.cachedRecords, ...newRecords]),
+        });
+      }
+      if (visit && visit.oversizedLines > 0) {
+        const lost = unrecoveredOversized;
+        const message = `skipped ${visit.oversizedLines} oversized line(s) in ${file}${lost > 0 ? ` (${lost} assistant line(s) without recoverable usage)` : ""}`;
+        // An assistant line we could not recover may hide usage: that is a
+        // real gap, reported like a read fault. Anything else (tool output,
+        // pasted files) carries no tokens — a notice, not a partial scan.
+        if (lost > 0) opts?.onWarning?.(message, { file });
+        else opts?.onNotice?.(message);
+      }
+      if (malformedUsageLines > 0) {
+        opts?.onWarning?.(
+          `skipped ${malformedLines} malformed line(s) in ${file}, ${malformedUsageLines} of them carrying usage`,
+          { file }
+        );
+      } else if (malformedLines > 0) {
+        opts?.onNotice?.(`skipped ${malformedLines} malformed line(s) in ${file}`);
       }
 
       // Merge cached records with newly parsed ones. Pass the stat hint that
@@ -276,14 +445,20 @@ export class ClaudeCodeParser implements SessionParser {
       if (cacheWouldExceedLimit) {
         readFailed = true;
         opts?.onWarning?.(
-          `failed read of ${file}: cached record limit (${MAX_JSONL_RECORDS}) exceeded`
+          `failed read of ${file}: cached record limit (${MAX_JSONL_RECORDS}) exceeded`,
+          { file }
         );
       }
       // Never seal a read failure as an empty/partial successful cache entry.
       // The previous good cache remains usable and the next scan retries.
-      if (!readFailed) await setCachedRecords(file, allFileRecords, parsedStat);
+      if (!readFailed && visit) {
+        await setCachedRecords(file, allFileRecords, {
+          mtimeMs: visit.snapshot.mtimeMs,
+          sizeBytes: visit.consumedThroughBytes,
+        });
+      }
       records.push(...(cacheWouldExceedLimit ? cacheResult.cachedRecords : allFileRecords));
     }
-    return records;
+    return dedupAcrossFiles(records);
   }
 }

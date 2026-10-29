@@ -143,7 +143,13 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      older entries can double-count bytes appended during a scan.
 // 23 — bounded JSONL snapshots and cached-record totals prevent append-mode
 //      sessions from bypassing the per-read memory limits.
-const CACHE_VERSION = 23;
+// 24 — claude-code clamps the 1h cache-write share to its total, streams
+//      sessions of any size line by line (cached offset = last consumed line,
+//      so a line caught mid-write is re-read), skips oversized lines instead
+//      of refusing the file, and folds a fork-subagent's copy of its parent's
+//      message into the original. v23 caches can hold 1h > total, nothing for
+//      sessions past 128 MiB, and fork duplicates; rebuild.
+const CACHE_VERSION = 24;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -448,6 +454,174 @@ export async function readJsonlFileFromOffset<T>(
 }
 
 const MAX_JSONL_LINE_CHARS = 8 * 1024 * 1024;
+
+/** What a {@link visitJsonlLines} pass consumed. */
+export interface JsonlVisitResult {
+  /**
+   * Byte offset just past the last line handed to the visitor (or skipped as
+   * oversized). An unterminated tail that doesn't parse is a write caught in
+   * flight: it is NOT consumed, so a cache keyed on this offset re-reads it
+   * once the writer finishes the line.
+   */
+  consumedThroughBytes: number;
+  /** stat of the descriptor that was read, taken before reading. */
+  snapshot: { mtimeMs: number; sizeBytes: number };
+  /** Lines longer than the cap that were skipped instead of parsed. */
+  oversizedLines: number;
+  /**
+   * The file ends in a line still being written. It is left unconsumed, but
+   * it may be a record dated before midnight: a seal must wait for it.
+   */
+  inFlightTail: boolean;
+}
+
+/** Head + tail of a line too long to buffer, for best-effort field recovery. */
+export interface OversizedLine {
+  head: string;
+  tail: string;
+  bytes: number;
+}
+
+const OVERSIZED_KEEP_BYTES = 64 * 1024;
+
+/**
+ * Stream a JSONL file from `startBytes`, handing each complete line to `visit`
+ * as a string. Unlike {@link readJsonlFile} nothing is accumulated, so memory
+ * is one line (≤ `maxLineBytes`) regardless of file size — there is no
+ * whole-file size refusal. A line over the cap is skipped, not fatal: its
+ * first and last 64 KB go to `onOversized` (so a caller can recover fields
+ * from it) and reading continues with the next line. The old reader threw at
+ * the first such line and dropped the rest of the file: one 16 MB tool output
+ * hid every later response in a 63 MB Codex rollout, and a Claude Code
+ * session past 128 MiB stopped counting entirely.
+ *
+ * If `startBytes` is not at a line boundary, the partial first line is
+ * discarded. Faults (EACCES, EIO, a vanished file) propagate to the caller.
+ */
+export async function visitJsonlLines(
+  path: string,
+  startBytes: number,
+  visit: (line: string) => void,
+  opts?: { maxLineBytes?: number; onOversized?: (line: OversizedLine) => void }
+): Promise<JsonlVisitResult> {
+  const maxLineBytes = opts?.maxLineBytes ?? MAX_JSONL_LINE_CHARS;
+  const fd = await open(path, "r");
+  try {
+    const st = await fd.stat();
+    const snapshot = { mtimeMs: st.mtimeMs, sizeBytes: st.size };
+    const result: JsonlVisitResult = {
+      consumedThroughBytes: startBytes,
+      snapshot,
+      oversizedLines: 0,
+      inFlightTail: false,
+    };
+    if (startBytes >= st.size) {
+      result.consumedThroughBytes = Math.min(startBytes, st.size);
+      return result;
+    }
+    let discardFirst = false;
+    if (startBytes > 0) {
+      const boundary = Buffer.alloc(1);
+      await fd.read(boundary, 0, 1, startBytes - 1);
+      discardFirst = boundary[0] !== 10;
+    }
+    let pieces: Buffer[] = [];
+    let lineBytes = 0;
+    let oversized = false;
+    let head = Buffer.alloc(0);
+    let tail = Buffer.alloc(0);
+    let pos = startBytes;
+    let lineStart = startBytes;
+
+    const endLine = (endPos: number) => {
+      if (discardFirst) {
+        discardFirst = false;
+      } else if (oversized) {
+        result.oversizedLines++;
+        opts?.onOversized?.({
+          head: head.toString("utf8"),
+          tail: tail.toString("utf8"),
+          bytes: lineBytes,
+        });
+      } else if (lineBytes > 0) {
+        visit(Buffer.concat(pieces, lineBytes).toString("utf8"));
+      }
+      pieces = [];
+      lineBytes = 0;
+      oversized = false;
+      head = Buffer.alloc(0);
+      tail = Buffer.alloc(0);
+      lineStart = endPos;
+      result.consumedThroughBytes = endPos;
+    };
+    const take = (chunk: Buffer) => {
+      if (chunk.length === 0) return;
+      lineBytes += chunk.length;
+      if (discardFirst) return;
+      if (!oversized && lineBytes > maxLineBytes) {
+        oversized = true;
+        const all = Buffer.concat(pieces);
+        head = Buffer.from(all.subarray(0, OVERSIZED_KEEP_BYTES));
+        tail = Buffer.from(all.subarray(Math.max(0, all.length - OVERSIZED_KEEP_BYTES)));
+        pieces = [];
+      }
+      if (oversized) {
+        if (head.length < OVERSIZED_KEEP_BYTES) {
+          head = Buffer.concat([head, chunk.subarray(0, OVERSIZED_KEEP_BYTES - head.length)]);
+        }
+        const joined = Buffer.concat([tail, chunk]);
+        tail = Buffer.from(joined.subarray(Math.max(0, joined.length - OVERSIZED_KEEP_BYTES)));
+      } else {
+        pieces.push(chunk);
+      }
+    };
+
+    const stream = fd.createReadStream({ start: startBytes, end: st.size - 1, autoClose: false });
+    for await (const raw of stream) {
+      const chunk = raw as Buffer;
+      let from = 0;
+      let nl = chunk.indexOf(10, from);
+      while (nl >= 0) {
+        take(chunk.subarray(from, nl));
+        endLine(pos + nl + 1);
+        from = nl + 1;
+        nl = chunk.indexOf(10, from);
+      }
+      take(chunk.subarray(from));
+      pos += chunk.length;
+    }
+    // Unterminated tail: consume it only if it is a complete JSON value (a
+    // writer that hasn't added the newline yet); otherwise it is in flight.
+    if (lineBytes > 0 && !discardFirst && !oversized) {
+      const text = Buffer.concat(pieces, lineBytes).toString("utf8");
+      let complete = false;
+      try {
+        JSON.parse(text);
+        complete = true;
+      } catch {
+        /* in flight */
+      }
+      if (complete) {
+        visit(text);
+        result.consumedThroughBytes = st.size;
+      } else {
+        result.consumedThroughBytes = lineStart;
+        result.inFlightTail = true;
+      }
+    } else if (lineBytes > 0 && oversized) {
+      result.inFlightTail = true; // an oversized line still being written
+    } else if (lineBytes === 0) {
+      result.consumedThroughBytes = Math.max(result.consumedThroughBytes, lineStart);
+    }
+    return result;
+  } finally {
+    try {
+      await fd.close();
+    } catch {
+      /* best-effort */
+    }
+  }
+}
 export const MAX_JSONL_RECORDS = 600_000;
 const MAX_JSONL_INPUT_BYTES = 128 * 1024 * 1024;
 
