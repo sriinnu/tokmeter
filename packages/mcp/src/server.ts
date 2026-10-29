@@ -1031,9 +1031,12 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_search",
-    "Flexible search across individual token usage records with filtering by model, provider, project, date range, and cost thresholds. " +
-      "Returns individual records sorted by timestamp. Use this to find specific usage events or investigate high-cost records. " +
-      `Individual records exist only while agents keep their transcripts, so the default (all) scope searches the last ${RAW_RECORD_WINDOW_DAYS} days.`,
+    "Find individual usage records — one per API response — matching a model substring, providers, project, " +
+      "date range and per-record cost bounds. Returns up to `limit` records (default 25), newest first unless " +
+      "sort_by says cost or tokens, each with time, provider, model, project, token buckets and cost. " +
+      "Use it to investigate a specific spike or an expensive call; for totals use tokmeter_pulse, " +
+      "for per-model or per-project rollups use tokmeter_models or tokmeter_projects. " +
+      `Records exist only while agents keep their transcripts, so the default (all) scope covers the last ${RAW_RECORD_WINDOW_DAYS} days.`,
     {
       scope: ScopeEnum,
       project: ProjectFilter,
@@ -1535,9 +1538,12 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_budget",
-    "Monitor spending against a budget with visual progress bars and alerts. " +
-      "Set a daily, weekly, or monthly budget and see how close you are to the limit. " +
-      "Shows projected overshoot/undershoot. Use this to stay within spending targets.",
+    "Check spend against one or more budgets you pass in (daily, weekly = rolling last 7 days, " +
+      "monthly = calendar month), optionally for one project or a set of providers. For each budget: " +
+      "spent, remaining, percent used with a status, and a progress bar; weekly and monthly also project to " +
+      'the end of the period at the average daily rate so far. Use it for a scoped budget question ("is project X on track this month?"); for a ' +
+      "whole-account red/yellow/green status with hours left at the current hourly burn, use tokmeter_budget_alert. " +
+      "Nothing is stored: budgets live only in the call.",
     {
       daily_budget: DollarAmount.optional().describe("Daily budget in USD"),
       weekly_budget: DollarAmount.optional().describe("Weekly budget in USD"),
@@ -1982,9 +1988,11 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_efficiency",
-    "Analyze cache hit rates, reasoning token ratios, input/output efficiency, and cost-per-token metrics. " +
-      "Shows how efficiently AI agents are using tokens — high cache rates mean less wasted compute. " +
-      "Use this to optimize costs by identifying models or projects with poor cache utilization.",
+    "Token-efficiency ratios for a scope, project or set of providers: cache hit rate, reasoning and output " +
+      "shares of all tokens, input:output ratio, cost per 1M tokens and average cost per request — overall and " +
+      "per model, plus an estimated caching saving. " +
+      "Use it to compare how models spend tokens. For what caching actually saved in dollars and how many " +
+      "cache writes were never read back, use tokmeter_cache_efficiency; to rank models on one metric, use tokmeter_leaderboard.",
     {
       scope: ScopeEnum,
       project: ProjectFilter,
@@ -2113,9 +2121,10 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_leaderboard",
-    "Rank models and providers by various metrics: total cost, cost-efficiency (cost per 1M tokens), " +
-      "total tokens, cache efficiency, reasoning usage, and output volume. " +
-      "Use this to find the best value models or identify the heaviest hitters.",
+    "Rank the top N models or providers (default 10) in a scope by one metric: total cost, cost per 1M tokens " +
+      "(cost_efficiency), total tokens, cache hit rate (cache_rate), reasoning share (reasoning_rate), " +
+      "output tokens, or record count. Returns the entries in rank order with their metrics. " +
+      'Use it to answer "which model costs most / gives the best value"; for every metric of every model at once, use tokmeter_models.',
     {
       rank_by: z
         .enum([
@@ -2619,8 +2628,11 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_cache_efficiency",
-    "Analyze cache hit/miss patterns across sessions. Shows overall cache hit rate, dollar savings from caching, " +
-      "cache write waste, and per-model breakdown. Use this to understand how effectively prompt caching is reducing your costs.",
+    "Prompt-caching payoff for today, the last 7 days or this month, optionally for one provider or project: " +
+      "cache hit rate, cache read and write volumes, and a per-model breakdown, plus ESTIMATED dollars — savings " +
+      "(cached reads assumed ~90% cheaper than input), the write premium (assumed ~25% over input) and the net. " +
+      "The estimates use the scope's average input price, not each model's card. Use it to judge whether caching " +
+      "pays off; for general token ratios across models, use tokmeter_efficiency.",
     {
       period: z
         .enum(["today", "week", "month"])
@@ -2925,9 +2937,11 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_budget_alert",
-    "Proactive budget monitoring with configurable daily/weekly/monthly thresholds. " +
-      "Shows current spend, percentage of budget used, projected end-of-period spend, and " +
-      "hours remaining until budget is exceeded. Gives green/yellow/red status indicators.",
+    "Whole-account budget status: pass a daily budget (required) and optionally weekly and monthly ones. " +
+      "For each: spend so far, percent used, projected end-of-period spend at the current hourly burn rate, " +
+      "hours left before the budget runs out, and a status of OK (<80%), WARNING (80–99%) or OVER BUDGET. " +
+      "Covers all providers and projects; to check a budget for one project or provider, use tokmeter_budget. " +
+      "Nothing is stored or scheduled: it reports on demand.",
     {
       daily_budget: DollarAmount.describe("Daily budget in USD"),
       weekly_budget: DollarAmount.optional().describe("Weekly budget in USD"),
