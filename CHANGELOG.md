@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A forced rebuild of a day sealed before price cards existed no longer zeroes
   a model kosha has since dropped. It gets an implied flat card at that day's
   average cost per token, so unchanged tokens keep exactly their sealed cost.
+- A full history rescan (`rescanHistory`, `tokmeter --rescan-history`) no
+  longer shrinks or drops sealed days. It started from an empty history and
+  overwrote every day it could rebuild, at today's prices: a day whose raw had
+  partly aged out lost those tokens for good, and a day with no raw left
+  vanished from history until the next restart. It now starts from the sealed
+  ledger, bills each day at its own prices, and replaces a day only when the
+  rebuild carries at least as much data — the same grow-only rule as Deep
+  Rescan. Shrinking a day still takes a forced window rebuild.
+||||||| b8b60a3
 
 ## [1.19.4] - 2026-10-29
 

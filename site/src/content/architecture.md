@@ -86,6 +86,11 @@ How the code enforces it:
 - **The only exception is an explicit rescan** (`rescanHistory` / the Hub's Deep
   Rescan). That is the sole path allowed to re-derive and overwrite sealed days,
   and it bills each day at the rates stored on it (`prices`), never today's.
+  Both are grow-only: a sealed day is replaced only when the rebuild carries at
+  least as much data, in total and for every provider. A day whose raw has aged
+  out keeps its sealed copy. Shrinking a day (a parser fix that removes
+  phantom records) takes a forced window rebuild (`tokmeter backfill --days N
+  --force`), after a backup of `~/.cache/tokmeter/aggregates`.
 
 ---
 
