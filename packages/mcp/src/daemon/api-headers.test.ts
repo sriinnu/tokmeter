@@ -55,7 +55,8 @@ test("every HTTP response carries both API version headers and exposes both to b
         listen: (...args: unknown[]) => void;
         close: () => void;
       };
-      server.listen = () => {};
+      // The daemon publishes its token only after the HTTP port is bound.
+      server.listen = (...args) => (args.at(-1) as () => void)();
       server.close = () => {};
       return server;
     },

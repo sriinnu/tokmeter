@@ -7,7 +7,17 @@
 
 import { dirname, isAbsolute, join } from "node:path";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonFile, readJsonlFile } from "./utils.js";
+import {
+  ANY_PATH_SEGMENT,
+  createRecord,
+  expandHome,
+  findFiles,
+  readJsonFile,
+  readJsonlFile,
+} from "./utils.js";
+
+/** OpenClaw's home plus the legacy names it shipped under. */
+const OPENCLAW_HOMES = ["~/.openclaw", "~/.clawdbot", "~/.moltbot", "~/.moldbot"];
 
 interface OpenClawSessionIndex {
   [key: string]: {
@@ -38,6 +48,18 @@ export class OpenClawParser implements SessionParser {
   sessionRoots(homeDir: string): string[] {
     return ["~/.openclaw/agents", "~/.clawdbot", "~/.moltbot", "~/.moldbot"].map((p) =>
       expandHome(p, homeDir)
+    );
+  }
+
+  /**
+   * Session data lives in `<home>/agents/<agentId>/sessions/` (sessions.json
+   * plus the JSONL files it indexes). The legacy scan roots above are whole
+   * config directories that also hold settings and credentials, so restore
+   * is limited to the per-agent `sessions` folders.
+   */
+  restoreRoots(homeDir: string): string[] {
+    return OPENCLAW_HOMES.map((h) =>
+      join(expandHome(h, homeDir), "agents", ANY_PATH_SEGMENT, "sessions")
     );
   }
 

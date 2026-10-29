@@ -19,6 +19,8 @@
  * same in tests as on screen.
  */
 
+import { sanitizeDataLabel } from "@sriinnu/tokmeter";
+
 export interface RateWindowView {
   /** Percent of the window used, as the harness reports it. */
   pct: number;
@@ -463,7 +465,11 @@ export function renderStatusline(v: StatusView, opts: RenderOptions): string {
   if (v.git)
     l1.push({
       prio: 40,
-      spans: [s("dim", "⎇ "), s("plain", `${v.git.branch}${v.git.dirty ? "*" : ""}`)],
+      // A branch name is repo-controlled text: strip terminal controls.
+      spans: [
+        s("dim", "⎇ "),
+        s("plain", `${sanitizeDataLabel(v.git.branch, 128)}${v.git.dirty ? "*" : ""}`),
+      ],
     });
   if (v.pr) l1.push({ prio: 30, spans: [s("warn", `#${v.pr.number}`)] });
 

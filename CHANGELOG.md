@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Restoring a backup no longer writes into Claude Code's `session-env`
+  directory, whose hook scripts Claude Code runs; those entries are skipped and
+  listed, and the rest of the archive still restores. OpenClaw restores are
+  limited to its per-agent `sessions` folders, so config and credential files
+  in its config directories can't be overwritten from a snapshot.
+- A restored `config.json` keeps this machine's Antigravity live-polling
+  choice, and restored aliases can no longer hide projects that are visible
+  here.
+- Cleanup only derives a Claude Code session's side folders from a real
+  session id, and refuses (deleting nothing) any target that is the home
+  folder, `~/.claude`, `~/.claude/projects` or a session root, or contains
+  one. Roo Code and Kilo cleanup deletes only a task folder directly inside
+  its tasks folder, never the tasks folder itself.
+- Cleanup never deletes a shared app database (such as Cursor's
+  `state.vscdb`) as a whole file; the preview lists it as not removable and
+  leaves it in place.
+- The daemon refuses to start, without writing an auth token, when another
+  process holds its HTTP API port, so clients can't send their token to it.
+  It exits non-zero after a pause so launchd retries about once a minute.
+- The statusline cache moved out of the shared temp folder into a private
+  per-user directory (`$XDG_RUNTIME_DIR`, else `~/.cache/tokmeter/statusline`)
+  with owner-only, symlink-safe writes. Its repo commands no longer run a
+  repository's fsmonitor hook or take optional locks, and branch names are
+  stripped of terminal controls.
+- The Antigravity live poller only looks at your own processes, runs `ps` and
+  `lsof` by absolute path, caps the response size, and sanitizes model labels
+  and reset times.
+- Label sanitizing runs in linear time; crafted labels could previously stall
+  output for seconds.
+- A project named `__proto__` is no longer dropped from the daemon's
+  per-project totals, and file paths in `tokmeter coverage` output and TUI
+  warnings are stripped of terminal controls.
+
 ### Fixed
 
 - **One inconsistent sealed day no longer breaks every report.** Claude Code

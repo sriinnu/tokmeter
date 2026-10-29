@@ -242,3 +242,13 @@ describe("helpers", () => {
     expect(formatSpan(5 * 86400 + 11 * 3600 + 40 * 60)).toBe("5d11h");
   });
 });
+
+describe("repo-controlled text", () => {
+  test("a branch name cannot emit terminal controls", () => {
+    const out = plain(base({ git: { branch: "main\u001b]0;owned\u0007\u001b[2Jx‮", dirty: 1 } }));
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u0007");
+    expect(out).not.toContain("‮");
+    expect(out).toContain("main");
+  });
+});

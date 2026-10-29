@@ -21,8 +21,8 @@ import type { CleanupResult, CleanupTarget, SessionCleaner } from "../types.js";
 
 /**
  * The per-session side directories Claude Code keeps outside
- * `~/.claude/projects`. Cleanup deletes (and backs up) entries here, so
- * restore must allow writing back into exactly these directories.
+ * `~/.claude/projects`. Cleanup deletes (and backs up) entries here; restore
+ * writes back into all of them except `sessionEnv` (see restore-guard.ts).
  */
 export function claudeSessionSideDirs(home: string) {
   const claudeDir = join(home, ".claude");
@@ -34,6 +34,9 @@ export function claudeSessionSideDirs(home: string) {
   };
 }
 
+/** Claude Code names each session (and its side directories) by a UUID. */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class ClaudeCodeCleaner implements SessionCleaner {
   readonly providerId = "claude-code" as const;
 
@@ -44,9 +47,22 @@ export class ClaudeCodeCleaner implements SessionCleaner {
     const uuids = new Set<string>();
     const projectDirs = new Set<string>();
 
+    const plainFiles = new Set<string>();
+
     for (const file of sourceFiles) {
       const uuid = basename(file, ".jsonl");
-      if (!uuid || uuids.has(uuid)) continue;
+      // Side paths are derived by joining the id onto directories, so only a
+      // real session UUID may name them. Anything else ("..", ".", "", a
+      // subagent's "agent-…" transcript) only ever targets the file itself:
+      // `...jsonl` would otherwise resolve to `<projectDir>/..` and the side
+      // dirs to ~/.claude itself.
+      if (!SESSION_ID_RE.test(uuid)) {
+        if (plainFiles.has(file)) continue;
+        plainFiles.add(file);
+        await this.addFileTarget(targets, file, "session transcript");
+        continue;
+      }
+      if (uuids.has(uuid)) continue;
       uuids.add(uuid);
 
       const projectDir = dirname(file);
