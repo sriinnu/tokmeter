@@ -1,9 +1,16 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { localDateKey } from "@sriinnu/tokmeter";
 import { describe, expect, test } from "vitest";
-import { formatAge, isConnectionRefused, readLastGoodToday } from "./statusline.js";
+import {
+  formatAge,
+  isConnectionRefused,
+  readLastGoodToday,
+  runGit,
+  statuslineCacheDir,
+} from "./statusline.js";
 
 const dir = mkdtempSync(join(tmpdir(), "tokmeter-statusline-test-"));
 const totals = (day: string, extra: Record<string, unknown> = {}) => ({
@@ -69,5 +76,35 @@ describe("formatAge", () => {
     expect(formatAge(41_000)).toBe("41s");
     expect(formatAge(180_000)).toBe("3m");
     expect(formatAge(7_200_000)).toBe("2h");
+  });
+});
+
+describe("statusline cache location", () => {
+  test("uses $XDG_RUNTIME_DIR when set, else ~/.cache/tokmeter — never shared /tmp", () => {
+    expect(statuslineCacheDir({ XDG_RUNTIME_DIR: "/run/user/1000" }, "/home/u")).toBe(
+      "/run/user/1000/tokmeter-statusline"
+    );
+    expect(statuslineCacheDir({}, "/home/u")).toBe("/home/u/.cache/tokmeter/statusline");
+    // A relative runtime dir is not trusted.
+    expect(statuslineCacheDir({ XDG_RUNTIME_DIR: "run" }, "/home/u")).toBe(
+      "/home/u/.cache/tokmeter/statusline"
+    );
+  });
+});
+
+describe("repo commands", () => {
+  test("a repo's core.fsmonitor hook is never executed by the statusline", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tokmeter-statusline-repo-"));
+    const marker = join(repo, "fsmonitor-ran");
+    const hook = join(repo, "hook.sh");
+    writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(hook, 0o755);
+    const vcs = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+    vcs("init", "-q");
+    vcs("config", "core.fsmonitor", hook);
+    writeFileSync(join(repo, "file.txt"), "x");
+
+    expect(runGit(repo, ["status", "--porcelain"])).toContain("file.txt");
+    expect(existsSync(marker)).toBe(false);
   });
 });

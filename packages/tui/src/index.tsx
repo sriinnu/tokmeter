@@ -15,7 +15,7 @@ process.on("uncaughtException", (error) => {
 });
 
 import type { ProviderSummary, TokmeterSummary } from "@sriinnu/tokmeter";
-import { TokmeterCore } from "@sriinnu/tokmeter";
+import { sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "./theme.js";
@@ -230,7 +230,10 @@ function summarizeWarnings(summary: TokmeterSummary): string | null {
     return null;
   }
 
-  return summary.meta.warnings.map((warning) => warning.message).join(" · ");
+  // Warnings quote file paths, which are user/agent-controlled text.
+  return summary.meta.warnings
+    .map((warning) => sanitizeDataLabel(warning.message, 1024))
+    .join(" · ");
 }
 
 function formatHistorySource(historySource: TokmeterSummary["meta"]["historySource"]): string {

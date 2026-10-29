@@ -16,7 +16,32 @@ import type {
   TokenRecord,
 } from "./types.js";
 
-/** Filter records by date range. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Local midnight that starts `date` (YYYY-MM-DD). */
+function localDayStart(date: string): number {
+  return new Date(`${date}T00:00:00`).getTime();
+}
+
+/** Local midnight that starts the day after `date` — DST-safe. */
+function localDayEnd(date: string): number {
+  const next = new Date(`${date}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  return next.getTime();
+}
+
+/**
+ * Filter records by date range, in LOCAL calendar days — the same days the
+ * daily aggregates and `createSummaryQuery` use.
+ *
+ * A date-only bound used to go through `new Date("YYYY-MM-DD")`, which is UTC
+ * midnight: in CET `--since 2026-10-28 --until 2026-10-28` dropped 00:00–01:00
+ * on the 28th and took 00:00–01:00 on the 29th. `week` was a rolling 168 hours
+ * (part of an eighth day) where the summary query uses the last 7 calendar
+ * days. Cleanup selects session files through this helper too
+ * (cleanup-service.ts), so its date window shifted the same way.
+ * Bounds with a time component (`2026-10-28T13:00:00Z`) are taken as given.
+ */
 export function filterByDate(
   records: TokenRecord[],
   opts: {
@@ -26,40 +51,53 @@ export function filterByDate(
     week?: boolean;
     month?: boolean;
     year?: number;
-  }
+  },
+  now = Date.now()
 ): TokenRecord[] {
-  const now = new Date();
-  let since: Date | undefined;
-  let until: Date | undefined;
+  const today = new Date(now);
+  const todayKey = localDayKey(today);
+  let since: number | undefined;
+  let until: number | undefined; // exclusive
 
   if (opts.today) {
-    since = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    until = new Date(since.getTime() + 86400000);
+    since = localDayStart(todayKey);
+    until = localDayEnd(todayKey);
   } else if (opts.week) {
-    since = new Date(now.getTime() - 7 * 86400000);
+    const first = new Date(now);
+    first.setDate(first.getDate() - 6);
+    since = localDayStart(localDayKey(first));
+    until = localDayEnd(todayKey);
   } else if (opts.month) {
-    since = new Date(now.getFullYear(), now.getMonth(), 1);
+    since = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+    until = localDayEnd(todayKey);
   } else if (opts.year) {
-    since = new Date(Date.UTC(opts.year, 0, 1));
-    until = new Date(Date.UTC(opts.year + 1, 0, 1));
+    since = new Date(opts.year, 0, 1).getTime();
+    until = new Date(opts.year + 1, 0, 1).getTime();
   } else {
-    if (opts.since) since = new Date(opts.since);
+    if (opts.since) {
+      since = DATE_ONLY.test(opts.since)
+        ? localDayStart(opts.since)
+        : new Date(opts.since).getTime();
+    }
     if (opts.until) {
-      // Handle both date-only ("2025-01-15") and full ISO strings
-      const untilStr = opts.until;
-      if (untilStr.includes("T") || untilStr.includes("Z")) {
-        until = new Date(untilStr);
-      } else {
-        until = new Date(`${untilStr}T23:59:59.999Z`);
-      }
+      // A timestamp bound is inclusive, a date bound covers its whole day.
+      until = DATE_ONLY.test(opts.until)
+        ? localDayEnd(opts.until)
+        : new Date(opts.until).getTime() + 1;
     }
   }
 
   return records.filter((r) => {
-    if (since && r.timestamp < since.getTime()) return false;
-    if (until && r.timestamp > until.getTime()) return false;
+    if (since !== undefined && r.timestamp < since) return false;
+    if (until !== undefined && r.timestamp >= until) return false;
     return true;
   });
+}
+
+function localDayKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 /** Filter records by provider. */

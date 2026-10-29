@@ -3251,6 +3251,16 @@ export function createServer(): McpServer {
           lines.push("");
         }
 
+        if (preview.unremovable && preview.unremovable.length > 0) {
+          lines.push("  LEFT IN PLACE:", separator());
+          for (const u of preview.unremovable) {
+            lines.push(
+              `  ${sanitizeDataLabel(u.path, 4096)} [${sanitizeDataLabel(u.provider, 64)}]: ${sanitizeDataLabel(u.reason, 256)}`
+            );
+          }
+          lines.push("");
+        }
+
         lines.push(
           "  To execute: call tokmeter_cleanup_execute with the same filters, confirm='DELETE', and:",
           `  Preview receipt: ${issueCleanupReceipt(cleanupReceipts, filter, cleanupPreviewDigest(preview))}`,
@@ -3504,6 +3514,14 @@ export function createServer(): McpServer {
           }
         } else {
           lines.push(`  ✅ Restored ${result.restoredCount} items.`);
+          if (result.skipped && result.skipped.length > 0) {
+            lines.push(`  ⏭  Skipped ${result.skipped.length} entries that restore never writes:`);
+            for (const sk of result.skipped.slice(0, 10)) {
+              lines.push(
+                `     ${sanitizeDataLabel(sk.file, 4096)}: ${sanitizeDataLabel(sk.reason, 256)}`
+              );
+            }
+          }
         }
         lines.push("");
 

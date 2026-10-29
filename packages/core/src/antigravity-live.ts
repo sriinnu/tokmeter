@@ -28,6 +28,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { sanitizeDataLabel } from "./display-safety.js";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 
 const execFileAsync = promisify(execFile);
@@ -57,22 +58,28 @@ interface ServerHandle {
 }
 
 /**
- * Finds Antigravity's language_server process(es) and the ports each one
- * has open. Multiple candidates can come back (this project's dev machine
- * had two live processes with three ports between them, only one of which
- * actually answered the RPC) — callers try each until one works.
+ * Absolute paths only: the daemon inherits whatever PATH launched it, and a
+ * writable directory early in PATH must not get to substitute `ps`/`lsof`.
  */
-async function discoverCandidates(): Promise<ServerHandle[]> {
-  let psOut: string;
-  try {
-    // -eo avoids the 4096-char argument truncation `ps aux` applies on
-    // some platforms — the csrf_token flag lives well past that column.
-    const { stdout } = await execFileAsync("ps", ["-eo", "pid,args"]);
-    psOut = stdout;
-  } catch {
-    return [];
-  }
+const PS_CANDIDATES = ["/bin/ps", "/usr/bin/ps"];
+const LSOF_CANDIDATES = ["/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof"];
 
+function firstExisting(paths: string[]): string | null {
+  return paths.find((p) => existsSync(p)) ?? null;
+}
+
+/**
+ * `ps` arguments listing only this user's processes. Another local account
+ * can run a process named language_server with a `--csrf_token` flag; we
+ * must never send requests (or trust responses) based on someone else's
+ * process. `-ww` keeps long command lines untruncated.
+ */
+export function processListArgs(uid: number): string[] {
+  return ["-ww", "-U", String(uid), "-o", "pid=,args="];
+}
+
+/** Pull (pid, csrf token) pairs for language_server processes out of `ps` output. */
+export function parseLanguageServerCandidates(psOut: string): { pid: string; csrfToken: string }[] {
   const candidates: { pid: string; csrfToken: string }[] = [];
   for (const line of psOut.split("\n")) {
     if (!line.includes("language_server") || !line.includes("csrf_token")) continue;
@@ -87,11 +94,41 @@ async function discoverCandidates(): Promise<ServerHandle[]> {
       candidates.push({ pid: pidMatch[1], csrfToken: tokenMatch[1] });
     }
   }
+  return candidates;
+}
+
+/**
+ * Finds Antigravity's language_server process(es) and the ports each one
+ * has open. Multiple candidates can come back (this project's dev machine
+ * had two live processes with three ports between them, only one of which
+ * actually answered the RPC) — callers try each until one works.
+ */
+async function discoverCandidates(): Promise<ServerHandle[]> {
+  const uid = process.getuid?.();
+  const ps = firstExisting(PS_CANDIDATES);
+  const lsof = firstExisting(LSOF_CANDIDATES);
+  if (uid === undefined || !ps || !lsof) return [];
+
+  let psOut: string;
+  try {
+    const { stdout } = await execFileAsync(ps, processListArgs(uid), {
+      timeout: 5_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    psOut = stdout;
+  } catch {
+    return [];
+  }
 
   const handles: ServerHandle[] = [];
-  for (const { pid, csrfToken } of candidates) {
+  for (const { pid, csrfToken } of parseLanguageServerCandidates(psOut)) {
     try {
-      const { stdout } = await execFileAsync("lsof", ["-p", pid, "-a", "-i", "-P"]);
+      // -u: belt and braces — only report sockets of a process we own.
+      const { stdout } = await execFileAsync(
+        lsof,
+        ["-a", "-p", pid, "-u", String(uid), "-i", "-P", "-n"],
+        { timeout: 5_000, maxBuffer: 1024 * 1024 }
+      );
       for (const line of stdout.split("\n")) {
         const portMatch =
           line.match(/LISTEN.*:(\d+)\s*\(LISTEN\)/) ?? line.match(/:(\d+) \(LISTEN\)/);
@@ -111,7 +148,7 @@ async function discoverCandidates(): Promise<ServerHandle[]> {
 const USER_STATUS_PATH = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
 const FETCH_TIMEOUT_MS = 3_000;
 
-interface RawUserStatusResponse {
+export interface RawUserStatusResponse {
   userStatus?: {
     planStatus?: {
       availablePromptCredits?: number;
@@ -123,6 +160,74 @@ interface RawUserStatusResponse {
         quotaInfo?: { resetTime?: string; remainingFraction?: number };
       }[];
     };
+  };
+}
+
+/** A credit-status reply is a few KB; refuse to buffer more than this. */
+export const MAX_RESPONSE_BYTES = 1024 * 1024;
+
+/**
+ * Read a response body as text, giving up (null) past `maxBytes` instead of
+ * buffering whatever a local port chooses to stream at us.
+ */
+export async function readCappedText(res: Response, maxBytes: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Normalise an RPC reply into a snapshot. Labels and reset times are shown in
+ * the CLI/bar, so they are stripped of terminal controls and bounded here,
+ * before they reach the on-disk log.
+ */
+export function toSnapshot(
+  data: RawUserStatusResponse,
+  now = Date.now()
+): AntigravitySnapshot | null {
+  const status = data?.userStatus;
+  if (!status || typeof status !== "object") return null;
+  const configs = status.cascadeModelConfigData?.clientModelConfigs;
+  return {
+    timestamp: now,
+    availablePromptCredits: finiteOr(status.planStatus?.availablePromptCredits, 0),
+    availableFlowCredits: finiteOr(status.planStatus?.availableFlowCredits, 0),
+    models: (Array.isArray(configs) ? configs : [])
+      .slice(0, 200)
+      .map((m) => ({
+        label: sanitizeDataLabel(m?.label, 128),
+        resetTime:
+          m?.quotaInfo?.resetTime === undefined
+            ? undefined
+            : sanitizeDataLabel(m.quotaInfo.resetTime, 64) || undefined,
+        remainingFraction:
+          typeof m?.quotaInfo?.remainingFraction === "number" &&
+          Number.isFinite(m.quotaInfo.remainingFraction)
+            ? m.quotaInfo.remainingFraction
+            : undefined,
+      }))
+      .filter((m) => m.label),
   };
 }
 
@@ -144,22 +249,9 @@ async function fetchUserStatus(handle: ServerHandle): Promise<AntigravitySnapsho
     });
     if (!res.ok) return null;
 
-    const data = (await res.json()) as RawUserStatusResponse;
-    const status = data.userStatus;
-    if (!status) return null;
-
-    return {
-      timestamp: Date.now(),
-      availablePromptCredits: status.planStatus?.availablePromptCredits ?? 0,
-      availableFlowCredits: status.planStatus?.availableFlowCredits ?? 0,
-      models: (status.cascadeModelConfigData?.clientModelConfigs ?? [])
-        .filter((m) => m.label)
-        .map((m) => ({
-          label: m.label as string,
-          resetTime: m.quotaInfo?.resetTime,
-          remainingFraction: m.quotaInfo?.remainingFraction,
-        })),
-    };
+    const body = await readCappedText(res, MAX_RESPONSE_BYTES);
+    if (body === null) return null;
+    return toSnapshot(JSON.parse(body) as RawUserStatusResponse);
   } catch {
     return null;
   } finally {

@@ -63,7 +63,7 @@
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo packages/macos-bar/.build packages/macos-bar/*.app packages/macos-bar/*.zip packages/macos-bar/*.dSYM packages/macos-bar/*.dSYM.zip && find packages -path '*/src/*' \\( -name '*.js' -o -name '*.d.ts' \\) -delete 2>/dev/null; true"
   },
   "devDependencies": {
-    "@biomejs/biome": "~2.5.15",
+    "@biomejs/biome": "~2.6.2",
     "vitest": "^4.1.12"
   },
   "overrides": {

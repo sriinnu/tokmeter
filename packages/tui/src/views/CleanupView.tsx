@@ -312,6 +312,20 @@ export function CleanupView({ core, projects: incomingProjects, onRefresh }: Cle
             )}
           </Box>
         )}
+        {preview.unremovable && preview.unremovable.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text color={T.muted} bold>
+              {" "}
+              LEFT IN PLACE (not removable by cleanup):
+            </Text>
+            {preview.unremovable.slice(0, 5).map((u) => (
+              <Text key={u.path} color={T.muted}>
+                {"    "}
+                {shortPath(u.path)}: shared app database
+              </Text>
+            ))}
+          </Box>
+        )}
       </Box>
     );
   }

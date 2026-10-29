@@ -209,3 +209,25 @@ describe("todayTotalsFrom — a stale core's accumulator is not today", () => {
     expect(fresh.cost).toBe(33.24);
   });
 });
+
+describe("per-project maps keep hostile project names", () => {
+  test('a project literally named "__proto__" survives todayTotalsFrom and the floor', () => {
+    const projects = JSON.parse(
+      '{"__proto__":{"cost":2,"inputTokens":10,"outputTokens":5},"alpha":{"cost":1,"inputTokens":1,"outputTokens":1}}'
+    );
+    const today = todayTotalsFrom(
+      { date: "2026-10-21", cost: 3, inputTokens: 11, outputTokens: 6, projects },
+      "2026-10-21"
+    );
+    expect(Object.keys(today.projects).sort()).toEqual(["__proto__", "alpha"]);
+    expect(Object.getOwnPropertyDescriptor(today.projects, "__proto__")?.value).toEqual({
+      cost: 2,
+      in: 10,
+      out: 5,
+    });
+    const floor = computeTodayFloor(today, null);
+    expect(Object.keys(floor.projects)).toContain("__proto__");
+    const raised = computeTodayFloor(today, floor);
+    expect(Object.getOwnPropertyDescriptor(raised.projects, "__proto__")?.value?.cost).toBe(2);
+  });
+});

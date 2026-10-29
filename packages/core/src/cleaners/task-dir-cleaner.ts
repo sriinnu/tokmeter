@@ -6,7 +6,9 @@
  */
 
 import { rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { ALL_PARSERS } from "../parsers/index.js";
 import type { CleanupResult, CleanupTarget, ProviderId, SessionCleaner } from "../types.js";
 
 export class TaskDirCleaner implements SessionCleaner {
@@ -16,13 +18,21 @@ export class TaskDirCleaner implements SessionCleaner {
     this.providerId = providerId;
   }
 
-  async resolveTargets(sourceFiles: string[], _homeDir: string): Promise<CleanupTarget[]> {
+  async resolveTargets(sourceFiles: string[], homeDir: string): Promise<CleanupTarget[]> {
     const targets: CleanupTarget[] = [];
     const seen = new Set<string>();
+    const parser = ALL_PARSERS.find((p) => p.providerId === this.providerId);
+    const tasksRoots = new Set(
+      (parser?.sessionRoots?.(homeDir || homedir()) ?? []).map((r) => resolve(r))
+    );
 
     for (const file of sourceFiles) {
       // sourceFile = .../tasks/{taskId}/ui_messages.json → delete the task dir
       const taskDir = dirname(file);
+      // Only a direct child of a known tasks root is a task dir. A
+      // ui_messages.json sitting in the root itself (or anywhere else) would
+      // make dirname() the whole tasks root, i.e. every task at once.
+      if (!tasksRoots.has(dirname(resolve(taskDir)))) continue;
       if (seen.has(taskDir)) continue;
       seen.add(taskDir);
 
