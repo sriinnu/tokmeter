@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A full history rescan (`rescanHistory`, `tokmeter --rescan-history`) no
+  longer shrinks or drops sealed days. It started from an empty history and
+  overwrote every day it could rebuild, at today's prices: a day whose raw had
+  partly aged out lost those tokens for good, and a day with no raw left
+  vanished from history until the next restart. It now starts from the sealed
+  ledger, bills each day at its own prices, and replaces a day only when the
+  rebuild carries at least as much data — the same grow-only rule as Deep
+  Rescan. Shrinking a day still takes a forced window rebuild.
+
 ## [1.19.4] - 2026-10-29
 
 ### Security
