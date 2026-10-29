@@ -140,6 +140,10 @@ sandbox() {
   printf 'SHORT_VERSION="${CFBundleShortVersionString:-1.0.0}"\nBUILD_VERSION="${CFBundleVersion:-7}"\n' > "$R/packages/macos-bar/bundle.sh"
   echo '![release](https://img.shields.io/badge/release-v1.0.0-blue)' > "$R/README.md"
   printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A fix.\n\n## [1.0.0] - 2026-01-01\n\n- First.\n' > "$R/CHANGELOG.md"
+  # Older history well past the 64 KB pipe buffer, so stage 8's notes
+  # extraction runs against a CHANGELOG as large as the real one (88 KB at
+  # 1.19.4, when an early awk exit made git show die of SIGPIPE).
+  for i in $(seq 1 1500); do printf '\n## [0.0.%d] - 2025-01-01\n\n- Older entry %d with enough text to fill the pipe buffer.\n' "$i" "$i"; done >> "$R/CHANGELOG.md"
   git -C "$R" init -q
   git -C "$R" add -A && git -C "$R" -c commit.gpgsign=false commit -q -m init
   git -C "$R" remote add origin "$ORIGIN" && git -C "$R" push -q -u origin main

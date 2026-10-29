@@ -288,9 +288,14 @@ else
   # Notes from the merged commit's CHANGELOG, not the working tree: on a
   # resumed run the checkout may be anywhere.
   notes="$(mktemp)"
+  # awk reads to EOF instead of exiting at the next heading: an early exit
+  # closes the pipe while git show is still writing, git show dies of
+  # SIGPIPE, and pipefail + set -e turn that into exit 141 once CHANGELOG.md
+  # outgrows the pipe buffer (it did at 88 KB, releasing 1.19.4).
   git show "${merged}:CHANGELOG.md" | awk -v v="$VERSION" '
+    done { next }
     $0 ~ "^## \\[" v "\\]" { on = 1; next }
-    on && /^## \[/ { exit }
+    on && /^## \[/ { on = 0; done = 1; next }
     on { print }
   ' > "$notes"
   [[ $DRY -eq 1 || -s "$notes" ]] || die "no CHANGELOG section for ${VERSION} on main."
@@ -340,8 +345,12 @@ else say "10/11 Homebrew cask — skipped (--skip-brew)"; fi
 say "11/11 appcast PR (Sparkle)"
 appcast="release/appcast-${TAG}"
 appcast_on_main() {
-  curl -fsS "https://raw.githubusercontent.com/${REPO}/main/packages/macos-bar/appcast.xml" \
-    | grep -q "<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>"
+  # Read the whole feed before matching: `curl | grep -q` would SIGPIPE curl
+  # once the feed outgrows the pipe buffer, and under pipefail this wait loop
+  # would then read "not merged yet" until it timed out.
+  local feed
+  feed="$(curl -fsS "https://raw.githubusercontent.com/${REPO}/main/packages/macos-bar/appcast.xml")" || return 1
+  grep -q "<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>" <<<"$feed"
 }
 # The PR is found by branch name, and `gh pr view <branch>` also matches a
 # fork's PR from a same-named branch. Merging it is what ships the feed to
