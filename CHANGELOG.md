@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Clearer MCP tool descriptions for the tools that overlap:
+  `tokmeter_budget` vs `tokmeter_budget_alert`, `tokmeter_efficiency` vs
+  `tokmeter_cache_efficiency`, plus `tokmeter_leaderboard` and
+  `tokmeter_search`. Each now says what it returns, what window it reads and
+  when to use its sibling instead. `tokmeter_cache_efficiency` says plainly
+  that its dollar figures are estimates. No tool was renamed or removed.
+
 ## [1.19.4] - 2026-10-29
 
 ### Security
