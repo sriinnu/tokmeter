@@ -3,27 +3,33 @@
  *
  * Tokmeter — token usage observatory for AI coding agents.
  *
- * Exposes 24 tools via the Model Context Protocol that let AI agents and CLIs
+ * Exposes 22 read-only tools via the Model Context Protocol that let AI agents and CLIs
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
-  cleanupPreviewDigest,
+  type DailyEntry,
   deriveUsage,
+  loadAliases,
+  localDateKey,
   type ModelSummary,
+  type ProjectSummary,
   type ProviderId,
   type ProviderSummary,
+  projectNameIncludes,
+  resolveProjectName,
   type ScanOptions,
   sanitizeDataLabel,
-  sumUsage,
+  startOfLocalDay,
   type TokenRecord,
   TokmeterCore,
+  type TokmeterStats,
 } from "@sriinnu/tokmeter";
 import { z } from "zod";
 
@@ -31,19 +37,16 @@ import { z } from "zod";
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-/** Cached core instance with TTL to avoid rescanning on every tool call. */
-let _cachedCore: TokmeterCore | null = null;
-let _cachedRecords: TokenRecord[] = [];
-let _cacheTimestamp = 0;
-let _cacheOptionsKey = "";
+/**
+ * Scans cached per option set with a TTL, so a tool that reads both the
+ * ledger and raw records (or a burst of tool calls) doesn't rescan.
+ */
+const _scanCache = new Map<string, { scan: CoreScan; at: number }>();
 const CORE_CACHE_TTL_MS = 5_000; // 5 seconds
-const DESTRUCTIVE_MCP_ENV = "TOKMETER_ENABLE_DESTRUCTIVE_MCP";
-const CLEANUP_RECEIPT_TTL_MS = 5 * 60_000;
-const MAX_CLEANUP_RECEIPTS = 128;
-type CleanupReceipt = { filterKey: string; previewDigest: string; expiresAt: number };
 
-/** Metadata from the last scan — surfaced in tool outputs for transparency. */
+/** Metadata from one scan — surfaced in tool outputs for transparency. */
 interface ScanMeta {
+  /** Records the scan itself read (today's live files, or a bounded raw window). */
   recordCount: number;
   /** Number of records where pricing was unavailable (cost === 0 despite having tokens). */
   unpricedRecords: number;
@@ -52,100 +55,137 @@ interface ScanMeta {
   /** Milliseconds the scan took. */
   scanDurationMs: number;
 }
-let _lastScanMeta: ScanMeta = {
-  recordCount: 0,
-  unpricedRecords: 0,
-  unpricedModels: [],
-  scanDurationMs: 0,
-};
 
-function optionsKey(options?: ScanOptions): string {
-  return JSON.stringify(options ?? {});
+interface CoreScan {
+  core: TokmeterCore;
+  records: TokenRecord[];
+  meta: ScanMeta;
 }
 
 /**
- * Get a core instance plus the records its most recent scan produced.
- * Pairing them prevents tools from reading a stale `_cachedRecords` after a
- * different-scope tool call invalidates the cache between the await points.
+ * Get a core instance plus the records and metadata its scan produced, cached
+ * per option set for {@link CORE_CACHE_TTL_MS}. Returning all three together
+ * means a tool never reads another call's records or footer.
  *
- * The DAEMON retired `this.records` in Phase 3 to drop RSS, so
- * `core.getRecords()` now returns only a rolling 14-day window. MCP tool
- * processes are short-lived (cached 5min) and per-tool-call, so paying to
- * hold the scoped records for that window is cheap — and lets the tools
- * keep their lifetime / scope-aware record math correct.
+ * `getCore()` with no options is the aggregate path: the sealed relay plus
+ * today's live files — past days are never re-parsed. Only the record-level
+ * tools pass options, and {@link getScopedRecords} bounds those.
  */
-async function getCore(
-  options?: ScanOptions
-): Promise<{ core: TokmeterCore; records: TokenRecord[] }> {
-  const key = optionsKey(options);
+async function getCore(options?: ScanOptions): Promise<CoreScan> {
+  const key = JSON.stringify(options ?? {});
   const now = Date.now();
-  if (_cachedCore && key === _cacheOptionsKey && now - _cacheTimestamp < CORE_CACHE_TTL_MS) {
-    return { core: _cachedCore, records: _cachedRecords };
+  for (const [cachedKey, entry] of _scanCache) {
+    if (now - entry.at >= CORE_CACHE_TTL_MS) _scanCache.delete(cachedKey);
   }
+  const cached = _scanCache.get(key);
+  if (cached) return cached.scan;
   const scanStart = Date.now();
   const core = new TokmeterCore();
   const records = await core.scan(options);
-  const scanDuration = Date.now() - scanStart;
-
-  const hasTokens = (r: TokenRecord) => r.inputTokens + r.outputTokens > 0;
-  const unpriced = records.filter((r) => r.cost === 0 && hasTokens(r));
-  const unpricedModels = [...new Set(unpriced.map((r) => r.model))];
-  _lastScanMeta = {
-    recordCount: records.length,
-    unpricedRecords: unpriced.length,
-    unpricedModels,
-    scanDurationMs: scanDuration,
+  const scan: CoreScan = {
+    core,
+    records,
+    meta: {
+      recordCount: records.length,
+      ...unpricedOf(records),
+      scanDurationMs: Date.now() - scanStart,
+    },
   };
-
-  _cachedCore = core;
-  _cachedRecords = records;
-  _cacheTimestamp = now;
-  _cacheOptionsKey = key;
-  return { core, records };
+  _scanCache.set(key, { scan, at: now });
+  return scan;
 }
 
-/** Build a transparency footer for tool outputs. */
-function scanFooter(): string {
-  const m = _lastScanMeta;
-  const parts = [`📊 ${m.recordCount} records scanned in ${m.scanDurationMs}ms`];
-  if (m.unpricedRecords > 0) {
-    parts.push(
-      `⚠️  ${m.unpricedRecords} records missing pricing (models: ${m.unpricedModels.join(", ")})`
-    );
-  }
+/** Records that carry tokens but no cost — pricing was unavailable for them. */
+function unpricedOf(records: TokenRecord[]): Pick<ScanMeta, "unpricedRecords" | "unpricedModels"> {
+  const unpriced = records.filter((r) => r.cost === 0 && r.inputTokens + r.outputTokens > 0);
+  return {
+    unpricedRecords: unpriced.length,
+    unpricedModels: [...new Set(unpriced.map((r) => r.model))],
+  };
+}
+
+function unpricedLine(meta: ScanMeta, what = "records"): string[] {
+  return meta.unpricedRecords > 0
+    ? [
+        `⚠️  ${meta.unpricedRecords} ${what} missing pricing (models: ${meta.unpricedModels.join(", ")})`,
+      ]
+    : [];
+}
+
+/** Transparency footer for a tool answered from the daily ledger. */
+function viewFooter(view: ScopedView): string {
+  const parts = [
+    `📊 ${fmtNum(view.stats.totalRecords)} records in scope (${view.label}) · sealed daily ledger + today's live files · refreshed in ${view.meta.scanDurationMs}ms`,
+    ...unpricedLine(view.meta, "of today's records"),
+  ];
   return `\n${separator()}\n${parts.join("\n")}`;
 }
 
-/**
- * Default lookback for record-consuming tools at "all"/undefined scope. Matches
- * the core's old RECENT_RECORDS_WINDOW_DAYS so these tools see the same multi-
- * day window they did before the daemon's default scan became today-only.
- */
-const RECENT_TOOL_WINDOW_DAYS = 14;
+/** Transparency footer for a tool answered from raw per-request records. */
+function rawFooter(raw: RawScope): string {
+  const parts = [
+    `📊 ${fmtNum(raw.records.length)} raw records (${raw.label}) scanned in ${raw.meta.scanDurationMs}ms`,
+    ...unpricedLine(raw.meta),
+  ];
+  return `\n${separator()}\n${parts.join("\n")}`;
+}
 
-/** Build ScanOptions from the common scope/filter params many tools accept. */
-function buildScanOptions(params: {
+/** The common scope/filter params many tools accept. */
+interface ScopeParams {
   scope?: string;
   since?: string;
   until?: string;
   project?: string;
   providers?: string[];
-}): ScanOptions {
-  const opts: ScanOptions = {};
-  if (params.scope === "today") opts.today = true;
-  else if (params.scope === "week") opts.week = true;
-  else if (params.scope === "month") opts.month = true;
-  else if (!params.since && !params.until) {
-    // "all"/undefined. The daemon's default scan() is now today + relay only
-    // (past days are never re-parsed on the hot path). But record-consuming
-    // tools here (search / heatmap / export / anomaly) run in a fresh, always-
-    // cold core and need the multi-day raw records they historically got from
-    // recentRecords' 14-day seed. Request that window explicitly so this
-    // on-demand path restores their contract without slowing the bar.
-    opts.since = new Date(Date.now() - RECENT_TOOL_WINDOW_DAYS * 86_400_000).toISOString();
+}
+
+/** Inclusive local-calendar day window a scope resolves to; open ends mean unbounded. */
+interface ScopeWindow {
+  since?: string;
+  until?: string;
+  /** Human label, with the exact dates for bounded scopes. */
+  label: string;
+}
+
+/** Move a local YYYY-MM-DD key by whole calendar days (DST-safe: anchored at noon). */
+function shiftDayKey(key: string, days: number): string {
+  const date = new Date(`${key}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return localDateKey(date.getTime());
+}
+
+/**
+ * Resolve a tool's scope to local calendar days, exactly as core's summary
+ * query does: week is today plus the six days before it, month is the
+ * calendar month to date. Resolving here and handing core explicit dates means
+ * the ledger totals and any raw records a tool reads cover the same days.
+ */
+export function resolveScopeWindow(params: ScopeParams, now = Date.now()): ScopeWindow {
+  const today = localDateKey(now);
+  if (params.scope === "today") return { since: today, until: today, label: `Today (${today})` };
+  if (params.scope === "week") {
+    const since = shiftDayKey(today, -6);
+    return { since, until: today, label: `Last 7 Days (${since} → ${today})` };
   }
-  if (params.since) opts.since = params.since;
-  if (params.until) opts.until = params.until;
+  if (params.scope === "month") {
+    const since = `${today.slice(0, 8)}01`;
+    return { since, until: today, label: `This Month (${since} → ${today})` };
+  }
+  if (params.since || params.until) {
+    return {
+      since: params.since,
+      until: params.until,
+      label: `${params.since ?? "beginning"} → ${params.until ?? today}`,
+    };
+  }
+  return { label: "All Time" };
+}
+
+/** The ScanOptions core's getSummary needs to narrow to this scope. */
+function summaryOptions(params: ScopeParams, window: ScopeWindow): ScanOptions {
+  const opts: ScanOptions = {};
+  if (window.since) opts.since = window.since;
+  if (window.until) opts.until = window.until;
   if (params.project) opts.project = params.project;
   if (params.providers && params.providers.length > 0) {
     opts.providers = params.providers as ProviderId[];
@@ -153,7 +193,229 @@ function buildScanOptions(params: {
   return opts;
 }
 
-/** Build a CleanupFilter from tool params (shared by preview + execute). */
+/** A provider's share of the scope, with its request count. */
+interface ProviderRow extends ProviderSummary {
+  recordCount: number;
+}
+
+/** Every number a ledger-backed tool reports, narrowed to one scope. */
+interface ScopedView {
+  label: string;
+  window: ScopeWindow;
+  stats: TokmeterStats;
+  models: ModelSummary[];
+  /** Sorted by cost, most expensive first. */
+  projects: ProjectSummary[];
+  daily: DailyEntry[];
+  providers: ProviderRow[];
+  /**
+   * Requests per `${provider} ${model}` row. Null when the saved per-project
+   * buckets don't reconcile with the scope's record total (days sealed before
+   * those buckets existed), so a tool shows "—" instead of a wrong count.
+   */
+  requestsByModel: Map<string, number> | null;
+  meta: ScanMeta;
+}
+
+type DayAggregate = ReturnType<TokmeterCore["getDailyAggregates"]>[number];
+
+/** Core's summary-query project rule: substring of the raw or the aliased name. */
+function projectMatcher(query: string | undefined): (name: string) => boolean {
+  if (!query) return () => true;
+  const aliases = loadAliases(homedir());
+  return (name) =>
+    projectNameIncludes(name, query) ||
+    projectNameIncludes(resolveProjectName(name, aliases), query);
+}
+
+/** Sealed days plus today's live aggregate, each day exactly once. */
+function allDays(core: TokmeterCore): DayAggregate[] {
+  const today = core.getTodayAggregate();
+  return [
+    ...core.getDailyAggregates().filter((day) => day.date !== today?.date),
+    ...(today ? [today] : []),
+  ];
+}
+
+/**
+ * Provider rows and per-model request counts for a scope. getSummary returns
+ * no provider breakdown and ModelSummary carries no request count, so both are
+ * folded here from the same day aggregates getSummary reads, with the same
+ * matching rules (inclusive local days; project substring on the raw or
+ * aliased name; provider set). Without a project filter, providers come from
+ * each day's own provider buckets, which also cover days sealed before the
+ * per-project buckets existed.
+ */
+function scopedBreakdown(core: TokmeterCore, opts: ScanOptions) {
+  const providerSet = opts.providers?.length ? new Set<string>(opts.providers) : null;
+  const query = opts.project;
+  const matchesProject = projectMatcher(query);
+  const rows = new Map<
+    string,
+    { cost: number; totalTokens: number; recordCount: number; models: Set<string> }
+  >();
+  const row = (provider: string) => {
+    let entry = rows.get(provider);
+    if (!entry) {
+      entry = { cost: 0, totalTokens: 0, recordCount: 0, models: new Set() };
+      rows.set(provider, entry);
+    }
+    return entry;
+  };
+  const requestsByModel = new Map<string, number>();
+  let bucketRecords = 0;
+
+  for (const day of allDays(core)) {
+    if (opts.since && day.date < opts.since) continue;
+    if (opts.until && day.date > opts.until) continue;
+    for (const [name, project] of Object.entries(day.projects)) {
+      if (!matchesProject(name)) continue;
+      for (const bucket of Object.values(project.modelBuckets)) {
+        if (providerSet && !providerSet.has(bucket.provider)) continue;
+        const model = sanitizeDataLabel(bucket.model) || "unknown";
+        const key = `${bucket.provider} ${model}`;
+        requestsByModel.set(key, (requestsByModel.get(key) ?? 0) + bucket.recordCount);
+        bucketRecords += bucket.recordCount;
+        if (query) {
+          const entry = row(bucket.provider);
+          entry.cost += bucket.cost;
+          entry.totalTokens += bucket.totalTokens;
+          entry.recordCount += bucket.recordCount;
+          entry.models.add(model);
+        }
+      }
+    }
+    if (!query) {
+      for (const [provider, bucket] of Object.entries(day.providers)) {
+        if (providerSet && !providerSet.has(provider)) continue;
+        const entry = row(provider);
+        entry.cost += bucket.cost;
+        entry.totalTokens += bucket.totalTokens;
+        entry.recordCount += bucket.recordCount;
+      }
+      for (const model of Object.values(day.models)) {
+        for (const provider of model.providers) {
+          if (providerSet && !providerSet.has(provider)) continue;
+          row(provider).models.add(sanitizeDataLabel(model.model) || "unknown");
+        }
+      }
+    }
+  }
+
+  let grandTotal = 0;
+  for (const entry of rows.values()) grandTotal += entry.cost;
+  const providers: ProviderRow[] = [...rows.entries()]
+    .map(([provider, entry]) => ({
+      provider: provider as ProviderId,
+      cost: entry.cost,
+      totalTokens: entry.totalTokens,
+      recordCount: entry.recordCount,
+      models: [...entry.models],
+      percentageOfTotal: grandTotal > 0 ? (entry.cost / grandTotal) * 100 : 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
+  return { providers, requestsByModel, bucketRecords };
+}
+
+/**
+ * The one entry point for ledger-backed tools: scan today + the sealed relay
+ * (never raw history), then narrow every number to the tool's scope, project
+ * and providers through core's getSummary.
+ */
+async function getScopedView(params: ScopeParams): Promise<ScopedView> {
+  const { core, records, meta } = await getCore();
+  const window = resolveScopeWindow(params);
+  const opts = summaryOptions(params, window);
+  const summary = core.getSummary(opts);
+  const breakdown = scopedBreakdown(core, opts);
+  // The scan priced only today's live records; report the ones in this scope.
+  const today = localDateKey();
+  const coversToday =
+    (!window.since || window.since <= today) && (!window.until || window.until >= today);
+  const matchesProject = projectMatcher(opts.project);
+  const todayInScope = coversToday
+    ? records.filter(
+        (r) =>
+          localDateKey(r.timestamp) === today &&
+          (!opts.providers || opts.providers.includes(r.provider)) &&
+          matchesProject(r.project)
+      )
+    : [];
+  return {
+    label: window.label,
+    window,
+    stats: summary.stats,
+    models: summary.models,
+    projects: [...summary.projects].sort((a, b) => b.totalCost - a.totalCost),
+    daily: summary.daily,
+    providers: breakdown.providers,
+    requestsByModel:
+      breakdown.bucketRecords === summary.stats.totalRecords ? breakdown.requestsByModel : null,
+    meta: { ...meta, ...unpricedOf(todayInScope) },
+  };
+}
+
+/** Requests for one model row, or null when the scope's buckets can't say. */
+function modelRequests(view: ScopedView, m: ModelSummary): number | null {
+  if (!view.requestsByModel) return null;
+  return view.requestsByModel.get(`${m.provider} ${m.model}`) ?? 0;
+}
+
+/**
+ * Raw per-request records exist only while the agents keep their transcripts
+ * (roughly the last few weeks), and reading them is the slow path. Tools that
+ * need individual requests read at most this many days at "all" scope.
+ */
+const RAW_RECORD_WINDOW_DAYS = 14;
+
+/** Raw per-request records for a scope, bounded to the days they can cover. */
+interface RawScope {
+  records: TokenRecord[];
+  since: string;
+  until: string;
+  /** True when the scope was all-time and the raw read was capped. */
+  capped: boolean;
+  label: string;
+  meta: ScanMeta;
+}
+
+/**
+ * Raw records for the record-level tools (search, heatmap, record export,
+ * per-request anomalies, sessions). Reads only files touched since the scope's
+ * first day — today alone needs no history at all — and keeps records whose
+ * LOCAL day falls in the window. All-time is capped to the last
+ * {@link RAW_RECORD_WINDOW_DAYS} days and labelled so.
+ */
+async function getScopedRecords(params: ScopeParams): Promise<RawScope> {
+  const window = resolveScopeWindow(params);
+  const today = localDateKey();
+  const capped = !window.since;
+  const since = window.since ?? shiftDayKey(today, -(RAW_RECORD_WINDOW_DAYS - 1));
+  const until = window.until ?? today;
+  const opts: ScanOptions =
+    since >= today
+      ? { today: true }
+      : { since: new Date(startOfLocalDay(new Date(`${since}T12:00:00`).getTime())).toISOString() };
+  if (params.project) opts.project = params.project;
+  if (params.providers?.length) opts.providers = params.providers as ProviderId[];
+  const { records, meta } = await getCore(opts);
+  const inWindow = records.filter((r) => {
+    const day = localDateKey(r.timestamp);
+    return day >= since && day <= until;
+  });
+  return {
+    records: inWindow,
+    since,
+    until,
+    capped,
+    label: capped
+      ? `last ${RAW_RECORD_WINDOW_DAYS} days only, ${since} → ${until}; older transcripts are not kept`
+      : `${since} → ${until}`,
+    meta: { ...meta, recordCount: inWindow.length, ...unpricedOf(inWindow) },
+  };
+}
+
+/** Build a CleanupFilter from tool params. */
 function buildCleanupFilter(params: {
   project?: string;
   providers?: string[];
@@ -170,63 +432,6 @@ function buildCleanupFilter(params: {
   else if (params.scope === "week") filter.week = true;
   else if (params.scope === "month") filter.month = true;
   return filter;
-}
-
-function destructiveMcpEnabled(): boolean {
-  return process.env[DESTRUCTIVE_MCP_ENV] === "1";
-}
-
-function cleanupFilterKey(filter: import("@sriinnu/tokmeter").CleanupFilter): string {
-  return JSON.stringify({
-    project: filter.project ?? null,
-    providers: [...(filter.providers ?? [])].sort(),
-    since: filter.since ?? null,
-    until: filter.until ?? null,
-    today: filter.today ?? false,
-    week: filter.week ?? false,
-    month: filter.month ?? false,
-  });
-}
-
-function issueCleanupReceipt(
-  store: Map<string, CleanupReceipt>,
-  filter: import("@sriinnu/tokmeter").CleanupFilter,
-  previewDigest: string
-): string {
-  const now = Date.now();
-  for (const [id, receipt] of store) {
-    if (receipt.expiresAt <= now) store.delete(id);
-  }
-  while (store.size >= MAX_CLEANUP_RECEIPTS) {
-    const oldest = store.keys().next().value;
-    if (oldest === undefined) break;
-    store.delete(oldest);
-  }
-  const id = randomUUID();
-  store.set(id, {
-    filterKey: cleanupFilterKey(filter),
-    previewDigest,
-    expiresAt: now + CLEANUP_RECEIPT_TTL_MS,
-  });
-  return id;
-}
-
-function consumeCleanupReceipt(
-  store: Map<string, CleanupReceipt>,
-  id: string | undefined,
-  filter: import("@sriinnu/tokmeter").CleanupFilter
-): CleanupReceipt | null {
-  if (!id) return null;
-  const receipt = store.get(id);
-  store.delete(id);
-  if (
-    !receipt ||
-    receipt.expiresAt <= Date.now() ||
-    receipt.filterKey !== cleanupFilterKey(filter)
-  ) {
-    return null;
-  }
-  return receipt;
 }
 
 // ── Formatting ──────────────────────────────────────────────
@@ -275,16 +480,22 @@ function fmtPct(n: number): string {
   return `${n.toFixed(1)}%`;
 }
 
-/** Format a timestamp as YYYY-MM-DD, or "—" for invalid/missing values. */
-function fmtDate(ts: number): string {
-  if (!ts || ts === Number.POSITIVE_INFINITY || ts === Number.NEGATIVE_INFINITY) return "—";
-  return new Date(ts).toISOString().slice(0, 10);
+/**
+ * Format a timestamp as its LOCAL YYYY-MM-DD day — the same key core files
+ * usage under — or "—" for invalid/missing values. (UTC here showed today's
+ * evening usage under tomorrow's or yesterday's date, depending on offset.)
+ */
+export function fmtDate(ts: number): string {
+  if (!ts || !Number.isFinite(ts)) return "—";
+  return localDateKey(ts);
 }
 
-/** Format a timestamp as YYYY-MM-DD HH:MM:SS, or "—" for invalid/missing values. */
-function fmtDatetime(ts: number): string {
-  if (!ts || ts === Number.POSITIVE_INFINITY || ts === Number.NEGATIVE_INFINITY) return "—";
-  return new Date(ts).toISOString().slice(0, 19).replace("T", " ");
+/** Format a timestamp as LOCAL YYYY-MM-DD HH:MM:SS, or "—" for invalid/missing values. */
+export function fmtDatetime(ts: number): string {
+  if (!ts || !Number.isFinite(ts)) return "—";
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${localDateKey(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /** Render a filled/empty progress bar: ████░░░░ */
@@ -339,44 +550,20 @@ function formatTable(headers: string[], rows: string[][], alignRight?: boolean[]
   return `${headerLine}\n${divider}\n${body}`;
 }
 
-/** Convert a scope enum value to a human-readable label for display. */
-function scopeLabel(scope?: string): string {
-  if (scope === "today") return "Today";
-  if (scope === "week") return "Last 7 Days";
-  if (scope === "month") return "This Month";
-  return "All Time";
-}
-
-/** Render a "no data" message when a tool finds zero records for the given scope. */
-function noDataMessage(scope?: string): string {
-  return `${header("NO DATA")}\n\n  No token usage records found for scope: ${scopeLabel(scope)}.\n  Make sure you have used an AI coding agent that tokmeter supports.\n`;
+/** Render a "no data" message when a tool finds zero records for the given scope label. */
+function noDataMessage(label: string): string {
+  return `${header("NO DATA")}\n\n  No token usage records found for scope: ${label}.\n  Make sure you have used an AI coding agent that tokmeter supports.\n`;
 }
 
 // ── MCP tool annotations ────────────────────────────────────
 // Hints clients use to decide what to auto-approve and what to confirm.
-// Every tool that only reads session data is readOnly and closed-world; the
-// two that change files on disk are marked destructive and non-idempotent
-// (a repeated cleanup can catch newly written sessions; a repeated cross-home
-// restore re-mints colliding UUIDs and duplicates sessions).
+// Every tool only reads local session data, so every tool is readOnly and
+// closed-world. Deleting or restoring sessions is deliberately not exposed
+// over MCP: an agent can preview a cleanup, but a human runs it from the CLI
+// or TUI, where the confirmation and mandatory backup live.
 
 /** Annotations for tools that only read local session data. */
 export const READ_ONLY_TOOL = { readOnlyHint: true, openWorldHint: false } as const;
-
-/** Annotations for tokmeter_cleanup_execute: deletes session files. */
-export const DESTRUCTIVE_CLEANUP_TOOL = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
-
-/** Annotations for tokmeter_restore: overwrites session files with archived copies. */
-export const DESTRUCTIVE_RESTORE_TOOL = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
 
 // ── Zod schemas (reused across tools) ───────────────────────
 
@@ -422,7 +609,6 @@ const DollarAmount = z.number().finite().nonnegative().max(1_000_000_000);
  * @returns Configured McpServer ready to be connected to a transport.
  */
 export function createServer(): McpServer {
-  const cleanupReceipts = new Map<string, CleanupReceipt>();
   /**
    * The published package version, read at runtime from the package.json that
    * ships beside `dist/`. MCP clients show this in `initialize`'s
@@ -466,23 +652,21 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const stats = core.getStats();
+      const view = await getScopedView(params);
+      const { stats, daily } = view;
 
       if (stats.totalRecords === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
-      const daily = core.getDailyBreakdown();
       const costValues = daily.map((d) => d.cost);
       const tokenValues = daily.map((d) => d.totalTokens);
 
       const lines = [
         header("PULSE"),
-        `  Scope: ${scopeLabel(params.scope)}${params.project ? ` │ Project: ${params.project}` : ""}`,
+        `  Scope: ${view.label}${params.project ? ` │ Project: ${params.project}` : ""}${params.providers?.length ? ` │ Providers: ${params.providers.join(", ")}` : ""}`,
         separator(),
         "",
         `  💰 Total Cost       ${fmtCost(stats.totalCost)}`,
@@ -508,7 +692,7 @@ export function createServer(): McpServer {
       ];
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -529,13 +713,12 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const models = core.getModelCosts({ project: params.project });
+      const view = await getScopedView(params);
+      const models = view.models;
 
       if (models.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -545,7 +728,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("MODELS"),
-        `  Scope: ${scopeLabel(params.scope)}  │  ${models.length} model(s) found`,
+        `  Scope: ${view.label}  │  ${models.length} model(s) found`,
         separator(),
         "",
       ];
@@ -567,7 +750,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -583,16 +766,16 @@ export function createServer(): McpServer {
     {
       scope: ScopeEnum,
       project: ProjectFilter,
+      providers: ProvidersArray,
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const providers = core.getProviderBreakdown();
+      const view = await getScopedView(params);
+      const providers = view.providers;
 
       if (providers.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -600,7 +783,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("PROVIDERS"),
-        `  Scope: ${scopeLabel(params.scope)}  │  ${providers.length} provider(s)`,
+        `  Scope: ${view.label}  │  ${providers.length} provider(s)`,
         separator(),
         "",
       ];
@@ -618,7 +801,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -632,18 +815,18 @@ export function createServer(): McpServer {
       "Use this to see which projects are consuming the most AI resources.",
     {
       scope: ScopeEnum,
+      project: ProjectFilter,
       providers: ProvidersArray,
       limit: ResultLimit.describe("Max projects to show (default: 20)"),
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
+      const view = await getScopedView(params);
+      const projects = view.projects;
 
       if (projects.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -654,7 +837,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("PROJECTS"),
-        `  Scope: ${scopeLabel(params.scope)}  │  ${projects.length} project(s)  │  Total: ${fmtCost(totalCost)}`,
+        `  Scope: ${view.label}  │  ${projects.length} project(s)  │  Total: ${fmtCost(totalCost)}`,
         separator(),
         "",
       ];
@@ -678,7 +861,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -698,13 +881,12 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const daily = core.getDailyBreakdown({ project: params.project });
+      const view = await getScopedView(params);
+      const daily = view.daily;
 
       if (daily.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -718,7 +900,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("TIMELINE"),
-        `  Scope: ${scopeLabel(params.scope)}  │  ${daily.length} day(s) of activity`,
+        `  Scope: ${view.label}  │  ${daily.length} day(s) of activity`,
         "",
         `  Cost Trend:   ${costSpark}`,
         `  Token Trend:  ${tokenSpark}`,
@@ -746,7 +928,7 @@ export function createServer(): McpServer {
 
       lines.push("", "");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -766,14 +948,12 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
-      const stats = core.getStats();
-      const daily = core.getDailyBreakdown({ project: params.project });
+      const view = await getScopedView(params);
+      const { stats, daily } = view;
 
       if (daily.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -811,7 +991,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("FORECAST"),
-        `  Scope: ${scopeLabel(params.scope)}  │  Based on ${totalDays} day(s) of data`,
+        `  Scope: ${view.label}  │  Based on ${totalDays} active day(s) of data`,
         separator(),
         "",
         "  Historical Averages",
@@ -841,7 +1021,7 @@ export function createServer(): McpServer {
       ];
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -851,8 +1031,9 @@ export function createServer(): McpServer {
   // ────────────────────────────────────────────
   server.tool(
     "tokmeter_search",
-    "Flexible search across all token usage records with filtering by model, provider, project, date range, and cost thresholds. " +
-      "Returns individual records sorted by timestamp. Use this to find specific usage events or investigate high-cost records.",
+    "Flexible search across individual token usage records with filtering by model, provider, project, date range, and cost thresholds. " +
+      "Returns individual records sorted by timestamp. Use this to find specific usage events or investigate high-cost records. " +
+      `Individual records exist only while agents keep their transcripts, so the default (all) scope searches the last ${RAW_RECORD_WINDOW_DAYS} days.`,
     {
       scope: ScopeEnum,
       project: ProjectFilter,
@@ -870,15 +1051,8 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions({
-        scope: params.scope,
-        since: params.since,
-        until: params.until,
-        project: params.project,
-        providers: params.providers,
-      });
-      const scanned = await getCore(opts);
-      let records = scanned.records;
+      const raw = await getScopedRecords(params);
+      let records = raw.records;
 
       // Additional filters
       if (params.model) {
@@ -909,13 +1083,14 @@ export function createServer(): McpServer {
 
       if (records.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(raw.label) }],
         };
       }
 
       const lines = [
         header("SEARCH"),
         `  ${records.length} record(s) found  │  Showing top ${Math.min(limit, records.length)}  │  Sorted by: ${sortBy}`,
+        `  Window: ${raw.label}`,
         separator(),
         "",
       ];
@@ -943,7 +1118,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + rawFooter(raw) }],
       };
     }
   );
@@ -969,18 +1144,17 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core } = await getCore(opts);
+      const view = await getScopedView(params);
 
       const lines = [
         header("COMPARE"),
-        `  Comparing: ${params.compare_type}  │  Scope: ${scopeLabel(params.scope)}`,
+        `  Comparing: ${params.compare_type}  │  Scope: ${view.label}`,
         separator(),
         "",
       ];
 
       if (params.compare_type === "models") {
-        let models = core.getModelCosts({ project: params.project });
+        let models = view.models;
         if (params.names && params.names.length > 0) {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
           models = models.filter(
@@ -995,7 +1169,7 @@ export function createServer(): McpServer {
 
         if (models.length === 0) {
           return {
-            content: [{ type: "text", text: noDataMessage(params.scope) }],
+            content: [{ type: "text", text: noDataMessage(view.label) }],
           };
         }
 
@@ -1035,7 +1209,7 @@ export function createServer(): McpServer {
 
         lines.push(formatTable(headers, rows));
       } else if (params.compare_type === "providers") {
-        let providers = core.getProviderBreakdown();
+        let providers = view.providers;
         if (params.names && params.names.length > 0) {
           const nameSet = new Set(params.names.map((n) => n.toLowerCase()));
           providers = providers.filter(
@@ -1050,7 +1224,7 @@ export function createServer(): McpServer {
 
         if (providers.length === 0) {
           return {
-            content: [{ type: "text", text: noDataMessage(params.scope) }],
+            content: [{ type: "text", text: noDataMessage(view.label) }],
           };
         }
 
@@ -1073,7 +1247,7 @@ export function createServer(): McpServer {
         lines.push(formatTable(headers, rows));
       } else {
         // projects
-        let projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
+        let projects = view.projects;
         if (params.names && params.names.length > 0) {
           projects = projects.filter(
             (p) =>
@@ -1085,7 +1259,7 @@ export function createServer(): McpServer {
 
         if (projects.length === 0) {
           return {
-            content: [{ type: "text", text: noDataMessage(params.scope) }],
+            content: [{ type: "text", text: noDataMessage(view.label) }],
           };
         }
 
@@ -1112,7 +1286,7 @@ export function createServer(): McpServer {
 
       lines.push("", "");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -1138,26 +1312,42 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records: scopedRecords } = await getCore(opts);
       const dataType = params.data ?? "all";
+      const view = await getScopedView(params);
+      // Raw per-request records are the slow path; read them only when asked.
+      const raw =
+        dataType === "records" || (dataType === "all" && params.format !== "markdown")
+          ? await getScopedRecords(params)
+          : null;
+      const scopedRecords = raw?.records ?? [];
 
       if (params.format === "json") {
         let payload: unknown;
         if (dataType === "all") {
-          payload = core.toJSON();
+          payload = {
+            scope: view.label,
+            since: view.window.since ?? null,
+            until: view.window.until ?? null,
+            stats: view.stats,
+            models: view.models,
+            providers: view.providers,
+            projects: view.projects,
+            daily: view.daily,
+            records: scopedRecords,
+            recordsWindow: raw?.label,
+          };
         } else if (dataType === "records") {
           payload = scopedRecords;
         } else if (dataType === "models") {
-          payload = core.getModelCosts({ project: params.project });
+          payload = view.models;
         } else if (dataType === "providers") {
-          payload = core.getProviderBreakdown();
+          payload = view.providers;
         } else if (dataType === "projects") {
-          payload = core.getAllProjects();
+          payload = view.projects;
         } else if (dataType === "daily") {
-          payload = core.getDailyBreakdown({ project: params.project });
+          payload = view.daily;
         } else if (dataType === "stats") {
-          payload = core.getStats();
+          payload = view.stats;
         }
         return {
           content: [
@@ -1190,7 +1380,7 @@ export function createServer(): McpServer {
           const csvRows = records.map((r) =>
             [
               r.timestamp,
-              csvCell(new Date(r.timestamp).toISOString()),
+              csvCell(localDateKey(r.timestamp)),
               csvCell(r.project),
               csvCell(r.provider),
               csvCell(r.model),
@@ -1204,7 +1394,7 @@ export function createServer(): McpServer {
           );
           csv = [csvHeaders.join(","), ...csvRows].join("\n");
         } else if (dataType === "models") {
-          const models = core.getModelCosts({ project: params.project });
+          const models = view.models;
           const csvHeaders = [
             "model",
             "provider",
@@ -1233,7 +1423,7 @@ export function createServer(): McpServer {
           );
           csv = [csvHeaders.join(","), ...csvRows].join("\n");
         } else if (dataType === "daily") {
-          const daily = core.getDailyBreakdown({ project: params.project });
+          const daily = view.daily;
           const csvHeaders = [
             "date",
             "totalTokens",
@@ -1275,16 +1465,13 @@ export function createServer(): McpServer {
 
       // Markdown
       if (params.format === "markdown") {
-        const stats = core.getStats();
-        const models = core.getModelCosts({ project: params.project });
-        const providers = core.getProviderBreakdown();
-        const daily = core.getDailyBreakdown({ project: params.project });
+        const { stats, models, providers, daily } = view;
 
         const md: string[] = [
           "# 【♾️】 Token Usage Report",
           "",
-          `**Scope:** ${scopeLabel(params.scope)}${params.project ? ` | **Project:** ${params.project}` : ""}`,
-          `**Generated:** ${new Date().toISOString().slice(0, 19)}`,
+          `**Scope:** ${view.label}${params.project ? ` | **Project:** ${params.project}` : ""}${params.providers?.length ? ` | **Providers:** ${params.providers.join(", ")}` : ""}`,
+          `**Generated:** ${fmtDatetime(Date.now())} (local)`,
           "",
           "## Summary",
           "",
@@ -1374,16 +1561,11 @@ export function createServer(): McpServer {
       const lines = [header("BUDGET"), separator(), ""];
 
       // Today
+      let lastView: ScopedView | null = null;
       if (params.daily_budget) {
-        const { core } = await getCore(
-          buildScanOptions({
-            scope: "today",
-            project: params.project,
-            providers: params.providers,
-          })
-        );
-        const stats = core.getStats();
-        const spent = stats.totalCost;
+        const view = await getScopedView({ ...params, scope: "today" });
+        lastView = view;
+        const spent = view.stats.totalCost;
         const budget = params.daily_budget;
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
@@ -1401,27 +1583,23 @@ export function createServer(): McpServer {
 
       // This week
       if (params.weekly_budget) {
-        const { core } = await getCore(
-          buildScanOptions({
-            scope: "week",
-            project: params.project,
-            providers: params.providers,
-          })
-        );
-        const stats = core.getStats();
-        const spent = stats.totalCost;
+        const view = await getScopedView({ ...params, scope: "week" });
+        lastView = view;
+        const spent = view.stats.totalCost;
         const budget = params.weekly_budget;
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
         const bar = progressBar(spent, budget, 30);
         const status = pct >= 100 ? "🔴 OVER BUDGET" : pct >= 80 ? "🟡 WARNING" : "🟢 ON TRACK";
 
-        // Days elapsed in week for projection
-        const dayOfWeek = new Date().getDay() || 7; // 1-7
-        const projectedWeekly = (spent / dayOfWeek) * 7;
+        // "week" is the rolling last 7 days (six full days plus today so far),
+        // so the burn rate divides by the days that window has actually run.
+        const now = new Date();
+        const daysElapsed = 6 + (now.getHours() + now.getMinutes() / 60) / 24;
+        const projectedWeekly = (spent / daysElapsed) * 7;
 
         lines.push(
-          `  Weekly Budget: ${fmtCost(budget)}  (Day ${dayOfWeek}/7)`,
+          `  Weekly Budget: ${fmtCost(budget)}  (${view.label})`,
           `    Spent:      ${fmtCost(spent)}  │  ${fmtPct(pct)} used  │  ${status}`,
           `    Remaining:  ${remaining >= 0 ? fmtCost(remaining) : `-${fmtCost(Math.abs(remaining))}`}`,
           `    Projected:  ${fmtCost(projectedWeekly)} by end of week ${projectedWeekly > budget ? "⚠ WILL EXCEED" : "✓ within budget"}`,
@@ -1432,15 +1610,9 @@ export function createServer(): McpServer {
 
       // This month
       if (params.monthly_budget) {
-        const { core } = await getCore(
-          buildScanOptions({
-            scope: "month",
-            project: params.project,
-            providers: params.providers,
-          })
-        );
-        const stats = core.getStats();
-        const spent = stats.totalCost;
+        const view = await getScopedView({ ...params, scope: "month" });
+        lastView = view;
+        const spent = view.stats.totalCost;
         const budget = params.monthly_budget;
         const pct = budget > 0 ? (spent / budget) * 100 : 0;
         const remaining = budget - spent;
@@ -1465,7 +1637,9 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [
+          { type: "text", text: lines.join("\n") + (lastView ? viewFooter(lastView) : "") },
+        ],
       };
     }
   );
@@ -1476,7 +1650,8 @@ export function createServer(): McpServer {
   server.tool(
     "tokmeter_heatmap",
     "Visualize activity patterns as a heatmap — see which hours of the day and days of the week have the heaviest usage. " +
-      "Shows both cost and token intensity. Use this to understand work patterns and peak usage times.",
+      "Shows both cost and token intensity. Use this to understand work patterns and peak usage times. " +
+      `Built from individual records, so the default (all) scope covers the last ${RAW_RECORD_WINDOW_DAYS} days.`,
     {
       scope: ScopeEnum,
       project: ProjectFilter,
@@ -1488,12 +1663,12 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { records } = await getCore(opts);
+      const raw = await getScopedRecords(params);
+      const records = raw.records;
 
       if (records.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(raw.label) }],
         };
       }
 
@@ -1541,7 +1716,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("HEATMAP"),
-        `  Scope: ${scopeLabel(params.scope)}  │  Metric: ${metricLabel}  │  ${records.length} records`,
+        `  Window: ${raw.label}  │  Metric: ${metricLabel}  │  ${records.length} records`,
         separator(),
         "",
         "  Hour-of-Day × Day-of-Week Heatmap",
@@ -1597,7 +1772,7 @@ export function createServer(): McpServer {
 
       lines.push("", "");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + rawFooter(raw) }],
       };
     }
   );
@@ -1621,9 +1796,8 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records } = await getCore(opts);
-      const daily = core.getDailyBreakdown({ project: params.project });
+      const view = await getScopedView(params);
+      const daily = view.daily;
 
       if (daily.length < 2) {
         return {
@@ -1646,10 +1820,13 @@ export function createServer(): McpServer {
 
       const lines = [
         header("ANOMALY"),
-        `  Scope: ${scopeLabel(params.scope)}  │  Sensitivity: ${sensitivity} (z > ${zThreshold})`,
+        `  Scope: ${view.label}  │  Sensitivity: ${sensitivity} (z > ${zThreshold})`,
         separator(),
         "",
       ];
+      // Per-request checks need raw records, which only cover recent days.
+      const raw = await getScopedRecords(params);
+      const records = raw.records;
 
       // ── Daily cost anomalies (z-score) ──
       const costs = daily.map((d) => d.cost);
@@ -1708,7 +1885,9 @@ export function createServer(): McpServer {
                 .slice(0, 10)
             : [];
 
-        lines.push(`  💸 Unusually Expensive Requests (mean: ${fmtCost(recMean)}/request)`);
+        lines.push(
+          `  💸 Unusually Expensive Requests (mean: ${fmtCost(recMean)}/request; ${raw.label})`
+        );
         if (expensiveRecords.length === 0) {
           lines.push("    ✓ No outlier requests detected.", "");
         } else {
@@ -1725,7 +1904,7 @@ export function createServer(): McpServer {
       // ── Sudden model change detection ──
       const dailyModels = new Map<string, Set<string>>();
       for (const r of records) {
-        const date = new Date(r.timestamp).toISOString().slice(0, 10);
+        const date = localDateKey(r.timestamp);
         if (!dailyModels.has(date)) dailyModels.set(date, new Set());
         dailyModels.get(date)!.add(r.model);
       }
@@ -1745,7 +1924,7 @@ export function createServer(): McpServer {
         }
       }
 
-      lines.push("  🔄 Model Change Events (last 5):");
+      lines.push(`  🔄 Model Change Events (last 5; ${raw.label}):`);
       if (modelChanges.length === 0) {
         lines.push("    ✓ Consistent model usage across all days.", "");
       } else {
@@ -1793,7 +1972,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) + rawFooter(raw) }],
       };
     }
   );
@@ -1813,19 +1992,17 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records } = await getCore(opts);
-      const stats = core.getStats();
-      const models = core.getModelCosts({ project: params.project });
+      const view = await getScopedView(params);
+      const { stats, models } = view;
 
       if (stats.totalRecords === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
       // Global efficiency metrics
-      const usage = sumUsage(records);
+      const usage = deriveUsage(stats);
       const cacheHitRate = usage.cacheHitRate * 100;
       const totalAll = stats.totalTokens;
       const reasoningRatio = totalAll > 0 ? (stats.reasoningTokens / totalAll) * 100 : 0;
@@ -1842,7 +2019,7 @@ export function createServer(): McpServer {
 
       const lines = [
         header("EFFICIENCY"),
-        `  Scope: ${scopeLabel(params.scope)}`,
+        `  Scope: ${view.label}`,
         separator(),
         "",
         "  Overall Metrics",
@@ -1868,16 +2045,14 @@ export function createServer(): McpServer {
         const mCacheRate = modelUsage.cacheHitRate * 100;
         const mReasonRate = m.totalTokens > 0 ? (m.reasoningTokens / m.totalTokens) * 100 : 0;
         const mCostPer1M = m.totalTokens > 0 ? (m.cost / m.totalTokens) * 1_000_000 : 0;
-        // Approximate requests: total records for this model
-        const modelRecords = records.filter((r) => r.model === m.model);
-        const mAvgCost = modelRecords.length > 0 ? m.cost / modelRecords.length : 0;
+        const requests = modelRequests(view, m);
 
         modelRows.push([
           m.model.length > 30 ? `${m.model.slice(0, 27)}...` : m.model,
           fmtPct(mCacheRate),
           fmtPct(mReasonRate),
           fmtCost(mCostPer1M),
-          fmtCost(mAvgCost),
+          requests ? fmtCost(m.cost / requests) : "—",
         ]);
       }
 
@@ -1928,7 +2103,7 @@ export function createServer(): McpServer {
 
       lines.push("", "");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -1964,25 +2139,24 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records } = await getCore(opts);
+      const view = await getScopedView(params);
       const rankBy = params.rank_by ?? "cost";
       const entity = params.entity ?? "models";
       const limit = params.limit ?? 10;
 
       const lines = [
         header("LEADERBOARD"),
-        `  Entity: ${entity}  │  Ranked by: ${rankBy}  │  Scope: ${scopeLabel(params.scope)}`,
+        `  Entity: ${entity}  │  Ranked by: ${rankBy}  │  Scope: ${view.label}`,
         separator(),
         "",
       ];
 
       if (entity === "models") {
-        const models = core.getModelCosts({ project: params.project });
+        const models = view.models;
 
         if (models.length === 0) {
           return {
-            content: [{ type: "text", text: noDataMessage(params.scope) }],
+            content: [{ type: "text", text: noDataMessage(view.label) }],
           };
         }
 
@@ -1994,11 +2168,6 @@ export function createServer(): McpServer {
           recordCount: number;
         };
 
-        const metricsMap = new Map<string, number>();
-        for (const r of records) {
-          metricsMap.set(r.model, (metricsMap.get(r.model) ?? 0) + 1);
-        }
-
         const enriched: ModelMetrics[] = models.map((m) => {
           const usage = deriveUsage(m);
           return {
@@ -2006,7 +2175,7 @@ export function createServer(): McpServer {
             costPer1M: m.totalTokens > 0 ? (m.cost / m.totalTokens) * 1_000_000 : 0,
             cacheRate: usage.cacheHitRate * 100,
             reasoningRate: m.totalTokens > 0 ? (m.reasoningTokens / m.totalTokens) * 100 : 0,
-            recordCount: metricsMap.get(m.model) ?? 0,
+            recordCount: modelRequests(view, m) ?? 0,
           };
         });
 
@@ -2063,7 +2232,7 @@ export function createServer(): McpServer {
             metricValue = fmtNum(m.outputTokens);
             metricRaw = m.outputTokens;
           } else if (rankBy === "records") {
-            metricValue = `${m.recordCount} requests`;
+            metricValue = view.requestsByModel ? `${m.recordCount} requests` : "— requests";
             metricRaw = m.recordCount;
           } else {
             metricValue = fmtCost(m.cost);
@@ -2079,28 +2248,19 @@ export function createServer(): McpServer {
         }
       } else {
         // providers
-        const providers = core.getProviderBreakdown();
+        const providers = view.providers;
 
         if (providers.length === 0) {
           return {
-            content: [{ type: "text", text: noDataMessage(params.scope) }],
+            content: [{ type: "text", text: noDataMessage(view.label) }],
           };
         }
 
-        type ProviderMetrics = ProviderSummary & {
-          costPer1M: number;
-          recordCount: number;
-        };
-
-        const provRecordCounts = new Map<string, number>();
-        for (const r of records) {
-          provRecordCounts.set(r.provider, (provRecordCounts.get(r.provider) ?? 0) + 1);
-        }
+        type ProviderMetrics = ProviderRow & { costPer1M: number };
 
         const enriched: ProviderMetrics[] = providers.map((p) => ({
           ...p,
           costPer1M: p.totalTokens > 0 ? (p.cost / p.totalTokens) * 1_000_000 : 0,
-          recordCount: provRecordCounts.get(p.provider) ?? 0,
         }));
 
         const sortFns: Record<string, (a: ProviderMetrics, b: ProviderMetrics) => number> = {
@@ -2128,7 +2288,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -2148,21 +2308,16 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records } = await getCore(opts);
-      const stats = core.getStats();
+      const view = await getScopedView(params);
+      const { stats, models, providers, projects, daily } = view;
 
       if (stats.totalRecords === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
-      const models = core.getModelCosts({ project: params.project });
-      const providers = core.getProviderBreakdown();
-      const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
-      const daily = core.getDailyBreakdown({ project: params.project });
-      const scope = scopeLabel(params.scope);
+      const scope = view.label;
 
       // Build narrative
       const lines: string[] = [header("DIGEST"), `  ${scope} Usage Summary`, separator(), ""];
@@ -2235,7 +2390,7 @@ export function createServer(): McpServer {
       }
 
       // Cache efficiency note
-      const usage = sumUsage(records);
+      const usage = deriveUsage(stats);
       const cacheRate = usage.cacheHitRate * 100;
       if (cacheRate > 0) {
         lines.push(
@@ -2264,7 +2419,7 @@ export function createServer(): McpServer {
       lines.push(separator(), `  Daily Cost:  ${costSpark}`, "");
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -2283,34 +2438,29 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions(params);
-      const { core, records } = await getCore(opts);
-      const daily = core.getDailyBreakdown({ project: params.project });
-      const stats = core.getStats();
+      const view = await getScopedView(params);
+      const { daily, stats } = view;
 
       if (daily.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.scope) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
-      const lines = [
-        header("STREAKS & HABITS"),
-        `  Scope: ${scopeLabel(params.scope)}`,
-        separator(),
-        "",
-      ];
+      const lines = [header("STREAKS & HABITS"), `  Scope: ${view.label}`, separator(), ""];
 
       // ── Current streak ──
       const daySet = new Set(daily.map((d) => d.date));
       const allDates = [...daySet].sort().reverse(); // most recent first
 
+      // Day keys are LOCAL calendar days (core keys usage that way), so walk
+      // them as local days too — UTC math put "today" a day off in the evening.
       let currentStreak = 0;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateKey();
       let checkDate = today;
       // Check if today or yesterday is the starting point
       if (!daySet.has(today)) {
-        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        const yesterday = shiftDayKey(today, -1);
         if (daySet.has(yesterday)) {
           checkDate = yesterday;
         } else {
@@ -2319,10 +2469,10 @@ export function createServer(): McpServer {
       }
 
       // Count consecutive days back from checkDate
-      let cursor = new Date(checkDate);
-      while (daySet.has(cursor.toISOString().slice(0, 10))) {
+      let cursor = checkDate;
+      while (daySet.has(cursor)) {
         currentStreak++;
-        cursor = new Date(cursor.getTime() - 86400000);
+        cursor = shiftDayKey(cursor, -1);
       }
 
       // ── Longest streak ──
@@ -2357,6 +2507,7 @@ export function createServer(): McpServer {
         `  🔥 Current Streak:  ${currentStreak} day(s)`,
         `  🏆 Longest Streak:  ${longestStreak} day(s) (${longestStreakStart} → ${longestStreakEnd})`,
         `  📅 Active Days:     ${stats.activeDays}`,
+        `  📦 Requests/Day:    ${(stats.activeDays > 0 ? stats.totalRecords / stats.activeDays : 0).toFixed(1)} avg`,
         ""
       );
 
@@ -2380,7 +2531,7 @@ export function createServer(): McpServer {
       let weekendDays = 0;
 
       for (const d of daily) {
-        const dayOfWeek = new Date(d.date).getDay();
+        const dayOfWeek = new Date(`${d.date}T12:00:00`).getDay();
         if (dayOfWeek === 0 || dayOfWeek === 6) {
           weekendCost += d.cost;
           weekendDays++;
@@ -2406,7 +2557,11 @@ export function createServer(): McpServer {
       );
 
       // ── Session intensity ──
-      // Group records into sessions (records within 30 min of each other)
+      // Group records into sessions (records within 30 min of each other).
+      // Sessions need raw timestamps, which only cover recent days, so the
+      // request counts here come from the same raw records, not the ledger.
+      const raw = await getScopedRecords(params);
+      const records = raw.records;
       const sortedRecords = [...records].sort((a, b) => a.timestamp - b.timestamp);
       let sessionCount = 0;
       let lastTs = 0;
@@ -2418,22 +2573,21 @@ export function createServer(): McpServer {
         lastTs = r.timestamp;
       }
 
-      const avgRecordsPerDay = stats.activeDays > 0 ? stats.totalRecords / stats.activeDays : 0;
-      const avgSessionsPerDay = stats.activeDays > 0 ? sessionCount / stats.activeDays : 0;
+      const rawActiveDays = new Set(records.map((r) => localDateKey(r.timestamp))).size;
+      const avgSessionsPerDay = rawActiveDays > 0 ? sessionCount / rawActiveDays : 0;
 
       lines.push(
-        "  Session Analysis (30min gap = new session)",
+        `  Session Analysis (30min gap = new session; ${raw.label})`,
         `    Total Sessions:      ~${sessionCount}`,
-        `    Avg Requests/Day:    ${avgRecordsPerDay.toFixed(1)}`,
         `    Avg Sessions/Day:    ${avgSessionsPerDay.toFixed(1)}`,
-        `    Avg Requests/Session: ${sessionCount > 0 ? (stats.totalRecords / sessionCount).toFixed(1) : "—"}`,
+        `    Avg Requests/Session: ${sessionCount > 0 ? (records.length / sessionCount).toFixed(1) : "—"}`,
         ""
       );
 
       // ── Weekly activity pattern (mini calendar) ──
       const weekMap = new Map<string, number>(); // ISO week -> cost
       for (const d of daily) {
-        const date = new Date(d.date);
+        const date = new Date(`${d.date}T12:00:00`);
         // Approximate ISO week
         const jan1 = new Date(date.getFullYear(), 0, 1);
         const weekNum = Math.ceil(
@@ -2455,7 +2609,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) + rawFooter(raw) }],
       };
     }
   );
@@ -2477,52 +2631,24 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions({
+      const view = await getScopedView({
         scope: params.period,
         project: params.project,
         providers: params.provider ? [params.provider] : undefined,
       });
-      const { records } = await getCore(opts);
+      const { stats } = view;
 
-      if (records.length === 0) {
+      if (stats.totalRecords === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.period) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
       // Aggregate totals
-      const usage = sumUsage(records);
+      const usage = deriveUsage(stats);
       const totalCacheRead = usage.cacheReadTokens;
       const totalCacheWrite = usage.cacheWriteTokens;
       const totalInputTokens = usage.totalInputTokens;
-
-      // Per-model aggregation
-      const modelMap = new Map<
-        string,
-        {
-          cacheRead: number;
-          cacheWrite: number;
-          inputTokens: number;
-          cost: number;
-          count: number;
-        }
-      >();
-
-      for (const r of records) {
-        const existing = modelMap.get(r.model) ?? {
-          cacheRead: 0,
-          cacheWrite: 0,
-          inputTokens: 0,
-          cost: 0,
-          count: 0,
-        };
-        existing.cacheRead += r.cacheReadTokens;
-        existing.cacheWrite += r.cacheWriteTokens;
-        existing.inputTokens += r.inputTokens;
-        existing.cost += r.cost;
-        existing.count++;
-        modelMap.set(r.model, existing);
-      }
 
       // Cache hit rate: reads / (input + reads + writes). If no input activity, 0%.
       const totalCacheTokens = totalCacheRead + totalCacheWrite;
@@ -2530,20 +2656,12 @@ export function createServer(): McpServer {
 
       // Estimate savings: cache reads cost ~10% of input price, so you save ~90% per cached token.
       // We approximate by looking at average input cost per token across the dataset.
-      const totalCost = records.reduce((sum, r) => sum + r.cost, 0);
+      const totalCost = stats.totalCost;
       const avgCostPerInputToken = totalInputTokens > 0 ? (totalCost * 0.4) / totalInputTokens : 0; // ~40% of cost is input
       const cacheSavings = totalCacheRead * avgCostPerInputToken * 0.9; // saved 90% of input price
       const cacheWaste = totalCacheWrite * avgCostPerInputToken * 0.25; // cache write premium ~25%
 
-      // Period label
-      const periodLabel =
-        params.period === "today"
-          ? "Today"
-          : params.period === "week"
-            ? "Last 7 Days"
-            : params.period === "month"
-              ? "This Month"
-              : "All Time";
+      const periodLabel = view.label;
 
       const lines = [
         header("CACHE EFFICIENCY"),
@@ -2563,28 +2681,22 @@ export function createServer(): McpServer {
       ];
 
       // Per-model breakdown
-      const modelEntries = [...modelMap.entries()]
-        .filter(([, v]) => v.cacheRead + v.cacheWrite > 0)
-        .sort((a, b) => b[1].cacheRead - a[1].cacheRead);
+      const modelEntries = view.models
+        .filter((m) => m.cacheReadTokens + m.cacheWriteTokens > 0)
+        .sort((a, b) => b.cacheReadTokens - a.cacheReadTokens);
 
       if (modelEntries.length > 0) {
         lines.push("  Per-Model Cache Breakdown", separator(), "");
         const tableHeaders = ["Model", "Hit Rate", "Reads", "Writes", "Calls"];
-        const tableRows = modelEntries.map(([model, v]) => {
-          const modelUsage = deriveUsage({
-            inputTokens: v.inputTokens,
-            outputTokens: 0,
-            cacheReadTokens: v.cacheRead,
-            cacheWriteTokens: v.cacheWrite,
-            reasoningTokens: 0,
-          });
-          const mHitRate = modelUsage.cacheHitRate * 100;
+        const tableRows = modelEntries.map((m) => {
+          const mHitRate = deriveUsage(m).cacheHitRate * 100;
+          const calls = modelRequests(view, m);
           return [
-            model,
+            m.model,
             fmtPct(mHitRate),
-            fmtNum(v.cacheRead),
-            fmtNum(v.cacheWrite),
-            String(v.count),
+            fmtNum(m.cacheReadTokens),
+            fmtNum(m.cacheWriteTokens),
+            calls === null ? "—" : String(calls),
           ];
         });
         lines.push(formatTable(tableHeaders, tableRows, [false, true, true, true, true]));
@@ -2624,7 +2736,7 @@ export function createServer(): McpServer {
       lines.push("");
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -2680,27 +2792,16 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions({
-        scope: params.period,
-        project: params.project,
-      });
-      const { core } = await getCore(opts);
-      const models = core.getModelCosts({ project: params.project });
+      const view = await getScopedView({ scope: params.period, project: params.project });
+      const models = view.models;
 
       if (models.length === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.period) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
-      const periodLabel =
-        params.period === "today"
-          ? "Today"
-          : params.period === "week"
-            ? "Last 7 Days"
-            : params.period === "month"
-              ? "This Month"
-              : "All Time";
+      const periodLabel = view.label;
 
       const lines = [
         header("MODEL ADVISOR"),
@@ -2814,7 +2915,7 @@ export function createServer(): McpServer {
       lines.push("");
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -2835,16 +2936,15 @@ export function createServer(): McpServer {
     READ_ONLY_TOOL,
     async (params) => {
       const now = new Date();
-      const todayStr = now.toISOString().slice(0, 10);
+      const todayStr = localDateKey(now.getTime());
 
-      const { core: coreToday, records: todayRecords } = await getCore({ today: true });
-      const todaySpend = todayRecords.reduce((s, r) => s + r.cost, 0);
-
-      const { records: weekRecords } = await getCore({ week: true });
-      const weekSpend = weekRecords.reduce((s, r) => s + r.cost, 0);
-
-      const { records: monthRecords } = await getCore({ month: true });
-      const monthSpend = monthRecords.reduce((s, r) => s + r.cost, 0);
+      // All three come from one today + relay scan, narrowed per window.
+      const todayView = await getScopedView({ scope: "today" });
+      const todaySpend = todayView.stats.totalCost;
+      const weekView = await getScopedView({ scope: "week" });
+      const weekSpend = weekView.stats.totalCost;
+      const monthView = await getScopedView({ scope: "month" });
+      const monthSpend = monthView.stats.totalCost;
 
       /** Determine status color based on usage percentage. */
       function budgetStatus(pct: number): string {
@@ -2871,9 +2971,8 @@ export function createServer(): McpServer {
       const hoursElapsedToday = now.getHours() + now.getMinutes() / 60;
       const hoursInDay = 24;
 
-      // Hours elapsed this week (day of week: 0=Sun)
-      const dayOfWeek = now.getDay();
-      const hoursElapsedWeek = dayOfWeek * 24 + hoursElapsedToday;
+      // Hours elapsed in the rolling week: six full days before today, plus today.
+      const hoursElapsedWeek = 6 * 24 + hoursElapsedToday;
       const hoursInWeek = 7 * 24;
 
       // Hours elapsed this month
@@ -2910,7 +3009,7 @@ export function createServer(): McpServer {
       if (params.weekly_budget) {
         const weeklyPct = (weekSpend / params.weekly_budget) * 100;
         lines.push(
-          "  📅 Weekly Budget",
+          `  📅 Weekly Budget (${weekView.label})`,
           `     Budget:     ${fmtCost(params.weekly_budget)}`,
           `     Spent:      ${fmtCost(weekSpend)}`,
           `     Used:       ${fmtPct(weeklyPct)}  ${progressBar(weekSpend, params.weekly_budget)}`,
@@ -2937,7 +3036,7 @@ export function createServer(): McpServer {
 
       // Cost drivers — top models from today if over budget
       if (dailyPct >= 80) {
-        const modelCosts = coreToday.getModelCosts();
+        const modelCosts = todayView.models;
         if (modelCosts.length > 0) {
           lines.push(separator(), "", "  ⚡ Cost Drivers (Today)", "");
           const driverHeaders = ["Model", "Cost", "Share"];
@@ -2951,7 +3050,7 @@ export function createServer(): McpServer {
 
       lines.push("");
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(monthView) }],
       };
     }
   );
@@ -2972,14 +3071,12 @@ export function createServer(): McpServer {
     },
     READ_ONLY_TOOL,
     async (params) => {
-      const opts = buildScanOptions({ scope: params.period });
-      const { core, records } = await getCore(opts);
-      const models = core.getModelCosts();
-      const stats = core.getStats();
+      const view = await getScopedView({ scope: params.period });
+      const { models, stats } = view;
 
-      if (records.length === 0) {
+      if (stats.totalRecords === 0) {
         return {
-          content: [{ type: "text", text: noDataMessage(params.period) }],
+          content: [{ type: "text", text: noDataMessage(view.label) }],
         };
       }
 
@@ -2995,7 +3092,7 @@ export function createServer(): McpServer {
       const tips: Tip[] = [];
 
       // ── Tip 1: Cache efficiency ──
-      const usage = sumUsage(records);
+      const usage = deriveUsage(stats);
       const cacheHitRate = usage.hasCacheTelemetry ? usage.cacheHitRate * 100 : -1;
 
       if (cacheHitRate >= 0 && cacheHitRate < 80) {
@@ -3028,7 +3125,8 @@ export function createServer(): McpServer {
       }
 
       // ── Tip 3: Large input tokens (conversation bloat) ──
-      const avgInputPerCall = records.length > 0 ? usage.freshInputTokens / records.length : 0;
+      const avgInputPerCall =
+        stats.totalRecords > 0 ? usage.freshInputTokens / stats.totalRecords : 0;
 
       if (avgInputPerCall > 100_000) {
         const potentialSavings = totalCost * 0.15;
@@ -3041,7 +3139,7 @@ export function createServer(): McpServer {
       }
 
       // ── Tip 4: Disproportionate project spending ──
-      const projects = core.getAllProjects().sort((a, b) => b.totalCost - a.totalCost);
+      const projects = view.projects;
       if (projects.length >= 2) {
         const topProject = projects[0];
         const topPct = totalCost > 0 ? (topProject.totalCost / totalCost) * 100 : 0;
@@ -3068,8 +3166,8 @@ export function createServer(): McpServer {
       }
 
       // ── Tip 6: High reasoning token usage ──
-      const totalReasoning = records.reduce((s, r) => s + r.reasoningTokens, 0);
-      const totalOutput = records.reduce((s, r) => s + r.outputTokens, 0);
+      const totalReasoning = stats.reasoningTokens;
+      const totalOutput = stats.outputTokens;
       const reasoningPct = totalOutput > 0 ? (totalReasoning / totalOutput) * 100 : 0;
       if (reasoningPct > 50) {
         tips.push({
@@ -3088,14 +3186,7 @@ export function createServer(): McpServer {
         return b.estimatedSavings - a.estimatedSavings;
       });
 
-      const periodLabel =
-        params.period === "today"
-          ? "Today"
-          : params.period === "week"
-            ? "Last 7 Days"
-            : params.period === "month"
-              ? "This Month"
-              : "All Time";
+      const periodLabel = view.label;
       const totalPotentialSavings = tips.reduce((s, t) => s + t.estimatedSavings, 0);
 
       const lines = [
@@ -3128,7 +3219,7 @@ export function createServer(): McpServer {
       }
 
       return {
-        content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+        content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
       };
     }
   );
@@ -3139,7 +3230,7 @@ export function createServer(): McpServer {
     "tokmeter_cleanup_preview",
     "Preview what session data would be deleted for the given filters. " +
       "Shows affected files, directories, database rows, total bytes, and per-project/provider breakdown. " +
-      "ALWAYS call this before tokmeter_cleanup_execute to understand the impact.",
+      "Read-only: deleting is not available over MCP; the user runs `tokmeter cleanup` in a terminal.",
     {
       project: ProjectFilter,
       providers: ProvidersArray,
@@ -3151,9 +3242,9 @@ export function createServer(): McpServer {
     async (params) => {
       try {
         const { CleanupService } = await import("@sriinnu/tokmeter");
-        const opts = buildScanOptions(params);
-        const { core } = await getCore(opts);
-        const service = new CleanupService(core);
+        // The preview reads the whole raw corpus itself (scanLifetimeRaw), so
+        // an extra scan here only cost time.
+        const service = new CleanupService(new TokmeterCore());
 
         const filter = buildCleanupFilter(params);
 
@@ -3181,8 +3272,8 @@ export function createServer(): McpServer {
           ""
         );
 
-        // Show the exact deletion scope the receipt is bound to. Keep output
-        // bounded for very large cleanups; the digest still covers every target.
+        // Show the exact deletion scope. Keep output bounded for very large
+        // cleanups.
         if (preview.targets.length > 0) {
           const visibleTargets = preview.targets.slice(0, 100);
           lines.push("  TARGET MANIFEST (first 100):", separator());
@@ -3261,152 +3352,18 @@ export function createServer(): McpServer {
           lines.push("");
         }
 
+        // No command is built from the filters: project names come from
+        // untrusted transcripts and must never be handed back as shell input.
         lines.push(
-          "  To execute: call tokmeter_cleanup_execute with the same filters, confirm='DELETE', and:",
-          `  Preview receipt: ${issueCleanupReceipt(cleanupReceipts, filter, cleanupPreviewDigest(preview))}`,
-          "  The receipt expires in 5 minutes and can be used only once."
+          "  Deleting is not available over MCP. To run this cleanup, the user runs",
+          "  `tokmeter cleanup` in a terminal with the same filters (--project, provider",
+          "  flags such as --claude or --codex, --since/--until or --today/--week/--month).",
+          "  It previews again, writes a backup, and asks for confirmation before deleting."
         );
 
         return {
-          content: [{ type: "text", text: lines.join("\n") + scanFooter() }],
+          content: [{ type: "text", text: lines.join("\n") }],
         };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("ERROR")}\n\n  ${sanitizeDataLabel(err instanceof Error ? err.message : String(err), 4096)}\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  server.tool(
-    "tokmeter_cleanup_execute",
-    "DESTRUCTIVE: Permanently delete session data matching the given filters. " +
-      "Disabled by default; the machine owner must explicitly enable destructive MCP tools. " +
-      "Always creates a tar.gz backup before deleting (restorable with tokmeter_restore). " +
-      "Requires at least one filter — a project, providers, or a date range (since/until or a today/week/month scope); " +
-      "an empty filter is refused because it would delete every session. " +
-      "ALWAYS call tokmeter_cleanup_preview first and pass its one-time receipt with the same filters. " +
-      "Requires confirm='DELETE' as an additional safety guard.",
-    {
-      project: ProjectFilter,
-      providers: ProvidersArray,
-      since: SinceDate,
-      until: UntilDate,
-      scope: ScopeEnum,
-      backup: z
-        .boolean()
-        .default(true)
-        .describe(
-          "Accepted for compatibility only: over MCP a tar.gz backup is always created before deleting, even when false"
-        ),
-      preview_id: z
-        .string()
-        .uuid()
-        .optional()
-        .describe("One-time receipt returned by tokmeter_cleanup_preview for these exact filters"),
-      confirm: z.string().max(16).describe("Must be exactly 'DELETE' to proceed with deletion"),
-    },
-    DESTRUCTIVE_CLEANUP_TOOL,
-    async (params) => {
-      if (!destructiveMcpEnabled()) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("OWNER AUTHORIZATION REQUIRED")}\n\n  Destructive MCP tools are disabled by default.\n  The machine owner must set ${DESTRUCTIVE_MCP_ENV}=1 in the MCP server environment and restart it.\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      if (params.confirm !== "DELETE") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'DELETE' to proceed.\n  Call tokmeter_cleanup_preview first to review what will be deleted.\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      try {
-        const {
-          CleanupService,
-          TokmeterCore: Core,
-          isEmptyCleanupFilter,
-        } = await import("@sriinnu/tokmeter");
-        const filter = buildCleanupFilter(params);
-        if (isEmptyCleanupFilter(filter)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${header("SAFETY CHECK")}\n\n  ❌ Refusing an empty filter because it would delete every session.\n  Specify project, providers, or a bounded date range.\n`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        const receipt = consumeCleanupReceipt(cleanupReceipts, params.preview_id, filter);
-        if (!receipt) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${header("SAFETY CHECK")}\n\n  ❌ Missing, expired, already-used, or filter-mismatched preview receipt.\n  Call tokmeter_cleanup_preview again and use its receipt with the exact same filters.\n`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        // Fresh core for destructive ops — never use stale cache
-        const core = new Core();
-        const service = new CleanupService(core);
-
-        // Over MCP the backup is mandatory: an agent-initiated delete must
-        // always be undoable. `backup:false` is accepted (older clients send
-        // it) but never honoured.
-        const result = await service.execute(filter, {
-          backup: true,
-          expectedPreviewDigest: receipt.previewDigest,
-        });
-
-        // Invalidate cached core so next tool call rescans
-        _cachedCore = null;
-
-        const lines: string[] = [header("CLEANUP RESULT"), ""];
-        if (params.backup === false) {
-          lines.push(
-            "  ℹ️  backup:false was ignored — over MCP a backup is always created before deleting.",
-            ""
-          );
-        }
-        lines.push(
-          `  ✅ Deleted: ${result.deletedCount} targets`,
-          `  💾 Freed: ${fmtNum(result.bytesFreed)} bytes`
-        );
-        if (result.backupPath) {
-          lines.push(`  📦 Backup: ${sanitizeDataLabel(result.backupPath, 4096)}`);
-        }
-        if (result.failedCount > 0) {
-          lines.push(`  ❌ Failed: ${result.failedCount}`);
-          for (const e of result.errors.slice(0, 5)) {
-            lines.push(
-              `     ${sanitizeDataLabel(e.target, 4096)}: ${sanitizeDataLabel(e.error, 4096)}`
-            );
-          }
-        }
-        lines.push("");
-
-        return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (err) {
         return {
           content: [
@@ -3454,89 +3411,6 @@ export function createServer(): McpServer {
       lines.push("");
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
-    }
-  );
-
-  server.tool(
-    "tokmeter_restore",
-    "Restore session data from a cleanup backup. Disabled by default; the machine owner must explicitly enable destructive MCP tools. Requires confirm='RESTORE'.",
-    {
-      backup_id: z
-        .string()
-        .trim()
-        .min(1)
-        .max(200)
-        .regex(/^[A-Za-z0-9._-]+$/, "Invalid backup ID")
-        .describe("Backup ID to restore (from tokmeter_backups)"),
-      confirm: z.string().max(16).describe("Must be exactly 'RESTORE' to proceed"),
-    },
-    DESTRUCTIVE_RESTORE_TOOL,
-    async (params) => {
-      if (!destructiveMcpEnabled()) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("OWNER AUTHORIZATION REQUIRED")}\n\n  Destructive MCP tools are disabled by default.\n  The machine owner must set ${DESTRUCTIVE_MCP_ENV}=1 in the MCP server environment and restart it.\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      if (params.confirm !== "RESTORE") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("SAFETY CHECK")}\n\n  ❌ confirm must be exactly 'RESTORE' to proceed.\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      try {
-        const { CleanupService, TokmeterCore: Core } = await import("@sriinnu/tokmeter");
-        const core = new Core({ skipPricing: true });
-        const service = new CleanupService(core);
-        const result = service.restore(params.backup_id);
-
-        // Invalidate cached core
-        _cachedCore = null;
-
-        const lines: string[] = [header("RESTORE RESULT"), ""];
-        if (result.errors.length > 0) {
-          lines.push("  ❌ Restore failed:");
-          for (const e of result.errors) {
-            lines.push(
-              `     ${sanitizeDataLabel(e.file, 4096)}: ${sanitizeDataLabel(e.error, 4096)}`
-            );
-          }
-        } else {
-          lines.push(`  ✅ Restored ${result.restoredCount} items.`);
-          if (result.skipped && result.skipped.length > 0) {
-            lines.push(`  ⏭  Skipped ${result.skipped.length} entries that restore never writes:`);
-            for (const sk of result.skipped.slice(0, 10)) {
-              lines.push(
-                `     ${sanitizeDataLabel(sk.file, 4096)}: ${sanitizeDataLabel(sk.reason, 256)}`
-              );
-            }
-          }
-        }
-        lines.push("");
-
-        return { content: [{ type: "text", text: lines.join("\n") }] };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${header("ERROR")}\n\n  ${sanitizeDataLabel(err instanceof Error ? err.message : String(err), 4096)}\n`,
-            },
-          ],
-          isError: true,
-        };
-      }
     }
   );
 

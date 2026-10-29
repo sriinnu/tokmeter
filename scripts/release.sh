@@ -134,6 +134,10 @@ BUMP_FILES_RE='^(CHANGELOG\.md|README\.md|bun\.lock|packages/[^/]+/package\.json
 say "1/11 preflight ${TAG}"
 branch="$(git branch --show-current)"
 echo "  branch: ${branch:-detached}"
+# run() evals its command string, and the branch name is interpolated into
+# some of them. Git allows quotes, `$` and `;` in ref names, so refuse anything
+# outside a plain charset rather than trust the quoting.
+[[ -z "$branch" || "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || die "branch name has characters release.sh won't pass through eval: ${branch}"
 for t in git gh node bun npm shasum curl; do command -v "$t" >/dev/null || die "missing tool: $t"; done
 git fetch -q origin main || die "could not fetch origin/main."
 
@@ -307,13 +311,14 @@ wait_for "TokmeterBar-${VERSION}.zip on the release" 3600 zip_attached
 # publish.yml registers it after npm. Cline, Glama and the rest read the repo
 # (README, llms-install.md, glama.json) and npm, so they track on their own.
 registry_listed() {
-  curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=tokmeter" \
-    | node -e '
-      let i = ""; process.stdin.on("data", d => i += d).on("end", () => {
-        const hit = JSON.parse(i).servers?.some(s =>
-          s.server?.name === "io.github.sriinnu/tokmeter" && s.server?.version === process.argv[1]);
-        process.exit(hit ? 0 : 1);
-      });' "$VERSION"
+  # The response is data: node only JSON.parses it from the environment.
+  # Nothing fetched from the network is ever piped into an interpreter.
+  local body
+  body="$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=tokmeter")" || return 1
+  REGISTRY_BODY="$body" node -e '
+    const hit = JSON.parse(process.env.REGISTRY_BODY).servers?.some(s =>
+      s.server?.name === "io.github.sriinnu/tokmeter" && s.server?.version === process.argv[1]);
+    process.exit(hit ? 0 : 1);' "$VERSION"
 }
 wait_for "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1800 registry_listed
 

@@ -41,7 +41,7 @@ For a scoped report, call `core.getSummary({ week: true, project: "my-app", prov
 
 ## Supported Providers
 
-Claude Code, OpenCode, Codex CLI, Codex Desktop, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo, Kilo CLI, Mux, VS Code Copilot, Antigravity, Zed, Muse, Cline, Augment, Copilot CLI, Synthetic, plus custom sources registered under `customSources` in `~/.tokmeter/config.json`.
+Claude Code, OpenCode, Codex CLI, Codex Desktop, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo, Kilo CLI, Mux, VS Code Copilot, Antigravity, Zed, Muse, Cline, Augment, Copilot CLI, plus custom sources registered under `customSources` in `~/.tokmeter/config.json`.
 
 ## Pricing
 

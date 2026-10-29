@@ -16,11 +16,10 @@ MCP server, local daemon, and live usage reporting for AI coding agents.
 | `tokmeter_cache_efficiency`, `tokmeter_efficiency`, `tokmeter_anomaly` | Efficiency and anomalies |
 | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips` | Cost suggestions |
 | `tokmeter_leaderboard`, `tokmeter_digest`, `tokmeter_streaks` | Reports and usage patterns |
-| `tokmeter_cleanup_preview`, `tokmeter_cleanup_execute`, `tokmeter_backups`, `tokmeter_restore` | Preview cleanup; owner-gated delete and restore with mandatory backups |
+| `tokmeter_cleanup_preview`, `tokmeter_backups` | Preview a cleanup and list backups (deleting and restoring are CLI/TUI only) |
 
-Destructive MCP tools are disabled unless the machine owner sets
-`TOKMETER_ENABLE_DESTRUCTIVE_MCP=1` in the server environment. Cleanup execute
-also requires the one-time receipt returned by a matching preview.
+Every MCP tool is read-only. To delete or restore sessions, the user runs
+`tokmeter cleanup` or `tokmeter restore` in a terminal.
 
 ### Statusline
 Shows project name, session cost, model, token flow (input/output/cache), context window %, burn rate, daily total, per-model breakdown.

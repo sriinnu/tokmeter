@@ -46,7 +46,7 @@ history yet; it means the server works.
 
 - The first call scans local session history and can take several seconds.
   Later calls are fast.
-- `tokmeter_cleanup_execute` deletes session files. Never call it without
-  running `tokmeter_cleanup_preview` first and getting the user's explicit
-  confirmation.
+- Every tool is read-only. `tokmeter_cleanup_preview` shows what a cleanup
+  would delete; the deletion itself is the user's to run, with `tokmeter
+  cleanup` in a terminal.
 - Costs are estimates from public price lists, not the user's bill.

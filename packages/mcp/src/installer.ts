@@ -652,115 +652,75 @@ interface SettingsWithHooks {
   hooks?: Record<string, HookMatcher[]>;
 }
 
-/** Guard hooks config — references ~/Sriinnu/Personal/script-helpers/ */
-function getGuardHooks(): Record<string, HookMatcher[]> {
-  const dir = `${homedir()}/Sriinnu/Personal/script-helpers`;
-  return {
-    PreToolUse: [
-      {
-        matcher: "Bash",
-        hooks: [
-          {
-            type: "command",
-            command: `bash ${dir}/danger-guard.sh "$CLAUDE_BASH_COMMAND"`,
-          },
-          {
-            type: "command",
-            command: `bash ${dir}/network-guard.sh "$CLAUDE_BASH_COMMAND"`,
-          },
-        ],
-      },
-      {
-        matcher: "",
-        hooks: [
-          {
-            type: "command",
-            command: `bash ${dir}/sensitive-guard.sh "$CLAUDE_TOOL_NAME" "$CLAUDE_TOOL_INPUT"`,
-          },
-          {
-            type: "command",
-            command: `bash ${dir}/danger-guard.sh "$CLAUDE_TOOL_INPUT"`,
-          },
-        ],
-      },
-    ],
-  };
-}
+/**
+ * The guard scripts releases up to 1.19.3 wired into Claude Code's PreToolUse
+ * hooks. They pointed at a script folder that only ever existed on the
+ * author's machine, so on anyone else's the hooks ran a missing file on every
+ * tool call. Installing them is gone; this pattern lets uninstall find and
+ * remove exactly those entries, whatever home directory they were written for.
+ */
+const LEGACY_GUARD_RE = /\/script-helpers\/(?:danger|network|sensitive)-guard\.sh\b/;
 
 export function installHooks(): void {
-  console.log(C.title("\n【♾️】 Installing Guard Hooks\n"));
-
-  const editor = EDITORS.find((e) => e.name === "Claude Code")!;
-  const rawSettings = readJSON<Record<string, unknown>>(editor.settingsPath);
-  if (wasCorrupt(editor.settingsPath, "Claude Code")) {
-    console.log();
-    return;
-  }
-  const settings = rawSettings ?? {};
-  const expected = getGuardHooks();
-
-  // Check if guard hooks are already present and up to date
-  const existing = (settings.hooks ?? {}) as Record<string, unknown[]>;
-  const guardMatchers = expected.PreToolUse;
-  const existingPre = (existing.PreToolUse ?? []) as HookMatcher[];
-
-  // Check if our guard matchers are already in PreToolUse
-  const guardJson = JSON.stringify(guardMatchers);
-  const hasGuards =
-    existingPre.length >= guardMatchers.length &&
-    JSON.stringify(existingPre.slice(0, guardMatchers.length)) === guardJson;
-
-  if (hasGuards) {
-    console.log(C.accent("  ✓ Claude Code — hooks already installed and up to date"));
-    console.log();
-    return;
-  }
-
-  // Merge: replace our guard matchers at the start, preserve any user-added hooks
-  const userHooks = existingPre.filter(
-    (m) => !guardMatchers.some((g) => JSON.stringify(g) === JSON.stringify(m))
+  console.log(C.title("\n【♾️】 Guard Hooks\n"));
+  console.log(C.dim("  ⊘ Guard hooks are no longer part of tokmeter — nothing installed."));
+  console.log(
+    C.dim("    Run `tokmeter-mcp uninstall-hooks` to remove ones an older release added.\n")
   );
-  settings.hooks = {
-    ...existing,
-    PreToolUse: [...guardMatchers, ...userHooks],
-  };
-  writeJSON(editor.settingsPath, settings);
-
-  console.log(C.success("  ✓ Claude Code — guard hooks installed"));
-  console.log(C.dim(`    ${editor.settingsPath}`));
-  console.log();
-  console.log(C.dim("Hooks installed:"));
-  console.log(C.dim("  • danger-guard.sh  — blocks destructive commands"));
-  console.log(C.dim("  • network-guard.sh — blocks unauthorized network access"));
-  console.log(C.dim("  • sensitive-guard.sh — guards sensitive file access\n"));
 }
 
+/**
+ * Remove the legacy guard hooks and nothing else: hooks the user configured
+ * themselves, under PreToolUse or any other event, are left untouched.
+ */
 export function uninstallHooks(): void {
   console.log(C.title("\n【♾️】 Uninstalling Guard Hooks\n"));
 
   const editor = EDITORS.find((e) => e.name === "Claude Code")!;
   const settings = readJSON<SettingsWithHooks>(editor.settingsPath);
-
-  if (!settings?.hooks) {
-    console.log(C.dim("  ⊘ Claude Code — no hooks installed"));
+  if (wasCorrupt(editor.settingsPath, "Claude Code")) {
     console.log();
     return;
   }
 
-  delete settings.hooks;
+  let removed = 0;
+  const hooks = settings?.hooks ?? {};
+  for (const [event, matchers] of Object.entries(hooks)) {
+    if (!Array.isArray(matchers)) continue;
+    const kept: HookMatcher[] = [];
+    for (const m of matchers) {
+      const entries = Array.isArray(m?.hooks) ? m.hooks : [];
+      const clean = entries.filter((h) => !LEGACY_GUARD_RE.test(String(h?.command ?? "")));
+      removed += entries.length - clean.length;
+      // Drop a matcher only when we emptied it; one that was already empty is the user's.
+      if (clean.length > 0 || entries.length === 0) kept.push({ ...m, hooks: clean });
+    }
+    if (kept.length > 0) hooks[event] = kept;
+    else delete hooks[event];
+  }
+
+  if (!settings || removed === 0) {
+    console.log(C.dim("  ⊘ Claude Code — no tokmeter guard hooks installed"));
+    console.log();
+    return;
+  }
+
+  if (Object.keys(hooks).length > 0) settings.hooks = hooks;
+  else delete settings.hooks;
   writeJSON(editor.settingsPath, settings);
 
-  console.log(C.success("  ✓ Claude Code — hooks removed"));
+  console.log(
+    C.success(`  ✓ Claude Code — removed ${removed} guard hook${removed === 1 ? "" : "s"}`)
+  );
   console.log();
 }
 
 // ─── Install All ────────────────────────────────────────────────────────────
 
 export function installAll(): void {
-  console.log(C.title("\n【♾️】 Full Restore — Statusline + MCP + Hooks\n"));
+  console.log(C.title("\n【♾️】 Full Restore — Statusline + MCP\n"));
   installStatusline();
   installMCP();
-  installHooks();
   console.log(C.accent("Done. Restart your editor(s) to activate everything.\n"));
 }
 

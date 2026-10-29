@@ -26,6 +26,8 @@ tokmeter stats                    # overall statistics
 tokmeter pricing sonnet           # lookup model pricing
 tokmeter digest --period week     # weekly cost digest (aliases: weekly, report)
 tokmeter backfill --muse --days 30  # add a newly supported source to sealed history
+tokmeter coverage --date 2026-10-19 # session files that changed that day but fed no usage
+tokmeter quota                    # plan windows: Codex weekly, Claude Code 5h/7d
 tokmeter config list              # knobs in ~/.tokmeter/config.json (get/set/reset/path)
 tokmeter install-cron             # daily price-catalog refresh (macOS launchd)
 tokmeter cron-status              # daily-refresh install and last-run state

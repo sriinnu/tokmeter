@@ -215,13 +215,23 @@ automatically.
 
 ### Cleanup tool deleted more than expected
 
-`tokmeter_cleanup_execute` deletes whole source files; a file can hold records
-outside your filter. Always run `tokmeter_cleanup_preview` first and read its
-partial-file warnings. Everything is backed up to `~/.cache/tokmeter/backups/`
-first; over MCP, `backup: false` is ignored. Destructive MCP calls also require
-the machine-owner environment gate described in the backup guide. Restore with
-`tokmeter_restore` (`confirm: "RESTORE"`). See
+`tokmeter cleanup` deletes whole source files; a file can hold records outside
+your filter. Always preview first (`--dry-run`, or `tokmeter_cleanup_preview`
+over MCP) and read its partial-file warnings. Everything is backed up to
+`~/.cache/tokmeter/backups/` first; restore with `tokmeter restore --latest`.
+See
 [Backup, Snapshot & Restore](backup-restore.md#confirmation-and-backup-where-the-gate-lives).
+
+### Claude Code runs a missing `danger-guard.sh` / `network-guard.sh` hook
+
+`tokmeter-mcp install-hooks` and `install-all` in releases up to 1.19.3 added
+Claude Code PreToolUse hooks pointing at `script-helpers/*-guard.sh` files that
+only existed on the author's machine, so every matching tool call ran a missing
+file. Nothing installs them now (`install-hooks` is a no-op). Upgrade
+`@sriinnu/tokmeter-mcp`, then run `tokmeter-mcp uninstall-hooks`: it removes
+those entries and leaves every other hook alone. Don't use the old version's
+`uninstall-hooks`; it deleted the whole `hooks` key in
+`~/.claude/settings.json`, your own hooks included.
 
 ## See also
 

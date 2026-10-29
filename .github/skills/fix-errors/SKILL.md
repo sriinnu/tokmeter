@@ -2,6 +2,8 @@
 name: fix-errors
 description: "Fix TypeScript build errors and Biome lint errors in the tokmeter monorepo. Use when: build fails, tsc errors, type errors, lint errors, biome errors, unused imports, unused variables, format errors, CI failing, errors after refactor."
 argument-hint: "Optionally specify a package (e.g. core, cli, mcp) or leave blank for the full monorepo"
+metadata:
+  internal: true
 ---
 
 # Fix Build and Lint Errors

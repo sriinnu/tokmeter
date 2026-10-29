@@ -51,9 +51,9 @@ An agent with no built-in parser can register a path and emit a usage line via
 `customSources`; Ribhu and Chitragupta are tracked this way.
 
 **Can I delete old session data safely?**
-Yes — `tokmeter cleanup` always backs up first, and since 1.15.0 so does
-`tokmeter_cleanup_execute`: it ignores `backup: false` and says so. An empty
-filter, which would match everything, is refused.
+Yes — `tokmeter cleanup` always backs up first, and an empty filter, which
+would match everything, is refused. An agent can only preview a cleanup over
+MCP; the deleting is yours to run.
 Scope it to `--until` yesterday or older: sealed days survive in the relay ledger,
 but today isn't sealed until midnight rollover. See
 [CLI reference](/cli/) and

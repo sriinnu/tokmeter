@@ -84,8 +84,7 @@ under `providerPaths` in `~/.tokmeter/config.json`, then restore again.
 
 Cleanup deletes raw session files, so every path has a confirmation step and a
 pre-delete backup. **Where that confirmation comes from depends on how you call
-cleanup** — a common question for agents driving the MCP server over stdio,
-where there is no terminal prompt to see.
+cleanup** — and agents driving the MCP server over stdio can only preview.
 
 ### CLI
 
@@ -93,7 +92,7 @@ where there is no terminal prompt to see.
 tokmeter cleanup                                     # interactive: prompts "type DELETE"
 tokmeter cleanup --project app --until 2026-10-04    # flag-driven, still prompts
 tokmeter cleanup --project app --until 2026-10-04 --dry-run   # preview only
-tokmeter cleanup --project app --until 2026-10-04 --force     # skip the prompt
+tokmeter cleanup --project app --until 2026-10-04 --force     # skip the prompt (still needs a terminal)
 ```
 
 - **Interactive and flag-driven runs both prompt** `Type DELETE to confirm`
@@ -103,33 +102,22 @@ tokmeter cleanup --project app --until 2026-10-04 --force     # skip the prompt
   `~/.cache/tokmeter/backups/` before the first file is removed; there is no
   `--no-backup` flag.
 
-### MCP (`tokmeter_cleanup_execute`)
+### MCP (preview only)
 
-An agent calling over stdio never sees a terminal prompt, so the gate is
-enforced **inside the server**, not left to the client:
+An agent calling over stdio never sees a terminal prompt, so the MCP server
+doesn't delete or restore anything:
 
-- `tokmeter_cleanup_execute` **refuses to run unless it is passed
-  `confirm: "DELETE"`** — checked in the tool handler before `CleanupService`
-  runs; any other value returns an error and deletes nothing.
-- **Backup is on by default** (`backup: true`); pass `backup: false` to opt out.
-  From 1.15.0, over MCP the backup is mandatory: `backup: false` is
-  accepted for compatibility, but it's ignored and the result says so.
-- From 1.15.0, an **empty filter is refused**, in core, for every caller
-  (CLI, TUI, MCP, daemon HTTP). With no project, no providers and no date
-  range, a cleanup would match every session of every provider. Name at least
-  one of: `project`, `providers`, `since`/`until`, or a `today`/`week`/`month`
-  scope. Provider-only and date-only cleanups still work. The interactive
-  CLI's "all" choice is unaffected, because it passes the explicit list of
-  projects.
-- Always call **`tokmeter_cleanup_preview`** first; it reports the exact files,
-  bytes, and per-project/provider breakdown that `execute` would delete.
-- `tokmeter_restore` has the same shape, guarded by `confirm: "RESTORE"`.
+- **`tokmeter_cleanup_preview`** reports the exact files, bytes,
+  per-project/provider breakdown and partial-file warnings, then tells the user
+  to run `tokmeter cleanup` with the same filters. It deletes nothing.
+- **`tokmeter_backups`** lists backups. There is no MCP restore; the user runs
+  `tokmeter restore`.
+- Deleting and restoring always go through a human, at a terminal or in the
+  TUI. See [MCP tool reference](/mcp/#tokmeter_cleanup_preview) for what earlier releases exposed.
 
-One honest distinction worth internalising: `confirm: "DELETE"` is a
-**deliberate-action guard, not proof a human agreed** — an autonomous agent can
-supply the string itself. The actual human "are you sure?" comes from your **MCP
-client/host's tool-approval UI** (the same layer that approves any tool call),
-not from inside the server. The CLI's `type DELETE` prompt and the MCP's
-`confirm` argument are two renderings of the same gate: one for a human at a
-terminal, one for a programmatic caller. The pre-delete backup is the
-recoverability net in both paths.
+From 1.15.0, an **empty filter is refused**, in core, for every caller (CLI,
+TUI, daemon HTTP). With no project, no providers and no date range, a cleanup
+would match every session of every provider. Name at least one of: `project`,
+`providers`, `since`/`until`, or a `today`/`week`/`month` scope. Provider-only
+and date-only cleanups still work. The interactive CLI's "all" choice is
+unaffected, because it passes the explicit list of projects.

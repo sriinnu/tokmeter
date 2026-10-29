@@ -15,11 +15,10 @@
  *   tokmeter-mcp daemon uninstall-agent Remove the launchd agent
  *   tokmeter-mcp install-statusline     Install statusline hook for ALL editors
  *   tokmeter-mcp install-mcp            Install MCP server for ALL editors
- *   tokmeter-mcp install-hooks          Install guard hooks (Claude Code)
- *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP + hooks
+ *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP
  *   tokmeter-mcp uninstall-statusline   Remove statusline hook from all editors
  *   tokmeter-mcp uninstall-mcp          Remove MCP server from all editors
- *   tokmeter-mcp uninstall-hooks        Remove guard hooks (Claude Code)
+ *   tokmeter-mcp uninstall-hooks        Remove guard hooks older releases added
  *   tokmeter-mcp editors                List all supported editors
  *   tokmeter-mcp help                   Show usage instructions
  */
@@ -232,11 +231,10 @@ ${b("COMMANDS")}
   ${a("daemon uninstall-agent")} Remove the launchd agent
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
-  ${a("install-hooks")}     Install guard hooks (Claude Code)
-  ${a("install-all")}       Restore everything — statusline + MCP + hooks
+  ${a("install-all")}       Restore everything — statusline + MCP
   ${a("uninstall-statusline")} Remove statusline hook from all editors
   ${a("uninstall-mcp")}     Remove MCP server from all editors
-  ${a("uninstall-hooks")}   Remove guard hooks (Claude Code)
+  ${a("uninstall-hooks")}   Remove guard hooks older releases added
   ${a("editors")}           List all supported editors
   ${a("help")}              Show this help message
   ${a("--version")}         Print the installed version
@@ -271,13 +269,13 @@ ${b("INSTALL EXAMPLES")}
 ${b("MCP TOOLS")}
   When running as an MCP server, tokmeter-mcp exposes these tools:
 
-  Start with ${a("tokmeter_pulse")}. Cleanup deletes files — preview first.
+  Start with ${a("tokmeter_pulse")}. Every tool is read-only; deleting stays in ${a("tokmeter cleanup")}.
 
   ${d("Overview   ")} ${a("tokmeter_pulse, tokmeter_digest, tokmeter_timeline, tokmeter_heatmap, tokmeter_streaks")}
   ${d("Breakdowns ")} ${a("tokmeter_models, tokmeter_providers, tokmeter_projects, tokmeter_search")}
   ${d("Analysis   ")} ${a("tokmeter_compare, tokmeter_forecast, tokmeter_efficiency, tokmeter_leaderboard, tokmeter_anomaly, tokmeter_cache_efficiency")}
   ${d("Advice     ")} ${a("tokmeter_model_advisor, tokmeter_cost_optimization_tips, tokmeter_budget, tokmeter_budget_alert")}
-  ${d("Data       ")} ${a("tokmeter_export, tokmeter_backups, tokmeter_cleanup_preview, tokmeter_cleanup_execute, tokmeter_restore")}
+  ${d("Data       ")} ${a("tokmeter_export, tokmeter_backups, tokmeter_cleanup_preview")}
 
 ${d("docs: https://github.com/sriinnu/tokmeter")}
 `);
