@@ -67,8 +67,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The first import() here runs the mock factory above, which transforms the
+// whole core source graph. That is ~1 s alone and past vitest's 5 s default
+// with the whole suite transforming in parallel; the logic under test takes
+// milliseconds.
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+
 describe("convenience helpers", () => {
-  test("filters each projection while retaining sealed history", async () => {
+  test("filters each projection while retaining sealed history", {
+    timeout: COLD_IMPORT_TIMEOUT_MS,
+  }, async () => {
     const api = await import("./index.js");
     expect((await api.loadTokmeterSummary({ week: true, light: true })).stats.totalTokens).toBe(60);
     expect(
