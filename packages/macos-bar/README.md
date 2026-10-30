@@ -37,7 +37,7 @@ bun run bar             # build, install to /Applications, and launch
 swift test --package-path packages/macos-bar
 ```
 
-The bundle script creates `packages/macos-bar/TokmeterBar.app`, includes license texts and source, and signs it. Local ad-hoc signing does not provide Developer ID or notarization.
+The bundle script creates `packages/macos-bar/build.noindex/TokmeterBar.app`, includes license texts and source, and signs it. The `.noindex` directory keeps dev builds out of Spotlight and Launchpad, so searching finds only the copy in `/Applications`. Local ad-hoc signing does not provide Developer ID or notarization.
 
 For optional synthetic UI captures, create an output directory and set `TOKMETER_UI_QA_DIR` before running the native tests. These fixtures read no local usage. Live pointer, keyboard, and VoiceOver checks remain separate.
 

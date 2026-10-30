@@ -31,10 +31,16 @@
 #   CFBundleVersion              # build number (integer), default 4
 #   APP_NAME                     # default "TokmeterBar"
 #
-# Outputs:
-#   TokmeterBar.app              # the .app bundle (always)
-#   TokmeterBar-X.Y.Z.zip        # ditto-zipped, ready for upload (--release)
-#   appcast.xml                  # updated with new release item (--release)
+# Outputs (relative to packages/macos-bar):
+#   build.noindex/TokmeterBar.app  # the .app bundle (always; removed once installed)
+#   TokmeterBar-X.Y.Z.zip          # ditto-zipped, ready for upload (--release)
+#   appcast.xml                    # updated with new release item (--release)
+#
+# The bundle is built under build.noindex/ because Spotlight skips any
+# directory whose name ends in ".noindex". Built anywhere else, every dev
+# build shows up in Spotlight and Launchpad as one more "TokmeterBar" beside
+# the real one in /Applications. The zip root is still TokmeterBar.app/:
+# `ditto --keepParent` archives the bundle directory itself, not its parents.
 
 set -euo pipefail
 
@@ -65,7 +71,9 @@ fi
 
 # ─── Config ─────────────────────────────────────────────────────────────
 APP_NAME="${APP_NAME:-TokmeterBar}"
-APP_DIR="${APP_NAME}.app"
+APP_BUNDLE="${APP_NAME}.app"          # the bundle's own name: zip root, /Applications entry
+BUILD_DIR="build.noindex"             # Spotlight never indexes a *.noindex directory
+APP_DIR="${BUILD_DIR}/${APP_BUNDLE}"  # where this script assembles it
 CONTENTS="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
@@ -524,8 +532,8 @@ if [[ "${INSTALL}" == "1" ]]; then
         sleep 0.5
     fi
 
-    rm -rf "/Applications/${APP_DIR}"
-    cp -R "${APP_DIR}" /Applications/
+    rm -rf "/Applications/${APP_BUNDLE}"
+    cp -R "${APP_DIR}" "/Applications/${APP_BUNDLE}"
 
     # Remove the build-dir copy once it's installed — otherwise Spotlight and
     # Launchpad index BOTH it and the /Applications copy, so the user sees two
@@ -533,11 +541,21 @@ if [[ "${INSTALL}" == "1" ]]; then
     # the loose .app is redundant after install. Skipped for --no-install so CI
     # still has the artifact to upload.
     rm -rf "${APP_DIR}"
+    rmdir "${BUILD_DIR}" 2>/dev/null || true
 
     # Launch it. Use `open` so it's a fresh launch via LaunchServices,
     # which Sparkle's installer logic relies on.
-    echo "    Launching /Applications/${APP_DIR}"
-    open "/Applications/${APP_DIR}"
+    echo "    Launching /Applications/${APP_BUNDLE}"
+    open "/Applications/${APP_BUNDLE}"
+fi
+
+# Older builds left the bundle at ./TokmeterBar.app, where Spotlight
+# indexes it. It's this script's own output, but say so rather than delete it.
+if [[ -d "${APP_BUNDLE}" ]]; then
+    echo ""
+    echo "Note: an old build sits at $(pwd)/${APP_BUNDLE}, where Spotlight lists it"
+    echo "      as another ${APP_NAME}. Builds now go to ${BUILD_DIR}/. Remove it with:"
+    echo "      rm -rf '$(pwd)/${APP_BUNDLE}'"
 fi
 
 echo ""
@@ -548,21 +566,21 @@ case "${MODE}" in
         ;;
     dev)
         if [[ "${INSTALL}" == "1" ]]; then
-            echo "Status: installed to /Applications/${APP_DIR} and launched."
+            echo "Status: installed to /Applications/${APP_BUNDLE} and launched."
         else
             echo "Status: built ./${APP_DIR} (ad-hoc signed). Pass --install to deposit to /Applications."
         fi
         ;;
     signed)
         if [[ "${INSTALL}" == "1" ]]; then
-            echo "Status: signed + installed to /Applications/${APP_DIR} (also Gatekeeper-friendly for AirDrop)."
+            echo "Status: signed + installed to /Applications/${APP_BUNDLE} (also Gatekeeper-friendly for AirDrop)."
         else
             echo "Status: signed .app at ./${APP_DIR} (Gatekeeper-friendly for AirDrop). Pass --install to install."
         fi
         ;;
     release)
         if [[ "${INSTALL}" == "1" ]]; then
-            echo "Status: notarized + stapled + installed to /Applications/${APP_DIR}. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
+            echo "Status: notarized + stapled + installed to /Applications/${APP_BUNDLE}. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
         else
             echo "Status: notarized + stapled. Upload ${APP_NAME}-${SHORT_VERSION}.zip + appcast.xml."
         fi
