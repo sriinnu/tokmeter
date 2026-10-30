@@ -76,6 +76,7 @@ case "$sub" in
     [[ -f "$S/release/$1" ]] || exit 1
     [[ "$*" == *assets* ]] && cat "$S/release/$1"; true ;;
   "release create") echo "TokmeterBar-${1#v}.zip" > "$S/release/$1" ;;
+  "workflow run") touch "$S/mcp_dispatched" ;;
   *) echo "fake gh: unhandled: $sub $*" >&2; exit 2 ;;
 esac
 EOF
@@ -84,7 +85,11 @@ cat > "$BIN/npm" <<'EOF'
 #!/usr/bin/env bash
 echo "npm $*" >> "$GH_STATE/log"
 case "$1" in
-  view) echo "${2##*@}" ;;
+  view)
+    # Staged, not yet approved: the first N reads find nothing live.
+    c="$(cat "$GH_STATE/npm_staged" 2>/dev/null || echo 0)"
+    if (( c > 0 )); then echo $((c - 1)) > "$GH_STATE/npm_staged"; exit 1; fi
+    echo "${2##*@}" ;;
   root) echo "$NPM_ROOT" ;;
   i|install)
     [[ -f "$GH_STATE/npm_install_fail" ]] && { echo "npm ERR! code E500" >&2; exit 1; }
@@ -114,6 +119,8 @@ cat > "$BIN/curl" <<'EOF'
 url="${*: -1}"
 if [[ "$url" == *appcast.xml && -f "$GH_STATE/appcast_pending" ]]; then
   echo "<sparkle:shortVersionString>0.0.0</sparkle:shortVersionString>"  # not merged yet
+elif [[ "$url" == *registry* && -f "$GH_STATE/registry_needs_dispatch" && ! -f "$GH_STATE/mcp_dispatched" ]]; then
+  echo '{"servers":[]}'  # the MCP job gave up before the approval
 elif [[ "$url" == *registry* ]]; then
   echo "{\"servers\":[{\"server\":{\"name\":\"io.github.sriinnu/tokmeter\",\"version\":\"$FAKE_VERSION\"}}]}"
 else
@@ -159,7 +166,7 @@ sandbox() {
   export GH_STATE="$d/gh" ORIGIN="$d/origin.git" SIGN_FAILS_FILE="$d/sign_fails" FAKE_VERSION="$V"
   export APPCAST_HEAD=0123456789abcdef0123456789abcdef01234567
   export HOME="$d" GIT_CONFIG_GLOBAL="$TMP/gitconfig" GIT_CONFIG_NOSYSTEM=1 PATH="$BIN:$PATH"
-  export NPM_ROOT="$d/npm-global/lib/node_modules"
+  export NPM_ROOT="$d/npm-global/lib/node_modules" RELEASE_POLL_SLEEP=0
   mkdir -p "$GH_STATE" "$NPM_ROOT"
   git init -q --bare "$ORIGIN"
   R="$d/repo"; mkdir -p "$R"/scripts/lib "$R"/packages/{tokmeter,mcp,macos-bar}
@@ -210,6 +217,7 @@ check "squash subject is 'chore(release): v$V (#100)'" test "$(main_subject)" = 
 check "signed tag on the release commit" tag_ok
 check "GitHub release created" released
 check "secret gate ran" test "$(count gate)" = 1
+check "no MCP re-run when the registry lists the version" test "$(count 'gh workflow run')" = 0
 check "bundle build advanced once (7 → 8)" grep -q 'CFBundleVersion:-8' "$R/packages/macos-bar/bundle.sh"
 
 echo "• rerun of a finished release changes nothing"
@@ -394,6 +402,24 @@ if release --skip-local-upgrade; then ok "exits 0"; else bad "exits 0"; show_out
 check "no npm install" test "$(count 'npm i ')" = 0
 check "no daemon restart" test "$(count 'launchctl kickstart')" = 0
 check "says it skipped" grep -q 'skipped (--skip-local-upgrade)' "$GH_STATE/out"
+
+echo "• staged npm versions: says how to approve, waits until they're live"
+sandbox npm_staged
+global_install "$V"; echo 6 > "$GH_STATE/npm_staged"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "names npm stage approve" grep -q 'npm stage approve <id>' "$GH_STATE/out"
+check "lists both packages" grep -q 'npm stage list @sriinnu/tokmeter-mcp' "$GH_STATE/out"
+check "waited for the approval" grep -q 'on npm (approved)' "$GH_STATE/out"
+check "release completed" grep -q "Release v$V complete" "$GH_STATE/out"
+
+echo "• approved after the MCP job gave up: re-runs just that job, once"
+sandbox mcp_rerun
+global_install "$V"; touch "$GH_STATE/registry_needs_dispatch"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "dispatched publish.yml once" test "$(count 'gh workflow run publish.yml')" = 1
+check "MCP only, for this tag" grep -q "workflow run publish.yml .*--ref main -f tag=v$V -f publish_npm=false" "$GH_STATE/log"
+check "then saw it listed" grep -q "tokmeter $V in the MCP registry" "$GH_STATE/out"
+check "release completed" grep -q "Release v$V complete" "$GH_STATE/out"
 
 echo "• a non-bump change in the tree is refused"
 sandbox dirty

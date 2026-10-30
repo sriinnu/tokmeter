@@ -1,6 +1,6 @@
 # Release workflow
 
-Release the npm packages and macOS app from the same reviewed, merged source. Use this manual workflow: `scripts/release.sh` is a legacy convenience script that creates an intermediate tag and permits admin merge before CI; it does not implement this sequence. `bar:ship` only builds and uploads the app.
+Release the npm packages and macOS app from the same reviewed, merged source. `bun run release X.Y.Z` (`scripts/release.sh`) runs this whole sequence and resumes where it stopped; the steps below are what it does, for reading or for recovering by hand. `bar:ship` only builds and uploads the app.
 
 ## Prepare the branch
 
@@ -15,12 +15,14 @@ Release the npm packages and macOS app from the same reviewed, merged source. Us
 
 Signing requires an installed Developer ID Application certificate, notarization credentials, and the existing Sparkle private key. Keep credentials in the ignored `packages/macos-bar/.env`; never print or commit them. `.env.example` lists supported settings. Back up the Sparkle private key securely: changing it breaks updates for existing installations.
 
-From merged main, rebuild and prepare the two npm tarballs, then publish those exact reviewed artifacts, Tokmeter first:
+npm packages are never published from a workstation. Publishing the GitHub release starts `.github/workflows/publish.yml`, which verifies the signed tag, rebuilds and tests, and **stages** both packages with provenance (`npm stage publish`). Neither is installable until you approve it with the security key:
 
 ```sh
-npm publish /tmp/tokmeter-candidate-X.Y.Z/tokmeter-X.Y.Z.tgz --access public
-npm publish /tmp/tokmeter-candidate-X.Y.Z/mcp-X.Y.Z.tgz --access public
+npm stage list @sriinnu/tokmeter        # then: npm stage approve <id>
+npm stage list @sriinnu/tokmeter-mcp    # then: npm stage approve <id>
 ```
+
+Once npm serves the version, the workflow's MCP-registry job registers the server. If you approved after that job gave up (it waits 30 minutes), run it alone: `gh workflow run publish.yml --ref main -f tag=vX.Y.Z -f publish_npm=false`. `release.sh` does that for you.
 
 Build the macOS artifact without replacing the running app during packaging:
 

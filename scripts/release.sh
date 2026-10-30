@@ -84,7 +84,8 @@ poll() {
   local waited=0
   until "$@" >/dev/null 2>&1; do
     (( waited >= limit )) && return 1
-    sleep 15; waited=$((waited + 15))
+    # Limits count in 15 s steps; the test suite sleeps 0 to run them fast.
+    sleep "${RELEASE_POLL_SLEEP:-15}"; waited=$((waited + 15))
   done
   echo "  ✓ ${desc}"
 }
@@ -415,8 +416,16 @@ fi
 
 # ── 9. wait for CI ───────────────────────────────────────────────────────────
 say "9/12 waiting for CI"
-wait_for "@sriinnu/tokmeter@${VERSION} on npm" 1800 npm view "@sriinnu/tokmeter@${VERSION}" version
-wait_for "@sriinnu/tokmeter-mcp@${VERSION} on npm" 1800 npm view "@sriinnu/tokmeter-mcp@${VERSION}" version
+npm_live() { npm view "$1@${VERSION}" version >/dev/null 2>&1; }
+# publish.yml stages both packages; neither is installable until approved with
+# the security key. CI can't approve its own release, so say how, once.
+if ! npm_live @sriinnu/tokmeter || ! npm_live @sriinnu/tokmeter-mcp; then
+  echo "  CI stages both packages on npm. Approve each with the security key once staged:"
+  echo "    npm stage list @sriinnu/tokmeter      then  npm stage approve <id>"
+  echo "    npm stage list @sriinnu/tokmeter-mcp  then  npm stage approve <id>"
+fi
+wait_for "@sriinnu/tokmeter@${VERSION} on npm (approved)" 3600 npm_live @sriinnu/tokmeter
+wait_for "@sriinnu/tokmeter-mcp@${VERSION} on npm (approved)" 3600 npm_live @sriinnu/tokmeter-mcp
 zip_attached() {
   gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | grep -qx "TokmeterBar-${VERSION}.zip"
 }
@@ -434,7 +443,13 @@ registry_listed() {
       s.server?.name === "io.github.sriinnu/tokmeter" && s.server?.version === process.argv[1]);
     process.exit(hit ? 0 : 1);' "$VERSION"
 }
-wait_for "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1800 registry_listed
+# publish.yml's MCP job waits 30 minutes for the approved version. Approved
+# later than that, the job has given up, so run it alone, once.
+if ! poll "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1200 registry_listed; then
+  echo "  The MCP-registry job likely gave up before npm was live; re-running it alone."
+  run "gh workflow run publish.yml --repo '${REPO}' --ref main -f tag='${TAG}' -f publish_npm=false"
+  wait_for "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1800 registry_listed
+fi
 
 # ── 10. Homebrew cask ────────────────────────────────────────────────────────
 # update-brew-cask.sh is itself rerunnable: it does nothing when the cask is
