@@ -5,7 +5,8 @@
 # refusing work.
 #
 # Real: git, a bare "origin", SSH signing with a throwaway key, bump-version.sh.
-# Faked: gh (state in files, squash-merges into the bare origin), npm, curl,
+# Faked: gh (state in files, squash-merges into the bare origin), npm (with a
+# sandbox global root), launchctl and plutil (never the real daemon), curl,
 # bun, and the secret gate (it packs the real packages; here it only records
 # that it ran). The signer can be told to miss taps.
 #
@@ -78,9 +79,35 @@ case "$sub" in
   *) echo "fake gh: unhandled: $sub $*" >&2; exit 2 ;;
 esac
 EOF
+# npm: the registry serves every version; the global root is a sandbox dir.
 cat > "$BIN/npm" <<'EOF'
 #!/usr/bin/env bash
-[[ "$1" == view ]] && { echo "${2##*@}"; exit 0; }; exit 0
+echo "npm $*" >> "$GH_STATE/log"
+case "$1" in
+  view) echo "${2##*@}" ;;
+  root) echo "$NPM_ROOT" ;;
+  i|install)
+    [[ -f "$GH_STATE/npm_install_fail" ]] && { echo "npm ERR! code E500" >&2; exit 1; }
+    shift; for spec in "$@"; do
+      [[ "$spec" == -* ]] && continue
+      mkdir -p "$NPM_ROOT/${spec%@*}"
+      echo "{ \"name\": \"${spec%@*}\", \"version\": \"${spec##*@}\" }" > "$NPM_ROOT/${spec%@*}/package.json"
+    done ;;
+esac
+EOF
+# launchctl: never the real one. The daemon job is loaded when a file says so.
+cat > "$BIN/launchctl" <<'EOF'
+#!/usr/bin/env bash
+echo "launchctl $*" >> "$GH_STATE/log"
+case "$1" in
+  print) [[ -f "$GH_STATE/daemon_loaded" ]] || { echo "Could not find service" >&2; exit 113; } ;;
+  kickstart) [[ -f "$GH_STATE/daemon_loaded" ]] || exit 113 ;;
+esac
+EOF
+# plutil: the LaunchAgent's script path, from a file (CI's Linux has no plutil).
+cat > "$BIN/plutil" <<'EOF'
+#!/usr/bin/env bash
+cat "$GH_STATE/daemon_program"
 EOF
 cat > "$BIN/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -132,7 +159,8 @@ sandbox() {
   export GH_STATE="$d/gh" ORIGIN="$d/origin.git" SIGN_FAILS_FILE="$d/sign_fails" FAKE_VERSION="$V"
   export APPCAST_HEAD=0123456789abcdef0123456789abcdef01234567
   export HOME="$d" GIT_CONFIG_GLOBAL="$TMP/gitconfig" GIT_CONFIG_NOSYSTEM=1 PATH="$BIN:$PATH"
-  mkdir -p "$GH_STATE"
+  export NPM_ROOT="$d/npm-global/lib/node_modules"
+  mkdir -p "$GH_STATE" "$NPM_ROOT"
   git init -q --bare "$ORIGIN"
   R="$d/repo"; mkdir -p "$R"/scripts/lib "$R"/packages/{tokmeter,mcp,macos-bar}
   cp "$SRC/scripts/release.sh" "$SRC/scripts/bump-version.sh" "$R/scripts/"
@@ -296,6 +324,76 @@ rm "$GH_STATE/pr/release_appcast-v$V.meta"
 if release; then ok "rerun once the PR is clean exits 0"; else bad "rerun once the PR is clean exits 0"; show_out; fi
 check "…and merges it pinned to the vetted head" \
   grep -q "gh pr merge release/appcast-v$V .*--match-head-commit $APPCAST_HEAD" "$GH_STATE/log"
+
+# Stage 12: this machine's own global install and launchd daemon.
+global_install() {  # global_install <version> — seed both packages in the sandbox root
+  local p; for p in tokmeter tokmeter-mcp; do
+    mkdir -p "$NPM_ROOT/@sriinnu/$p"
+    echo "{ \"name\": \"@sriinnu/$p\", \"version\": \"$1\" }" > "$NPM_ROOT/@sriinnu/$p/package.json"
+  done
+}
+global_is() {  # global_is <version> — both packages installed at it
+  grep -q "\"version\": \"$1\"" "$NPM_ROOT/@sriinnu/tokmeter/package.json" \
+    && grep -q "\"version\": \"$1\"" "$NPM_ROOT/@sriinnu/tokmeter-mcp/package.json"
+}
+KICK="launchctl kickstart -k gui/$(id -u)/com.tokmeter.daemon"
+
+echo "• this machine is already on the version: no install, no restart"
+sandbox local_current
+global_install "$V"; touch "$GH_STATE/daemon_loaded"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "reports the install as done" grep -q "already done: global install is at $V" "$GH_STATE/out"
+check "no npm install" test "$(count 'npm i ')" = 0
+check "no daemon restart" test "$(count 'launchctl kickstart')" = 0
+
+echo "• this machine is behind and the daemon is loaded: upgrade, then kickstart"
+sandbox local_upgrade
+global_install 1.0.0; touch "$GH_STATE/daemon_loaded"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "installs both packages at the exact version" \
+  grep -qx "npm i -g @sriinnu/tokmeter@$V @sriinnu/tokmeter-mcp@$V" "$GH_STATE/log"
+check "global install is now $V" global_is "$V"
+check "kickstarts the daemon once" test "$(count "$KICK")" = 1
+check "kickstart comes after the install" \
+  test "$(grep -n 'npm i -g' "$GH_STATE/log" | cut -d: -f1)" -lt "$(grep -n 'launchctl kickstart' "$GH_STATE/log" | cut -d: -f1)"
+if release; then ok "rerun exits 0"; else bad "rerun exits 0"; show_out; fi
+check "rerun neither reinstalls nor restarts" test "$(count 'npm i ')$(count 'launchctl kickstart')" = 11
+
+echo "• this machine is behind and the daemon isn't loaded: says how to restart it"
+sandbox local_unloaded
+global_install 1.0.0
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "global install is now $V" global_is "$V"
+check "no kickstart" test "$(count 'launchctl kickstart')" = 0
+check "prints the manual restart" grep -q 'tokmeter-mcp daemon restart' "$GH_STATE/out"
+check "names the unloaded job" grep -q 'com.tokmeter.daemon is not loaded' "$GH_STATE/out"
+
+echo "• the install fails: the release still succeeds, with a loud manual step"
+sandbox local_install_fail
+global_install 1.0.0; touch "$GH_STATE/daemon_loaded" "$GH_STATE/npm_install_fail"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "warns that this machine is behind" grep -q "THIS MACHINE IS NOT ON $V" "$GH_STATE/out"
+check "prints the npm command" grep -q "npm i -g @sriinnu/tokmeter@$V @sriinnu/tokmeter-mcp@$V" "$GH_STATE/out"
+check "no kickstart onto the old version" test "$(count 'launchctl kickstart')" = 0
+check "still reports the release complete" grep -q "Release v$V complete" "$GH_STATE/out"
+
+echo "• the daemon runs from a different install than this npm: warns, no kickstart"
+sandbox local_other_prefix
+global_install 1.0.0; touch "$GH_STATE/daemon_loaded"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/other/bin"
+touch "$HOME/Library/LaunchAgents/com.tokmeter.daemon.plist" "$HOME/other/bin/tokmeter-mcp"
+echo "$HOME/other/bin/tokmeter-mcp" > "$GH_STATE/daemon_program"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "names the daemon's install" grep -q "the daemon runs .*other/bin/tokmeter-mcp" "$GH_STATE/out"
+check "no kickstart" test "$(count 'launchctl kickstart')" = 0
+
+echo "• --skip-local-upgrade leaves this machine alone"
+sandbox local_skip
+global_install 1.0.0; touch "$GH_STATE/daemon_loaded"
+if release --skip-local-upgrade; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "no npm install" test "$(count 'npm i ')" = 0
+check "no daemon restart" test "$(count 'launchctl kickstart')" = 0
+check "says it skipped" grep -q 'skipped (--skip-local-upgrade)' "$GH_STATE/out"
 
 echo "• a non-bump change in the tree is refused"
 sandbox dirty

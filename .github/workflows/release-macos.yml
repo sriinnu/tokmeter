@@ -149,8 +149,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/unsigned"
           ZIP="$RUNNER_TEMP/unsigned/${APP_NAME}-unsigned.zip"
           # ditto keeps Sparkle.framework's symlinks and modes; upload-artifact
-          # alone would flatten them.
-          /usr/bin/ditto --norsrc -c -k --keepParent "${APP_NAME}.app" "$ZIP"
+          # alone would flatten them. bundle.sh assembles the app under
+          # build.noindex/ (Spotlight skips it); --keepParent archives the
+          # bundle directory itself, so the zip root is still ${APP_NAME}.app/.
+          /usr/bin/ditto --norsrc -c -k --keepParent "build.noindex/${APP_NAME}.app" "$ZIP"
           {
             echo "commit=${COMMIT}"
             echo "sha256=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
