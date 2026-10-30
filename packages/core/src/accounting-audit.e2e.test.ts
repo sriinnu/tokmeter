@@ -5,7 +5,7 @@
 // so HOME points at a scratch dir BEFORE the core is imported; otherwise these
 // runs would write into the real ~/.cache/tokmeter.
 
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -127,6 +127,115 @@ describe("midnight seal", () => {
     expect(sealed?.outputTokens).toBe(700);
     expect(daemon.getTodayAggregate()?.date).toBe("2026-10-29");
     expect(daemon.getTodayAggregate()?.outputTokens).toBe(5);
+  });
+
+  test("a fault that holds yesterday's seal leaves today live and seals once the read is clean", async () => {
+    // 2026-10-30: a Copilot scan crash (a fault naming no file, so it may hide
+    // any day) held 10-29's seal, and the accumulator stayed on 10-29 — the
+    // bar showed 0 tokens today while its "today" lists held yesterday.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-28T23:50:00"));
+    session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+
+    // Written after that tick, before midnight, never again: a straggler the
+    // held tick reads and the eventual seal must still carry.
+    session("b.jsonl", [line("B", at("2026-10-28T23:57:44"), 90)], at("2026-10-28T23:57:44"));
+    // An unknown mutation kind crashes the Copilot provider scan.
+    const copilotDir = join(
+      home,
+      ".config",
+      "Code",
+      "User",
+      "globalStorage",
+      "emptyWindowChatSessions"
+    );
+    mkdirSync(copilotDir, { recursive: true });
+    const broken = join(copilotDir, "s.jsonl");
+    writeFileSync(
+      broken,
+      '{"kind":0,"v":{"requests":[]}}\n{"kind":9,"v":1}\n{"kind":1,"k":["x"],"v":1}\n'
+    );
+    session("t.jsonl", [line("T", at("2026-10-29T00:00:01"), 5)], at("2026-10-29T00:00:02"));
+
+    vi.setSystemTime(at("2026-10-29T00:00:04"));
+    await daemon.refreshToday(at("2026-10-29T00:00:04"));
+    expect(
+      daemon.getScanMeta().warnings.some((w) => /vscode-copilot scan failed/.test(w.message))
+    ).toBe(true);
+    expect(store.readDayFile(home, "2026-10-28")).toBeNull();
+    expect(daemon.getTodayAggregate()?.date).toBe("2026-10-29");
+    expect(daemon.getTodayAggregate()?.outputTokens).toBe(5);
+    // Yesterday is still readable, from memory.
+    expect(daemon.getDailyAggregates().find((d) => d.date === "2026-10-28")?.outputTokens).toBe(
+      790
+    );
+    expect(
+      daemon.getScanMeta().warnings.some((w) => /2026-10-28 is not sealed yet/.test(w.message))
+    ).toBe(true);
+
+    session(
+      "t.jsonl",
+      [line("T", at("2026-10-29T00:00:01"), 5), line("U", at("2026-10-29T00:10:00"), 6)],
+      at("2026-10-29T00:10:00")
+    );
+    vi.setSystemTime(at("2026-10-29T00:12:00"));
+    await daemon.refreshToday(at("2026-10-29T00:12:00"));
+    expect(store.readDayFile(home, "2026-10-28")).toBeNull();
+    expect(daemon.getTodayAggregate()?.outputTokens).toBe(11);
+
+    rmSync(broken);
+    vi.setSystemTime(at("2026-10-29T00:24:00"));
+    await daemon.refreshToday(at("2026-10-29T00:24:00"));
+    expect(store.readDayFile(home, "2026-10-28")?.outputTokens).toBe(790);
+    expect(store.readDayFile(home, "2026-10-28")?.recordCount).toBe(2);
+    expect(daemon.getDailyAggregates().filter((d) => d.date === "2026-10-28")).toHaveLength(1);
+    expect(daemon.getTodayAggregate()?.outputTokens).toBe(11);
+    expect(daemon.getScanMeta().warnings.some((w) => /not sealed yet/.test(w.message))).toBe(false);
+    expect(daemon.getStats().totalTokens).toBe(
+      daemon.getDailyAggregates().reduce((s, d) => s + d.totalTokens, 0) +
+        (daemon.getTodayAggregate()?.totalTokens ?? 0)
+    );
+  });
+
+  test("a corrupt file appearing at a held day's path doesn't wedge the tick", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-28T23:50:00"));
+    session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+
+    const copilotDir = join(
+      home,
+      ".config",
+      "Code",
+      "User",
+      "globalStorage",
+      "emptyWindowChatSessions"
+    );
+    mkdirSync(copilotDir, { recursive: true });
+    writeFileSync(
+      join(copilotDir, "s.jsonl"),
+      '{"kind":0,"v":{"requests":[]}}\n{"kind":9}\n{"kind":1,"k":["x"],"v":1}\n'
+    );
+    vi.setSystemTime(at("2026-10-29T00:00:04"));
+    await daemon.refreshToday(at("2026-10-29T00:00:04"));
+    expect(store.readDayFile(home, "2026-10-28")).toBeNull();
+
+    // Something else writes the day, and the file is unreadable.
+    const dayFile = join(store.aggregatesStoreDir(home), "2026-10-28.json");
+    mkdirSync(store.aggregatesStoreDir(home), { recursive: true });
+    writeFileSync(dayFile, "{not json", { mode: 0o600 });
+    session("t.jsonl", [line("T", at("2026-10-29T00:10:00"), 5)], at("2026-10-29T00:10:00"));
+    vi.setSystemTime(at("2026-10-29T00:12:00"));
+    await expect(daemon.refreshToday(at("2026-10-29T00:12:00"))).resolves.toBeDefined();
+    expect(daemon.getTodayAggregate()?.outputTokens).toBe(5);
+    expect(daemon.getDailyAggregates().some((d) => d.date === "2026-10-28")).toBe(false);
+    expect(readFileSync(dayFile, "utf-8")).toBe("{not json");
+
+    vi.setSystemTime(at("2026-10-29T00:24:00"));
+    await expect(daemon.refreshToday(at("2026-10-29T00:24:00"))).resolves.toBeDefined();
   });
 
   test("seals with the cards the day was priced at even when kosha changed since", async () => {
