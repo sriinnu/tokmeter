@@ -24,17 +24,21 @@
 #   9. wait for CI      — npm versions visible, bar zip attached, MCP registry
 #  10. Homebrew cask    — scripts/update-brew-cask.sh    (--skip-brew)
 #  11. appcast PR       — trigger its checks, merge it: Sparkle users get the update
+#  12. this machine     — upgrade the global npm install to X.Y.Z and restart
+#                         its launchd daemon                 (--skip-local-upgrade)
 #
 # Rerunnable. Every stage first checks whether it already happened — bump
 # applied, release commit made, PR open or merged, tag pushed, release
-# published, cask current, appcast merged — and skips it if so. When a run
-# dies (a missed key tap, a CI flake, a closed terminal), run the same command
-# again from the same branch and it carries on from where it stopped. Once the
-# release commit is on main, any branch works.
+# published, cask current, appcast merged, global install current — and skips
+# it if so. When a run dies (a missed key tap, a CI flake, a closed terminal),
+# run the same command again from the same branch and it carries on from where
+# it stopped. Once the release commit is on main, any branch works.
 #
 # Flags:
 #   --no-publish   stop after stage 7 (merged and tagged; no release, no brew)
 #   --skip-brew
+#   --skip-local-upgrade
+#                  leave this machine's global npm install and daemon alone
 #   --dry-run      print where the release is and what would run, change nothing
 #   --yes          don't prompt before the irreversible stages
 #
@@ -46,18 +50,19 @@ cd "$ROOT"
 source "$ROOT/scripts/lib/signing.sh"
 
 REPO="sriinnu/tokmeter"
-VERSION=""; DRY=0; ASSUME_YES=0; NO_PUBLISH=0; SKIP_BREW=0
+VERSION=""; DRY=0; ASSUME_YES=0; NO_PUBLISH=0; SKIP_BREW=0; SKIP_LOCAL=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
     --no-publish) NO_PUBLISH=1 ;;
     --skip-brew) SKIP_BREW=1 ;;
+    --skip-local-upgrade) SKIP_LOCAL=1 ;;
     -* ) echo "unknown flag: $arg" >&2; exit 1 ;;
     * ) VERSION="$arg" ;;
   esac
 done
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: release.sh X.Y.Z [--no-publish|--skip-brew|--dry-run|--yes]" >&2; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: release.sh X.Y.Z [--no-publish|--skip-brew|--skip-local-upgrade|--dry-run|--yes]" >&2; exit 1; }
 
 TAG="v${VERSION}"
 SUBJECT="chore(release): ${TAG}"
@@ -72,17 +77,19 @@ confirm() {
   [[ $ASSUME_YES -eq 1 || $DRY -eq 1 ]] && return 0
   read -r -p "  $1 [y/N] " a; [[ "$a" == "y" || "$a" == "Y" ]]
 }
-# Poll until a command succeeds, or give up after $2 seconds.
-wait_for() {
+# Poll until a command succeeds; return 1 after $2 seconds without success.
+poll() {
   local desc="$1" limit="$2"; shift 2
   [[ $DRY -eq 1 ]] && { echo "DRY: wait for ${desc}"; return 0; }
   local waited=0
   until "$@" >/dev/null 2>&1; do
-    (( waited >= limit )) && die "timed out after ${limit}s waiting for ${desc}"
+    (( waited >= limit )) && return 1
     sleep 15; waited=$((waited + 15))
   done
   echo "  ✓ ${desc}"
 }
+# poll, but a timeout ends the release.
+wait_for() { poll "$@" || die "timed out after $2s waiting for $1"; }
 
 # ── where a previous run got to ──────────────────────────────────────────────
 # The squash commit on main is "chore(release): vX (#N)"; older releases used
@@ -133,8 +140,107 @@ checks_started() {
 # at VERSION, is a bump an earlier run applied before it died.
 BUMP_FILES_RE='^(CHANGELOG\.md|README\.md|bun\.lock|packages/[^/]+/package\.json|packages/macos-bar/bundle\.sh|packages/mcp/server\.json)$'
 
+# ── this machine's own install (stage 12) ────────────────────────────────────
+# The release machine runs tokmeter too: a launchd daemon on the global npm
+# install. Publishing doesn't touch it, so it stays on the old version until
+# someone notices. 1.19.5 shipped and a day later the daemon was still on
+# 1.19.4, whose Copilot parser failure held the midnight seal and froze the
+# bar's "today" on yesterday.
+DAEMON_LABEL="com.tokmeter.daemon"
+LOCAL_PKGS=("@sriinnu/tokmeter@${VERSION}" "@sriinnu/tokmeter-mcp@${VERSION}")
+global_version() {  # global_version <package> — its version in npm's global root, or nothing
+  local root pj
+  root="$(npm root -g 2>/dev/null)" || return 0
+  pj="${root}/$1/package.json"
+  [[ -f "$pj" ]] || return 0
+  node -e 'try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "") } catch {}' "$pj" 2>/dev/null || true
+}
+global_at_version() {
+  [[ "$(global_version @sriinnu/tokmeter)" == "$VERSION" && "$(global_version @sriinnu/tokmeter-mcp)" == "$VERSION" ]]
+}
+daemon_target() { echo "gui/$(id -u)/${DAEMON_LABEL}"; }
+daemon_loaded() {
+  command -v launchctl >/dev/null 2>&1 && launchctl print "$(daemon_target)" >/dev/null 2>&1
+}
+# The script the LaunchAgent runs (ProgramArguments[1], after node), fully
+# resolved, or nothing when it can't be told. Lets stage 12 notice a daemon
+# that runs from a different install than the npm on PATH (an nvm node, say).
+daemon_program() {
+  local plist="${HOME}/Library/LaunchAgents/${DAEMON_LABEL}.plist" prog
+  [[ -f "$plist" ]] && command -v plutil >/dev/null 2>&1 || return 0
+  prog="$(plutil -extract ProgramArguments.1 raw -o - "$plist" 2>/dev/null)" || return 0
+  [[ -e "$prog" ]] || return 0
+  node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$prog" 2>/dev/null || true
+}
+local_upgrade_warn() {  # local_upgrade_warn <what went wrong>
+  {
+    echo
+    echo "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "  !! THIS MACHINE IS NOT ON ${VERSION}: $1"
+    echo "  !! ${TAG} itself is published; only the local install is behind. By hand:"
+    echo "  !!   npm i -g ${LOCAL_PKGS[*]}"
+    echo "  !!   launchctl kickstart -k gui/\$(id -u)/${DAEMON_LABEL}"
+    echo "  !! or rerun: bash scripts/release.sh ${VERSION}"
+    echo "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  } >&2
+}
+# Never fails: the release is out by now, and a stale local install is worth a
+# loud warning, not a red release. Every step checks its own result, since
+# set -e doesn't apply inside a function called with ||.
+upgrade_local_install() {
+  local root prog real_root
+  root="$(npm root -g 2>/dev/null || true)"
+  echo "  global npm root: ${root:-unknown}"
+  echo "  installed: tokmeter $(global_version @sriinnu/tokmeter | grep . || echo none)," \
+    "tokmeter-mcp $(global_version @sriinnu/tokmeter-mcp | grep . || echo none)"
+  if global_at_version; then
+    skip "global install is at ${VERSION}"
+    return 0
+  fi
+  # Stage 9 already saw both on npm, but `npm i` can briefly miss a version
+  # `npm view` already serves, so wait again, without dying on a timeout.
+  if ! poll "@sriinnu/tokmeter@${VERSION} on npm" 900 npm view "@sriinnu/tokmeter@${VERSION}" version \
+    || ! poll "@sriinnu/tokmeter-mcp@${VERSION} on npm" 900 npm view "@sriinnu/tokmeter-mcp@${VERSION}" version; then
+    local_upgrade_warn "npm still isn't serving ${VERSION} after 15 minutes."
+    return 0
+  fi
+  if [[ $DRY -eq 1 ]]; then
+    echo "DRY: npm i -g ${LOCAL_PKGS[*]}"
+    echo "DRY: launchctl kickstart -k $(daemon_target), if it is loaded"
+    return 0
+  fi
+  if ! npm i -g "${LOCAL_PKGS[@]}"; then
+    local_upgrade_warn "npm i -g failed."
+    return 0
+  fi
+  if ! global_at_version; then
+    local_upgrade_warn "npm i -g ran, but ${root:-the global root} still isn't at ${VERSION}."
+    return 0
+  fi
+  echo "  ✓ global install upgraded to ${VERSION}"
+
+  if ! daemon_loaded; then
+    echo "  ${DAEMON_LABEL} is not loaded in launchd, so nothing was restarted."
+    echo "  If a tokmeter daemon runs outside launchd, restart it on ${VERSION}:"
+    echo "    tokmeter-mcp daemon restart"
+    echo "  To run it under launchd from now on: tokmeter-mcp daemon install-agent"
+    return 0
+  fi
+  prog="$(daemon_program)"
+  real_root="$(node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$root" 2>/dev/null || true)"
+  if [[ -n "$prog" && -n "$real_root" && "$prog" != "${real_root}/"* ]]; then
+    local_upgrade_warn "the daemon runs ${prog}, which is not under this npm's global root ${real_root}. Upgrade the install it runs from, then kickstart it."
+    return 0
+  fi
+  if launchctl kickstart -k "$(daemon_target)"; then
+    echo "  ✓ restarted ${DAEMON_LABEL} on ${VERSION}"
+  else
+    local_upgrade_warn "launchctl kickstart failed; the daemon may still be running the old version."
+  fi
+}
+
 # ── 1. preflight ─────────────────────────────────────────────────────────────
-say "1/11 preflight ${TAG}"
+say "1/12 preflight ${TAG}"
 branch="$(git branch --show-current)"
 echo "  branch: ${branch:-detached}"
 # run() evals its command string, and the branch name is interpolated into
@@ -185,7 +291,7 @@ echo "  progress: bump $(state $bumped)  commit $(state $committed)  merged $(st
 
 if [[ -z "$merged" ]]; then
   # ── 2. bump ────────────────────────────────────────────────────────────────
-  say "2/11 bump → ${VERSION}"
+  say "2/12 bump → ${VERSION}"
   if [[ $bumped -eq 1 ]]; then skip "bump applied"; else run "bash scripts/bump-version.sh ${VERSION}"; fi
   # The release notes are this version's CHANGELOG section. Check them now,
   # before anything is committed, merged or tagged — not after.
@@ -204,17 +310,17 @@ if [[ -z "$merged" ]]; then
   # ── 3. secret gate (mandatory) ─────────────────────────────────────────────
   # Runs on every pass, resumed or not: a release commit made by hand never
   # went through it.
-  say "3/11 secret gate"
+  say "3/12 secret gate"
   run "bash scripts/check-no-secrets.sh"
 
   # ── 4. quality gate ────────────────────────────────────────────────────────
-  say "4/11 build + test + lint"
+  say "4/12 build + test + lint"
   run "bun run build"
   run "bun run test"
   run "bun run lint"
 
   # ── 5. commit (signed) ─────────────────────────────────────────────────────
-  say "5/11 release commit (signed)"
+  say "5/12 release commit (signed)"
   if [[ $committed -eq 1 ]]; then
     skip "$(git log -1 --format='%h %s')"
   else
@@ -224,7 +330,7 @@ if [[ -z "$merged" ]]; then
   fi
 
   # ── 6. push + PR + squash-merge ────────────────────────────────────────────
-  say "6/11 PR + squash-merge"
+  say "6/12 PR + squash-merge"
   run "git push -u origin '${branch}'"
   case "$(pr_field "$branch" state)" in
     OPEN) skip "PR #$(pr_field "$branch" number) is open" ;;
@@ -251,7 +357,7 @@ if [[ -z "$merged" ]]; then
     echo "DRY: gh pr merge '${branch}' --squash --delete-branch --subject '${SUBJECT} (#N)'"
   fi
 else
-  say "2–6/11 bump, gates, commit, PR"
+  say "2–6/12 bump, gates, commit, PR"
   skip "${SUBJECT} is on main (${merged:0:7})"
 fi
 merged="${merged:-origin/main}"   # dry run: the commit the squash would make
@@ -259,7 +365,7 @@ merged="${merged:-origin/main}"   # dry run: the commit the squash would make
 # ── 7. tag the squashed commit on main ───────────────────────────────────────
 # Squash creates a new commit, so the tag goes on main's commit, never the
 # branch's — a tag off main is invisible to anyone reading main's history.
-say "7/11 tag ${TAG} on main"
+say "7/12 tag ${TAG} on main"
 if [[ -n "$tag_commit" ]]; then
   [[ "$tag_commit" == "$(git rev-parse "$merged")" ]] \
     || die "${TAG} on origin points at ${tag_commit:0:7}, not the release commit ${merged:0:7}."
@@ -284,7 +390,7 @@ if [[ $NO_PUBLISH -eq 1 ]]; then
 fi
 
 # ── 8. GitHub release → CI publishes ─────────────────────────────────────────
-say "8/11 GitHub release (starts CI publishing)"
+say "8/12 GitHub release (starts CI publishing)"
 if [[ $released -eq 1 ]]; then
   skip "release ${TAG} is published"
 else
@@ -308,7 +414,7 @@ else
 fi
 
 # ── 9. wait for CI ───────────────────────────────────────────────────────────
-say "9/11 waiting for CI"
+say "9/12 waiting for CI"
 wait_for "@sriinnu/tokmeter@${VERSION} on npm" 1800 npm view "@sriinnu/tokmeter@${VERSION}" version
 wait_for "@sriinnu/tokmeter-mcp@${VERSION} on npm" 1800 npm view "@sriinnu/tokmeter-mcp@${VERSION}" version
 zip_attached() {
@@ -334,18 +440,18 @@ wait_for "io.github.sriinnu/tokmeter ${VERSION} in the MCP registry" 1800 regist
 # update-brew-cask.sh is itself rerunnable: it does nothing when the cask is
 # already at this version and sha256.
 if [[ $SKIP_BREW -eq 0 ]]; then
-  say "10/11 Homebrew cask"
+  say "10/12 Homebrew cask"
   if confirm "Update the Homebrew cask to ${VERSION}?"; then
     run "bash scripts/update-brew-cask.sh ${VERSION}"
   else echo "  brew skipped. Later: bash scripts/update-brew-cask.sh ${VERSION}"; fi
-else say "10/11 Homebrew cask — skipped (--skip-brew)"; fi
+else say "10/12 Homebrew cask — skipped (--skip-brew)"; fi
 
 # ── 11. appcast PR ───────────────────────────────────────────────────────────
 # release-macos.yml opens it with the workflow token, and GitHub doesn't run
 # workflows for PRs that token opens, so its required checks never start and
 # Sparkle users never see the release. Closing and reopening it as a person
 # starts them.
-say "11/11 appcast PR (Sparkle)"
+say "11/12 appcast PR (Sparkle)"
 appcast="release/appcast-${TAG}"
 appcast_on_main() {
   # Read the whole feed before matching: `curl | grep -q` would SIGPIPE curl
@@ -411,5 +517,11 @@ else
     echo "  appcast not merged. Rerun to finish, or merge ${appcast} by hand."
   fi
 fi
+
+# ── 12. this machine's install ───────────────────────────────────────────────
+if [[ $SKIP_LOCAL -eq 0 ]]; then
+  say "12/12 this machine's install"
+  upgrade_local_install || local_upgrade_warn "the local upgrade stage stopped unexpectedly."
+else say "12/12 this machine's install — skipped (--skip-local-upgrade)"; fi
 
 say "Release ${TAG} complete."

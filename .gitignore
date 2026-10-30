@@ -16,6 +16,7 @@ packages/web/public/data.json
 # macOS menubar app — build artifacts
 packages/macos-bar/.build/
 packages/macos-bar/*.app/
+packages/macos-bar/build.noindex/
 packages/macos-bar/*.zip
 packages/macos-bar/*.dSYM/
 packages/macos-bar/*.dSYM.zip
