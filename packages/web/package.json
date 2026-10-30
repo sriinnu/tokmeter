@@ -1,6 +1,6 @@
 {
   "name": "@sriinnu/tokmeter-web",
-  "version": "1.19.6",
+  "version": "1.19.7",
   "private": true,
   "description": "Token usage tracking web dashboard — React, shadcn/ui, Recharts, three.js",
   "type": "module",
