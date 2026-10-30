@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.7] - 2026-10-30
+
+### Changed
+
+- A model whose provider hides the model behind it shows "—" (price
+  unavailable) instead of "$0.00", which read as free. Codex logs its
+  approval reviewer as `codex-auto-review` and OpenAI doesn't say which
+  model runs it. It still counts as zero and never trips the unpriced
+  warning.
+
+### Added
+
+- `~/.tokmeter/pricing-overrides.json` takes `{ "<model>": { "as":
+  "<model>" } }` to price a model at another model's live catalog rate,
+  for example `{ "codex-auto-review": { "as": "gpt-5.6-luna" } }`.
+  Editing the file reprices today; sealed days keep their cost. One hop
+  only: a target that is itself an alias, or unknown, stays unpriced.
+
 ## [1.19.6] - 2026-10-30
 
 ### Added
