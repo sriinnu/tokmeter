@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.8] - 2026-10-30
+
+### Fixed
+
+- 1.19.7 reached npm and GitHub but not the MCP registry, Homebrew or the
+  Sparkle feed. Its MCP-registry step stopped waiting for npm after five
+  minutes, and rerunning it failed in the "already published" check, which
+  read npm 12's array output as an object. The check now reads both, the
+  wait is fifteen minutes, and 1.19.8 carries 1.19.7's changes to every
+  channel.
+- A stray merge-conflict line in this changelog (in the 1.19.5 notes) is
+  gone, and CI now fails on conflict markers in any tracked file.
+
 ## [1.19.7] - 2026-10-30
 
 ### Changed

@@ -8,13 +8,13 @@
     "url": "https://github.com/sriinnu/tokmeter",
     "source": "github"
   },
-  "version": "1.19.7",
+  "version": "1.19.8",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@sriinnu/tokmeter-mcp",
-      "version": "1.19.7",
+      "version": "1.19.8",
       "transport": {
         "type": "stdio"
       },
