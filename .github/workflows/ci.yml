@@ -18,6 +18,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # A stray `||||||| b8b60a3` from a resolved merge shipped in CHANGELOG
+      # through three releases (1.19.5–1.19.7) and into release notes; no other
+      # check reads Markdown. `=======` is left out: it is also a heading rule.
+      - name: No merge-conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>)( |$)'; then
+            echo "::error::merge-conflict markers in tracked files"
+            exit 1
+          fi
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:

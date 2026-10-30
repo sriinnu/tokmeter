@@ -142,7 +142,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger, bills each day at its own prices, and replaces a day only when the
   rebuild carries at least as much data — the same grow-only rule as Deep
   Rescan. Shrinking a day still takes a forced window rebuild.
-||||||| b8b60a3
 - The web dashboard's project page labelled each model's share of all spend
   as its share of the project. It now shows share-of-project, worked out
   from the project's own cost.
