@@ -7,20 +7,24 @@
 #
 # AUTHENTICATION: npm Trusted Publishing (OIDC) — no token.
 #
-# The job's own OIDC identity proves it is this workflow in this repo, so
-# there is no NPM_TOKEN to store, rotate or leak, and it works with 2FA
-# required on writes. npm is removing token-based direct publishing in
-# January 2027, so this is also the path that keeps working.
+# The job's own OIDC identity proves it is this workflow in this repo and the
+# `release` environment, so there is no NPM_TOKEN to store, rotate or leak.
 #
-# One-time setup, per package (@sriinnu/tokmeter and @sriinnu/tokmeter-mcp):
-#   npmjs.com → package → Settings → Trusted Publisher → GitHub Actions
-#     Organization or user: sriinnu
-#     Repository:           tokmeter
-#     Workflow filename:    publish.yml
+# STAGED, NOT PUBLISHED. CI runs `npm stage publish`: each version sits in the
+# registry, not installable, until the maintainer approves it with the
+# security key (`npm stage approve <id>`). An OIDC token can stage but can't
+# approve, so CI can never make its own release live. The trust relationship
+# is stage-only, per package (@sriinnu/tokmeter and @sriinnu/tokmeter-mcp):
+#   npm trust github <pkg> --repo sriinnu/tokmeter --file publish.yml \
+#     --env release --allow-stage-publish
 #
-# Requires npm >= 11.5.1 (installed below) and Node >= 22.14.
+# Requires npm >= 11.15 for `npm stage` (11.20.0 installed below).
 #
-# To publish: bump versions → commit → create GitHub Release → workflow runs.
+# To publish: `bun run release X.Y.Z` → the GitHub release starts this run →
+# approve both staged versions → the MCP-registry job registers the server
+# once npm serves the version. If that job gave up before the approval,
+# re-run just it:
+#   gh workflow run publish.yml --ref main -f tag=vX.Y.Z -f publish_npm=false
 # ============================================================================
 
 name: Release & Publish to npm
@@ -28,12 +32,31 @@ name: Release & Publish to npm
 on:
   release:
     types: [published]
+  # Re-run part of a release that already has its signed tag: typically the
+  # MCP-registry job after the staged npm versions were approved. Runs this
+  # file from main, verifying the tag the same way a release event does.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Signed release tag, vX.Y.Z"
+        required: true
+        type: string
+      publish_npm:
+        description: "Stage both packages on npm (off once they're staged or live)"
+        required: true
+        default: true
+        type: boolean
+      publish_mcp:
+        description: "Register the server in the MCP registry (needs the npm version live)"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: true
 
 jobs:
@@ -57,7 +80,7 @@ jobs:
         id: release-tag
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RELEASE_ACTOR: ${{ github.actor }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           RELEASE_SIGNER_FINGERPRINT: ${{ vars.RELEASE_SIGNER_FINGERPRINT }}
@@ -89,7 +112,7 @@ jobs:
 
       - name: Verify package versions match the signed release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           node - <<'NODE'
           const fs = require("node:fs");
@@ -118,9 +141,13 @@ jobs:
   # Job 2: Publish — only after verify succeeds
   # ==========================================================================
   publish:
-    name: Publish to npm (with provenance)
+    name: Stage on npm (with provenance)
     needs: verify
+    if: ${{ github.event_name == 'release' || inputs.publish_npm }}
     runs-on: ubuntu-latest
+    # The trust relationship names this environment; it admits only main and
+    # v* tags. The job reads none of the environment's secrets.
+    environment: release
     permissions:
       contents: read
       id-token: write
@@ -144,14 +171,13 @@ jobs:
           name: npm-packages-${{ github.run_id }}
           path: ${{ runner.temp }}/tokmeter-packages
 
-      # Trusted Publishing authenticates via the job's OIDC token instead of
-      # an NPM_TOKEN. It needs npm >= 11.5.1, and Node 22 still ships npm 10.
-      - name: Upgrade npm for Trusted Publishing
+      # `npm stage` needs npm >= 11.15, and Node 22 still ships npm 10.
+      - name: Upgrade npm for staged publishing
         run: |
-          npm install -g npm@12.2.1
+          npm install -g --ignore-scripts npm@11.20.0
           npm --version
 
-      - name: Prepare and publish verified package artifacts
+      - name: Stage verified package artifacts
         run: |
           set -euo pipefail
           for package in tokmeter mcp; do
@@ -212,15 +238,51 @@ jobs:
               echo "$name@$version is already published"
               continue
             fi
-            npm publish "$artifact" --provenance --access public
+            # npm stage packs the current directory, so stage from the verified
+            # tarball unpacked. --ignore-scripts: the packed package.json keeps
+            # its `prepack` (prepare-license-materials.py ../../scripts), which
+            # can't run here and must not change what was verified.
+            stage_dir=$(mktemp -d "$RUNNER_TEMP/tokmeter-stage.XXXXXX")
+            tar -xzf "$artifact" --no-same-owner -C "$stage_dir"
+            if ! (cd "$stage_dir/package" && npm stage publish --provenance --access public --ignore-scripts); then
+              echo "::error::staging $name@$version failed. If it is already staged, approve it (npm stage approve <id>) or reject it, then re-run." >&2
+              exit 1
+            fi
+            echo "::notice::Staged $name@$version. Approve with the security key: npm stage list $name, then npm stage approve <id>."
           done
+
+  # ==========================================================================
+  # Job 3: MCP registry — once the approved npm version is live. Runs after
+  # staging, or alone (publish_npm off) when re-dispatched after approval.
+  # ==========================================================================
+  mcp-registry:
+    name: Publish to the MCP registry
+    needs: [verify, publish]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.publish.result != 'failure' && (github.event_name == 'release' || inputs.publish_mcp) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.release_commit }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       # ======================================================================
       # Publish the MCP server manifest to the official registry.
       #
-      # Runs AFTER npm publish on purpose: the registry proves namespace
-      # ownership by fetching the published package and reading `mcpName`
-      # out of its package.json, so the version has to exist on npm first.
+      # Runs once the npm version is LIVE, which with staging means after the
+      # maintainer approved it: the registry proves namespace ownership by
+      # fetching the published package and reading `mcpName` out of its
+      # package.json.
       # Auth is the job's own OIDC token (`id-token: write` above) — it
       # proves the io.github.sriinnu/* namespace, so there is no interactive
       # login and no secret to rotate.
@@ -271,18 +333,16 @@ jobs:
               throw new Error(`server.json description is ${srv.description.length} chars; the registry allows 100`);
             }
           '
-          # npm's read API lags its own publish, and the registry resolves
-          # the version before it will register anything. Wait for the
-          # version to be readable instead of racing it. Five minutes wasn't
-          # enough for v1.19.7 ("did not appear on npm within 5 minutes",
-          # listed a few minutes later), so wait up to fifteen.
+          # The version is live only after the maintainer approves the staged
+          # one, and npm's read API lags even that. Wait up to 30 minutes, then
+          # say how to finish rather than leave a half-registered release.
           PKG_VERSION="${RELEASE_TAG#v}"
-          for attempt in $(seq 1 90); do
+          for attempt in $(seq 1 180); do
             if npm view "${PKG_NAME}@${PKG_VERSION}" version >/dev/null 2>&1; then
               break
             fi
-            if [ "$attempt" -eq 90 ]; then
-              echo "::error::${PKG_NAME}@${PKG_VERSION} did not appear on npm within 15 minutes" >&2
+            if [ "$attempt" -eq 180 ]; then
+              echo "::error::${PKG_NAME}@${PKG_VERSION} is not live on npm after 30 minutes. If it is staged, approve it (npm stage approve <id>), then run: gh workflow run publish.yml --ref main -f tag=${RELEASE_TAG} -f publish_npm=false" >&2
               exit 1
             fi
             sleep 10
@@ -291,5 +351,5 @@ jobs:
           /tmp/mcp-publisher publish
         env:
           MCP_PUBLISHER_VERSION: v1.8.1
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           PKG_NAME: "@sriinnu/tokmeter-mcp"
