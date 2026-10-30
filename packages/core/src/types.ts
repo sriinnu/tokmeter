@@ -602,8 +602,8 @@ export interface TokmeterSummary {
   /** Optional — present when computed (daemon API includes it). */
   signals?: StatbarSignals;
   /**
-   * Optional — the daemon's /api/summary attaches the same time-of-day profile
-   * /api/statbar-signals carries, so the web dashboard reads one source.
+   * Optional — the same time-of-day profile as `signals.timeOfDay`, on every
+   * unfiltered summary, so the web dashboard reads one source.
    */
   timeOfDay?: TimeOfDayProfile;
 }

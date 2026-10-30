@@ -876,6 +876,7 @@ export class TokmeterCore {
         // Live signals have rolling/intraday scopes that daily buckets cannot reconstruct.
       };
     }
+    const signals = this.getStatbarSignals();
     return {
       records: this.recentRecords,
       projects: this.getAllProjects(),
@@ -883,7 +884,10 @@ export class TokmeterCore {
       daily: this.getDailyBreakdown(),
       stats: this.getStats(),
       meta: this.getScanMeta(),
-      signals: this.getStatbarSignals(),
+      signals,
+      // Top level too, so every summary server (daemon, Vite dev/preview,
+      // ensure-summary) carries it without each attaching its own copy.
+      timeOfDay: signals.timeOfDay,
     };
   }
 

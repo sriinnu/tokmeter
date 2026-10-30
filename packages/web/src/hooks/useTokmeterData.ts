@@ -307,7 +307,7 @@ function detectSummarySource(endpoint: string, response: Response): TokmeterSumm
   return response.headers.get(SUMMARY_SOURCE_HEADER) === "cache" ? "cached-api" : "live-api";
 }
 
-function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
+export function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
   return {
     records: Array.isArray(input.records) ? input.records : [],
     projects: Array.isArray(input.projects)
@@ -317,6 +317,9 @@ function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
     daily: Array.isArray(input.daily) ? input.daily.map((entry) => normalizeDailyEntry(entry)) : [],
     stats: normalizeStats(input.stats),
     meta: normalizeMeta(input.meta),
+    // Shape-checked where it's read (buildTimeOfDayView); dropping it here
+    // left the dashboard's busiest-hours strip permanently "missing".
+    timeOfDay: input.timeOfDay,
   };
 }
 
