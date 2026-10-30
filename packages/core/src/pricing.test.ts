@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PricingService } from "./pricing.js";
+import { PricingService, parseUserOverrides } from "./pricing.js";
 
 describe("PricingService", () => {
   it("preserves explicit free cache and reasoning rates instead of charging fallback rates", async () => {
@@ -252,5 +252,27 @@ describe("calculateCost", () => {
     });
     const cost = await pricing.calculateCost("internal-llama-deployment", 10_000_000, 10_000_000);
     expect(cost).toBe(0);
+  });
+});
+
+describe("parseUserOverrides", () => {
+  it("reads prices and `as` entries, skipping anything malformed", () => {
+    const { prices, priceAs } = parseUserOverrides({
+      "codex-auto-review": { as: " gpt-5.6-luna " },
+      "internal-model": { inputPerMillion: 0, outputPerMillion: 0 },
+      "self-loop": { as: "self-loop" },
+      "empty-as": { as: "" },
+      "half-price": { inputPerMillion: 1 },
+      "not-an-object": 5,
+    });
+    expect([...priceAs]).toEqual([["codex-auto-review", "gpt-5.6-luna"]]);
+    expect([...prices.keys()]).toEqual(["internal-model"]);
+  });
+
+  it("returns empty maps for a non-object file", () => {
+    for (const bad of [null, [], "x", 3]) {
+      const { prices, priceAs } = parseUserOverrides(bad);
+      expect(prices.size + priceAs.size).toBe(0);
+    }
   });
 });
