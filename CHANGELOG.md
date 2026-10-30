@@ -5,7 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.19.6] - 2026-10-30
+
+### Added
+
+- Busiest time of day: the share of the last 30 days' cost in each 3-hour
+  block, read from the sealed days' hourly cost curves. The menu bar shows
+  one line ("Busiest 15–18 · 24% of 30-day cost") and the web dashboard
+  shows the eight blocks, with a table view, beside the 24-hour dial. Days
+  without a usable curve are skipped, never counted as $0, and nothing is
+  shown with fewer than 7 days.
+- A late-night rest nudge in the menu bar. It only appears when a person
+  has been at the keyboard for 20 minutes or more inside the late window
+  (00–05 by default), going by physical keyboard and mouse input only, so
+  agents running overnight never trigger it. At most once a night,
+  dismissible, and off with one switch in Settings.
+- `bun run release` ends by upgrading the release machine's own global
+  install and restarting its launchd daemon (`--skip-local-upgrade` turns
+  it off).
+
+### Fixed
+
+- A provider fault that held the midnight seal also froze "today": the
+  live day stayed on yesterday, so the menu bar showed 0 tokens today
+  while its Today lists held yesterday's numbers, and today's usage went
+  uncounted until the daemon restarted. A held day now stays readable from
+  memory and seals on the first clean read, while today counts live.
+- The menu bar's model list no longer wraps "Unavailable" onto two lines;
+  an unpriced model shows "—" ("Price unavailable" to VoiceOver).
+- Local builds of the menu bar app no longer show up in Spotlight beside the
+  installed one: they are built under `build.noindex/`.
 
 ### Changed
 
