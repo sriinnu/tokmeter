@@ -527,9 +527,15 @@ export class TokmeterCore {
       }
       if (dayFileMtime(this.homeDir, date) !== null) {
         // Sealed meanwhile by a gap fill or another process: the file wins.
-        const onDisk = readDayFile(this.homeDir, date);
-        if (onDisk) this.aggregates.set(date, onDisk);
+        // A file that can't be read is left out of the totals and kept as-is,
+        // as the relay loader does; throwing here would fail every tick.
         this.heldSeals.delete(date);
+        try {
+          const onDisk = readDayFile(this.homeDir, date);
+          if (onDisk) this.aggregates.set(date, onDisk);
+        } catch {
+          this.aggregates.delete(date);
+        }
         continue;
       }
       // Re-derive the day from a DEDUPED aggregation of its records rather

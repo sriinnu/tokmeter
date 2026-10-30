@@ -5,7 +5,7 @@
 // so HOME points at a scratch dir BEFORE the core is imported; otherwise these
 // runs would write into the real ~/.cache/tokmeter.
 
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -197,6 +197,45 @@ describe("midnight seal", () => {
       daemon.getDailyAggregates().reduce((s, d) => s + d.totalTokens, 0) +
         (daemon.getTodayAggregate()?.totalTokens ?? 0)
     );
+  });
+
+  test("a corrupt file appearing at a held day's path doesn't wedge the tick", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(at("2026-10-28T23:50:00"));
+    session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: true });
+    await daemon.scan();
+
+    const copilotDir = join(
+      home,
+      ".config",
+      "Code",
+      "User",
+      "globalStorage",
+      "emptyWindowChatSessions"
+    );
+    mkdirSync(copilotDir, { recursive: true });
+    writeFileSync(
+      join(copilotDir, "s.jsonl"),
+      '{"kind":0,"v":{"requests":[]}}\n{"kind":9}\n{"kind":1,"k":["x"],"v":1}\n'
+    );
+    vi.setSystemTime(at("2026-10-29T00:00:04"));
+    await daemon.refreshToday(at("2026-10-29T00:00:04"));
+    expect(store.readDayFile(home, "2026-10-28")).toBeNull();
+
+    // Something else writes the day, and the file is unreadable.
+    const dayFile = join(store.aggregatesStoreDir(home), "2026-10-28.json");
+    mkdirSync(store.aggregatesStoreDir(home), { recursive: true });
+    writeFileSync(dayFile, "{not json", { mode: 0o600 });
+    session("t.jsonl", [line("T", at("2026-10-29T00:10:00"), 5)], at("2026-10-29T00:10:00"));
+    vi.setSystemTime(at("2026-10-29T00:12:00"));
+    await expect(daemon.refreshToday(at("2026-10-29T00:12:00"))).resolves.toBeDefined();
+    expect(daemon.getTodayAggregate()?.outputTokens).toBe(5);
+    expect(daemon.getDailyAggregates().some((d) => d.date === "2026-10-28")).toBe(false);
+    expect(readFileSync(dayFile, "utf-8")).toBe("{not json");
+
+    vi.setSystemTime(at("2026-10-29T00:24:00"));
+    await expect(daemon.refreshToday(at("2026-10-29T00:24:00"))).resolves.toBeDefined();
   });
 
   test("seals with the cards the day was priced at even when kosha changed since", async () => {
