@@ -168,9 +168,14 @@ jobs:
                 echo "::error::$name@$version has no registry integrity" >&2
                 exit 1
               }
+              # npm 12 wraps `npm view <field> --json` in an array; npm 11
+              # returned the bare object. Accept both, or a rerun of a
+              # published release dies here ("Cannot index array with
+              # string "url"", v1.19.7).
               attestations=$(npm view "$name@$version" dist.attestations --json 2>/dev/null || true)
-              provenance_url=$(jq -r '.url // empty' <<<"$attestations")
-              predicate_type=$(jq -r '.provenance.predicateType // empty' <<<"$attestations")
+              attestation='if type == "array" then .[0] else . end'
+              provenance_url=$(jq -r "$attestation | .url // empty" <<<"$attestations")
+              predicate_type=$(jq -r "$attestation | .provenance.predicateType // empty" <<<"$attestations")
               [[ -n "$provenance_url" && "$predicate_type" == "https://slsa.dev/provenance/v1" ]] || {
                 echo "::error::$name@$version exists without expected SLSA provenance" >&2
                 exit 1
@@ -266,16 +271,18 @@ jobs:
               throw new Error(`server.json description is ${srv.description.length} chars; the registry allows 100`);
             }
           '
-          # npm's read API lags its own publish by tens of seconds, and the
-          # registry resolves the version before it will register anything.
-          # Wait for the version to be readable instead of racing it.
+          # npm's read API lags its own publish, and the registry resolves
+          # the version before it will register anything. Wait for the
+          # version to be readable instead of racing it. Five minutes wasn't
+          # enough for v1.19.7 ("did not appear on npm within 5 minutes",
+          # listed a few minutes later), so wait up to fifteen.
           PKG_VERSION="${RELEASE_TAG#v}"
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 90); do
             if npm view "${PKG_NAME}@${PKG_VERSION}" version >/dev/null 2>&1; then
               break
             fi
-            if [ "$attempt" -eq 30 ]; then
-              echo "::error::${PKG_NAME}@${PKG_VERSION} did not appear on npm within 5 minutes" >&2
+            if [ "$attempt" -eq 90 ]; then
+              echo "::error::${PKG_NAME}@${PKG_VERSION} did not appear on npm within 15 minutes" >&2
               exit 1
             fi
             sleep 10
