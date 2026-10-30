@@ -27,7 +27,14 @@
  *     }
  *   }
  *
- * Keys are exact model ids. Values are partial ModelPricing objects
+ * A value can instead name another model to be priced as, at that model's
+ * live rate: `{ "codex-auto-review": { "as": "gpt-5.6-luna" } }`. For models
+ * whose provider hides the model behind them (see OPAQUE_MODELS), this is how
+ * a user who has decided what it most likely is turns "price hidden" into an
+ * estimate. One hop only: the target is looked up as itself, never through
+ * another `as`.
+ *
+ * Keys are exact model ids. Price values are partial ModelPricing objects
  * (input/output required; cache + reasoning fields optional, plus
  * `cacheWrite1hPerMillion` for 1-hour-TTL cache writes). Missing cache
  * reads default to 10% of input and reasoning to the output rate; cache
@@ -266,36 +273,54 @@ function userOverridesMtime(): number {
  * on any error (missing file, malformed JSON, etc.) so a broken override file
  * never breaks pricing resolution.
  */
-function loadUserOverrides(): Map<string, FullPricing> {
-  const overrides = new Map<string, FullPricing>();
+export interface UserOverrides {
+  prices: Map<string, FullPricing>;
+  /** model id → the model id it is priced as */
+  priceAs: Map<string, string>;
+}
+
+function loadUserOverrides(): UserOverrides {
   try {
-    const raw = readFileSync(userOverridesPath(), "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return overrides;
-    for (const [id, pricing] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof id !== "string" || id.length === 0 || id.length > 256) continue;
-      if (!pricing || typeof pricing !== "object") continue;
-      const p = pricing as Record<string, unknown>;
-      const isNum = (v: unknown): v is number =>
-        typeof v === "number" && Number.isFinite(v) && v >= 0;
-      if (!isNum(p.inputPerMillion) || !isNum(p.outputPerMillion)) continue;
-      const out: FullPricing = {
-        inputPerMillion: p.inputPerMillion,
-        outputPerMillion: p.outputPerMillion,
-      };
-      if (isNum(p.cacheReadPerMillion)) out.cacheReadPerMillion = p.cacheReadPerMillion;
-      if (isNum(p.cacheWritePerMillion)) out.cacheWritePerMillion = p.cacheWritePerMillion;
-      if (isNum(p.cacheWrite1hPerMillion)) out.cacheWrite1hPerMillion = p.cacheWrite1hPerMillion;
-      if (isNum(p.reasoningInputPerMillion))
-        out.reasoningInputPerMillion = p.reasoningInputPerMillion;
-      if (isNum(p.reasoningOutputPerMillion))
-        out.reasoningOutputPerMillion = p.reasoningOutputPerMillion;
-      overrides.set(id, out);
-    }
+    return parseUserOverrides(JSON.parse(readFileSync(userOverridesPath(), "utf-8")));
   } catch {
-    // missing or malformed — quietly fall through with empty map
+    // missing or malformed — quietly fall through with empty maps
+    return { prices: new Map(), priceAs: new Map() };
   }
-  return overrides;
+}
+
+/** The pricing-overrides.json schema, validated; bad entries are skipped. */
+export function parseUserOverrides(parsed: unknown): UserOverrides {
+  const overrides = new Map<string, FullPricing>();
+  const priceAs = new Map<string, string>();
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { prices: overrides, priceAs };
+  }
+  for (const [id, pricing] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof id !== "string" || id.length === 0 || id.length > 256) continue;
+    if (!pricing || typeof pricing !== "object") continue;
+    const p = pricing as Record<string, unknown>;
+    if (typeof p.as === "string") {
+      const target = p.as.trim();
+      if (target.length > 0 && target.length <= 256 && target !== id) priceAs.set(id, target);
+      continue;
+    }
+    const isNum = (v: unknown): v is number =>
+      typeof v === "number" && Number.isFinite(v) && v >= 0;
+    if (!isNum(p.inputPerMillion) || !isNum(p.outputPerMillion)) continue;
+    const out: FullPricing = {
+      inputPerMillion: p.inputPerMillion,
+      outputPerMillion: p.outputPerMillion,
+    };
+    if (isNum(p.cacheReadPerMillion)) out.cacheReadPerMillion = p.cacheReadPerMillion;
+    if (isNum(p.cacheWritePerMillion)) out.cacheWritePerMillion = p.cacheWritePerMillion;
+    if (isNum(p.cacheWrite1hPerMillion)) out.cacheWrite1hPerMillion = p.cacheWrite1hPerMillion;
+    if (isNum(p.reasoningInputPerMillion))
+      out.reasoningInputPerMillion = p.reasoningInputPerMillion;
+    if (isNum(p.reasoningOutputPerMillion))
+      out.reasoningOutputPerMillion = p.reasoningOutputPerMillion;
+    overrides.set(id, out);
+  }
+  return { prices: overrides, priceAs };
 }
 
 /** Cached pricing lookup: modelId → FullPricing or null. */
@@ -304,6 +329,7 @@ export class PricingService {
   /** Resolution tier per cached model id. Kept in step with `cache`. */
   private sources = new Map<string, PricingSource>();
   private userOverrides = new Map<string, FullPricing>();
+  private userPriceAs = new Map<string, string>();
   private userOverridesMtime = 0;
   private registry: any = null;
   private initialized = false;
@@ -363,7 +389,9 @@ export class PricingService {
       this.registry = null;
       this.pricingUnavailable = true;
     }
-    this.userOverrides = loadUserOverrides();
+    const loaded = loadUserOverrides();
+    this.userOverrides = loaded.prices;
+    this.userPriceAs = loaded.priceAs;
     this.userOverridesMtime = overridesMtime;
     this.registryMtime = currentMtime;
     this.initialized = true;
@@ -375,6 +403,12 @@ export class PricingService {
    * private state. Production callers should not need this — kosha is the
    * source of truth.
    */
+  /** Test seam for a `{ "as": target }` override, like {@link seedPricing}. */
+  seedPriceAs(modelId: string, target: string): void {
+    this.userPriceAs.set(modelId, target);
+    this.cache.delete(modelId);
+  }
+
   seedPricing(modelId: string, pricing: FullPricing): void {
     this.cache.set(modelId, this.roundPricing(pricing));
     this.sources.set(modelId, { tier: "seeded" });
@@ -432,6 +466,17 @@ export class PricingService {
       this.cache.set(modelId, userOverride);
       this.sources.set(modelId, { tier: "override" });
       return userOverride;
+    }
+    const priceAs = this.userPriceAs.get(modelId);
+    if (priceAs) {
+      // One hop: the target resolves as itself, never through its own `as`.
+      const target = this.userPriceAs.has(priceAs) ? null : await this.getPricing(priceAs);
+      this.cache.set(modelId, target);
+      this.sources.set(
+        modelId,
+        target ? { tier: "override", matchedId: priceAs } : { tier: "unpriced" }
+      );
+      return target;
     }
 
     if (this.registry) {

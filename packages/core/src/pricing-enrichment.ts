@@ -18,9 +18,11 @@ import type { ScanWarning, TokenRecord } from "./types.js";
 /**
  * Models whose provider intentionally hides the underlying routed model, so
  * we can't price them even with a fresh kosha. Treat these as known-opaque:
- * cost still resolves to $0 (we honestly don't know), but suppress the
- * unpriced-leak signal — otherwise the bar's amber pill cries wolf on every
- * scan and the kosha wishlist begs for an entry that will never exist.
+ * cost still resolves to $0 and is marked not exposed (we honestly don't
+ * know, so the surfaces show "—"), but suppress the unpriced-leak signal —
+ * otherwise the bar's amber pill cries wolf on every scan and the kosha
+ * wishlist begs for an entry that will never exist. A user who decides what
+ * the model most likely is can price it with an `{ "as": … }` override.
  *
  * Codex CLI's auto-review pipeline ("codex-auto-review") is the canonical
  * case: codex writes this literal string into rollout JSONL when OpenAI's
@@ -115,10 +117,11 @@ export async function enrichCosts(
           r.reasoningTokens >
         0;
       const pricingUnavailable =
-        r.cost === 0 &&
-        hasBillableTokens &&
-        !pricing.hasUserOverride(r.model) &&
-        !isOpaqueModel(r.model);
+        r.cost === 0 && hasBillableTokens && !pricing.hasUserOverride(r.model);
+      // An opaque model's $0 is "price hidden", not a price: mark it so the
+      // surfaces show "—" rather than a $0.00 that reads as free. It still
+      // stays out of the unpriced tracker below; nothing will ever price it
+      // unless the user names a model for it (`{ "as": … }` override).
       if (r.usage) {
         r.usage.cost = pricingUnavailable ? "not_exposed" : "calculated";
       }
@@ -129,7 +132,7 @@ export async function enrichCosts(
       // means "intentionally free" (internal/local/negotiated deployment),
       // not a lookup miss, and we'd otherwise flood the amber pill with
       // every internal model the user has configured.
-      if (unpricedTracker && pricingUnavailable) {
+      if (unpricedTracker && pricingUnavailable && !isOpaqueModel(r.model)) {
         unpricedTracker.models.add(r.model);
         unpricedTracker.records += 1;
       }

@@ -96,6 +96,69 @@ describe("enrichCosts — costEligible", () => {
   });
 });
 
+describe("enrichCosts — opaque models and price-as overrides", () => {
+  const reviewer = () =>
+    makeRecord({
+      provider: "codex",
+      model: "codex-auto-review",
+      inputTokens: 14_145_601,
+      cacheReadTokens: 154_895_232,
+      outputTokens: 118_321,
+      reasoningTokens: 57_008,
+      usage: undefined,
+    });
+
+  it("marks an opaque model's $0 as not exposed, not calculated, and doesn't flag it unpriced", async () => {
+    // The bar showed codex-auto-review at "$0.00", which reads as free. Its
+    // price is hidden by the provider, so the record says so and every
+    // surface shows "—"; the amber unpriced pill still stays quiet.
+    const pricing = new PricingService();
+    const tracker: UnpricedTracker = { models: new Set(), records: 0 };
+    const record = {
+      ...reviewer(),
+      usage: { ...makeRecord().usage!, cost: "calculated" as const },
+    };
+    await enrichCosts([record], pricing, "today", [], tracker);
+    expect(record.cost).toBe(0);
+    expect(record.usage?.cost).toBe("not_exposed");
+    expect(tracker.records).toBe(0);
+  });
+
+  it("prices an opaque model as the model its `as` override names", async () => {
+    const pricing = new PricingService();
+    pricing.seedPricing("gpt-5.6-luna", {
+      inputPerMillion: 0.2,
+      outputPerMillion: 1.2,
+      cacheReadPerMillion: 0.02,
+    });
+    pricing.seedPriceAs("codex-auto-review", "gpt-5.6-luna");
+    const record = {
+      ...reviewer(),
+      usage: { ...makeRecord().usage!, cost: "not_exposed" as const },
+    };
+    await enrichCosts([record], pricing, "today", []);
+    // 14.1456M × $0.20 + 154.895M × $0.02 + (0.118M + 0.057M) × $1.20 ≈ $6.14
+    expect(record.cost).toBeCloseTo(6.137, 2);
+    expect(record.usage?.cost).toBe("calculated");
+    expect((await pricing.getPricingWithSource("codex-auto-review")).source).toEqual({
+      tier: "override",
+      matchedId: "gpt-5.6-luna",
+    });
+  });
+
+  it("an `as` naming an unknown or aliased model stays unpriced", async () => {
+    const pricing = new PricingService();
+    pricing.seedPriceAs("model-a", "nowhere-model-xyz");
+    expect(await pricing.getPricing("model-a")).toBeNull();
+    pricing.seedPricing("real-model", { inputPerMillion: 1, outputPerMillion: 1 });
+    pricing.seedPriceAs("model-b", "model-c");
+    pricing.seedPriceAs("model-c", "real-model");
+    // One hop only: b → c is itself an alias, so b doesn't chain to real-model.
+    expect(await pricing.getPricing("model-b")).toBeNull();
+    expect(await pricing.getPricing("model-c")).not.toBeNull();
+  });
+});
+
 describe("resetCalculatedCosts", () => {
   const withCost = (cost: number, kind: "calculated" | "direct" | undefined): TokenRecord => {
     const base = makeRecord({ cost });
