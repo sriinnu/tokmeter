@@ -48,6 +48,7 @@ struct TokmeterBarView: View {
     /// Top-anchored gradient ripple flashed briefly on theme change so the
     /// transition reads as deliberate, not a glitch.
     @State private var themeRipple: Bool = false
+    @ObservedObject private var restNudge = RestNudgeMonitor.shared
 
     private var maximumPanelHeight: CGFloat {
         min(780, panelVisibility.screenHeight - 32)
@@ -71,6 +72,12 @@ struct TokmeterBarView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .cascadeIn(delay: 0.08)
+
+            // Late-night rest nudge: renders nothing unless a person has been
+            // at the keyboard for a while inside the late window.
+            RestNudgeLine(monitor: restNudge, theme: theme)
+                .padding(.horizontal, 16)
+                .padding(.top, restNudge.isShowing ? 6 : 0)
 
             // Natural height when it fits; PanelStack caps it and it scrolls.
             ScrollView(.vertical, showsIndicators: true) {

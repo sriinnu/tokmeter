@@ -289,10 +289,16 @@ struct ModelsSection: View {
                 // count (e.g. Codex Desktop's SQLite-sourced total) — show
                 // that number rather than an unhelpful "no cost data" when we
                 // actually have real data, just not a priceable one.
-                Text("Unavailable")
-                    .font(.system(size: 9, weight: .medium, design: theme.fonts.bodyDesign))
+                // "Unavailable" wrapped to "Unavailabl / e" in the 56pt cost
+                // column. An em dash in the dollar column's font keeps the
+                // column aligned; VoiceOver and the hover help say what it means.
+                Text("—")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                    .lineLimit(1)
                     .frame(width: 56, alignment: .trailing)
+                    .help("Price unavailable")
+                    .accessibilityLabel("Price unavailable")
             } else {
                 Text(Fmt.money(model.cost))
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))

@@ -45,7 +45,7 @@ function Overview({ data }: { data: TokmeterData }) {
           storageKey="tokmeter.range.overview"
         />
         <div className="grid gap-5 lg:grid-cols-2">
-          <TodayCard insights={insights} records={data.records} />
+          <TodayCard insights={insights} records={data.records} timeOfDay={data.timeOfDay} />
           <ProvidersCard insights={insights} />
           <ModelsCard insights={insights} />
           <TopProjectsCard insights={insights} />

@@ -138,6 +138,11 @@ describe("aggregate summary queries", () => {
     expect(summary.meta.warnings[0].message).toBe("fixture source warning");
     expect(summary.signals).toBeUndefined();
     expect(core.getSummary().signals).toBeDefined();
+    // Every unfiltered summary carries the busiest-hours profile at the top
+    // level, whichever server built it; a filtered one has no daily curve.
+    expect(core.getSummary().timeOfDay).toEqual(core.getSummary().signals?.timeOfDay);
+    expect(core.getSummary().timeOfDay).toBeDefined();
+    expect(summary.timeOfDay).toBeUndefined();
   });
 
   test("calendar week includes the whole first day and does not depend on hours elapsed", () => {

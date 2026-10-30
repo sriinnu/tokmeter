@@ -94,6 +94,29 @@ export interface TokmeterScanMeta {
   warnings: TokmeterScanWarning[];
 }
 
+/** One 3-hour local block of the daemon's time-of-day profile (share of COST). */
+export interface TokmeterTimeOfDayBlock {
+  startHour: number;
+  endHour: number;
+  cost: number;
+  share: number;
+}
+
+/**
+ * Share of cost per 3-hour block over the last 30 sealed days, computed by the
+ * daemon from the relay's hourly cost curves (core `computeTimeOfDayProfile`).
+ */
+export interface TokmeterTimeOfDay {
+  status: "ok" | "insufficient";
+  windowDays: number;
+  minDays: number;
+  daysCounted: number;
+  daysSkipped: number;
+  totalCost: number;
+  blocks: TokmeterTimeOfDayBlock[];
+  peak: TokmeterTimeOfDayBlock | null;
+}
+
 export interface TokmeterData {
   records: Array<Record<string, unknown>>;
   projects: TokmeterProjectSummary[];
@@ -101,6 +124,8 @@ export interface TokmeterData {
   daily: TokmeterDailyEntry[];
   stats: TokmeterStats;
   meta: TokmeterScanMeta;
+  /** Absent from older daemons and static exports; the strip says so. */
+  timeOfDay?: TokmeterTimeOfDay;
 }
 
 export type TokmeterSummarySource = "live-api" | "cached-api" | "static-cache" | "memory-cache";
@@ -282,7 +307,7 @@ function detectSummarySource(endpoint: string, response: Response): TokmeterSumm
   return response.headers.get(SUMMARY_SOURCE_HEADER) === "cache" ? "cached-api" : "live-api";
 }
 
-function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
+export function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
   return {
     records: Array.isArray(input.records) ? input.records : [],
     projects: Array.isArray(input.projects)
@@ -292,6 +317,9 @@ function normalizeTokmeterData(input: Partial<TokmeterData>): TokmeterData {
     daily: Array.isArray(input.daily) ? input.daily.map((entry) => normalizeDailyEntry(entry)) : [],
     stats: normalizeStats(input.stats),
     meta: normalizeMeta(input.meta),
+    // Shape-checked where it's read (buildTimeOfDayView); dropping it here
+    // left the dashboard's busiest-hours strip permanently "missing".
+    timeOfDay: input.timeOfDay,
   };
 }
 

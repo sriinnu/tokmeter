@@ -549,6 +549,46 @@ export interface StatbarSignals {
     /** Cost of the single most-recent record (for context-of-glance). */
     lastRecordCost: number;
   } | null;
+  /**
+   * Busiest time of day over the last 30 sealed days, as share of COST per
+   * 3-hour local block. Optional: older daemons don't send it.
+   */
+  timeOfDay?: TimeOfDayProfile;
+}
+
+/** One 3-hour local-time block of the time-of-day profile. */
+export interface TimeOfDayBlock {
+  /** Local hour the block starts at (0, 3, … 21). */
+  startHour: number;
+  /** Local hour the block ends at, exclusive (3, 6, … 24). */
+  endHour: number;
+  /** USD summed over the window's counted days. */
+  cost: number;
+  /** cost / totalCost, 0…1. The eight shares sum to 1. */
+  share: number;
+}
+
+/**
+ * Share of cost per 3-hour block over the last `windowDays` sealed days
+ * (today excluded), read from the relay's `costByHour` curves. Days without a
+ * usable curve are skipped (`daysSkipped`), never counted as $0. Cost, not
+ * tokens: the sealed ledger only keeps an hourly curve for cost.
+ */
+export interface TimeOfDayProfile {
+  /** "insufficient" when fewer than `minDays` days carried a curve with spend. */
+  status: "ok" | "insufficient";
+  windowDays: number;
+  minDays: number;
+  /** Days in the window that fed the split (curve present and spend > 0). */
+  daysCounted: number;
+  /** Days in the window whose curve was missing or didn't reconcile with the day's cost. */
+  daysSkipped: number;
+  /** USD across the counted days; 0 when insufficient. */
+  totalCost: number;
+  /** Eight blocks 00–03 … 21–24 when ok; empty when insufficient. */
+  blocks: TimeOfDayBlock[];
+  /** The block with the largest cost share; null when insufficient. */
+  peak: TimeOfDayBlock | null;
 }
 
 /** Full serialisable summary payload used by web/CLI/API consumers. */
@@ -561,6 +601,11 @@ export interface TokmeterSummary {
   meta: ScanMeta;
   /** Optional — present when computed (daemon API includes it). */
   signals?: StatbarSignals;
+  /**
+   * Optional — the same time-of-day profile as `signals.timeOfDay`, on every
+   * unfiltered summary, so the web dashboard reads one source.
+   */
+  timeOfDay?: TimeOfDayProfile;
 }
 
 /** Options for the TokmeterCore constructor. */
