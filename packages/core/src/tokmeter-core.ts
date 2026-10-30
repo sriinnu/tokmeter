@@ -17,7 +17,12 @@ import {
   computeStatsFromState,
 } from "./aggregate-consumers.js";
 import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
-import { DailyAccumulator, sealRolledOverDay } from "./aggregates-store.js";
+import {
+  DailyAccumulator,
+  dayFileMtime,
+  readDayFile,
+  sealRolledOverDay,
+} from "./aggregates-store.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
 import {
@@ -102,6 +107,14 @@ export class TokmeterCore {
   // can refresh it), so by the midnight tick the registry has usually moved
   // on from the one that priced the outgoing day — see pricesForSeal.
   private lastPricedCards: { date: string; prices: DayPrices } | null = null;
+  // Past days whose seal waits on a scan that reads them cleanly: a provider
+  // fault that may hide their records held it. Each keeps the accumulator it
+  // ran on, the straggler floor of its rollover tick and the cards it was
+  // priced with, and stays readable from memory while today runs live.
+  private heldSeals = new Map<
+    string,
+    { acc: DailyAccumulator; floor: number; prices: DayPrices | undefined }
+  >();
   // Last records of files that vanished today, so the day only grows.
   private readonly todayJournal: TodayJournal;
   private pricing: PricingService;
@@ -236,7 +249,6 @@ export class TokmeterCore {
           ...todayRecords,
         ]
       : todayRecords;
-    const outgoing = this.todayAccumulator?.date;
     const sealPrices = await this.pricesForSeal(
       referenceTimestamp,
       scannedToday.stragglers,
@@ -248,9 +260,9 @@ export class TokmeterCore {
       referenceTimestamp,
       scannedToday.stragglers,
       sealPrices,
-      !options?.providers?.length &&
-        !(outgoing !== undefined && warningsBlockDay(todayWarnings, outgoing))
+      (date) => !options?.providers?.length && !warningsBlockDay(todayWarnings, date)
     );
+    todayWarnings.push(...this.heldSealWarnings());
     if (!options?.providers?.length) this.lastTickStartedAt = referenceTimestamp;
 
     const hasExplicitRange = Boolean(
@@ -352,22 +364,25 @@ export class TokmeterCore {
     }
 
     const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
-    const sealingDate =
-      this.todayAccumulator.date < localDateKey(now) ? this.todayAccumulator.date : null;
-    // Only a fault that can hide the outgoing day's records may hold its seal;
-    // any other fault (a broken file not written since before that day, or
-    // whose unread tail is newer) used to stall the rollover indefinitely.
-    const rolloverAuthoritative =
-      sealingDate === null || !warningsBlockDay(todayWarnings, sealingDate);
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
     this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
-    this.refreshTodayAccumulator(today, now, stragglers, sealPrices, rolloverAuthoritative);
+    // Only a fault that can hide a past day's records may hold its seal; any
+    // other fault (a broken file not written since before that day, or whose
+    // unread tail is newer) used to stall the rollover indefinitely.
+    const sealed = this.refreshTodayAccumulator(
+      today,
+      now,
+      stragglers,
+      sealPrices,
+      (date) => !warningsBlockDay(todayWarnings, date)
+    );
+    todayWarnings.push(...this.heldSealWarnings());
     this.lastTickStartedAt = now;
-    if (rolloverAuthoritative && sealingDate && this.aggregates.has(sealingDate)) {
+    if (sealed.length > 0) {
       // Off the tick: the walk is async and budgeted, and a failure must never
       // touch the seal that just happened.
       const readFiles = [...this.recentRecords, ...stragglers].map((r) => r.sourceFile ?? "");
-      void this.checkSealedDayCoverage(sealingDate, readFiles);
+      for (const date of sealed) void this.checkSealedDayCoverage(date, readFiles);
     }
 
     this.scanMeta = {
@@ -415,12 +430,24 @@ export class TokmeterCore {
    * 300 s and the first post-midnight tick sealed at 00:00:04.
    */
   private stragglerFloor(now: number): number {
-    const todayStart = startOfLocalDay(now);
+    // A held day is re-read from its own rollover floor on every tick until it
+    // seals, so the records that tick found still reach the seal.
+    let floor = startOfLocalDay(now);
+    for (const held of this.heldSeals.values()) floor = Math.min(floor, held.floor);
     const prev = this.todayAccumulator;
-    if (!prev || prev.date >= localDateKey(now)) return todayStart;
+    if (!prev || prev.date >= localDateKey(now)) return floor;
     const outgoingStart = startOfLocalDay(new Date(`${prev.date}T00:00:00`).getTime());
     const lastTick = this.lastTickStartedAt ?? outgoingStart;
-    return Math.max(outgoingStart, Math.min(lastTick, todayStart));
+    return Math.min(floor, Math.max(outgoingStart, Math.min(lastTick, startOfLocalDay(now))));
+  }
+
+  /** One notice per held day, so a surface can say why it isn't sealed yet. */
+  private heldSealWarnings(): ScanWarning[] {
+    return [...this.heldSeals.keys()].map((date) => ({
+      scope: "today" as const,
+      notice: true,
+      message: `${date} is not sealed yet: a provider fault may hide some of its records. It is kept in memory and seals on the first tick that reads it cleanly.`,
+    }));
   }
 
   private sliceRecent(records: TokenRecord[], referenceTimestamp: number): TokenRecord[] {
@@ -465,13 +492,14 @@ export class TokmeterCore {
     }
   }
 
+  /** Returns the days this call sealed to disk. */
   private refreshTodayAccumulator(
     todayRecords: TokenRecord[],
     referenceTimestamp: number,
     stragglers: TokenRecord[] = [],
-    sealPrices?: DayPrices,
-    allowRolloverSeal = true
-  ): void {
+    sealPrices: DayPrices | undefined,
+    canSeal: (date: string) => boolean
+  ): string[] {
     const todayKey = localDateKey(referenceTimestamp);
 
     // Seal-on-rollover. If the daemon ran across midnight, the outgoing
@@ -479,31 +507,67 @@ export class TokmeterCore {
     // the day survives even if its raw JSONL is later deleted, instead of
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
-    if (prev && prev.date < todayKey && !allowRolloverSeal) {
-      // Keep the outgoing accumulator alive so the next authoritative tick can
-      // retry. Replacing it with today's partial scan would make the missed day
-      // dependent on a later process restart and raw-data retention.
-      return;
+    if (prev && prev.date < todayKey && !this.heldSeals.has(prev.date)) {
+      this.heldSeals.set(prev.date, {
+        acc: prev,
+        floor: this.stragglerFloor(referenceTimestamp),
+        prices: sealPrices,
+      });
     }
-    if (prev) {
-      // Re-derive the outgoing day from a DEDUPED aggregation of its records
-      // rather than folding stragglers into the accumulator. `prev` is built
-      // via hydrate(), which clears the fingerprint set — so folding a
-      // straggler that was already counted before midnight would double-count
-      // it into the immutable sealed day. Instead, aggregate the union of the
+
+    const sealedNow: string[] = [];
+    const dates = [...this.heldSeals.keys()].sort();
+    for (const date of dates) {
+      const held = this.heldSeals.get(date);
+      if (!held) continue;
+      if (date >= todayKey) {
+        // The clock stepped back past it: the live accumulator owns the day.
+        this.heldSeals.delete(date);
+        continue;
+      }
+      if (dayFileMtime(this.homeDir, date) !== null) {
+        // Sealed meanwhile by a gap fill or another process: the file wins.
+        const onDisk = readDayFile(this.homeDir, date);
+        if (onDisk) this.aggregates.set(date, onDisk);
+        this.heldSeals.delete(date);
+        continue;
+      }
+      // Re-derive the day from a DEDUPED aggregation of its records rather
+      // than folding stragglers into the accumulator. It is built via
+      // hydrate(), which clears the fingerprint set — so folding a straggler
+      // that was already counted before midnight would double-count it into
+      // the immutable sealed day. Instead, aggregate the union of the
       // last-seen recent records + freshly-scanned stragglers for that day;
       // aggregateRecordsByDay dedups by fingerprint, so an already-counted
       // record collapses (no double-count) while a genuinely late record is
       // still captured (no loss). Falls back to the accumulator's own totals
       // if no records for the day are in memory.
-      const outgoing = [...this.recentRecords, ...stragglers].filter(
-        (r) => localDateKey(r.timestamp) === prev.date
+      const records = [...this.recentRecords, ...stragglers].filter(
+        (r) => localDateKey(r.timestamp) === date
       );
-      const derived = aggregateRecordsByDay(outgoing).find((d) => d.date === prev.date);
-      const toSeal = new DailyAccumulator(prev.date);
-      toSeal.hydrate(derived ?? prev.toAggregate());
-      const sealed = sealRolledOverDay(this.homeDir, toSeal, todayKey, sealPrices);
-      if (sealed) this.aggregates.set(sealed.date, sealed);
+      const derived = aggregateRecordsByDay(records).find((d) => d.date === date);
+      const ran = held.acc.toAggregate();
+      const day = new DailyAccumulator(date);
+      // Grow-only: a day held past the recent window keeps only its late
+      // records in memory, and those alone would seal it short.
+      day.hydrate(derived && derived.totalTokens >= ran.totalTokens ? derived : ran);
+      if (!canSeal(date)) {
+        // A fault may hide some of this day's records. Holding the seal used
+        // to hold today too: the accumulator stayed on the outgoing day, so
+        // "today" read yesterday's numbers and today's usage went uncounted
+        // (2026-10-30: a Copilot scan crash kept 10-29 as today until 09:23).
+        // Keep the day readable from memory and let today run.
+        this.aggregates.set(date, day.toAggregate());
+        continue;
+      }
+      const sealed = sealRolledOverDay(this.homeDir, day, todayKey, held.prices);
+      if (sealed) {
+        this.aggregates.set(sealed.date, sealed);
+        sealedNow.push(sealed.date);
+      } else {
+        this.aggregates.delete(date); // an empty day has nothing to seal
+      }
+      this.heldSeals.delete(date);
     }
 
     // Never let a day live in BOTH the sealed-aggregates map and the live
@@ -518,6 +582,7 @@ export class TokmeterCore {
     const acc = new DailyAccumulator(todayKey);
     if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
     this.todayAccumulator = acc;
+    return sealedNow;
   }
 
   // ─── Read API — delegators to aggregate-consumers + signals ──────────────

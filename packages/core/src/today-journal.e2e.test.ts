@@ -23,11 +23,12 @@ const realHome = process.env.HOME;
 const scratchHome = mkdtempSync(join(tmpdir(), "tokmeter-grow-only-cache-"));
 let TokmeterCore: typeof Core;
 let writeDayFile: typeof import("./aggregates-store.js").writeDayFile;
+let readDayFile: typeof import("./aggregates-store.js").readDayFile;
 
 beforeAll(async () => {
   process.env.HOME = scratchHome;
   ({ TokmeterCore } = await import("./tokmeter-core.js"));
-  ({ writeDayFile } = await import("./aggregates-store.js"));
+  ({ writeDayFile, readDayFile } = await import("./aggregates-store.js"));
 });
 afterAll(() => {
   process.env.HOME = realHome;
@@ -181,12 +182,15 @@ describe("grow-only today", () => {
 
     vi.setSystemTime(at("2026-10-21T00:00:12"));
     await daemon.refreshToday(at("2026-10-21T00:00:12"));
-    expect(daemon.getDailyAggregates().some((day) => day.date === "2026-10-20")).toBe(false);
+    // Held: nothing reaches the immutable relay, and today runs live meanwhile.
+    expect(readDayFile(home, "2026-10-20")).toBeNull();
+    expect(daemon.getTodayAggregate()?.date).toBe("2026-10-21");
 
     appendFileSync(path, lateLine.slice(split));
     await daemon.refreshToday(at("2026-10-21T00:00:24"));
     const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-20");
     expect(sealed?.totalTokens).toBe(810);
+    expect(readDayFile(home, "2026-10-20")?.totalTokens).toBe(810);
   });
 
   test("a provider-filtered midnight scan defers sealing until a full retry", async () => {
@@ -199,11 +203,14 @@ describe("grow-only today", () => {
 
     vi.setSystemTime(at("2026-10-21T00:00:12"));
     await daemon.scan({ today: true, providers: ["codex"] });
-    expect(daemon.getDailyAggregates().some((day) => day.date === "2026-10-20")).toBe(false);
+    // Held: nothing reaches the immutable relay, and today runs live meanwhile.
+    expect(readDayFile(home, "2026-10-20")).toBeNull();
+    expect(daemon.getTodayAggregate()?.date).toBe("2026-10-21");
 
     utimesSync(late, new Date(at("2026-10-21T00:00:20")), new Date(at("2026-10-21T00:00:20")));
     await daemon.refreshToday(at("2026-10-21T00:00:24"));
     const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-20");
     expect(sealed?.totalTokens).toBe(810);
+    expect(readDayFile(home, "2026-10-20")?.totalTokens).toBe(810);
   });
 });
