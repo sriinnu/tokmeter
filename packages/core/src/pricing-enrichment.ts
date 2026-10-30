@@ -19,8 +19,10 @@ import type { ScanWarning, TokenRecord } from "./types.js";
  * Models whose provider intentionally hides the underlying routed model, so
  * we can't price them even with a fresh kosha. Treat these as known-opaque:
  * cost still resolves to $0 and is marked not exposed (we honestly don't
- * know, so the surfaces show "—"), but suppress the unpriced-leak signal — otherwise the bar's amber pill cries wolf on every
- * scan and the kosha wishlist begs for an entry that will never exist.
+ * know, so the surfaces show "—"), but suppress the unpriced-leak signal —
+ * otherwise the bar's amber pill cries wolf on every scan and the kosha
+ * wishlist begs for an entry that will never exist. A user who decides what
+ * the model most likely is can price it with an `{ "as": … }` override.
  *
  * Codex CLI's auto-review pipeline ("codex-auto-review") is the canonical
  * case: codex writes this literal string into rollout JSONL when OpenAI's
