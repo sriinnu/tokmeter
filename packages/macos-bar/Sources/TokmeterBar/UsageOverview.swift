@@ -22,6 +22,11 @@ struct UsageOverview: View {
         let customDisclosure = theme.skin?.spec.disclosureLabel(expanded: showUsageDetails, theme: theme)
         VStack(alignment: .leading, spacing: 16) {
             QuotaSection(windows: loader.quotaWindows, theme: theme)
+            // "Busiest 15–18 · 25% of 30-day cost"; nothing when the daemon
+            // is older or there aren't 7 days with an hourly curve yet.
+            if loader.statbarSignals?.timeOfDay?.busiestLine != nil {
+                BusiestHoursLine(profile: loader.statbarSignals?.timeOfDay, theme: theme)
+            }
             if !loader.topModels.isEmpty || !loader.todayModels.isEmpty || loader.isWarming {
                 ModelsSection(loader: loader, theme: theme, showRates: showRates)
             }

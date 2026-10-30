@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  computeTimeOfDayProfile,
   loadSummaryCache,
   saveSummaryCache,
   TokmeterCore,
@@ -70,7 +71,10 @@ async function main(): Promise<void> {
     try {
       const core = new TokmeterCore();
       await core.scan();
-      summary = core.getSummary();
+      summary = {
+        ...core.getSummary(),
+        timeOfDay: computeTimeOfDayProfile(core.getDailyAggregates(), Date.now()),
+      };
       saveSummaryCache(homeDir, summary);
     } catch (error) {
       if (existingFile) {

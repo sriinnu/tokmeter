@@ -13,6 +13,8 @@ struct TokmeterBarApp: App {
 
     init() {
         AppTheme.migrateStoredPreference()
+        // Once-a-minute idle sampling for the late-night rest nudge.
+        RestNudgeMonitor.shared.start()
     }
 
     var body: some Scene {

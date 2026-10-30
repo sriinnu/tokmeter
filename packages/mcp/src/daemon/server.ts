@@ -30,6 +30,7 @@ import { homedir, setPriority } from "node:os";
 import { join } from "node:path";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import {
+  computeTimeOfDayProfile,
   loadConfig,
   localDateKey,
   nullMap,
@@ -875,7 +876,13 @@ async function getHttpSummaryPayload(): Promise<{
   try {
     const core = await getHttpCore();
     return {
-      summary: core.getSummary(),
+      // The web dashboard's 3-hour cost split: the same sealed-relay profile
+      // /api/statbar-signals carries, attached here so the dashboard (which
+      // only proxies /api/summary) reads one source instead of re-deriving it.
+      summary: {
+        ...core.getSummary(),
+        timeOfDay: computeTimeOfDayProfile(core.getDailyAggregates(), Date.now()),
+      },
       source: "live",
     };
   } catch (error) {

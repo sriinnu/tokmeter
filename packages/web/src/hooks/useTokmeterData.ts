@@ -94,6 +94,29 @@ export interface TokmeterScanMeta {
   warnings: TokmeterScanWarning[];
 }
 
+/** One 3-hour local block of the daemon's time-of-day profile (share of COST). */
+export interface TokmeterTimeOfDayBlock {
+  startHour: number;
+  endHour: number;
+  cost: number;
+  share: number;
+}
+
+/**
+ * Share of cost per 3-hour block over the last 30 sealed days, computed by the
+ * daemon from the relay's hourly cost curves (core `computeTimeOfDayProfile`).
+ */
+export interface TokmeterTimeOfDay {
+  status: "ok" | "insufficient";
+  windowDays: number;
+  minDays: number;
+  daysCounted: number;
+  daysSkipped: number;
+  totalCost: number;
+  blocks: TokmeterTimeOfDayBlock[];
+  peak: TokmeterTimeOfDayBlock | null;
+}
+
 export interface TokmeterData {
   records: Array<Record<string, unknown>>;
   projects: TokmeterProjectSummary[];
@@ -101,6 +124,8 @@ export interface TokmeterData {
   daily: TokmeterDailyEntry[];
   stats: TokmeterStats;
   meta: TokmeterScanMeta;
+  /** Absent from older daemons and static exports; the strip says so. */
+  timeOfDay?: TokmeterTimeOfDay;
 }
 
 export type TokmeterSummarySource = "live-api" | "cached-api" | "static-cache" | "memory-cache";

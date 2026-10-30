@@ -20,6 +20,7 @@ import {
 } from "../../components/ui/table.js";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group.js";
 import { useStoredState } from "../../hooks/useStoredState.js";
+import type { TokmeterTimeOfDay } from "../../hooks/useTokmeterData.js";
 import { localDateKey } from "../../lib/dates.js";
 import {
   formatCompact,
@@ -30,6 +31,7 @@ import {
 } from "../../lib/format.js";
 import { buildTodayDial, buildTypicalDay, OTHER_KEY } from "../../lib/today-dial.js";
 import type { DashboardInsights } from "./buildDashboardInsights.js";
+import { TimeOfDayStrip } from "./TimeOfDayStrip.js";
 
 const VIEWS = ["dial", "bars", "table"] as const;
 type View = (typeof VIEWS)[number];
@@ -43,9 +45,12 @@ const isView = (value: string): value is View => (VIEWS as readonly string[]).in
 export function TodayCard({
   insights,
   records,
+  timeOfDay,
 }: {
   insights: DashboardInsights;
   records: Array<Record<string, unknown>>;
+  /** The daemon's 30-day cost share per 3-hour block; absent from older daemons. */
+  timeOfDay?: TokmeterTimeOfDay;
 }) {
   const today = insights.today;
   const [view, setView] = useStoredState<View>("tokmeter.today.view", "dial", isView);
@@ -130,6 +135,7 @@ export function TodayCard({
           ) : (
             <p className="text-sm text-muted-foreground">No models yet today.</p>
           )}
+          <TimeOfDayStrip profile={timeOfDay} />
         </div>
       </CardContent>
     </Card>

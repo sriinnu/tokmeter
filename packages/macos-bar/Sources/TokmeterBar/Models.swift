@@ -448,6 +448,9 @@ struct StatbarSignals: Codable, Equatable {
     let toolCallsToday: ToolCallsToday
     let billingWindow: BillingWindow?
     let liveSession: LiveSession?
+    /// Busiest 3-hour block over the last 30 sealed days (share of cost).
+    /// Optional: older daemons don't send it, and the line hides.
+    var timeOfDay: TimeOfDayProfile? = nil
 }
 
 struct ProjectDetailData: Codable {

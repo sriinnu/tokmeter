@@ -15,6 +15,9 @@ struct SettingsPopover: View {
     @ObservedObject var loader: TokmeterLoader
     @ObservedObject private var configStore = HubConfigStore.shared
     @ObservedObject private var dashboard = WebDashboardController.shared
+    @AppStorage(RestNudgeDefaults.enabled) private var restNudgeEnabled = true
+    @AppStorage(RestNudgeDefaults.startHour) private var restNudgeStart = LateWindow.defaultStart
+    @AppStorage(RestNudgeDefaults.endHour) private var restNudgeEnd = LateWindow.defaultEnd
 
     private var paper: Bool { theme == .paper }
     private var mode: BackgroundMode { theme.backgroundMode }
@@ -72,6 +75,10 @@ struct SettingsPopover: View {
             rule
 
             pricingRefreshRow
+
+            rule
+
+            restNudgeRow
 
             rule
 
@@ -170,6 +177,63 @@ struct SettingsPopover: View {
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
+    }
+
+    // MARK: - Rest nudge row
+
+    /// On/off plus the late window. The nudge reads keyboard/mouse idle time
+    /// only, so agents running unattended never trigger it.
+    private var restNudgeRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Late-night rest nudge")
+                        .font(f(11))
+                    Text("Only when you're at the keyboard late, not when agents run alone.")
+                        .font(f(9))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("Late-night rest nudge", isOn: $restNudgeEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+            }
+            if restNudgeEnabled {
+                HStack(spacing: 4) {
+                    Text("Late hours")
+                        .font(f(10))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    hourPicker("Late hours start", selection: $restNudgeStart)
+                    Text("to").font(f(10)).foregroundColor(.secondary)
+                    hourPicker("Late hours end", selection: $restNudgeEnd)
+                }
+                if restNudgeStart == restNudgeEnd {
+                    Text("Start and end match, so the window is empty and the nudge never shows.")
+                        .font(f(9))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .onChange(of: restNudgeEnabled) { _, _ in RestNudgeMonitor.shared.tick() }
+        .onChange(of: restNudgeStart) { _, _ in RestNudgeMonitor.shared.tick() }
+        .onChange(of: restNudgeEnd) { _, _ in RestNudgeMonitor.shared.tick() }
+    }
+
+    private func hourPicker(_ label: String, selection: Binding<Int>) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(0..<24, id: \.self) { h in
+                Text(String(format: "%02d:00", h)).tag(h)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.mini)
+        .font(f(10))
+        .frame(width: 74)
     }
 
     // MARK: - Pricing refresh row

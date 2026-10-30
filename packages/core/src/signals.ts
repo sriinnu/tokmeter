@@ -10,6 +10,7 @@
 import type { DailyAggregate } from "./aggregates.js";
 import { modelCostBasis, summarizeCostBasis } from "./cost-basis.js";
 import { localDateKey } from "./date-utils.js";
+import { computeTimeOfDayProfile } from "./time-of-day.js";
 import type { StatbarSignals, TokenRecord } from "./types.js";
 import { deriveUsage, sumUsage } from "./usage.js";
 
@@ -516,5 +517,7 @@ export function computeStatbarSignals(
     toolCallsToday,
     billingWindow,
     liveSession,
+    // Same sealed relay curves pace reads; today is excluded inside.
+    timeOfDay: computeTimeOfDayProfile(recentAggregates, now),
   };
 }
