@@ -224,6 +224,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--copilot-cli":
         args.providers = [...(args.providers || []), "copilot-cli" as ProviderId];
         break;
+      case "--deepseek-harness":
+        args.providers = [...(args.providers || []), "deepseek-harness" as ProviderId];
+        break;
       case "--ribhu":
         args.providers = [...(args.providers || []), "ribhu" as ProviderId];
         break;
@@ -372,6 +375,7 @@ Other Filters:
   --cline         Only Cline
   --augment       Only Augment
   --copilot-cli   Only Copilot CLI
+  --deepseek-harness  Only DeepSeek Harness
   --ribhu         Only Ribhu (custom source)
   --chitragupta   Only Chitragupta (custom source)
   --grok          Only Grok (custom source)
