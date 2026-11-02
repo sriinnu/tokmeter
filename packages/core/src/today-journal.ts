@@ -109,6 +109,7 @@ const STABLE_RECORD_IDS = new Set<ProviderId>([
   "codex",
   "kimi",
   "copilot-cli",
+  "deepseek-harness",
   "muse",
 ]);
 

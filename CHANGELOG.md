@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- DeepSeek Harness (the desktop app) is tracked: its zstd-compressed session
+  logs under `~/.dsh/sessions` now count by model, project and day, and
+  `--deepseek-harness` filters to them. Run
+  `tokmeter backfill --deepseek-harness` to add past days. The harness logs no
+  usage for its title and web-search requests, so those stay uncounted.
+
 ## [1.19.8] - 2026-10-30
 
 ### Fixed

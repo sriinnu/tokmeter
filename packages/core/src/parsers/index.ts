@@ -13,6 +13,7 @@ import { CodexDesktopParser } from "./codex-desktop.js";
 import { CopilotCliParser } from "./copilot-cli.js";
 import { CursorParser } from "./cursor.js";
 import { CustomSourceParser } from "./custom-source.js";
+import { DeepSeekHarnessParser } from "./deepseek-harness.js";
 import { DroidParser } from "./droid.js";
 import { GeminiParser } from "./gemini.js";
 import { KiloParser } from "./kilo.js";
@@ -54,6 +55,7 @@ export const ALL_PARSERS: SessionParser[] = [
   new ClineParser(),
   new AugmentParser(),
   new CopilotCliParser(),
+  new DeepSeekHarnessParser(),
   new CustomSourceParser(),
   new SyntheticParser(),
 ];

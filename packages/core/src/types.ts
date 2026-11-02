@@ -27,6 +27,7 @@ export type ProviderId =
   | "cline"
   | "augment"
   | "copilot-cli"
+  | "deepseek-harness"
   // Agents with no native on-disk usage telemetry yet: they surface through a
   // configured custom source (see CustomSourceParser) once they emit the
   // canonical usage-line format. `custom` is the catch-all for any other

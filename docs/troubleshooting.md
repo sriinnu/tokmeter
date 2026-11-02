@@ -98,7 +98,7 @@ database thread that disappears and counts it until midnight. If it still
 drops, check you're on 1.17.1 (`tokmeter --version`) and that the daemon was
 restarted after the upgrade, and whether the tool rewrote the file smaller
 rather than deleting it (a rewind or a deleted message). Since 1.18.0 that's
-covered for Claude Code, Codex, Kimi, Copilot CLI and Muse, not for Cline,
+covered for Claude Code, Codex, Kimi, Copilot CLI, DeepSeek Harness and Muse, not for Cline,
 Roo, Kilo, Gemini or Qwen. What was kept is in
 `~/.cache/tokmeter/today/<date>.json`.
 

@@ -178,6 +178,7 @@ struct HubCrossToolCard: View {
         case "cline":                         return "chevron.left.forwardslash.chevron.right"
         case "augment":                       return "a.square.fill"
         case "copilot-cli":                  return "airplane"
+        case "deepseek-harness":             return "water.waves"
         case "ribhu":                         return "hammer.fill"
         case "chitragupta":                   return "arrow.triangle.branch"
         default:                              return "waveform.circle"
