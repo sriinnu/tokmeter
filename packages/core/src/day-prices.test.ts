@@ -14,8 +14,15 @@ import {
   sealRolledOverDay,
   writeDayFile,
 } from "./aggregates-store.js";
-import { attachDayPrices, type DayPrices, impliedPrices } from "./day-prices.js";
-import { costFromCard, type PriceCard, PricingService } from "./pricing.js";
+import {
+  attachDayPrices,
+  type CardSource,
+  type DayPrices,
+  impliedPrices,
+  priceCardsFor,
+  priceWithCard,
+} from "./day-prices.js";
+import { costFromCard, type PriceCard, PricingService, ratesAt } from "./pricing.js";
 import { backfillProviderIntoRelay, rebuildRecentWindow } from "./relay-loader.js";
 import type { ScanContext } from "./scan-pipeline.js";
 import type { ScanWarning, TokenRecord } from "./types.js";
@@ -322,5 +329,81 @@ describe("costFromCard is calculateCost's arithmetic", () => {
     expect(await ps.calculateCost("claude-sonnet-test", ...args)).toBe(
       costFromCard("claude-sonnet-test", c, ...args)
     );
+  });
+});
+
+describe("time-of-day rates", () => {
+  const card: PriceCard = {
+    inputPerMillion: 0.3,
+    outputPerMillion: 1.2,
+    cacheReadPerMillion: 0.006,
+    schedule: {
+      offPeak: { inputPerMillion: 0.15, outputPerMillion: 0.6, cacheReadPerMillion: 0.003 },
+      peakWindows: [
+        { days: [1, 2, 3, 4, 5], startHourUtc: 1, endHourUtc: 4 },
+        { days: [1, 2, 3, 4, 5], startHourUtc: 6, endHourUtc: 10 },
+      ],
+      source: "https://example.test",
+    },
+  };
+  const at = (iso: string) => ratesAt(card, Date.parse(iso)).inputPerMillion;
+
+  test("charges peak rates only inside a window on a weekday", () => {
+    expect(at("2026-11-03T09:59:59Z")).toBe(0.3); // Tuesday
+    expect(at("2026-11-03T10:00:00Z")).toBe(0.15); // the end hour is exclusive
+    expect(at("2026-11-03T05:00:00Z")).toBe(0.15); // between the windows
+    expect(at("2026-11-07T08:00:00Z")).toBe(0.15); // Saturday
+  });
+
+  test("keeps the card's rates for a cost with no moment", () => {
+    expect(ratesAt(card).inputPerMillion).toBe(0.3);
+  });
+
+  test("a real PricingService bills by the time it's given", async () => {
+    const ps = new PricingService();
+    (ps as unknown as { seedPricing(m: string, c: PriceCard): void }).seedPricing("timed", card);
+    const noon = Date.parse("2026-11-03T12:00:00Z");
+    const morning = Date.parse("2026-11-03T08:00:00Z");
+    expect(await ps.calculateCost("timed", 1e6, 0, 0, 0, 0, 0, noon)).toBeCloseTo(0.15);
+    expect(await ps.calculateCost("timed", 1e6, 0, 0, 0, 0, 0, morning)).toBeCloseTo(0.3);
+  });
+
+  test("bills a stored card by the record's own time", () => {
+    const r = {
+      model: "deepseek-flash",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      timestamp: Date.parse("2026-11-03T12:00:00Z"),
+      cost: 0,
+    } as TokenRecord;
+    priceWithCard(r, card);
+    expect(r.cost).toBeCloseTo(0.15);
+  });
+
+  test("keeps the schedule on a stored card but not on an implied one", async () => {
+    const source = {
+      getPricingWithSource: async () => ({ pricing: card, source: { tier: "kosha" } }),
+    } as unknown as CardSource;
+    const stored = await priceCardsFor(["deepseek-flash"], source);
+    expect(stored["deepseek-flash"].card.schedule).toEqual(card.schedule);
+
+    const day = {
+      models: {
+        "deepseek-flash": {
+          cost: 0.2,
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        },
+      },
+    } as unknown as DailyAggregate;
+    const implied = await impliedPrices(day, source);
+    expect(implied["deepseek-flash"].card.schedule).toBeUndefined();
+    expect(implied["deepseek-flash"].card.inputPerMillion).toBeCloseTo(0.2);
   });
 });

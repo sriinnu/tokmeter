@@ -107,7 +107,8 @@ export async function enrichCosts(
         r.cacheReadTokens,
         r.cacheWriteTokens,
         r.reasoningTokens,
-        r.cacheWrite1hTokens ?? 0
+        r.cacheWrite1hTokens ?? 0,
+        r.timestamp
       );
       const hasBillableTokens =
         r.inputTokens +
