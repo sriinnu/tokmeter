@@ -18,7 +18,7 @@
 #   npm trust github <pkg> --repo sriinnu/tokmeter --file publish.yml \
 #     --env release --allow-stage-publish
 #
-# Requires npm >= 11.15 for `npm stage` (11.20.0 installed below).
+# Requires npm >= 11.15 for `npm stage` (11.21.0 installed below).
 #
 # To publish: `bun run release X.Y.Z` → the GitHub release starts this run →
 # approve both staged versions → the MCP-registry job registers the server
@@ -174,7 +174,7 @@ jobs:
       # `npm stage` needs npm >= 11.15, and Node 22 still ships npm 10.
       - name: Upgrade npm for staged publishing
         run: |
-          npm install -g --ignore-scripts npm@11.20.0
+          npm install -g --ignore-scripts npm@11.21.0
           npm --version
 
       - name: Stage verified package artifacts
@@ -242,9 +242,11 @@ jobs:
             # tarball unpacked. --ignore-scripts: the packed package.json keeps
             # its `prepack` (prepare-license-materials.py ../../scripts), which
             # can't run here and must not change what was verified.
+            # --loglevel verbose: npm logs a failed OIDC token exchange only at
+            # verbose, then carries on and reports a bare E401 (v1.20.0).
             stage_dir=$(mktemp -d "$RUNNER_TEMP/tokmeter-stage.XXXXXX")
             tar -xzf "$artifact" --no-same-owner -C "$stage_dir"
-            if ! (cd "$stage_dir/package" && npm stage publish --provenance --access public --ignore-scripts); then
+            if ! (cd "$stage_dir/package" && npm stage publish --provenance --access public --ignore-scripts --loglevel verbose); then
               echo "::error::staging $name@$version failed. If it is already staged, approve it (npm stage approve <id>) or reject it, then re-run." >&2
               exit 1
             fi
