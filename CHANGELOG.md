@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Costs follow DeepSeek's peak and off-peak prices. DeepSeek charges half price
+  outside 01:00–04:00 and 06:00–10:00 UTC on weekdays, and tokmeter applied one
+  rate to the whole day, so a day could be overstated or understated depending
+  on when kosha last refreshed. Each response is now billed at the rate of its
+  own time. Sealed days keep the cost they sealed with. Chinese public holidays,
+  also off-peak, aren't modelled.
+- A long list of kosha pricing warnings no longer prints above every command's
+  output (kosha-discovery 1.12.0).
+
 ## [1.20.0] - 2026-11-02
 
 ### Added

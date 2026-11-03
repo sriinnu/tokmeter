@@ -26,6 +26,7 @@ import {
   type PriceCard,
   type PricingService,
   type PricingSourceTier,
+  ratesAt,
 } from "./pricing.js";
 import type { TokenRecord } from "./types.js";
 
@@ -64,6 +65,9 @@ function billingCard(p: PriceCard, scale = 1): PriceCard {
     const v = p[k];
     if (typeof v === "number" && Number.isFinite(v)) out[k] = v * scale;
   }
+  // A scaled card is an implied one: a flat level that already reproduces the
+  // day's cost. An off-peak discount on top would bill that day twice over.
+  if (p.schedule && scale === 1) out.schedule = p.schedule;
   return out;
 }
 
@@ -124,7 +128,10 @@ export async function impliedPrices(day: DailyAggregate, pricing: CardSource): P
       b.cacheWrite1hTokens ?? 0
     );
     if (!(base > 0)) continue;
-    out[model] = { card: billingCard(card, b.cost / base), source: "implied" };
+    out[model] = {
+      card: billingCard({ ...card, schedule: undefined }, b.cost / base),
+      source: "implied",
+    };
   }
   return out;
 }
@@ -141,7 +148,7 @@ export async function pricesForRebuild(
 export function priceWithCard(r: TokenRecord, card: PriceCard): void {
   r.cost = costFromCard(
     r.model,
-    card,
+    ratesAt(card, r.timestamp),
     r.inputTokens,
     r.outputTokens,
     r.cacheReadTokens,

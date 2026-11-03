@@ -80,6 +80,23 @@ type FullPricing = ModelPricing & {
 };
 
 /**
+ * The rates a card charges at a moment. A card's own rates are the peak ones;
+ * outside its peak windows its off-peak rates replace them. A cost with no
+ * moment (a projection, a what-if) stays at the card's own rates.
+ */
+export function ratesAt(card: FullPricing, timestampMs?: number): FullPricing {
+  const schedule = card.schedule;
+  if (!schedule || timestampMs === undefined) return card;
+  const at = new Date(timestampMs);
+  const day = at.getUTCDay();
+  const hour = at.getUTCHours();
+  const isPeak = schedule.peakWindows.some(
+    (w) => w.days.includes(day) && hour >= w.startHourUtc && hour < w.endHourUtc
+  );
+  return isPeak ? card : { ...card, ...schedule.offPeak };
+}
+
+/**
  * Which resolution tier produced a model's price. Reported alongside the
  * price (never used to compute cost) so the rates panel can say where a
  * number came from.
@@ -741,6 +758,7 @@ export class PricingService {
    * @param cacheWriteTokens - Tokens written to prompt cache (all TTLs).
    * @param reasoningTokens  - Thinking/reasoning tokens (input + output combined).
    * @param cacheWrite1hTokens - Share of cacheWriteTokens written with the 1h TTL.
+   * @param timestampMs      - When the usage happened, for time-of-day rates.
    * @returns Cost in USD, or 0 if no pricing is available.
    */
   async calculateCost(
@@ -750,13 +768,14 @@ export class PricingService {
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
     reasoningTokens = 0,
-    cacheWrite1hTokens = 0
+    cacheWrite1hTokens = 0,
+    timestampMs?: number
   ): Promise<number> {
     const pricing = await this.getPricing(modelId);
     if (!pricing) return 0;
     return costFromCard(
       modelId,
-      pricing,
+      ratesAt(pricing, timestampMs),
       inputTokens,
       outputTokens,
       cacheReadTokens,
@@ -845,6 +864,7 @@ export class PricingService {
       if (v !== undefined && (!Number.isFinite(v) || v < 0)) return null;
     }
     return {
+      ...(p.schedule ? { schedule: p.schedule } : {}),
       inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),
       ...(p.cacheReadPerMillion !== undefined
