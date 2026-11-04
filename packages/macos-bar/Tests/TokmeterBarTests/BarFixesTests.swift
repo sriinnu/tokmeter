@@ -6,6 +6,39 @@ import XCTest
 /// Regression guards for the bar audit fixes: unit boundaries, retired-theme
 /// migration, selected-chip contrast and the auto-start backoff schedule.
 final class BarFixesTests: XCTestCase {
+    private func usage(_ model: String, _ provider: String, cost: Double) -> ModelUsage {
+        ModelUsage(model: model, provider: provider, cost: cost, tokens: 1,
+                   inputTokens: 1, outputTokens: 0, cacheReadTokens: 0,
+                   cacheWriteTokens: 0, reasoningTokens: 0)
+    }
+
+    /// The shape of a real day: DeepSeek did most of its work cheaply and ranks
+    /// below five costlier models from other providers.
+    func testModelListKeepsCheapProviderBelowTheCut() {
+        var models = (0..<9).map { usage("claude-\($0)", "claude-code", cost: Double(20 - $0)) }
+        models.append(usage("deepseek-flash", "deepseek-harness", cost: 1))
+        models.append(usage("deepseek-pro", "deepseek-harness", cost: 0.5))
+        models.append(usage("gpt", "codex", cost: 0.25))
+
+        let names = ModelsSection.rankedWithEveryProvider(models).map(\.model)
+
+        XCTAssertEqual(names, ["claude-0", "claude-1", "claude-2", "claude-3", "claude-4",
+                               "deepseek-flash", "gpt"])
+    }
+
+    func testModelListAddsNothingWhenTopFiveCoverEveryProvider() {
+        let models = (0..<8).map { usage("m\($0)", $0 == 0 ? "codex" : "claude-code", cost: Double(9 - $0)) }
+        XCTAssertEqual(ModelsSection.rankedWithEveryProvider(models).map(\.model),
+                       ["m0", "m1", "m2", "m3", "m4"])
+    }
+
+    /// $0 rows have their own slots below, so they aren't promoted here.
+    func testModelListLeavesZeroCostProviderToItsOwnSlots() {
+        let models = (0..<5).map { usage("m\($0)", "codex", cost: Double(9 - $0)) }
+            + [usage("free", "copilot", cost: 0)]
+        XCTAssertEqual(ModelsSection.rankedWithEveryProvider(models).count, 5)
+    }
+
     func testNumberPicksUnitAfterRounding() {
         XCTAssertEqual(Fmt.number(999), "999")
         XCTAssertEqual(Fmt.number(999_949), "999.9K")
