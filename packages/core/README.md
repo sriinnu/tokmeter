@@ -1,6 +1,6 @@
 # Core API
 
-The engine behind tokmeter. Scans local session files, parses token records from 20+ AI agent formats, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
+The engine behind tokmeter. Scans local session files, parses token records from 24 AI agents and editors, enriches them with model pricing via [`@sriinnu/kosha-discovery`](https://www.npmjs.com/package/@sriinnu/kosha-discovery), and exposes an API for aggregation.
 
 ## Install
 

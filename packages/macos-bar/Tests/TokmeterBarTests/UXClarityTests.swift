@@ -12,11 +12,11 @@ final class UXClarityTests: XCTestCase {
         XCTAssertEqual(Fmt.money(0.056), "$0.056")
         XCTAssertEqual(Fmt.money(0.0004), "<$0.001")
         XCTAssertEqual(Fmt.money(0), "$0.00")
-        // Totals keep their K shorthand; rows don't.
+        // Totals shorten from $1K; rows only from a million.
         XCTAssertEqual(Fmt.cost(85_000), "$85K")
-        XCTAssertEqual(Fmt.money(85_000), "$85,000.00")
+        XCTAssertEqual(Fmt.money(85_000), "$85,000")
         XCTAssertEqual(Fmt.money(1234.5), "$1,234.50")
-        XCTAssertEqual(Fmt.money(250_000), "$250K")
+        XCTAssertEqual(Fmt.money(250_000), "$250,000")
     }
 
     func testCountsAgreeWithTheirNoun() {

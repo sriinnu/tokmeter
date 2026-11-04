@@ -78,7 +78,7 @@ final class StartupTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let hung = try makeToolchain(root: root, name: "hung", script: "exec /bin/sleep 10")
-        let working = try makeToolchain(root: root, name: "working", script: "echo v18.20.0")
+        let working = try makeToolchain(root: root, name: "working", script: "echo v22.20.0")
         // Exercise the production budgets; a one-second override also timed
         // out the healthy child intermittently after native render work.
         let selected = await NodeToolchain.firstSupported(candidates: [hung, working], environment: [:])

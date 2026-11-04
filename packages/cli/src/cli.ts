@@ -280,6 +280,9 @@ Commands:
   daily           Show daily usage over time
   stats           Show overall statistics
   pricing         Show pricing for a model
+  update          Refresh the price catalogs now; today reprices on the next scan
+  routes          Today's tokens priced on every model you've used, cheapest first
+  pricing-audit   JSON: which of today's models resolved a price, and which moved
   digest          Weekly cost digest with trends and tips
                   (aliases: weekly, report)
   backfill        Add a newly supported provider or custom source to
@@ -334,10 +337,10 @@ Config (knobs in ~/.tokmeter/config.json):
 Installer:
   install-statusline   Install statusline hook for ALL editors
   install-mcp          Install MCP server for ALL editors
-  install-cron         Install daily kosha-refresh cron (macOS launchd)
+  install-cron         Install daily price refresh (macOS launchd)
   uninstall-statusline Remove statusline hook from all editors
   uninstall-mcp        Remove MCP server from all editors
-  uninstall-cron       Remove the daily kosha-refresh cron
+  uninstall-cron       Remove the daily price refresh
   cron-status          Show daily-cron install + last-run state
   editors              List all supported editors
 

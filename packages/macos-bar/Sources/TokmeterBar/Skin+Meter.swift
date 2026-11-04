@@ -168,7 +168,7 @@ enum MeterSkin: SkinSpec {
                                                                : "No reading · usage service offline",
                              size: 9, color: Plate.redInk)
                     Text(loader.daemonPhase == .needsNode
-                         ? "Install Node 18+ to run the local service."
+                         ? "Install Node 22+ to run the local service."
                          : "Press ▶ Start below to bring it up.")
                         .font(.system(size: 11))
                         .foregroundColor(Plate.ink)
@@ -397,7 +397,7 @@ enum MeterSkin: SkinSpec {
                 .frame(width: 112, alignment: .leading)
                 LoadBar(share: row.activityOnly ? 0 : row.share)
                 if row.activityOnly {
-                    Engraved("n/a", size: 8.5, color: Plate.muted)
+                    Engraved(Fmt.isFreeModel(row.model.model) ? "free" : "n/a", size: 8.5, color: Plate.muted)
                         .frame(minWidth: 40, alignment: .trailing)
                 } else {
                     DrumWindow(reading: Reading.money(row.model.cost), size: .small, minCells: 3, currency: true)
@@ -409,7 +409,7 @@ enum MeterSkin: SkinSpec {
             .help(row.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
-                ? "\(row.name), cost unavailable"
+                ? "\(row.name), \(Fmt.isFreeModel(row.model.model) ? "free" : "cost unavailable")"
                 : "\(row.name), \(Fmt.money(row.model.cost))")
         }
     }
@@ -466,11 +466,11 @@ private struct Reading {
     let unit: String
     var hasDigits: Bool { !(whole + fraction).isEmpty }
 
-    /// Money for the drums: always dollars and cents, never abbreviated
-    /// below $100k, so $347.21 can't read as 00347 next to 92.21.
+    /// Money for the drums: dollars and cents below $10,000, so $347.21 can't
+    /// read as 00347 next to 92.21. Above that it reads like every other row.
     static func money(_ value: Double?) -> Reading {
         guard let value else { return Reading("—") }
-        if value >= 100_000 { return Reading(Fmt.cost(value)) }
+        if value >= 9_999.995 { return Reading(Fmt.money(value)) }
         return Reading(String(format: "%.2f", value))
     }
 
@@ -576,6 +576,14 @@ private struct DrumWindow: View {
                     .background(wheel(red: cell.red))
                     .clipped()
                 }
+            }
+            // Without its unit, $3.46B would read as $3.46.
+            if currency, !reading.unit.isEmpty {
+                Text(reading.unit)
+                    .font(.system(size: size.font * 0.8, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color(white: 0.85))
+                    .frame(height: size.cell.height)
+                    .padding(.horizontal, 1)
             }
         }
         .padding(size == .tiny ? 2 : 3)
@@ -846,7 +854,7 @@ private struct StatusLamp: View {
         case .warming:
             return (MeterSkin.Plate.ledAmber, "Warming up", "The usage service is reading your session logs.")
         case .needsNode:
-            return (MeterSkin.Plate.ledRed, "Node.js required", "Install Node 18+ to run the local usage service.")
+            return (MeterSkin.Plate.ledRed, "Node.js required", "Install Node 22+ to run the local usage service.")
         case .offline:
             return (MeterSkin.Plate.ledRed, "Offline", "The usage service isn't running. Press ▶ Start below.")
         case .live:

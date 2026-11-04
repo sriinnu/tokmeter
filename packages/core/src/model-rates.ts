@@ -12,7 +12,7 @@
  *   price is ever invented.
  */
 
-import type { PricingService, PricingSource } from "./pricing.js";
+import type { PriceFlag, PricingService, PricingSource } from "./pricing.js";
 import type { ModelSummary, ProviderId } from "./types.js";
 
 export interface Rate {
@@ -28,6 +28,8 @@ export interface ModelRateCard {
   model: string;
   provider: ProviderId;
   source: PricingSource;
+  /** Doubts kosha recorded about this price. Absent when there are none. */
+  priceFlags?: PriceFlag[];
   rates: {
     input: Rate;
     output: Rate;
@@ -141,10 +143,12 @@ export async function computeModelRates(
           ? exact(p.reasoningInputPerMillion)
           : { perMillion: p.outputPerMillion, derived: true, basis: "output rate" };
 
+    const priceFlags = pricing.getPriceFlags(m.model, p);
     cards.push({
       model: m.model,
       provider: m.provider,
       source,
+      ...(priceFlags.length > 0 ? { priceFlags } : {}),
       rates: {
         input: exact(p.inputPerMillion),
         output: exact(p.outputPerMillion),

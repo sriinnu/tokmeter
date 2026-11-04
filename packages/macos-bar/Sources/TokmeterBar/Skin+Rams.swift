@@ -171,7 +171,7 @@ enum RamsSkin: SkinSpec {
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(face)
                     Text(loader.daemonPhase == .needsNode
-                        ? "Install Node 18+ to run the local service."
+                        ? "Install Node 22+ to run the local service."
                         : "No live numbers. Press ▶ Start below.")
                         .font(mono(10.5))
                         .foregroundColor(legend)
@@ -599,7 +599,9 @@ enum RamsSkin: SkinSpec {
                     }
                     .help(row.help)
                     .accessibilityHidden(true)
-                    Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
+                    Text(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "free" : "n/a") : Fmt.money(row.model.cost))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .font(mono(14))
                         .foregroundColor(row.activityOnly ? muted : ink)
                         .frame(width: 64, alignment: .trailing)
@@ -609,7 +611,7 @@ enum RamsSkin: SkinSpec {
             }
             .help(row.help)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.money(row.model.cost))")
+            .accessibilityLabel("\(row.name): \(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "free" : "cost unavailable") : Fmt.money(row.model.cost))")
         }
     }
 
@@ -636,6 +638,8 @@ enum RamsSkin: SkinSpec {
                         .fixedSize()
                     Spacer(minLength: 6)
                     Text(Fmt.money(project.totalCost))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .font(mono(14))
                         .foregroundColor(ink)
                         .fixedSize()

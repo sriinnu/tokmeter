@@ -11,7 +11,7 @@ name tokmeter derives from the cwd can drift:
 
 | Machine | cwd | Canonical name |
 | --- | --- | --- |
-| Mac | `/Users/bob/Sriinnu/Personal/Vortex` | `Vortex` |
+| Mac | `/Users/bob/code/Vortex` | `Vortex` |
 | Linux office PC | `/mnt/c/sriinnu/personal/vortex` | `vortex` |
 
 After restoring the Linux snapshot onto the Mac, tokmeter shows **two** rows

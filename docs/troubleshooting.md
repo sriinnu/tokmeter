@@ -199,9 +199,11 @@ read the **daemon** (`127.0.0.1:9877`) or the MCP server, which hold warm state.
 
 If the daemon itself spikes, a common cause is old session files whose
 modification time was bumped (e.g. editing or re-saving old transcripts), making
-them look like "today" and forcing re-parses. Tokmeter filters on the path date
-to resist this, but editing large old transcripts in place can still trigger a
-rescan.
+them look like "today" and forcing re-parses. Modification time is only a cheap
+first filter, and a file's newest event time decides whether it counts. Path
+dates aren't used, because a long session keeps writing under the day it started.
+So editing old transcripts won't add usage to today, but editing large ones in
+place can still make the daemon re-read them.
 
 ## MCP
 

@@ -171,7 +171,7 @@ enum PumpSkin: SkinSpec {
             case .priming: return "The usage service is starting."
             case .outOfService:
                 return loader.daemonPhase == .needsNode
-                    ? "Node.js 18+ is required to run the local usage service."
+                    ? "Node.js 22+ is required to run the local usage service."
                     : "The usage service is offline. Press ▶ Start below."
             }
         }
@@ -208,7 +208,7 @@ enum PumpSkin: SkinSpec {
                         Text(loader.daemonPhase == .needsNode ? "OUT OF SERVICE · NODE.JS REQUIRED" : "OUT OF SERVICE")
                             .font(plateFont(13)).tracking(1.2).foregroundColor(alertInk)
                         Text(loader.daemonPhase == .needsNode
-                             ? "Install Node 18+ to run the local service."
+                             ? "Install Node 22+ to run the local service."
                              : "No live numbers — press ▶ Start below.")
                             .font(monoFont(10)).foregroundColor(inkMuted)
                     }
@@ -526,7 +526,9 @@ enum PumpSkin: SkinSpec {
                         }
                     }
                     Spacer(minLength: 6)
-                    Text(row.activityOnly ? "N/A" : Fmt.money(row.model.cost))
+                    Text(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "FREE" : "N/A") : Fmt.money(row.model.cost))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .font(row.activityOnly ? plateFont(12) : monoFont(13, weight: .semibold))
                         .foregroundColor(row.activityOnly ? inkMuted : ink)
                         .monospacedDigit()
@@ -552,7 +554,7 @@ enum PumpSkin: SkinSpec {
             .help(row.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
-                ? "\(row.name): cost unavailable"
+                ? "\(row.name): \(Fmt.isFreeModel(row.model.model) ? "free" : "cost unavailable")"
                 : "\(row.name): \(Fmt.money(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model's cost")
         }
     }
@@ -575,6 +577,8 @@ enum PumpSkin: SkinSpec {
                     .font(monoFont(11, weight: .regular))
                     .foregroundColor(creamDim)
                 Text(Fmt.money(project.totalCost))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .font(monoFont(12, weight: .semibold))
                     .foregroundColor(amber)
                     .frame(minWidth: 52, alignment: .trailing)

@@ -188,8 +188,57 @@ struct ProjectData: Codable, Identifiable {
     let totalTokens: Int
     let activeDays: Int
     let lastUsed: Double?
+    /// Who worked on it, and on what. Absent from older daemons.
+    var providers: [ProjectAgent]? = nil
+    var models: [ProjectAgentModel]? = nil
 
     var id: String { project }
+
+    /// Agents that did something in this project, costliest first.
+    var agents: [ProjectAgent] {
+        (providers ?? [])
+            .filter { $0.cost > 0 || $0.totalTokens > 0 }
+            .sorted { ($0.cost, $0.totalTokens) > ($1.cost, $1.totalTokens) }
+    }
+
+    /// Models per agent, costliest first. The same model under two agents stays
+    /// two rows, because the two can bill differently.
+    var agentModels: [ProjectAgentModel] {
+        (models ?? [])
+            .filter { $0.cost > 0 || $0.totalTokens > 0 }
+            .sorted { ($0.cost, $0.totalTokens) > ($1.cost, $1.totalTokens) }
+    }
+}
+
+struct ProjectAgent: Codable, Equatable, Identifiable {
+    let provider: String
+    let totalTokens: Int
+    let cost: Double
+    var id: String { provider }
+
+    /// Short enough for three agents on one line. An agent with no dollars
+    /// still did work, so it shows its tokens rather than $0.00.
+    var legendAmount: String {
+        cost > 0 ? Fmt.cost(cost) : "\(Fmt.number(totalTokens)) tokens"
+    }
+}
+
+struct ProjectAgentModel: Codable, Equatable, Identifiable {
+    let provider: String
+    let model: String
+    let totalTokens: Int
+    let cost: Double
+    var id: String { "\(provider)::\(model)" }
+}
+
+extension Array where Element == ProjectAgent {
+    /// Each agent's share of the bar: by cost, or by tokens when nothing cost anything.
+    var shares: [Double] {
+        let cost = reduce(0) { $0 + $1.cost }
+        if cost > 0 { return map { $0.cost / cost } }
+        let tokens = reduce(0) { $0 + $1.totalTokens }
+        return tokens > 0 ? map { Double($0.totalTokens) / Double(tokens) } : map { _ in 0 }
+    }
 }
 
 /// Full CLI output from `tokmeter --json`.

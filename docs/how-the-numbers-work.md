@@ -24,9 +24,38 @@ Tokmeter uses kosha's catalog and optional `~/.tokmeter/pricing-overrides.json` 
 
 **A model whose provider hides the model behind it shows "—", not $0.00 (since 1.19.7).** Codex's approval reviewer is logged as `codex-auto-review`; OpenAI doesn't say which model runs it, so there is no rate to bill it at. Its cost is counted as zero and marked unavailable, and it never trips the unpriced warning. To estimate it anyway, name the model to price it as in the overrides file, `{ "codex-auto-review": { "as": "gpt-5.6-luna" } }`, and it is billed at that model's live catalog rate. Editing the file reprices today; sealed days keep their cost. The target is looked up as itself, never through another `as`.
 
-**The same model is priced at the rate of whoever served it (since 1.18.0).** OpenCode, Kilo and Kilo CLI route one model through many providers and write the provider beside the model, and the rate differs a lot by route: DeepSeek V4.1 Flash is $0.15/$0.60 per million on Ollama Cloud, $0.30/$1.19 on Alibaba and $0.016/$0.89 on OpenRouter. Their model ids now carry the route, as `model@provider`, so breakdowns keep the routes apart and a response the tool didn't price is billed at that provider's own catalog rate; failing that, at the model's rate as before. Costs the tool reported itself are unchanged. An override can name the route (`"deepseek-v4.1-flash@ollama-cloud"`). Which upstream OpenRouter picked for a call isn't written anywhere on disk, so OpenRouter routes are priced at OpenRouter's list rate.
+**The same model is priced at the rate of whoever served it (since 1.18.0).** OpenCode, Kilo and Kilo CLI route one model through many providers and write the provider beside the model, and the rate differs a lot by route: on 2026-11-04 kosha's saved catalog listed DeepSeek V4.1 Flash at $0.15/$0.60 per million on Ollama Cloud, $0.30/$1.19 on Alibaba and $0.016/$0.89 on OpenRouter. These change; `tokmeter pricing <model>` shows today's. Their model ids now carry the route, as `model@provider`, so breakdowns keep the routes apart and a response the tool didn't price is billed at that provider's own catalog rate; failing that, at the model's rate as before. Costs the tool reported itself are unchanged. An override can name the route (`"deepseek-v4.1-flash@ollama-cloud"`). Which upstream OpenRouter picked for a call isn't written anywhere on disk, so OpenRouter routes are priced at OpenRouter's list rate.
 
 Today exposes cost provenance in `/api/statbar-signals`: the estimated and reported amounts, unavailable count, and per-model breakdown. Model/project cost totals may combine different bases. Existing historical rollups do not contain enough provenance for a reliable retrospective split, so normal refreshes retain their original values.
+
+**DeepSeek is billed by the time of each response (since 1.20.1).** DeepSeek charges half price outside 01:00–04:00 and 06:00–10:00 UTC on weekdays. Each response is priced at the rate of its own timestamp, so two responses in one day can bill differently. A projection has no timestamp, so it uses the peak rate. Chinese public holidays are also off-peak for DeepSeek, but that calendar isn't modelled, so a weekday holiday bills at the peak rate during peak hours. Kosha curates these rates and windows by hand.
+
+### Free models
+
+A model whose id ends in `-free` or `:free` reads as free when its cost is $0, and the menu bar labels it `free` with its token count. Any other $0 stays unavailable, shown as "—" or "n/a", because a catalog's $0 often means nobody listed a price. Subscription plans that list $0, like `zai-coding-plan`, and GitLab's Duo aren't treated as free. Some other catalog providers list every model at $0, and the catalog alone can't say whether that's real. Kosha tags those free, but Tokmeter still only takes the `-free` and `:free` ids at $0.
+
+### Where prices come from, and when one is held back
+
+Kosha 1.13.0 takes prices from models.dev, LiteLLM and, when it has a key, the provider's own API. Tokmeter doesn't give it keys. Providers with their own discovery go in `~/.kosha/registry.json`. The rest go in `~/.kosha/catalog-only.json`, and Tokmeter reads that file only for a lookup that names its provider, like `beam-free@opencode`. A bare model name is never priced from it, so a gateway's rate can't land on a model you never ran through that gateway.
+
+A price that moves by 75% or more is held at its old value for a while:
+
+| What the sources say | How long it's held | Flag afterwards |
+| --- | --- | --- |
+| Two or more agree | 1 day | None |
+| Only one lists the model | 3 days | `pricing_single_source` |
+| They disagree by more than 5% | 7 days | `pricing_sources_disagree` |
+| A billed rate falls to $0 | Never accepted | Stays held |
+
+A change in the published rates restarts the wait. A smaller move takes effect at once, and it's flagged if the sources disagree. The **$/M** panel in the menu bar says when a price is held back, disputed, or rests on one source.
+
+**What this doesn't catch.** Planted prices through real discovery on 2026-11-04 showed:
+
+- A lie under 75% from a lone source goes through at once with no flag.
+- A bigger lie from a lone source is accepted after 3 days, with a flag.
+- Two catalogs agreeing on the same lie are accepted after 1 day.
+
+Only 174 of 3,419 models in that day's registry (5%) had a second source, so most prices rest on one catalog's word. A hold narrows the risk from a bad catalog without closing it. A day seals with the price it was billed at, so a bad price that gets through stays in that day.
 
 ## History and corrections
 

@@ -6,11 +6,13 @@ Tokmeter's applications (CLI, TUI, web dashboard, daemon/MCP server, and macOS a
 
 ## Included materials
 
-The npm distributions include `dist/licenses/`. The macOS app includes `Contents/Resources/Licenses/`, accessible using **Licenses** in the popup footer. Each contains:
+This page is included as `README.md` in both of the folders below. The npm distributions include `dist/licenses/`. The macOS app includes `Contents/Resources/Licenses/`, accessible using **Licenses** in the popup footer. Each contains:
 
 - `AGPL-3.0-only.txt` — the application license.
 - `MPL-2.0.txt` — the core source license, including when the core is bundled in `@sriinnu/tokmeter`.
 - `tokmeter-source.tar.gz` — local source and build inputs collected when this artifact was packaged. The application and core source retain the licenses described above.
+- In the macOS app, `WebThirdPartyNotices.txt` — notices for the bundled web dashboard's dependencies.
+- In the macOS app, `AgentLogos.md` — the MIT licence for the agent logos from lobe-icons, compiled into the app. The marks stay with their owners.
 - In the macOS app, `Sparkle.txt` — the complete notices supplied with the bundled Sparkle artifact, including its embedded third-party components.
 
 JavaScript dependencies are installed separately by the package manager; their notices reside in their respective installed packages. The source snapshot includes the dependency manifests, lockfile, integration skills, and synthetic fixture used by native contrast tests. Build tools and platform SDKs are obtained separately.

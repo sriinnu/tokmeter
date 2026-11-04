@@ -24,7 +24,7 @@ struct NodeToolchain: Equatable {
         ]
         let directories = fixed + managed.flatMap { root, suffix in
             (try? fileManager.contentsOfDirectory(atPath: root))?
-                .filter { majorVersion($0).map { $0 >= 18 } ?? false }
+                .filter { majorVersion($0).map { $0 >= 22 } ?? false }
                 .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
                 .map { root + "/" + $0 + suffix } ?? []
         }
@@ -56,7 +56,7 @@ struct NodeToolchain: Equatable {
                     executable: candidate.node, arguments: ["--version"],
                     environment: candidate.environment(base: environment),
                     timeout: min(probeTimeout, remaining))
-                if let major = majorVersion(version), major >= 18 { return candidate }
+                if let major = majorVersion(version), major >= 22 { return candidate }
             } catch {
                 // Missing runtimes behind executable shims and hung probes
                 // are candidate failures, not proof that Node is unavailable.

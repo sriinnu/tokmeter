@@ -188,7 +188,7 @@ enum PassbookSkin: SkinSpec {
                         .font(PassbookSkin.print(22, weight: .bold))
                         .foregroundColor(ink)
                     Text(loader.daemonPhase == .needsNode
-                        ? "Install Node 18+ to run the local service."
+                        ? "Install Node 22+ to run the local service."
                         : "Usage service offline — press ▶ Start below.")
                         .font(.system(size: 10.5))
                         .foregroundColor(muted)
@@ -492,7 +492,9 @@ enum PassbookSkin: SkinSpec {
                         .frame(maxHeight: .infinity)
                 }
                 .frame(height: 10)
-                Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
+                Text(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "free" : "n/a") : Fmt.money(row.model.cost))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .font(PassbookSkin.print(12, weight: row.activityOnly ? .regular : .bold))
                     .foregroundColor(row.activityOnly ? muted : ink)
                     .frame(width: 62, alignment: .trailing)
@@ -501,7 +503,7 @@ enum PassbookSkin: SkinSpec {
             .overlay(alignment: .bottom) { Rectangle().fill(ruling).frame(height: 1).offset(y: 3) }
             .help(row.help)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(row.name): \(row.activityOnly ? "cost unavailable" : Fmt.money(row.model.cost))")
+            .accessibilityLabel("\(row.name): \(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "free" : "cost unavailable") : Fmt.money(row.model.cost))")
         }
     }
 
@@ -526,6 +528,8 @@ enum PassbookSkin: SkinSpec {
                     .foregroundColor(muted)
                     .lineLimit(1)
                 Text(Fmt.money(project.totalCost))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .font(PassbookSkin.print(12, weight: .bold))
                     .foregroundColor(ink)
                     .frame(width: 62, alignment: .trailing)

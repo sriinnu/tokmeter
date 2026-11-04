@@ -536,14 +536,16 @@ enum DeckSkin: SkinSpec {
                 TunerScale(share: row.activityOnly ? nil : row.share)
                     .frame(height: 18)
                     .help(row.help)
-                Text(row.activityOnly ? "n/a" : Fmt.money(row.model.cost))
+                Text(row.activityOnly ? (Fmt.isFreeModel(row.model.model) ? "free" : "n/a") : Fmt.money(row.model.cost))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .font(vfdFont(11.5))
                     .foregroundColor(row.activityOnly ? legend : amber)
                     .frame(width: 58, alignment: .trailing)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.activityOnly
-                ? "\(row.name): cost unavailable"
+                ? "\(row.name): \(Fmt.isFreeModel(row.model.model) ? "free" : "cost unavailable")"
                 : "\(row.name): \(Fmt.money(row.model.cost)), \(Int((row.share * 100).rounded()))% of the top model")
         }
     }
@@ -598,6 +600,8 @@ enum DeckSkin: SkinSpec {
                         .foregroundColor(cyan)
                         .shadow(color: cyan.opacity(0.4), radius: 2)
                     Text(Fmt.money(project.totalCost))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .font(vfdFont(12))
                         .foregroundColor(amber)
                         .frame(minWidth: 54, alignment: .trailing)

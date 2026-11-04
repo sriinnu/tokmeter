@@ -109,11 +109,14 @@ doesn't delete or restore anything:
   to run `tokmeter cleanup` with the same filters. It deletes nothing.
 - **`tokmeter_backups`** lists backups. There is no MCP restore; the user runs
   `tokmeter restore`.
-- Deleting and restoring always go through a human, at a terminal or in the
-  TUI. See [MCP tool reference](mcp-tools.md#tokmeter_cleanup_preview) for what earlier releases exposed.
+- Deleting and restoring run only from a terminal or the TUI. The daemon has no
+  route for them either. Releases before 1.21.0 had token-gated POST routes on
+  the daemon that nothing in the repository called, and anything able to read
+  the token could have used them. See
+  [MCP tool reference](mcp-tools.md#tokmeter_cleanup_preview) for what earlier
+  releases exposed over MCP.
 
-From 1.15.0, an **empty filter is refused**, in core, for every caller (CLI,
-TUI, daemon HTTP). With no project, no providers and no date range, a cleanup
+From 1.15.0, an **empty filter is refused**, in core, for every caller. With no project, no providers and no date range, a cleanup
 would match every session of every provider. Name at least one of: `project`,
 `providers`, `since`/`until`, or a `today`/`week`/`month` scope. Provider-only
 and date-only cleanups still work. The interactive CLI's "all" choice is

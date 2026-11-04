@@ -6,7 +6,7 @@
 
 **Every AI coding agent you run, on one ledger.**
 
-Tokmeter reads the session files your agents already write to disk and turns them into token and cost totals by project, model, provider, and day — across Claude Code, Codex, Gemini CLI, Cursor, and twenty more (now including Muse, Cline, Augment, Copilot CLI, Kimi Code, and DeepSeek Harness). An agent it has no built-in parser for can register a path and emit a simple usage line to show up too. No API keys, no telemetry, no account. Your data never leaves the machine.
+Tokmeter reads the session files your agents already write to disk and turns them into token and cost totals by project, model, provider, and day — across 24 agents and editors, including Claude Code, Codex, Gemini CLI, Cursor, Muse, Cline, Augment, Copilot CLI, Kimi Code and DeepSeek Harness. An agent it has no built-in parser for can register a path and emit a simple usage line to show up too. No API keys, no telemetry, no account. Your data never leaves the machine.
 
 [![release](https://img.shields.io/badge/release-v1.20.2-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
@@ -46,7 +46,7 @@ There is also a terminal UI (`tokmeter-tui`), a local web dashboard, a statuslin
 
 ## Install
 
-Requires Node.js 18+. Reading session files needs no provider credentials; pricing lookups fetch a public catalog, and `--light` skips them entirely.
+Requires Node.js 22+. Tools that keep history in SQLite need 22.13+, and DeepSeek Harness logs need 22.15+. Reading session files needs no provider credentials. Pricing fetches public catalogs, and `--light` skips that for one command.
 
 ```sh
 # Try it without installing
@@ -143,7 +143,7 @@ Vite opens the dashboard in your browser on `127.0.0.1:3000` with a per-launch s
 
 ## macOS app
 
-Release builds target Apple silicon and macOS 14+. Node.js 18+ with npx is also required for the local daemon.
+Release builds target Apple silicon and macOS 14+. Node.js 22+ with npx is also required for the local daemon.
 
 Install it with `brew install --cask sriinnu/homebrew-tap/tokmeterbar`, or download `TokmeterBar-<version>.zip` from [GitHub Releases](https://github.com/sriinnu/tokmeter/releases) and move it to `/Applications`. The app starts the version-matched `@sriinnu/tokmeter-mcp` daemon itself when none is running, and updates through Sparkle.
 
@@ -161,14 +161,18 @@ The [synthetic walkthrough](docs/assets/demo/README.md) documents how the exampl
 - [Backup, snapshot & restore](docs/backup-restore.md) — the confirmation/backup model and cross-machine restore
 - [Troubleshooting](docs/troubleshooting.md) — daemon, bar updates, "shrinking" history, performance
 - [Architecture](docs/architecture.md) — daemon lifecycle, storage, refresh
+- [Security and privacy](docs/security.md) — what is read, what leaves the machine, and how releases are signed
 
 ## Privacy
 
-Everything runs on your machine. Tokmeter reads session files your agents
-already wrote, needs **no provider credentials**, sends **no telemetry**, and
-requires **no account**. The CLI's only outbound request is an optional fetch
-of a public model-price catalog, which `--light` skips entirely; the macOS app
-also checks GitHub for app updates. Your usage data never leaves the device.
+Tokmeter reads session files your agents already wrote, sends **no credentials**
+and **no telemetry**, and requires **no account**. Your usage data doesn't leave
+the machine.
+
+It does download public price catalogs: the daemon refreshes them about daily on
+its own, and `--light` skips that only for the command it's on. The macOS app also
+checks GitHub for updates. [Security and privacy](docs/security.md) lists every
+host and how to check.
 
 ## Support
 

@@ -94,7 +94,7 @@ export {
   invalidateRecordCache,
   peekCachedRecords,
 } from "./parsers/utils.js";
-export type { PricingSource, PricingSourceTier } from "./pricing.js";
+export type { PriceFlag, PricingSource, PricingSourceTier } from "./pricing.js";
 export {
   getKoshaRegistryMtime,
   maybeBackgroundRefresh,
