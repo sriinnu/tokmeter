@@ -33,11 +33,22 @@ struct ModelsSection: View {
     }
     private var activeModels: [ModelUsage] {
         if showAllModels { return availableModels }
-        let ranked = Array(availableModels.prefix(5))
+        let ranked = Self.rankedWithEveryProvider(availableModels)
         guard showToday else { return ranked }
         // Preserve visibility for activity whose cost isn't exposed.
         let rankedIDs = Set(ranked.map(\.id))
         return ranked + availableModels.filter { $0.cost == 0 && !rankedIDs.contains($0.id) }.prefix(3)
+    }
+
+    /// The top models by cost, plus each remaining provider's top model. Cheap
+    /// providers never reach a cost-ranked cut, so one that did real work would
+    /// otherwise vanish from the list. Expects `models` sorted by cost.
+    static func rankedWithEveryProvider(_ models: [ModelUsage], limit: Int = 5) -> [ModelUsage] {
+        var seenProviders = Set(models.prefix(limit).map(\.provider))
+        return models.enumerated().filter { index, model in
+            let isNewProvider = seenProviders.insert(model.provider).inserted
+            return index < limit || (isNewProvider && model.cost > 0)
+        }.map(\.element)
     }
 
     var body: some View {
