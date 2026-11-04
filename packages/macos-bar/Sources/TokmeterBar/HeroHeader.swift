@@ -154,7 +154,7 @@ struct HeroHeader: View {
                 .font(.system(size: 18, weight: .semibold, design: theme.fonts.bodyDesign))
                 .foregroundColor(foreground)
             Text(loader.daemonPhase == .needsNode
-                ? "Install Node 18+ to run the local service."
+                ? "Install Node 22+ to run the local service."
                 : "No live numbers — press ▶ Start below to bring it up.")
                 .font(.system(size: 10, weight: .medium, design: theme.fonts.bodyDesign))
                 .foregroundColor(foreground.opacity(0.8))

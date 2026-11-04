@@ -1,4 +1,64 @@
-# Native theme development
+# Menu bar and themes
+
+TokmeterBar shows today's tokens in the menu bar. Click it for today's cost,
+models and projects. It reads everything from the local daemon, which it starts
+when needed, and updates itself through Sparkle. It needs Node.js 22+ with npx for
+that daemon.
+
+## The model list
+
+**Today** and **All** switch between today and all time.
+
+- **Today** shows the five costliest models, then the top model of every other
+  provider you used, free or not, then up to three more $0 models, busiest first.
+- **All** shows the top five by cost.
+- **Show all** lists everything. Hovering a row shows its full model id, tokens,
+  exact cost and token mix.
+- The line under a name appears when it's needed: the route for a `model@route`
+  id, or the provider when two rows would otherwise look the same.
+
+The column on the right reads:
+
+| It shows | It means |
+| --- | --- |
+| `$8,698.60` | Dollars and cents, up to $9,999.99 |
+| `$25,748` | From $10,000, without cents |
+| `$1.25M`, `$3.46B` | From a million. Hover for every cent |
+| `free` | A free model, with its tokens on the line under its name |
+| `—` or `n/a` | No price known. It doesn't mean free |
+
+These are estimates at API rates, or the tool's own figure where it reports one.
+They aren't your bill. See [How the numbers work](../how-the-numbers-work.md).
+
+Rows carry the logo of the agent that ran them. Agents without a logo get a letter
+mark. Paper and the five instrument themes draw no icons in this list.
+
+## Projects
+
+Each project shows its tokens and cost. A project used by two or more agents also
+shows a bar and a line such as `Claude Code $3.1K · Codex $1.3K`. An agent with
+no dollars shows its tokens instead. Click a project to see which agent used which
+model. The same model under two agents stays two rows, because they can bill
+differently.
+
+## Rates
+
+The **$/M** button in the models header opens each model's rates and where they
+came from. It also warns when a price is held back, disputed by its sources, or
+rests on one source. [How the numbers work](../how-the-numbers-work.md) explains
+those holds and what they don't catch.
+
+## Themes
+
+Eleven themes change how it looks, not what it counts: Terminal, Paper, Prism,
+Lagoon, Carbon, Glass, and five instruments (Meter, Pump, Rams, Deck, Passbook).
+Pick one in Settings.
+
+The logos come from [lobe-icons](https://github.com/lobehub/lobe-icons) (MIT). The
+**Licenses** button in the footer opens the notice, and the marks stay with their
+owners.
+
+## For contributors: native theme development
 
 The popup and Hub share `AppTheme`, palettes, typography, and surface renderers. Themes change presentation; telemetry, cost provenance, refresh, and navigation remain in their existing models and views.
 

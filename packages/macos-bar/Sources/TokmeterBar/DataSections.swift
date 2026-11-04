@@ -32,23 +32,40 @@ struct ModelsSection: View {
             .filter { !Fmt.isEmptySynthetic(model: $0.model, tokens: $0.tokens, cost: $0.cost) }
     }
     private var activeModels: [ModelUsage] {
-        if showAllModels { return availableModels }
+        if showAllModels { return Self.byCostThenTokens(availableModels) }
+        // All time spans too many providers to list each one; "Show all" has them.
+        guard showToday else { return Array(Self.byCostThenTokens(availableModels).prefix(5)) }
         let ranked = Self.rankedWithEveryProvider(availableModels)
-        guard showToday else { return ranked }
-        // Preserve visibility for activity whose cost isn't exposed.
-        let rankedIDs = Set(ranked.map(\.id))
-        return ranked + availableModels.filter { $0.cost == 0 && !rankedIDs.contains($0.id) }.prefix(3)
+        return ranked + Self.zeroCostSlots(availableModels, excluding: ranked)
     }
 
-    /// The top models by cost, plus each remaining provider's top model. Cheap
-    /// providers never reach a cost-ranked cut, so one that did real work would
-    /// otherwise vanish from the list. Expects `models` sorted by cost.
+    /// Cost first, then tokens, so free models order by the work they did
+    /// rather than by whatever order they arrived in.
+    static func byCostThenTokens(_ models: [ModelUsage]) -> [ModelUsage] {
+        models.sorted {
+            if $0.cost != $1.cost { return $0.cost > $1.cost }
+            if $0.tokens != $1.tokens { return $0.tokens > $1.tokens }
+            return $0.id < $1.id
+        }
+    }
+
+    /// The top models, plus each remaining provider's top model, free or not.
+    /// Cheap and free providers never reach a cost-ranked cut, so one that did
+    /// real work would otherwise vanish from the list.
     static func rankedWithEveryProvider(_ models: [ModelUsage], limit: Int = 5) -> [ModelUsage] {
-        var seenProviders = Set(models.prefix(limit).map(\.provider))
-        return models.enumerated().filter { index, model in
+        let sorted = byCostThenTokens(models)
+        var seenProviders = Set(sorted.prefix(limit).map(\.provider))
+        return sorted.enumerated().filter { index, model in
             let isNewProvider = seenProviders.insert(model.provider).inserted
-            return index < limit || (isNewProvider && model.cost > 0)
+            return index < limit || isNewProvider
         }.map(\.element)
+    }
+
+    /// Today's busiest other $0 models: free tiers and activity whose cost isn't
+    /// exposed. A provider's first free model already has its row above.
+    static func zeroCostSlots(_ models: [ModelUsage], excluding ranked: [ModelUsage], limit: Int = 3) -> [ModelUsage] {
+        let rankedIDs = Set(ranked.map(\.id))
+        return Array(byCostThenTokens(models).filter { $0.cost == 0 && !rankedIDs.contains($0.id) }.prefix(limit))
     }
 
     var body: some View {
@@ -83,11 +100,11 @@ struct ModelsSection: View {
                 // (glyph and label derive from the model name), so surface
                 // the provider on exactly the ambiguous ones.
                 let dupNames = Set(
-                    Dictionary(grouping: activeModels, by: \.model)
+                    Dictionary(grouping: activeModels, by: { Fmt.rowModelName($0.model) })
                         .filter { $0.value.count > 1 }.keys
                 )
                 ForEach(activeModels) { model in
-                    modelRow(model, maxCost: maxCost, showProvider: dupNames.contains(model.model))
+                    modelRow(model, maxCost: maxCost, showProvider: dupNames.contains(Fmt.rowModelName(model.model)))
                 }
                 if showAllModels || availableModels.count > activeModels.count {
                     Button(showAllModels ? "Show fewer" : "Show all \(availableModels.count) models") {
@@ -141,8 +158,15 @@ struct ModelsSection: View {
     /// guessing an input/output split to price it from). Drawn distinctly so
     /// neither case reads as "$0.00 = confirmed free."
     private func isActivityOnly(_ model: ModelUsage) -> Bool {
+        Self.hidesPrice(model, basis: showToday ? loader.statbarSignals?.modelCostBasisToday?[model.id] : nil)
+    }
+
+    /// True when a row has no dollars to show. A free model's $0 is reported,
+    /// so the check for it comes before the cost basis would call it priced.
+    static func hidesPrice(_ model: ModelUsage, basis: CostBasis?) -> Bool {
         guard model.cost == 0 else { return false }
-        if showToday, let basis = loader.statbarSignals?.modelCostBasisToday?[model.id] {
+        if Fmt.isFreeModel(model.model) { return true }
+        if let basis {
             return basis.unavailableRecords > 0 || basis.estimatedRecords + basis.reportedRecords == 0
         }
         return true
@@ -161,8 +185,8 @@ struct ModelsSection: View {
             let activityOnly = isActivityOnly(model)
             SkinModelRow(skin: skin, row: ModelRowData(
                 model: model,
-                name: Fmt.shortModel(model.model),
-                provider: showProvider ? model.provider : nil,
+                name: Fmt.rowModelName(model.model),
+                provider: rowSubtitle(model, showProvider: showProvider),
                 share: activityOnly ? 0 : min(model.cost / max(maxCost, 0.01), 1.0),
                 activityOnly: activityOnly,
                 help: modelHelp(model, activityOnly: activityOnly)
@@ -180,13 +204,13 @@ struct ModelsSection: View {
         let activityOnly = isActivityOnly(model)
         return HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(Fmt.shortModel(model.model))
+                Text(Fmt.rowModelName(model.model))
                     .font(Broadsheet.display(12.5, weight: .semibold))
                     .foregroundColor(Broadsheet.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if showProvider {
-                    Text(model.provider)
+                if let subtitle = rowSubtitle(model, showProvider: showProvider) {
+                    Text(subtitle)
                         .font(.system(size: 9, design: .serif).italic())
                         .foregroundColor(Broadsheet.muted)
                         .lineLimit(1)
@@ -206,7 +230,7 @@ struct ModelsSection: View {
             }
             .frame(height: 8)
             .help(modelHelp(model, activityOnly: activityOnly))
-            Text(activityOnly ? "n/a" : Fmt.money(model.cost))
+            Text(activityOnly ? (Fmt.isFreeModel(model.model) ? "free" : "n/a") : Fmt.money(model.cost))
                 .font(activityOnly
                       ? .system(size: 10, design: .serif).italic()
                       : Broadsheet.display(12.5, weight: .bold).monospacedDigit())
@@ -216,12 +240,26 @@ struct ModelsSection: View {
         .padding(.vertical, 1)
     }
 
+    /// The line under a row's name: which route served it, and what a free
+    /// model did, since it has no dollars to show for it.
+    private func rowSubtitle(_ model: ModelUsage, showProvider: Bool) -> String? {
+        let route = Fmt.servedBy(model.model)
+        let provider = (showProvider || route != nil) ? (route ?? model.provider) : nil
+        guard Fmt.isFreeModel(model.model), model.tokens > 0 else { return provider }
+        // The name column is narrow, so "tokens" only fits when it's alone.
+        let tokens = Fmt.number(model.tokens)
+        return provider.map { "\($0) · \(tokens)" } ?? "\(tokens) tokens"
+    }
+
     private func modelHelp(_ model: ModelUsage, activityOnly: Bool) -> String {
-        activityOnly
+        if activityOnly, Fmt.isFreeModel(model.model) {
+            return "\(model.tokens.formatted()) tokens. Free model: the provider lists it at $0."
+        }
+        return activityOnly
             ? (model.tokens > 0
                 ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
                 : "This provider doesn't expose token counts or cost locally — only that you used it.")
-            : "\(model.tokens.formatted()) tokens · \(Fmt.money(model.cost)) cost\n" + compositionTooltip(
+            : "\(model.tokens.formatted()) tokens · \(Fmt.moneyExact(model.cost)) cost\n" + compositionTooltip(
                 output: model.outputTokens,
                 cacheRead: model.cacheReadTokens,
                 cacheWrite: model.cacheWriteTokens,
@@ -234,16 +272,14 @@ struct ModelsSection: View {
         let activityOnly = isActivityOnly(model)
         return HStack(spacing: 8) {
             HStack(spacing: 3) {
-                Image(systemName: providerGlyph(for: model.model))
-                    .font(.system(size: 10))
-                    .foregroundColor(c.accent)
+                ProviderMark(provider: model.provider, size: 12, color: c.accent)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(Fmt.shortModel(model.model))
+                    Text(Fmt.rowModelName(model.model))
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.backgroundMode.primaryTextColor)
                         .lineLimit(1)
-                    if showProvider {
-                        Text(model.provider)
+                    if let subtitle = rowSubtitle(model, showProvider: showProvider) {
+                        Text(subtitle)
                             .font(.system(size: 8, design: theme.fonts.bodyDesign))
                             .foregroundColor(theme.backgroundMode.secondaryTextColor)
                             .lineLimit(1)
@@ -282,19 +318,7 @@ struct ModelsSection: View {
                     .animation(.spring(response: 0.6, dampingFraction: 0.75), value: model.cost)
             }
             .frame(height: 6)
-            .help(
-                activityOnly
-                    ? (model.tokens > 0
-                        ? "\(Fmt.number(model.tokens)) tokens. Cost is unavailable because pricing or a reliable token breakdown is missing."
-                        : "This provider doesn't expose token counts or cost locally — only that you used it.")
-                    : "\(model.tokens.formatted()) tokens · \(Fmt.money(model.cost)) cost\n" + compositionTooltip(
-                        output: model.outputTokens,
-                        cacheRead: model.cacheReadTokens,
-                        cacheWrite: model.cacheWriteTokens,
-                        input: model.inputTokens,
-                        reasoning: model.reasoningTokens
-                    )
-            )
+            .help(modelHelp(model, activityOnly: activityOnly))
             if activityOnly {
                 // A known-zero-cost row can still carry a real, honest token
                 // count (e.g. Codex Desktop's SQLite-sourced total) — show
@@ -303,15 +327,18 @@ struct ModelsSection: View {
                 // "Unavailable" wrapped to "Unavailabl / e" in the 56pt cost
                 // column. An em dash in the dollar column's font keeps the
                 // column aligned; VoiceOver and the hover help say what it means.
-                Text("—")
+                let isFree = Fmt.isFreeModel(model.model)
+                Text(isFree ? "free" : "—")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.backgroundMode.secondaryTextColor)
+                    .foregroundColor(isFree ? c.accent : theme.backgroundMode.secondaryTextColor)
                     .lineLimit(1)
                     .frame(width: 56, alignment: .trailing)
-                    .help("Price unavailable")
-                    .accessibilityLabel("Price unavailable")
+                    .help(isFree ? "Free model: \(model.tokens.formatted()) tokens" : "Price unavailable")
+                    .accessibilityLabel(isFree ? "Free" : "Price unavailable")
             } else {
                 Text(Fmt.money(model.cost))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.costInk)
                     .frame(width: 56, alignment: .trailing)
@@ -320,41 +347,6 @@ struct ModelsSection: View {
     }
 
     // MARK: - Provider glyph (extension C)
-
-    /// Map model name to a provider glyph. Letter-disc glyphs (a.circle.fill /
-    /// g.circle.fill / m.circle.fill) win over dotted-grid glyphs at 10pt —
-    /// OpenAI's hexagongrid and Google's 3x3 grid were both reading as "dotted
-    /// disc" below the perceptual floor. Letter discs are unambiguous.
-    ///
-    /// Namespace handling: strip a leading `openrouter/` (and any single-
-    /// segment `provider/` prefix from kilo/opencode/roo) before matching, so
-    /// `openrouter/anthropic/claude-opus-4-7` still gets the sparkle.
-    private func providerGlyph(for model: String) -> String {
-        let raw = model.lowercased()
-        // Strip a leading openrouter/ then check the rest.
-        let n: String
-        if raw.hasPrefix("openrouter/") {
-            n = String(raw.dropFirst("openrouter/".count))
-        } else {
-            n = raw
-        }
-        if n.hasPrefix("claude") || n.hasPrefix("anthropic/")
-            || n.contains("/claude")                            { return "sparkle" }
-        if n.hasPrefix("gpt") || n.hasPrefix("openai/")
-            || n.hasPrefix("o1") || n.hasPrefix("o3")
-            || n.hasPrefix("codex")
-            || n.contains("/gpt")                               { return "circle.hexagongrid.fill" }
-        if n.hasPrefix("gemini") || n.hasPrefix("google/")
-            || n.contains("/gemini")                            { return "g.circle.fill" }
-        if n.hasPrefix("qwen") || n.hasPrefix("alibaba/")      { return "diamond.fill" }
-        if n.hasPrefix("deepseek")                              { return "triangle.fill" }
-        if n.hasPrefix("mistral")                               { return "m.circle.fill" }
-        if n.hasPrefix("llama") || n.hasPrefix("meta/")        { return "leaf.fill" }
-        if n.hasPrefix("kimi") || n.hasPrefix("moonshot")      { return "moon.fill" }
-        if n.hasPrefix("minimax")                               { return "infinity" }
-        if n.hasPrefix("grok") || n.hasPrefix("xai/")          { return "x.circle.fill" }
-        return "waveform.circle"
-    }
 
 }
 
@@ -564,8 +556,70 @@ struct SessionsSection: View {
         let rowBackground: AnyView
 
         @State private var hovered = false
+        @State private var expanded = false
 
         private var c: ThemeColors { theme.colors }
+        private var agents: [ProjectAgent] { session.agents }
+        private var isShared: Bool { agents.count > 1 }
+
+        /// Two colours can't tell five agents apart, so they fade by rank.
+        private func agentColor(_ index: Int) -> Color {
+            let base = index % 2 == 0 ? c.secondary : c.warm
+            return base.opacity(max(0.45, 1 - Double(index / 2) * 0.3))
+        }
+
+        /// The split of a shared project: a bar, then who did what.
+        private var agentSplit: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                GeometryReader { geo in
+                    let gaps = CGFloat(agents.count - 1) * 2
+                    HStack(spacing: 2) {
+                        ForEach(Array(zip(agents, agents.shares).enumerated()), id: \.element.0.id) { index, pair in
+                            Capsule().fill(agentColor(index))
+                                .frame(width: safeDim((geo.size.width - gaps) * CGFloat(pair.1), floor: 2))
+                        }
+                    }
+                }
+                .frame(height: 4)
+                HStack(spacing: 10) {
+                    ForEach(Array(agents.prefix(3).enumerated()), id: \.element.id) { index, agent in
+                        HStack(spacing: 3) {
+                            ProviderMark(provider: agent.provider, size: 10, color: agentColor(index))
+                            Text("\(ProviderLogos.displayName(agent.provider)) \(agent.legendAmount)")
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                    }
+                    if agents.count > 3 { Text("+\(agents.count - 3)").fixedSize() }
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(theme.backgroundMode.secondaryTextColor)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(agents.map { "\(ProviderLogos.displayName($0.provider)) \($0.legendAmount)" }.joined(separator: ", "))
+        }
+
+        private var expandedModels: some View {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(session.agentModels.prefix(8)) { row in
+                    HStack(spacing: 5) {
+                        ProviderMark(provider: row.provider, size: 10, color: c.accent)
+                        Text("\(ProviderLogos.displayName(row.provider)) · \(Fmt.rowModelName(row.model))")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 6)
+                        Text(row.cost > 0 ? Fmt.money(row.cost) : (Fmt.isFreeModel(row.model) ? "free" : "—"))
+                            .fixedSize()
+                    }
+                }
+                if session.agentModels.count > 8 { Text("+\(session.agentModels.count - 8) more") }
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(theme.backgroundMode.secondaryTextColor)
+            .padding(.leading, 8)
+        }
 
         private var standardRow: some View {
             HStack(spacing: 10) {
@@ -611,11 +665,22 @@ struct SessionsSection: View {
         }
 
         var body: some View {
-            Group {
-                if let skin = theme.skin {
-                    SkinProjectRow(skin: skin, project: session, theme: theme)
-                } else if theme == .paper { broadsheetRow } else { standardRow }
+            VStack(alignment: .leading, spacing: 5) {
+                Group {
+                    if let skin = theme.skin {
+                        SkinProjectRow(skin: skin, project: session, theme: theme)
+                    } else if theme == .paper { broadsheetRow } else { standardRow }
+                }
+                if isShared { agentSplit }
+                if expanded { expandedModels }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard !session.agentModels.isEmpty else { return }
+                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+            }
+            .accessibilityAddTraits(session.agentModels.isEmpty ? [] : .isButton)
+            .accessibilityHint(session.agentModels.isEmpty ? "" : "Shows which agent used which model")
             .padding(.horizontal, theme == .paper || theme.skin != nil ? 0 : 10)
             .padding(.vertical, 6)
             .background(

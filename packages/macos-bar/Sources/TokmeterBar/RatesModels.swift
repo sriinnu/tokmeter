@@ -18,12 +18,25 @@ struct ModelRateCard: Decodable, Identifiable {
     let model: String
     let provider: String
     let source: PricingSource
+    /// Doubts kosha recorded about this price. Absent from older daemons.
+    let priceFlags: [String]?
     let rates: Rates
     let usage: Usage
     /// cost ÷ tokens × 1M actually paid; nil with no tokens.
     let effectivePerMillion: Double?
 
     var id: String { "\(provider)/\(model)" }
+
+    /// What to tell someone reading this price, worst first.
+    var priceWarning: String? {
+        let flags = priceFlags ?? []
+        if flags.contains("held") {
+            return "New price held back: it moved a lot and hasn't been confirmed. This is the last accepted price."
+        }
+        if flags.contains("disputed") { return "Price disputed: its sources list different rates." }
+        if flags.contains("single-source") { return "Big price move accepted on one source's word." }
+        return nil
+    }
 
     struct Rates: Decodable {
         let input: Rate

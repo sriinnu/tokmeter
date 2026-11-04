@@ -135,6 +135,10 @@ test("every HTTP response carries both API version headers and exposes both to b
   expect((await request("GET", "/api/summary")).status).toBe(401);
   expect((await request("POST", "/api/rescan")).status).toBe(401);
   const token = readFileSync(join(root, "daemon.token"), "utf8");
+  // Deleting and restoring run only from the CLI or TUI, even with the token.
+  for (const route of ["/api/cleanup/preview", "/api/cleanup/execute", "/api/restore"]) {
+    expect((await request("POST", route, `Bearer ${token}`)).status, route).toBe(404);
+  }
   const live = await request("GET", "/api/live", `Bearer ${token}`);
   expect(live.status, errors.join("\n")).toBe(200);
   expect(JSON.parse(live.body)).toHaveProperty("aggregated");

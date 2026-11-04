@@ -4,8 +4,8 @@ The `@sriinnu/tokmeter-mcp` server exposes **22 tools**, all prefixed
 `tokmeter_`. Start with [`tokmeter_pulse`](#tokmeter_pulse) — it answers most
 "what am I spending" questions in one call.
 
-> This page is generated from the tool definitions in
-> `packages/mcp/src/server.ts`; the descriptions are the tools' own.
+> The tool descriptions are copied from `packages/mcp/src/server.ts` by
+> `scripts/sync-mcp-tool-docs.mjs`; `--check` fails if they differ.
 
 **Install (stdio):**
 
@@ -99,7 +99,7 @@ Token-efficiency ratios for a scope, project or set of providers: cache hit rate
 
 ### tokmeter_leaderboard
 
-Rank the top N models or providers (default 10) in a scope by one metric: total cost, cost per 1M tokens (cost_efficiency), total tokens, cache hit rate (cache_rate), reasoning share (reasoning_rate), output tokens, or record count. Returns the entries in rank order with their metrics. which model costs most / gives the best value
+Rank the top N models or providers (default 10) in a scope by one metric: total cost, cost per 1M tokens (cost_efficiency), total tokens, cache hit rate (cache_rate), reasoning share (reasoning_rate), output tokens, or record count. Returns the entries in rank order with their metrics. Use it to answer "which model costs most / gives the best value"; for every metric of every model at once, use tokmeter_models.
 
 ### tokmeter_anomaly
 
@@ -123,7 +123,7 @@ Analyze usage patterns and provide actionable cost optimization recommendations.
 
 ### tokmeter_budget
 
-Check spend against one or more budgets you pass in (daily, weekly = rolling last 7 days, monthly = calendar month), optionally for one project or a set of providers. For each budget: spent, remaining, percent used with a status, and a progress bar; weekly and monthly also project to is project X on track this month?whole-account red/yellow/green status with hours left at the current hourly burn, use tokmeter_budget_alert. Nothing is stored: budgets live only in the call.
+Check spend against one or more budgets you pass in (daily, weekly = rolling last 7 days, monthly = calendar month), optionally for one project or a set of providers. For each budget: spent, remaining, percent used with a status, and a progress bar; weekly and monthly also project to the end of the period at the average daily rate so far. Use it for a scoped budget question ("is project X on track this month?"); for a whole-account red/yellow/green status with hours left at the current hourly burn, use tokmeter_budget_alert. Nothing is stored: budgets live only in the call.
 
 ### tokmeter_budget_alert
 
@@ -131,7 +131,8 @@ Whole-account budget status: pass a daily budget (required) and optionally weekl
 
 ## Data management
 
-Export, back up, and (carefully) delete raw session data.
+Export usage, list backups, and preview a cleanup. Nothing here deletes or
+restores anything.
 
 ### tokmeter_export
 

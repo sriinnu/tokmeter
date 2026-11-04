@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Tokmeter sends no credentials. Fetching prices went through kosha's normal
+  discovery, which read API keys from your environment and agent config files and
+  could send them to those providers, while the docs said no credentials were
+  involved. It now uses public price data only.
+- The daemon no longer has routes for deleting or restoring session data. Any
+  process able to read its token could call them, though the docs said these
+  always go through a person. Use the CLI or TUI.
+- Node.js 22 or newer is required. A dependency already needed it, though the
+  docs and package metadata still said 18.
+
+### Fixed
+
+- Free models show up in the menu bar. It ranked by cost, so a model at $0 sat
+  at the bottom however much work it did. Free models now rank by tokens, and
+  every provider you used on the Today tab gets a row, free or not.
+- Costs read correctly at any size. Rows ran out of room past $10,000 and had no
+  M or B, so $1,250,000 showed as $1250K. They now read $25,748, $1.25M, $3.46B,
+  with every cent on hover.
+- The Rates panel says when a price is held back, disputed by its sources, or
+  rests on one source (kosha-discovery 1.13.0).
+- Real agent logos replace the guessed icons in the model list. They ship inside
+  the app, so nothing is fetched for them.
+- A project used by more than one agent shows the split under its row, and a
+  click opens which agent used which model.
+- Free models from providers kosha has no discoverer for, like OpenCode's
+  `beam-free`, now price as free, and paid ones like OpenCode Go's use that
+  provider's own rate. These only answer a lookup naming the provider, so no
+  other model's price can change because of them (kosha-discovery 1.13.0).
+- A price move kosha holds now waits a day if two sources agree on it and three if
+  only one lists it, and it stays held while sources disagree.
+- The Meter theme no longer drops the unit from its drums: $250,000 read as $250.
+
 ## [1.20.2] - 2026-11-04
 
 ### Fixed
@@ -13,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   costliest models, so a cheap provider like DeepSeek could do real work and
   never appear; each other provider's top model now joins the list.
 - Prices that really moved 75% or more no longer stay stuck on the old rate
-  (kosha-discovery 1.12.1).
+  (kosha-discovery 1.13.0).
 
 ## [1.20.1] - 2026-11-03
 

@@ -305,6 +305,12 @@ struct RatesCardView: View {
                     if show1h { cell("Write 1h", card.rates.cacheWrite1h) }
                 }
             }
+            if let warning = card.priceWarning {
+                Text(warning)
+                    .font(.system(size: 9.5, design: theme.fonts.bodyDesign))
+                    .foregroundColor(theme.statusWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 4) {
                 Text(allTime ? "Est. paid, all time · historical rates" : "Est. paid today")
                     .foregroundColor(bg.secondaryTextColor)

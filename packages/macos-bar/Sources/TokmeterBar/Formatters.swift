@@ -25,11 +25,15 @@ enum Fmt {
         return s == 0 ? "\(m)m" : "\(m)m \(s)s"
     }
 
-    /// Currency: $9.99 / $120 / $1.2K / $48K. Decimals only when the number
+    /// Currency: $9.99 / $120 / $1.2K / $48K / $1.2M / $48M / $1.2B. Decimals only when the number
     /// is small enough to need them; large numbers get integer-K shorthand.
     /// Thresholds are the rounding boundaries, not the round numbers: 99.996
     /// was "$100.00" and 999.6 was "$1000" when the unit was picked first.
     static func cost(_ cost: Double) -> String {
+        if cost >= 9_950_000_000 { return String(format: "$%.0fB", cost / 1_000_000_000) }
+        if cost >= 999_500_000 { return String(format: "$%.1fB", cost / 1_000_000_000) }
+        if cost >= 9_950_000 { return String(format: "$%.0fM", cost / 1_000_000) }
+        if cost >= 999_500 { return String(format: "$%.1fM", cost / 1_000_000) }
         if cost >= 9_950  { return String(format: "$%.0fK", cost / 1000) }
         if cost >= 999.5  { return String(format: "$%.1fK", cost / 1000) }
         if cost >= 99.995 { return String(format: "$%.0f", cost) }
@@ -38,15 +42,54 @@ enum Fmt {
 
     /// A row's amount, the same everywhere a list shows money: dollars and
     /// cents ("$144.00", "$92.21"), three decimals only below ten cents
-    /// ("$0.056") and "<$0.001" below a tenth of a cent. No K/M shorthand:
-    /// that's for totals (`cost`), where a missing cent doesn't matter.
+    /// ("$0.056") and "<$0.001" below a tenth of a cent. Rows share a narrow
+    /// column, so from $10,000 the cents go ("$25,748"), and from a million it
+    /// shortens ("$1.25M"). `moneyExact` keeps every cent for the tooltip.
     static func money(_ cost: Double) -> String {
         if cost <= 0 { return "$0.00" }
         if cost < 0.001 { return "<$0.001" }
         if cost < 0.10 { return String(format: "$%.3f", cost) }
-        if cost >= 100_000 { return Fmt.cost(cost) }
+        if cost >= 999_995_000 { return String(format: "$%.2fB", cost / 1_000_000_000) }
+        if cost >= 999_999.5 { return String(format: "$%.2fM", cost / 1_000_000) }
+        if cost >= 9_999.995 {
+            return "$" + (groupedWhole.string(from: NSNumber(value: cost)) ?? String(format: "%.0f", cost))
+        }
         return "$" + (groupedCents.string(from: NSNumber(value: cost)) ?? String(format: "%.2f", cost))
     }
+
+    /// Every cent at any size, for tooltips: "$1,250,000.42".
+    static func moneyExact(_ cost: Double) -> String {
+        if cost < 0.10 { return money(cost) }
+        return "$" + (groupedCents.string(from: NSNumber(value: cost)) ?? String(format: "%.2f", cost))
+    }
+
+    /// A free model by its id: OpenCode Zen's `-free`, OpenRouter's `:free`.
+    static func isFreeModel(_ id: String) -> Bool {
+        let bare = servedBy(id) == nil ? id : String(id[..<id.lastIndex(of: "@")!])
+        return bare.range(of: #"[-:]free$"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// The route in `model@route`, read as the core's splitServedBy reads it:
+    /// a letter first, so a Vertex date ("claude-x@20250514") isn't a route.
+    static func servedBy(_ id: String) -> String? {
+        guard let range = id.range(of: #"(?<=.)@[A-Za-z][A-Za-z0-9-]*$"#, options: .regularExpression) else { return nil }
+        return String(id[range].dropFirst()).lowercased()
+    }
+
+    /// A model list's name: short, with the route left for the line beneath it.
+    static func rowModelName(_ id: String) -> String {
+        guard servedBy(id) != nil, let at = id.lastIndex(of: "@") else { return shortModel(id) }
+        return shortModel(String(id[..<at]))
+    }
+
+    private static let groupedWhole: NumberFormatter = {
+        let f = NumberFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        f.maximumFractionDigits = 0
+        return f
+    }()
 
     /// "1,234.56": thousands grouped, always two decimals, in one fixed
     /// locale so a row never flips to "1.234,56" beside "$0.40".

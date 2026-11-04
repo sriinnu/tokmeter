@@ -42,6 +42,9 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: MCP tool docs match the server
+        run: node scripts/sync-mcp-tool-docs.mjs --check
+
       - name: Test
         run: bun run test
 
@@ -56,9 +59,9 @@ jobs:
       - name: Setup oldest supported Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "22"
 
-      - name: CLI and MCP load on Node 20
+      - name: CLI and MCP load on Node 22
         run: |
           # A real version, not the "latest" fallback a path bug once gave.
           node packages/tokmeter/dist/cli/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
@@ -99,11 +102,11 @@ jobs:
       - name: Setup oldest supported Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "22"
 
       # A real run, not just --version: an empty home must report no usage
       # rather than crash on a path or a missing directory.
-      - name: CLI and MCP run on Node 20
+      - name: CLI and MCP run on Node 22
         env:
           HOME: ${{ runner.temp }}/empty-home
           USERPROFILE: ${{ runner.temp }}/empty-home

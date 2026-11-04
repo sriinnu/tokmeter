@@ -764,24 +764,10 @@ export function getDaemonStatus(): {
  */
 let _httpCore: { core: any; ts: number } | null = null;
 /**
- * Single chokepoint for invalidating the warm core. Anywhere we null `_httpCore`
- * we MUST also reset `_httpCoreReady` and the today-floor so `/api/ready`
- * doesn't lie ("ready: true" with no warm core) and the floor doesn't pin
- * yesterday's high-water onto a freshly-rebuilt core. Use this helper
- * everywhere instead of `_httpCore = null` so the invariant can't drift.
- */
-function invalidateHttpCore(): void {
-  _httpCore = null;
-  _httpCoreReady = false;
-  _todayHighWater = null;
-  _statsHighWater = null;
-}
-/**
  * How stale today's data may get before a warm `refreshToday()` runs. The full
  * frozen history is never re-read here — only today's ~2 active files.
  */
 const TODAY_REFRESH_TTL = 12_000;
-const MAX_BODY_BYTES = 1_048_576; // 1MB
 
 /** True once the first warmup scan has completed. */
 let _httpCoreReady = false;
@@ -1318,9 +1304,6 @@ function startHttpApi(handlers: {
               "/api/antigravity-live",
               "/api/backups",
               "/api/themes",
-              "/api/cleanup/preview",
-              "/api/cleanup/execute",
-              "/api/restore",
             ],
           });
         }
@@ -1330,52 +1313,9 @@ function startHttpApi(handlers: {
       // POST endpoints (fresh core for mutations). Authentication was checked
       // before routing, alongside the private GET endpoints.
       if (req.method === "POST") {
-        const { CleanupService } = await import("@sriinnu/tokmeter");
-        const body = await readBody(req);
-
-        if (pathname === "/api/cleanup/preview") {
-          const core = await getHttpCore();
-          const service = new CleanupService(core);
-          const { project, providers, since, until, today, week, month } = body;
-          const preview = await service.preview({
-            project,
-            providers,
-            since,
-            until,
-            today,
-            week,
-            month,
-          });
-          json(res, preview);
-        } else if (pathname === "/api/cleanup/execute") {
-          if (body.confirm !== "DELETE") {
-            res.writeHead(403);
-            json(res, { error: "confirm must be 'DELETE'" });
-            return;
-          }
-          const { TokmeterCore } = await import("@sriinnu/tokmeter");
-          const core = new TokmeterCore();
-          const service = new CleanupService(core);
-          const { project, providers, since, until, today, week, month, backup } = body;
-          const result = await service.execute(
-            { project, providers, since, until, today, week, month },
-            { backup: backup ?? true }
-          );
-          invalidateHttpCore(); // Cache + floors must follow the mutation.
-          json(res, result);
-        } else if (pathname === "/api/restore") {
-          if (body.confirm !== "RESTORE") {
-            res.writeHead(403);
-            json(res, { error: "confirm must be 'RESTORE'" });
-            return;
-          }
-          const { TokmeterCore } = await import("@sriinnu/tokmeter");
-          const core = new TokmeterCore({ skipPricing: true });
-          const service = new CleanupService(core);
-          const result = service.restore(body.backup_id);
-          invalidateHttpCore(); // Cache + floors must follow the mutation.
-          json(res, result);
-        } else if (pathname === "/api/update-pricing") {
+        // Deleting and restoring session data stay out of here on purpose: they run
+        // only from the CLI or TUI, where a person is at the keyboard.
+        if (pathname === "/api/update-pricing") {
           // Mutation (network fetch + full rescan), so token-gated under POST —
           // a GET here let any visited web page force repeated multi-GB rescans
           // cross-origin (CSRF / resource-exhaustion DoS).
@@ -1789,30 +1729,6 @@ function appendSummaryWarnings(
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-async function readBody(req: IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let totalSize = 0;
-    req.on("data", (chunk: Buffer) => {
-      totalSize += chunk.length;
-      if (totalSize > MAX_BODY_BYTES) {
-        req.destroy();
-        reject(new Error("Request body too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
-      } catch {
-        resolve({});
-      }
-    });
-    req.on("error", () => resolve({}));
-  });
 }
 
 // ─── CLI Entry Point ────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Integration coverage and verification
 
-Checked for the 1.10.0 release candidate on 2026-09-06. An implemented parser is not a promise that every current version of that tool is supported.
+Each row says when and how it was checked. A row with no date was last checked for the 1.10.0 release candidate on 2026-09-06. An implemented parser is not a promise that every current version of that tool is supported.
 
 **Live checked** means local numeric usage was inspected during this release work. **Fixture tested** means the parser is exercised using controlled input. Neither means invoice reconciliation, cross-platform testing, or an exhaustive audit of every historical session.
 
@@ -33,7 +33,7 @@ OpenCode, Kilo CLI, Cursor, Zed, Codex Desktop and Antigravity are read from SQL
 
 ### Windows
 
-Not supported yet. Since 1.18.0 a CI job builds tokmeter on Windows and runs the CLI and MCP server on Node 20 against an empty home, so a build or startup break shows up. The test suite runs there too, but 51 tests in 10 files still assume a Unix machine (the `sqlite3` CLI in fixtures, `tar` with `C:` paths, path checks in restore), so it doesn't gate the job yet. No Windows install of any agent has been checked against real usage.
+Not supported yet. Since 1.18.0 a CI job builds tokmeter on Windows and runs the CLI and MCP server on Node 22 against an empty home, so a build or startup break shows up. The test suite runs there too, but 51 tests in 10 files still assume a Unix machine (the `sqlite3` CLI in fixtures, `tar` with `C:` paths, path checks in restore), so it doesn't gate the job yet. No Windows install of any agent has been checked against real usage.
 
 ## Keeping this table current
 

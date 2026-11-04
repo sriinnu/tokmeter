@@ -8,8 +8,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const refresh = vi.fn<() => Promise<void>>();
+const koshaConfigs = vi.hoisted(() => [] as unknown[]);
 vi.mock("@sriinnu/kosha-discovery", () => ({
-  createKosha: async () => ({ refresh }),
+  createKosha: async (config: unknown) => {
+    koshaConfigs.push(config);
+    return { refresh };
+  },
 }));
 
 const HOUR = 3_600_000;
@@ -29,6 +33,16 @@ function registryAged(ms: number): number {
   return Date.now();
 }
 const settle = () => new Promise((r) => setTimeout(r, 0));
+
+test("every route to kosha asks for public data only", async () => {
+  koshaConfigs.length = 0;
+  const { PricingService, refreshKoshaRegistry } = await load();
+  await refreshKoshaRegistry();
+  await refreshKoshaRegistry("/tmp/kosha-cache");
+  await new PricingService().init();
+  expect(koshaConfigs.length).toBeGreaterThanOrEqual(3);
+  for (const config of koshaConfigs) expect(config).toMatchObject({ keyless: true });
+});
 
 describe("maybeBackgroundRefresh", () => {
   beforeEach(() => {

@@ -1,6 +1,7 @@
 # Architecture - Data Freshness, Immutability & the Daemon Model
 
-> Last updated: 2026-07-09 (1.8.0)
+> Last edited 2026-11-04 for 1.21.0. Sections name the release they describe
+> where that matters.
 
 This document describes how tokmeter stores history, keeps "today" live, and
 serves data to its consumers (CLI, TUI, web, macOS bar, statusline, MCP)
@@ -177,10 +178,13 @@ days - lives in the Hub behind a confirm.
 
 ## 6. Single source of truth: one daemon, many readers
 
-One **singleton daemon** holds the data warm in memory and is the single source
-of truth. Every consumer - the macOS bar, the statusline, MCP tools - is a thin
-**reader** of the daemon over its local HTTP API. Nothing else scans the corpus
-on its own.
+One **singleton daemon** holds the data warm in memory. The macOS bar and the
+statusline read it over its local HTTP API and don't scan.
+
+Two consumers can scan on their own. The CLI reads the daemon when a query can be
+answered from its lifetime data. A query narrowed by date or project scans in its
+own process, and so does any query when the daemon is down. The MCP server keeps
+its own core and scans through a short-lived cache rather than asking the daemon.
 
 Since 1.19.2, `/api/ready` is the only anonymous HTTP route. Every private
 read and WebSocket upgrade requires the owner's token from

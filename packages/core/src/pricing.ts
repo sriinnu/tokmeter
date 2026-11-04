@@ -111,6 +111,15 @@ export type PricingSourceTier =
   | "seeded"
   | "unpriced";
 
+/** Doubts kosha recorded about a price. */
+export type PriceFlag = "held" | "disputed" | "single-source";
+
+const PRICE_FLAG_TAGS: ReadonlyArray<readonly [string, PriceFlag]> = [
+  ["pricing_quarantined", "held"],
+  ["pricing_sources_disagree", "disputed"],
+  ["pricing_single_source", "single-source"],
+];
+
 export interface PricingSource {
   tier: PricingSourceTier;
   /** The registry id the price was taken from, when it differs from the
@@ -198,6 +207,11 @@ export function getKoshaRegistryMtime(): number {
   return maxMtime;
 }
 
+/** Tokmeter promises it sends no credentials, so kosha only ever gets public data. */
+function koshaConfig(cacheDir?: string): { keyless: true; cacheDir?: string } {
+  return cacheDir ? { keyless: true, cacheDir } : { keyless: true };
+}
+
 /**
  * Force kosha-discovery to rerun discovery against upstream providers and
  * overwrite `~/.kosha/registry.json` with the latest model + pricing data.
@@ -207,7 +221,7 @@ export function getKoshaRegistryMtime(): number {
  */
 export async function refreshKoshaRegistry(cacheDir?: string): Promise<void> {
   const { createKosha } = await import("@sriinnu/kosha-discovery");
-  const registry = (await createKosha(cacheDir ? { cacheDir } : undefined)) as unknown as {
+  const registry = (await createKosha(koshaConfig(cacheDir))) as unknown as {
     refresh: (providerId?: string) => Promise<void>;
   };
   await registry.refresh();
@@ -400,7 +414,7 @@ export class PricingService {
     }
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
-      this.registry = await createKosha(this.cacheDir ? { cacheDir: this.cacheDir } : undefined);
+      this.registry = await createKosha(koshaConfig(this.cacheDir));
       this.pricingUnavailable = false;
     } catch {
       this.registry = null;
@@ -637,16 +651,53 @@ export class PricingService {
    * model vendor's direct rate, used only when the route lists none. Matches
    * the id as given, then without a vendor prefix ("deepseek/…"), then
    * without a tag (":1017"), then with dots read as hyphens.
+   *
+   * A provider kosha has no discoverer for lives in catalog-only.json instead.
+   * That file answers only a lookup naming its provider, so a catalog row can
+   * never price a bare model name.
    */
   private lookupServedBy(
     model: string,
     provider: string
   ): { pricing: FullPricing; matchedId: string } | null {
-    const manifestModels = this.loadRegistryManifest();
-    if (!manifestModels) return null;
+    const fromRegistry = this.matchRoute(this.loadRegistryManifest() ?? [], model, provider);
+    if (fromRegistry) return fromRegistry;
+
+    const fromCatalog = this.loadCatalogOnly() ?? [];
+    const priced = this.matchRoute(fromCatalog, model, provider);
+    if (priced) return priced;
+    // A catalog's $0 is only a price when the id itself says free: on a coding
+    // plan or an unmetered listing it means the rate is unknown, so those fall
+    // through and price as the bare model.
+    if (!/[-:]free$/i.test(model)) return null;
+    const free = fromCatalog.find(
+      (e) =>
+        e.providerId?.toLowerCase() === provider &&
+        e.modelId?.toLowerCase() === model.toLowerCase() &&
+        e.pricing?.inputPerMillion === 0 &&
+        e.pricing?.outputPerMillion === 0
+    );
+    return free
+      ? {
+          pricing: { inputPerMillion: 0, outputPerMillion: 0 },
+          matchedId: `${provider}:${free.modelId}`,
+        }
+      : null;
+  }
+
+  private matchRoute(
+    models: Array<{
+      modelId?: string;
+      pricing?: ModelPricing;
+      originPricing?: ModelPricing;
+      providerId?: string;
+    }>,
+    model: string,
+    provider: string
+  ): { pricing: FullPricing; matchedId: string } | null {
     const usable = (p: ModelPricing | null | undefined): p is ModelPricing =>
       !!p && (p.inputPerMillion ?? 0) > 0 && (p.outputPerMillion ?? 0) > 0;
-    const entries = manifestModels.filter(
+    const entries = models.filter(
       (e) =>
         e.providerId?.toLowerCase() === provider && (usable(e.pricing) || usable(e.originPricing))
     );
@@ -741,6 +792,78 @@ export class PricingService {
       }> | null;
     } catch {
       this.manifestCache = { mtimeMs: mtime, sizeBytes: size, models: null };
+      return null;
+    }
+  }
+
+  /**
+   * What kosha flagged about a price: held, disputed by its sources, or resting
+   * on one source. It reads only the saved row carrying these same rates, so a
+   * flag on another provider's price for the model can't land on this one.
+   */
+  getPriceFlags(
+    modelId: string,
+    card: Pick<ModelPricing, "inputPerMillion" | "outputPerMillion"> | null
+  ): PriceFlag[] {
+    if (!card) return [];
+    const { model, servedBy } = splitServedBy(modelId);
+    const rows = this.loadRegistryManifest() as Array<{
+      modelId?: string;
+      providerId?: string;
+      pricing?: ModelPricing;
+      rawCapabilities?: unknown;
+    }> | null;
+    const flags = new Set<PriceFlag>();
+    for (const row of rows ?? []) {
+      if (row.modelId !== model || (servedBy && row.providerId !== servedBy)) continue;
+      // Cards are rounded on the way in, so exact equality would miss them.
+      const same = (a: number | undefined, b: number) => a !== undefined && Math.abs(a - b) < 1e-6;
+      if (
+        !same(row.pricing?.inputPerMillion, card.inputPerMillion) ||
+        !same(row.pricing?.outputPerMillion, card.outputPerMillion) ||
+        !Array.isArray(row.rawCapabilities)
+      ) {
+        continue;
+      }
+      for (const [tag, flag] of PRICE_FLAG_TAGS)
+        if (row.rawCapabilities.includes(tag)) flags.add(flag);
+    }
+    return [...flags];
+  }
+
+  /** Cached read of ~/.kosha/catalog-only.json, first opened by a route lookup
+   *  that missed the registry. A missing or bad file just means no route there. */
+  private catalogOnlyCache: {
+    mtimeMs: number;
+    sizeBytes: number;
+    models: Array<{ modelId?: string; pricing?: ModelPricing; providerId?: string }> | null;
+  } | null = null;
+
+  private loadCatalogOnly(): Array<{
+    modelId?: string;
+    pricing?: ModelPricing;
+    providerId?: string;
+  }> | null {
+    const path = join(homedir(), ".kosha", "catalog-only.json");
+    try {
+      const { mtimeMs, size } = statSync(path);
+      if (this.catalogOnlyCache?.mtimeMs === mtimeMs && this.catalogOnlyCache.sizeBytes === size) {
+        return this.catalogOnlyCache.models;
+      }
+      this.catalogOnlyCache = { mtimeMs, sizeBytes: size, models: null };
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+        schemaVersion?: number;
+        models?: unknown;
+      };
+      if (parsed.schemaVersion === KOSHA_SCHEMA_VERSION && Array.isArray(parsed.models)) {
+        this.catalogOnlyCache.models = parsed.models as Array<{
+          modelId?: string;
+          pricing?: ModelPricing;
+          providerId?: string;
+        }>;
+      }
+      return this.catalogOnlyCache.models;
+    } catch {
       return null;
     }
   }

@@ -20,7 +20,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@sriinnu/kosha-discovery": "^1.12.1"
+    "@sriinnu/kosha-discovery": "^1.13.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.9",
@@ -44,7 +44,7 @@
     "anthropic"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "publishConfig": {
     "access": "public"
