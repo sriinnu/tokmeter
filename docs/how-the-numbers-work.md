@@ -34,6 +34,12 @@ Today exposes cost provenance in `/api/statbar-signals`: the estimated and repor
 
 A model whose id ends in `-free` or `:free` reads as free when its cost is $0, and the menu bar labels it `free` with its token count. Any other $0 stays unavailable, shown as "—" or "n/a", because a catalog's $0 often means nobody listed a price. Subscription plans that list $0, like `zai-coding-plan`, and GitLab's Duo aren't treated as free. Some other catalog providers list every model at $0, and the catalog alone can't say whether that's real. Kosha tags those free, but Tokmeter still only takes the `-free` and `:free` ids at $0.
 
+An embedding or rerank model has no output, so a catalog rate for its input alone is its whole price, and its usage is billed at it. Before, any rate without an output price was dropped, so embedding usage counted as $0 and the model was reported unpriced. That holds for the id itself and its plain variants (case, dots for hyphens, a date suffix), never for the loose name match, so a chat model can't be billed as an embedding model. A row kosha marks `chat` with no output rate still has no price, even when it's really a reranker; name its price in the overrides file.
+
+A `-free` or `:free` route is billed at its own $0 row even when the same provider also sells the plain model: `kimi-k2-6:free@kenari` used to be billed at kenari's paid `kimi-k2-6`, because the lookup dropped the tag before it checked for a free row.
+
+`tokmeter pricing <model>` gives one of three answers, the same ones billing uses: a price and where it came from, free (a `-free` or `:free` model on its route, like `beam-free@opencode`, or a $0 override), or no price, which counts as $0 but is a gap rather than a fact. With `--json` it prints `status` as `priced`, `free` or `unpriced`, plus the `source`.
+
 ### Where prices come from, and when one is held back
 
 Kosha 1.13.0 takes prices from models.dev, LiteLLM and, when it has a key, the provider's own API. Tokmeter doesn't give it keys. Providers with their own discovery go in `~/.kosha/registry.json`. The rest go in `~/.kosha/catalog-only.json`, and Tokmeter reads that file only for a lookup that names its provider, like `beam-free@opencode`. A bare model name is never priced from it, so a gateway's rate can't land on a model you never ran through that gateway.
@@ -81,6 +87,18 @@ Claude Code writes an assistant turn as a separate JSONL line per content block
 usage. Deduplicate on the provider's own per-response identifier (`message.id`
 for Claude Code, `payload.response_id` for Codex), never on a timestamp: every
 line carries its own.
+
+**A record's time never comes from the clock.** Today is rebuilt from each
+scan, and a session file that changes is parsed again. A line with no usable
+timestamp used to be stamped with the time of the scan, so it sat on whatever
+day its file was last read: counted that day, sealed into it at midnight, then
+counted again on the next day the file changed. Such a record now takes the
+session's time where the tool writes one, else the time of the line before it
+in the same file, else when the file was created, plus 1 ms per such record in
+a row so identical ones stay apart. Each scan reports how many it dated this
+way. One limit: a record whose inferred day has already been sealed is counted
+nowhere, since sealed days only grow from that day's own late records. Today's
+tools write a time on every usage line, so in practice this is a guard.
 
 **Usage is not uniform across a turn's lines.** Subagent transcripts open with a
 placeholder usage record and only the final line carries real counts. Keep the

@@ -11,7 +11,7 @@
 
 import { isBeforeToday, startOfLocalDay } from "./date-utils.js";
 import { getParsers } from "./parsers/index.js";
-import { saveRecordCacheToDisk } from "./parsers/utils.js";
+import { saveRecordCacheToDisk, settleInferredTimes } from "./parsers/utils.js";
 import type { PricingService } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
 import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
@@ -40,6 +40,24 @@ export function selectRecordsToPrice(
 }
 
 /** A per-file parser fault as a provider-scoped, partial scan warning. */
+/**
+ * Say how many records had no timestamp of their own. They are dated by the
+ * line before them, and one that falls on a day already sealed is counted
+ * nowhere, so this must not stay silent. A notice: it never blocks a seal.
+ */
+export function inferredTimesNotice(
+  provider: ProviderId,
+  scope: "history" | "today",
+  count: number
+): ScanWarning {
+  return {
+    scope,
+    provider,
+    message: `${provider}: ${count} record${count === 1 ? "" : "s"} had no timestamp; dated by the line before, or by when the session file was created.`,
+    notice: true,
+  };
+}
+
 export function providerFault(
   provider: ProviderId,
   message: string,
@@ -78,7 +96,7 @@ export async function scanRawRecords(
   const results = await Promise.all(
     parsers.map(async (parser) => {
       try {
-        return await parser.scan(ctx.homeDir, {
+        const scanned = await parser.scan(ctx.homeDir, {
           ...(modifiedSinceMs !== undefined ? { modifiedSinceMs } : {}),
           // Per-file bounded-read faults surface as provider warnings so every
           // persistence path can refuse to seal an incomplete provider scan.
@@ -92,6 +110,10 @@ export async function scanRawRecords(
               notice: true,
             }),
         });
+        const settled = settleInferredTimes(scanned);
+        if (settled.inferred > 0)
+          warnings.push(inferredTimesNotice(parser.providerId, warningScope, settled.inferred));
+        return settled.records;
       } catch (error) {
         warnings.push({
           scope: "provider",

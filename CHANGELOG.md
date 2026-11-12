@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A response logged without a usable timestamp keeps one time. It used to be
+  stamped with the time of the scan, so it landed on whichever day its session
+  file was last read, and was counted again on each later day the file
+  changed. It now takes the session's time, or the time of the line before it,
+  or when the session file was created, and each scan says how many records it
+  dated this way. Current agents write a time on every usage line, so for most
+  people nothing moves.
+- Embedding and rerank models are billed. A model with an input price and no
+  output price was treated as unpriced, so its usage counted as $0 and it showed
+  in the unpriced warning. A loose name match never prices a model this way.
+- A `:free` route is billed at $0. When the same provider also sold the plain
+  model, `kimi-k2-6:free@kenari` was billed at the paid `kimi-k2-6` rate.
+- A `-free` or `:free` model priced through its route no longer shows up as
+  unpriced. Its $0 is a price, and it's now recorded as one.
+- `tokmeter pricing` tells a free model from a missing price. It said "No
+  pricing found" for anything at $0, and printed text even with `--json`. It
+  now says priced (with where the price came from), free, or no price, and
+  `--json` always prints JSON with a `status` and `source`. Rates under a
+  dollar show up to three significant digits instead of rounding to cents.
+
 ## [1.21.0] - 2026-11-04
 
 ### Changed

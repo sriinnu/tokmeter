@@ -5,7 +5,7 @@
  */
 
 import type { Dirent } from "node:fs";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { type FileHandle, open, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "../config-service.js";
@@ -152,7 +152,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 25 — vscode-copilot replays *.jsonl chat sessions as mutation logs and reads
 //      them under workspaceStorage too. v24 threw on any multi-line session
 //      (failing the whole provider) and never saw workspace *.jsonl sessions.
-const CACHE_VERSION = 25;
+// 26 — a record with no usable timestamp is marked timestampInferred and
+//      dated by its file (settleInferredTimes), not the scan's clock. v25
+//      caches hold such records at the time they were first scanned; rebuild.
+const CACHE_VERSION = 26;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -1192,14 +1195,100 @@ function mergeUsageProvenance(
   };
 }
 
-/** Create a base token record with sensible defaults. */
+/** Per-file creation times, read once per file. */
+const fallbackTimes = new Map<string, number>();
+const FALLBACK_TIMES_MAX = 20_000;
+
+/**
+ * When `sourceFile` was created: the base time for a record whose line has no
+ * usable timestamp, before {@link settleInferredTimes} moves it next to the
+ * line before it. Read once per file and remembered.
+ *
+ * It must not be the scan's clock. Today is rebuilt from each scan, so a
+ * clock-stamped record lands on whatever day the file is next read: counted on
+ * that day, sealed into it at midnight, then counted again on the next day the
+ * file changes. A creation time stays put while the file grows.
+ *
+ * Where the filesystem keeps no creation time, the file's mtime when first
+ * seen is used and remembered, which holds only for the process's life. With
+ * no source file there is nothing stable, and the clock is all that's left.
+ */
+export function fallbackRecordTime(sourceFile: string | undefined): number {
+  if (!sourceFile) return Date.now();
+  const known = fallbackTimes.get(sourceFile);
+  if (known !== undefined) return known;
+  let t = Date.now();
+  try {
+    const s = statSync(sourceFile);
+    t = s.birthtimeMs > 0 ? s.birthtimeMs : s.mtimeMs;
+  } catch {
+    // Unreadable: the clock, remembered below, still holds for this process.
+  }
+  t = Math.floor(t);
+  if (fallbackTimes.size >= FALLBACK_TIMES_MAX) fallbackTimes.clear();
+  fallbackTimes.set(sourceFile, t);
+  return t;
+}
+
+/** Test seam: forget remembered creation times. */
+export function resetFallbackRecordTimes(): void {
+  fallbackTimes.clear();
+}
+
+/**
+ * Date every record whose line had no timestamp (`timestampInferred`) by the
+ * line before it in the same file, plus 1 ms for each such record in a row,
+ * so two of them with the same token counts stay two records. A record with
+ * nothing before it keeps its file's creation time, plus the same 1 ms steps.
+ *
+ * `records` must be in file order per `sourceFile`, as parsers emit them.
+ * Appending to a file never changes what comes before a line, so a record
+ * keeps its time, and its fingerprint, as its session grows. Returns a new
+ * array (cached records are shared and never mutated) and how many were
+ * inferred, for a scan notice.
+ *
+ * Known limit: a record dated before today is a straggler, and stragglers
+ * only reach the day being sealed. One whose inferred day is already sealed
+ * is counted nowhere; the notice is how that shows.
+ */
+export function settleInferredTimes(records: TokenRecord[]): {
+  records: TokenRecord[];
+  inferred: number;
+} {
+  if (!records.some((r) => r.timestampInferred)) return { records, inferred: 0 };
+  const prev = new Map<string, { at: number; run: number }>();
+  let inferred = 0;
+  const out = records.map((r) => {
+    const key = r.sourceFile ?? "";
+    if (!r.timestampInferred) {
+      prev.set(key, { at: r.timestamp, run: 0 });
+      return r;
+    }
+    inferred++;
+    const base = prev.get(key) ?? { at: fallbackRecordTime(r.sourceFile), run: 0 };
+    const run = base.run + 1;
+    prev.set(key, { at: base.at, run });
+    const timestamp = base.at + run;
+    return timestamp === r.timestamp ? r : { ...r, timestamp };
+  });
+  return { records: out, inferred };
+}
+
+/**
+ * Create a base token record with sensible defaults.
+ *
+ * `timestamp` is required but may be undefined or NaN when the line has no
+ * usable time (an unparseable date reads as NaN). Such a record is marked
+ * `timestampInferred` and given its file's creation time; the scan pipeline
+ * then dates it by the line before it ({@link settleInferredTimes}). A parser
+ * should pass `undefined` rather than inventing a time of its own.
+ */
 export function createRecord(
-  overrides: CreateRecordOverrides & Pick<TokenRecord, "timestamp" | "provider" | "model">
+  overrides: CreateRecordOverrides &
+    Pick<TokenRecord, "provider" | "model"> & { timestamp: number | undefined }
 ): TokenRecord {
-  const ts =
-    typeof overrides.timestamp === "number" && Number.isFinite(overrides.timestamp)
-      ? overrides.timestamp
-      : Date.now();
+  const hasTime = typeof overrides.timestamp === "number" && Number.isFinite(overrides.timestamp);
+  const ts = hasTime ? (overrides.timestamp as number) : fallbackRecordTime(overrides.sourceFile);
   const usage = mergeUsageProvenance(overrides.provider, overrides.usage);
   const record: TokenRecord = {
     project: "unknown",
@@ -1212,6 +1301,7 @@ export function createRecord(
     ...overrides,
     usage,
     timestamp: ts,
+    ...(hasTime ? {} : { timestampInferred: true }),
   };
   record.model = sanitizeDataLabel(record.model, 256) || "unknown";
   record.project = sanitizeDataLabel(record.project, 512) || "unknown";

@@ -52,6 +52,12 @@ After the in-memory cache, pricing resolves through:
 4. The kosha registry manifest when runtime discovery lacks a model.
 5. `null` when no rate is available.
 
+The exact lookups (2 and 4, including the manifest's normalized-id match) take
+an embedding or rerank model's input-only rate as its full price; the fuzzy
+lookup never does. A $0/$0 catalog row is no price,
+except on a `-free`/`:free` route. `PricingService.isPricedFree(model)` tells a
+real $0 price from a missing one.
+
 There is no bundled static pricing table. Public catalog pricing does not require provider credentials. See [how the numbers work](../../docs/how-the-numbers-work.md) for estimation rules and unavailable costs.
 
 Covers: input, output, cache read, cache write, and reasoning tokens.
