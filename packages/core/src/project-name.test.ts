@@ -9,6 +9,49 @@ import {
 import type { TokenRecord } from "./types.js";
 
 describe("project-name helpers", () => {
+  it("names an eval harness's trial folders for the tool, not the trial number", () => {
+    const evalDir = "/Users/me/.ribhu/eval/work/1794565623-38179/footer-repeats/core/1";
+    const evalSlug =
+      "-Users-me--ribhu-eval-work-1794565623-38179-mcp-only-extension-dropped-on-restart-core-1";
+    expect(canonicalizeProjectName(evalDir)).toBe("ribhu/eval");
+    expect(canonicalizeProjectName(evalSlug)).toBe("ribhu/eval");
+    expect(projectMatchKey(evalSlug)).not.toBe(projectMatchKey("ribhu"));
+  });
+
+  it("keeps ordinary projects, config dot-folders and one-deep tool folders as before", () => {
+    expect(canonicalizeProjectName("/Users/me/Sriinnu/Personal/tokmeter")).toBe("tokmeter");
+    expect(canonicalizeProjectName("-Users-me-Sriinnu-Personal-tokmeter")).toBe("tokmeter");
+    expect(canonicalizeProjectName("/Users/me/.dotfiles/nvim")).toBe("nvim");
+    expect(canonicalizeProjectName("/Users/me/.codex/worktrees/a1b2/AUriva")).toBe("AUriva");
+    expect(canonicalizeProjectName("-Users-me--codex-worktrees-ribhu-routing-repair-AUriva")).toBe(
+      "AUriva"
+    );
+    expect(canonicalizeProjectName("/home/me/.config/nvim/lua")).toBe("lua");
+    expect(canonicalizeProjectName("-Users-me--config-nvim-lua")).toBe("lua");
+  });
+
+  it("names a per-run temp workspace for its prefix, not its random tail", () => {
+    const mac = "/private/var/folders/3p/3f62sd0j57/T/ribhu-live-ws-06Wwnk";
+    const macSlug = "-private-var-folders-3p-3f62sd0j57114nppqn2x67hm0000gn-T-ribhu-live-ws-9AGabi";
+    expect(canonicalizeProjectName(mac)).toBe("ribhu-live-ws");
+    expect(canonicalizeProjectName(macSlug)).toBe("ribhu-live-ws");
+    expect(canonicalizeProjectName("/tmp/tmp.Ab3dE9xQ")).toBe("tmp");
+    expect(canonicalizeProjectName("-private-tmp-scratch")).toBe("scratch");
+    expect(
+      canonicalizeProjectName(
+        "-private-tmp-claude-501--Users-me-Personal-ribhu-17228982-scratchpad-ux"
+      )
+    ).toBe("ux");
+    expect(canonicalizeProjectName("/tmp/build-server")).toBe("build-server");
+    expect(canonicalizeProjectName("/tmp/accept2417")).toBe("accept2417");
+    expect(canonicalizeProjectName("/tmp/work/Harbor")).toBe("Harbor");
+  });
+
+  it("never lets a bare number stand alone as a project name", () => {
+    expect(canonicalizeProjectName("/Users/me/work/runs/3")).toBe("runs/3");
+    expect(canonicalizeProjectName("-Users-me-work-runs-3")).toBe("runs/3");
+  });
+
   it("canonicalizes Windows, WSL, and slugged frontend workspaces to one project label", () => {
     const inputs = [
       "/mnt/c/Acme/WeatherApp/frontend",

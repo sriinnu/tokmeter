@@ -152,7 +152,7 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 25 — vscode-copilot replays *.jsonl chat sessions as mutation logs and reads
 //      them under workspaceStorage too. v24 threw on any multi-line session
 //      (failing the whole provider) and never saw workspace *.jsonl sessions.
-const CACHE_VERSION = 25;
+const CACHE_VERSION = 26;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
