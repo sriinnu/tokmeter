@@ -211,4 +211,34 @@ describe("a :free route beside its paid twin", () => {
     // The paid twin keeps its price.
     expect(await svc.getPricing("kimi-k2-6@kenari")).toMatchObject({ inputPerMillion: 0.571 });
   });
+
+  it("leaves a :free id unpriced when no free row exists, never at the paid rate", async () => {
+    // Real shape: kenari lists a free row for some models, not this one, and
+    // kosha's live lookup resolves "x:free" to the paid "x" card.
+    writeFileSync(
+      join(home, ".kosha", "catalog-only.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        models: [
+          {
+            providerId: "kenari",
+            canonicalProviderId: "models.dev",
+            modelId: "deepseek-v9-pro",
+            pricing: { inputPerMillion: 0.571429, outputPerMillion: 1.142857 },
+          },
+        ],
+      })
+    );
+    const svc = pricingService();
+    (svc as any).registry.model = (id: string) =>
+      id.replace(/:free$/, "") === "deepseek-v9-pro"
+        ? { mode: "chat", pricing: { inputPerMillion: 0.95, outputPerMillion: 4 } }
+        : undefined;
+    expect(await svc.getPricing("deepseek-v9-pro:free@kenari")).toBeNull();
+    expect(await svc.getPricing("deepseek-v9-pro:free")).toBeNull();
+    expect((await svc.getPricingWithSource("deepseek-v9-pro:free")).source.tier).toBe("unpriced");
+    // The paid id still prices both ways.
+    expect((await svc.getPricing("deepseek-v9-pro@kenari"))?.inputPerMillion).toBeCloseTo(0.571429);
+    expect(await svc.getPricing("deepseek-v9-pro")).toMatchObject({ inputPerMillion: 0.95 });
+  });
 });

@@ -45,15 +45,25 @@ export function selectRecordsToPrice(
  * line before them, and one that falls on a day already sealed is counted
  * nowhere, so this must not stay silent. A notice: it never blocks a seal.
  */
+/**
+ * `beforeToday`: how many of them were dated to an earlier day. A scan only
+ * adds those to the day still waiting to be sealed, so one whose day is
+ * already sealed is counted nowhere, and the notice says so.
+ */
 export function inferredTimesNotice(
   provider: ProviderId,
   scope: "history" | "today",
-  count: number
+  count: number,
+  beforeToday = 0
 ): ScanWarning {
+  const past =
+    beforeToday > 0
+      ? ` ${beforeToday} of them fall on an earlier day and aren't counted if that day is already sealed.`
+      : "";
   return {
     scope,
     provider,
-    message: `${provider}: ${count} record${count === 1 ? "" : "s"} had no timestamp; dated by the line before, or by when the session file was created.`,
+    message: `${provider}: ${count} record${count === 1 ? "" : "s"} had no timestamp; dated by the line before, or by when the session file was created.${past}`,
     notice: true,
   };
 }
@@ -111,8 +121,16 @@ export async function scanRawRecords(
             }),
         });
         const settled = settleInferredTimes(scanned);
-        if (settled.inferred > 0)
-          warnings.push(inferredTimesNotice(parser.providerId, warningScope, settled.inferred));
+        if (settled.inferred > 0) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const beforeToday = settled.records.filter(
+            (r) => r.timestampInferred && r.timestamp < today.getTime()
+          ).length;
+          warnings.push(
+            inferredTimesNotice(parser.providerId, warningScope, settled.inferred, beforeToday)
+          );
+        }
         return settled.records;
       } catch (error) {
         warnings.push({

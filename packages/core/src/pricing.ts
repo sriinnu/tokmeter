@@ -149,6 +149,9 @@ export function withServedBy(model: string, servedBy: string | undefined | null)
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
 const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
 
+/** An id that names a free route: "beam-free", "kimi-k2-6:free". */
+const FREE_TAG_RE = /[-:]free$/i;
+
 /** Expected `schemaVersion` of ~/.kosha/registry.json. Bump when reading
  *  the manifest fallback would break (renamed fields, removed pricing block). */
 const KOSHA_SCHEMA_VERSION = 1;
@@ -496,7 +499,8 @@ export class PricingService {
    *
    * The exact tiers (3, 5) accept an embedding or rerank row priced on input
    * alone; the fuzzy match never does. A $0 card is never taken as a price
-   * except on a "-free"/":free" route (see `lookupServedBy`).
+   * except on a "-free"/":free" route (see `lookupServedBy`), and a free id
+   * skips tiers 3 and 4, which would drop its tag and price the paid model.
    */
   async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
@@ -542,7 +546,14 @@ export class PricingService {
       return target;
     }
 
-    if (this.registry) {
+    // A "-free"/":free" id is priced by an override, its own $0 row on a route
+    // (lookupServedBy), or a saved-catalog row with that exact id. kosha's
+    // live lookup and the fuzzy match drop the tag, so they'd land on the
+    // paid model and bill a free call at its rate; unpriced is the honest
+    // answer instead.
+    const freeTagged = FREE_TAG_RE.test(modelId);
+
+    if (this.registry && !freeTagged) {
       // Tier 2: kosha canonical lookup
       try {
         const card = this.registry.model(modelId) as
@@ -703,7 +714,7 @@ export class PricingService {
     // through and price as the bare model. It's checked first, on the exact
     // id: the loose forms below drop a ":free" tag, and would otherwise bill
     // "kimi-k2-6:free" at the same provider's paid "kimi-k2-6" row.
-    if (/[-:]free$/i.test(model)) {
+    if (FREE_TAG_RE.test(model)) {
       const free = [...registryRows, ...(this.loadCatalogOnly() ?? [])].find(
         (e) =>
           e.providerId?.toLowerCase() === provider &&
@@ -748,13 +759,16 @@ export class PricingService {
     const lastSegment = (id: string) => id.slice(id.lastIndexOf("/") + 1);
     const untagged = (id: string) => id.replace(/:[^:/]+$/, "");
     const dashed = (id: string) => id.replace(/\./g, "-");
-    const forms: ((id: string) => string)[] = [
-      (id) => id,
-      lastSegment,
-      (id) => untagged(lastSegment(id)),
-      (id) => dashed(untagged(lastSegment(id))),
-    ];
     const want = model.toLowerCase();
+    // A free id keeps its tag: dropping it lands on the paid route.
+    const forms: ((id: string) => string)[] = FREE_TAG_RE.test(want)
+      ? [(id) => id, lastSegment]
+      : [
+          (id) => id,
+          lastSegment,
+          (id) => untagged(lastSegment(id)),
+          (id) => dashed(untagged(lastSegment(id))),
+        ];
     for (const form of forms) {
       const target = form(want);
       const hit = entries.find((e) => form((e.modelId ?? "").toLowerCase()) === target);

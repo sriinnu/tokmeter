@@ -1212,19 +1212,24 @@ const FALLBACK_TIMES_MAX = 20_000;
  * Where the filesystem keeps no creation time, the file's mtime when first
  * seen is used and remembered, which holds only for the process's life. With
  * no source file there is nothing stable, and the clock is all that's left.
+ * A file replaced by rename (written to a temp file, then moved over) gets a
+ * new creation time; only a record with no real record before it in the file
+ * depends on it, and its time moves on the next process that reads it.
  */
 export function fallbackRecordTime(sourceFile: string | undefined): number {
   if (!sourceFile) return Date.now();
   const known = fallbackTimes.get(sourceFile);
   if (known !== undefined) return known;
-  let t = Date.now();
+  let t: number;
   try {
     const s = statSync(sourceFile);
-    t = s.birthtimeMs > 0 ? s.birthtimeMs : s.mtimeMs;
+    t = Math.floor(s.birthtimeMs > 0 ? s.birthtimeMs : s.mtimeMs);
   } catch {
-    // Unreadable: the clock, remembered below, still holds for this process.
+    // Unreadable (or a relative path, which would be a parser bug): the clock
+    // is all there is. Not remembered, so a file readable on the next scan
+    // gets its real creation time instead of a stale clock reading.
+    return Date.now();
   }
-  t = Math.floor(t);
   if (fallbackTimes.size >= FALLBACK_TIMES_MAX) fallbackTimes.clear();
   fallbackTimes.set(sourceFile, t);
   return t;

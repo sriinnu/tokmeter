@@ -1254,8 +1254,12 @@ async function main() {
     await pricing.init();
     const modelId = args.pricingModel;
     if (!modelId) {
-      console.log("Usage: tokmeter pricing <model-id>");
-      console.log("Example: tokmeter pricing claude-sonnet-4-20250514");
+      if (args.json) {
+        console.log(JSON.stringify({ error: "usage: tokmeter pricing <model-id> [--json]" }));
+      } else {
+        console.log("Usage: tokmeter pricing <model-id>");
+        console.log("Example: tokmeter pricing claude-sonnet-4-20250514");
+      }
       process.exit(1);
     }
     // Same lookup calculateCost bills with, so what this prints is what a
@@ -1284,11 +1288,14 @@ async function main() {
       // Rates aren't money owed, so cents would hide them: $0.075 and $0.0084
       // would print as $0.08 and $0.01. Under $1, show up to 3 significant
       // digits (never fewer than 2 decimals); from $1, cents.
+      // Cents at $1 and up; below it, three significant digits (at least two
+      // decimals), so $0.0375 doesn't print as $0.04. Fixed notation, never
+      // "1e-7", and never $0.00 for a rate that isn't zero.
       const usd = (n: number) => {
         if (n === 0 || n >= 1) return `$${n.toFixed(2)}`;
-        const s = String(Number(n.toPrecision(3)));
-        const decimals = s.split(".")[1]?.length ?? 0;
-        return `$${decimals < 2 ? n.toFixed(2) : s}`;
+        const decimals = Math.max(2, 2 - Math.floor(Math.log10(Math.abs(n))));
+        const s = n.toFixed(Math.min(decimals, 20)).replace(/(\.\d\d)0+$|(\.\d*?[1-9])0+$/, "$1$2");
+        return `$${s}`;
       };
       const table = new Table({ head: ["Metric", "Per Million Tokens"], colWidths: [25, 20] });
       table.push(

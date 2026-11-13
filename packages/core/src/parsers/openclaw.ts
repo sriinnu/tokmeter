@@ -101,7 +101,7 @@ export class OpenClawParser implements SessionParser {
                 provider: "openclaw",
                 model: currentModel,
                 project: "openclaw",
-                sourceFile: entry.sessionFile,
+                sourceFile: sessionFilePath,
                 inputTokens: msg.message.usage.input ?? 0,
                 outputTokens: msg.message.usage.output ?? 0,
                 cacheReadTokens: msg.message.usage.cacheRead ?? 0,

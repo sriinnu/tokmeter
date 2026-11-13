@@ -141,6 +141,15 @@ describe("settleInferredTimes", () => {
     expect(records[0].timestamp).toBe(createdAt(a) + 1);
   });
 
+  it("doesn't remember a clock reading for a file it couldn't read", async () => {
+    const gone = join(home, "not-yet.jsonl");
+    const t1 = utils.fallbackRecordTime(gone);
+    await tick();
+    writeFileSync(gone, "{}\n");
+    expect(utils.fallbackRecordTime(gone)).toBe(createdAt(gone));
+    expect(createdAt(gone)).toBeGreaterThan(t1);
+  });
+
   it("never mutates the records it was given", () => {
     const a = join(home, "a.jsonl");
     writeFileSync(a, "{}\n");
@@ -227,6 +236,34 @@ describe("a session without timestamps keeps its records' times across re-parses
         writeFileSync(file, JSON.stringify({ sessionId: "sid", messages: [msg(100), msg(200)] }))
     );
     expect(second).toHaveLength(2);
+    expect(fingerprint(second[0])).toBe(fingerprint(first[0]));
+  });
+});
+
+describe("OpenClaw, whose index names its session files relatively", () => {
+  it("dates by the resolved file, not the clock", async () => {
+    const { OpenClawParser } = await import("./openclaw.js");
+    const dir = join(home, ".openclaw", "agents", "a1", "sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "sessions.json"), JSON.stringify({ k: { sessionFile: "s1.jsonl" } }));
+    const file = join(dir, "s1.jsonl");
+    const line = (out: number) =>
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", usage: { input: 10, output: out } },
+      });
+    writeFileSync(file, `${line(100)}\n`);
+
+    // A fresh process each time: the remembered creation time can't mask a
+    // clock reading, which is what a relative sourceFile used to fall back to.
+    const parser = new OpenClawParser();
+    const first = await parse(() => parser.scan(home));
+    await tick();
+    utils.resetFallbackRecordTimes();
+    appendFileSync(file, `${line(200)}\n`);
+    const second = await parse(() => parser.scan(home));
+    expect(first[0].sourceFile).toBe(file);
+    expect(first[0].timestamp).toBe(createdAt(file) + 1);
     expect(fingerprint(second[0])).toBe(fingerprint(first[0]));
   });
 });
