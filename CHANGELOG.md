@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Sessions in numbered folders no longer show up as projects called `1`, `2`,
+  `3`. An eval harness that runs each trial in `~/.<tool>/<sub>/.../<n>` is now
+  one project named `<tool>/<sub>` (Ribhu's evals show as `ribhu/eval`, apart
+  from the `ribhu` repo itself). A bare number never names a project on its
+  own: `runs/3` keeps its parent. Days already sealed keep their old names.
+- A session started in a fresh temp folder (`/tmp/x-AbC123`, or macOS
+  `/var/folders/.../T/x-AbC123`) is named for the folder's prefix, not its
+  random tail, so a tool that makes a new workspace per run gets one card.
+
 ## [1.21.0] - 2026-11-04
 
 ### Changed
