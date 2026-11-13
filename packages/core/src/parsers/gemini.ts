@@ -48,8 +48,10 @@ export class GeminiParser implements SessionParser {
       for (const msg of session.messages) {
         if (msg.type !== "gemini" || !msg.tokens) continue;
 
-        // Prefer per-message timestamp, fall back to session timestamp, then Date.now()
-        const ts = msg.timestamp ? new Date(msg.timestamp).getTime() : (sessionTs ?? Date.now());
+        // Prefer the message's own time, then the session's; with neither,
+        // createRecord falls back to when the file was created.
+        const msgTs = msg.timestamp ? new Date(msg.timestamp).getTime() : Number.NaN;
+        const ts = Number.isFinite(msgTs) ? msgTs : sessionTs;
 
         // Gemini CLI mirrors Google's API: tokens.input is the TOTAL prompt
         // (including cached). Subtract the cached portion so inputTokens =

@@ -135,7 +135,7 @@ export class AugmentParser implements SessionParser {
         const ts =
           typeof bestNode?.timestamp_ms === "number" && Number.isFinite(bestNode.timestamp_ms)
             ? bestNode.timestamp_ms
-            : (sessionTs ?? Date.now());
+            : sessionTs;
 
         records.push(
           createRecord({

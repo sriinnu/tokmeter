@@ -1254,32 +1254,57 @@ async function main() {
     await pricing.init();
     const modelId = args.pricingModel;
     if (!modelId) {
-      console.log("Usage: tokmeter pricing <model-id>");
-      console.log("Example: tokmeter pricing claude-sonnet-4-20250514");
+      if (args.json) {
+        console.log(JSON.stringify({ error: "usage: tokmeter pricing <model-id> [--json]" }));
+      } else {
+        console.log("Usage: tokmeter pricing <model-id>");
+        console.log("Example: tokmeter pricing claude-sonnet-4-20250514");
+      }
       process.exit(1);
     }
-    const p = await pricing.getPricing(modelId);
-    if (!p || p.inputPerMillion <= 0 || p.outputPerMillion <= 0) {
-      console.log(`No pricing found for model: ${modelId}`);
-      process.exit(1);
-    }
+    // Same lookup calculateCost bills with, so what this prints is what a
+    // record of this model costs. Three answers, kept apart: a price, a real
+    // $0 (a "-free" route or a $0 override), and no price at all, which
+    // bills as $0 but is a gap, not a fact.
+    const { pricing: p, source } = await pricing.getPricingWithSource(modelId);
+    const status = !p ? "unpriced" : pricing.isPricedFree(modelId) ? "free" : "priced";
+    const from = source.matchedId ? `${source.tier}, as ${source.matchedId}` : source.tier;
     if (args.json) {
-      console.log(JSON.stringify({ model: modelId, pricing: p }, null, 2));
+      console.log(JSON.stringify({ model: modelId, status, source, pricing: p }, null, 2));
+      if (!p) process.exit(1);
+      return;
+    }
+    if (!p) {
+      console.log(`No price for ${modelId}, so its usage counts as $0.`);
+      console.log(
+        "A catalog's $0 isn't taken as a price, except for a -free or :free model on its route (model@provider)."
+      );
+      console.log("Add a rate in ~/.tokmeter/pricing-overrides.json to price it.");
+      process.exit(1);
+    }
+    if (status === "free") {
+      console.log(`${modelId} is free: $0 in, $0 out (${from}).`);
     } else {
+      // Rates aren't money owed, so cents would hide them: $0.075 and $0.0084
+      // would print as $0.08 and $0.01. Under $1, show up to 3 significant
+      // digits (never fewer than 2 decimals); from $1, cents.
+      // Cents at $1 and up; below it, three significant digits (at least two
+      // decimals), so $0.0375 doesn't print as $0.04. Fixed notation, never
+      // "1e-7", and never $0.00 for a rate that isn't zero.
+      const usd = (n: number) => {
+        if (n === 0 || n >= 1) return `$${n.toFixed(2)}`;
+        const decimals = Math.max(2, 2 - Math.floor(Math.log10(Math.abs(n))));
+        const s = n.toFixed(Math.min(decimals, 20)).replace(/(\.\d\d)0+$|(\.\d*?[1-9])0+$/, "$1$2");
+        return `$${s}`;
+      };
       const table = new Table({ head: ["Metric", "Per Million Tokens"], colWidths: [25, 20] });
       table.push(
-        ["Input", `$${(p.inputPerMillion ?? 0).toFixed(2)}`],
-        ["Output", `$${(p.outputPerMillion ?? 0).toFixed(2)}`],
-        [
-          "Cache Read",
-          p.cacheReadPerMillion != null ? `$${p.cacheReadPerMillion.toFixed(2)}` : "N/A",
-        ],
-        [
-          "Cache Write",
-          p.cacheWritePerMillion != null ? `$${p.cacheWritePerMillion.toFixed(2)}` : "N/A",
-        ]
+        ["Input", usd(p.inputPerMillion ?? 0)],
+        ["Output", usd(p.outputPerMillion ?? 0)],
+        ["Cache Read", p.cacheReadPerMillion != null ? usd(p.cacheReadPerMillion) : "N/A"],
+        ["Cache Write", p.cacheWritePerMillion != null ? usd(p.cacheWritePerMillion) : "N/A"]
       );
-      console.log(`Pricing for: ${modelId}`);
+      console.log(`Pricing for: ${modelId} (${from})`);
       console.log(table.toString());
     }
     return;

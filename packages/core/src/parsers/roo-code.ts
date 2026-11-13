@@ -71,7 +71,7 @@ export class RooCodeParser implements SessionParser {
 
             records.push(
               createRecord({
-                timestamp: msg.ts ? new Date(msg.ts).getTime() : Date.now(),
+                timestamp: msg.ts ? new Date(msg.ts).getTime() : undefined,
                 provider: "roo-code",
                 model: data.model || data.modelName || "unknown",
                 project: "roo-code",
