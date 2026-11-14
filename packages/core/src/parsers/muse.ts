@@ -26,10 +26,19 @@
  * full input rate.
  */
 
+import { stat } from "node:fs/promises";
 import { sanitizeDataLabel } from "../display-safety.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  filterFilesByMtime,
+  findFiles,
+  getCachedRecords,
+  readJsonlFile,
+  setCachedRecords,
+} from "./utils.js";
 
 interface MuseUsage {
   input_tokens?: number;
@@ -73,16 +82,39 @@ export class MuseParser implements SessionParser {
     return out;
   }
 
+  /**
+   * The daemon's today refresh runs every ~12 s with `modifiedSinceMs` set to
+   * the start of today, and the relay rebuild sets it to its window's start.
+   * Ignoring it re-parsed every Muse session on each refresh: 799 MB across
+   * 74k files, 9–12 s a refresh on the machine that showed it. Unchanged
+   * files reuse their records from the per-file cache (mtime + size, taken
+   * before the read so a write mid-parse is read again next time).
+   */
   async scanStreaming(
     homeDir: string,
-    _opts: ScanFilterOptions | undefined,
+    opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f.endsWith("session.jsonl"), 6);
+    let files = await findFiles(sessionsDir, (f) => f.endsWith("session.jsonl"), 6);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
 
     for (const file of files) {
-      const records = await this.parseFile(file);
+      const cached = await getCachedRecords(file);
+      let records: TokenRecord[];
+      if (cached.hit) {
+        records = cached.records;
+      } else {
+        let before: { mtimeMs: number; sizeBytes: number } | undefined;
+        try {
+          const s = await stat(file);
+          before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
+        } catch {}
+        records = await this.parseFile(file);
+        if (before) await setCachedRecords(file, records, before);
+      }
       if (records.length > 0) await onFile(records);
     }
   }

@@ -10,7 +10,7 @@
  * has its cached portion stripped.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ afterEach(() => {
   } catch {}
 });
 
-function seedSession(lines: unknown[]): void {
+function seedSession(lines: unknown[]): string {
   const dir = join(
     tmpDir,
     ".local",
@@ -41,7 +41,9 @@ function seedSession(lines: unknown[]): void {
     "01a0fc98-7285-7e71-be1c-0303e1066a1b"
   );
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "session.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n"));
+  const file = join(dir, "session.jsonl");
+  writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n"));
+  return file;
 }
 
 function modelCompleted(id: string, usage: Record<string, number>, model = "muse-spark-1.3") {
@@ -117,5 +119,39 @@ describe("MuseParser", () => {
     const records = await new MuseParser().scan(tmpDir);
     expect(records).toHaveLength(1);
     expect(records[0].inputTokens).toBe(800);
+  });
+});
+
+describe("MuseParser: the today refresh doesn't re-parse old sessions", () => {
+  const october = new Date("2026-10-02T12:00:00Z");
+  const usage = { input_tokens: 100, output_tokens: 10 };
+
+  it("skips a session older than modifiedSinceMs", async () => {
+    const file = seedSession([modelCompleted("r1", usage)]);
+    utimesSync(file, october, october);
+    const parser = new MuseParser();
+    const today = new Date("2026-11-14T00:00:00").getTime();
+    expect(await parser.scan(tmpDir, { modifiedSinceMs: today })).toHaveLength(0);
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+  });
+
+  it("reuses an unchanged session's records instead of parsing it again", async () => {
+    const file = seedSession([modelCompleted("r1", usage)]);
+    utimesSync(file, october, october);
+    const parser = new MuseParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+    // Same size and mtime, no usage in it: only a re-parse would see 0.
+    writeFileSync(file, "x".repeat(statSync(file).size));
+    utimesSync(file, october, october);
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+  });
+
+  it("parses a session again once it grows", async () => {
+    const file = seedSession([modelCompleted("r1", usage)]);
+    utimesSync(file, october, october);
+    const parser = new MuseParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+    seedSession([modelCompleted("r1", usage), modelCompleted("r2", usage)]);
+    expect(await parser.scan(tmpDir)).toHaveLength(2);
   });
 });
