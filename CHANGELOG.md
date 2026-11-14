@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The daemon no longer bursts to 2–4 GB of memory. Its today refresh, every
+  ~12 seconds, re-read every VS Code Copilot chat session on disk, however
+  old: it ignored "changed since" and kept no per-file cache. One session
+  from April was 427 MB with its whole state on a single 291 MB line, so
+  each refresh took about 6 s and 3 GB. A session untouched today is now
+  never opened by the refresh, and an unchanged one is read once and
+  reused. On the machine that showed it: 86 ms and 9 MB per refresh.
 - A response logged without a usable timestamp keeps one time. It used to be
   stamped with the time of the scan, so it landed on whichever day its session
   file was last read, and was counted again on each later day the file

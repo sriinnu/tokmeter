@@ -8,7 +8,7 @@
  * (single folder, saved *.code-workspace, and untitled/internal multi-root).
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -203,5 +203,48 @@ describe("VSCodeCopilotParser", () => {
   it("returns no records when VS Code isn't installed", async () => {
     const records = await new VSCodeCopilotParser().scan(tmpDir);
     expect(records.length).toBe(0);
+  });
+});
+
+describe("VSCodeCopilotParser: no re-reading old sessions (the daemon's 3 GB bursts)", () => {
+  const april = new Date("2026-04-12T12:00:00Z");
+
+  it("skips a session older than modifiedSinceMs, so the today refresh never opens it", async () => {
+    const file = writeWorkspaceSession("old", [fakeRequest()], { folder: "file:///Users/me/proj" });
+    utimesSync(file, april, april);
+    const parser = new VSCodeCopilotParser();
+    const today = new Date("2026-11-14T00:00:00").getTime();
+    expect(await parser.scan(tmpDir, { modifiedSinceMs: today })).toHaveLength(0);
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+  });
+
+  it("reuses an unchanged session's records instead of reading it again", async () => {
+    const file = writeWorkspaceSession("same", [fakeRequest()], {
+      folder: "file:///Users/me/proj",
+    });
+    utimesSync(file, april, april);
+    const parser = new VSCodeCopilotParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+    // Same size and mtime, unreadable content: only a re-read would notice.
+    const size = statSync(file).size;
+    writeFileSync(file, "x".repeat(size));
+    utimesSync(file, april, april);
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+  });
+
+  it("reads a session again once it changes", async () => {
+    const file = writeWorkspaceSession("grows", [fakeRequest()], {
+      folder: "file:///Users/me/proj",
+    });
+    utimesSync(file, april, april);
+    const parser = new VSCodeCopilotParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(1);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        requests: [fakeRequest(), fakeRequest({ timestamp: april.getTime() + 60_000 })],
+      })
+    );
+    expect(await parser.scan(tmpDir)).toHaveLength(2);
   });
 });
