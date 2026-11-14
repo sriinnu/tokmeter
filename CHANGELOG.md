@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- An independent Codex oracle (`scripts/oracle/`). `codex_oracle.py` counts
+  Codex usage straight from the rollout files and shares no code with the
+  parser; `compare-codex.mjs` diffs it against the built parser response by
+  response and day by day; `test-fixtures.mjs` checks the oracle itself
+  against hand-worked totals. On this machine's full history the two agree
+  on every other response (151,966 of them, 19.5 billion tokens). It found
+  one real undercount: a fresh Codex auto-review (guardian) thread's first
+  call after a compaction is skipped as if it had been carried over from an
+  earlier file. Here that is 8 calls, 229,158 tokens, between 2026-10-24 and
+  2026-11-03. The fixtures pin it and four more edge cases the parser gets
+  wrong that haven't shown up in real data. The fixes come next, judged by
+  the oracle.
+
+### Changed
+
+- `bun run release` now also upgrades the TokmeterBar app on the releasing
+  machine, after checking the downloaded bar is Developer ID signed by the
+  same team, notarized and stapled; a running bar is quit and reopened, and
+  a failed swap rolls back.
+
 ## [1.22.1] - 2026-11-14
 
 ### Fixed

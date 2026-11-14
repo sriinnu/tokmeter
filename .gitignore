@@ -49,3 +49,6 @@ packages/macos-bar/generate_keys.out
 /CLAUDE.md
 /hello.md
 /proj-status/
+
+# Python bytecode (scripts/oracle)
+__pycache__/
