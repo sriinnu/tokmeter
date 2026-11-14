@@ -47,6 +47,10 @@ export type UsageTelemetrySource =
   | "tool_csv"
   | "otel"
   | "statusline"
+  // Usage the agent handed to a tokmeter hook at runtime (Cursor's `stop`
+  // hook), journaled by tokmeter itself rather than read from the agent's own
+  // files.
+  | "agent_hook"
   | "synthetic"
   | "unknown";
 

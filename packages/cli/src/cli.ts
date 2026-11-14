@@ -19,6 +19,7 @@ import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sri
 import { localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { readOwnVersion } from "./cron.js";
+import { runCursorSyncCommand } from "./cursor-sync.js";
 import {
   DAEMON_READ_ENDPOINTS,
   daemonReadAuthorization,
@@ -63,7 +64,11 @@ interface CliArgs extends ScanOptions {
     | "refresh"
     | "backfill"
     | "coverage"
-    | "quota";
+    | "quota"
+    | "cursor-hook";
+  /** For `cursor-hook`: install | uninstall | status, and its own flags. */
+  cursorHookSub?: string;
+  cursorHookRest?: string[];
   /** For `coverage`: the local day to check (YYYY-MM-DD); default yesterday. */
   date?: string;
   /** For `backfill`: how many recent sealed days to recompute into the relay. */
@@ -293,6 +298,8 @@ Commands:
   coverage        Session files that changed on a day but fed no record:
                   usage the parsers are missing. --date D (default
                   yesterday). The daemon runs it after each day seals.
+  cursor sync     Opt-in: download your billed Cursor usage from
+                  cursor.com (--since D, --dry-run, --json)
   quota           Plan windows per agent (Codex weekly, Claude Code 5h
                   and 7d): used %, reset time, and whether the current
                   pace runs out before the reset
@@ -343,6 +350,10 @@ Installer:
   uninstall-cron       Remove the daily price refresh
   cron-status          Show daily-cron install + last-run state
   editors              List all supported editors
+  cursor-hook install  Record Cursor's per-turn token usage via a stop hook
+  cursor-hook uninstall  Remove only tokmeter's entry from ~/.cursor/hooks.json
+  cursor-hook status   Hook state, journal path, last turn, turns today
+                       (--home DIR to use another home, --node PATH, --json)
 
 Date Filters:
   --today         Only today's usage
@@ -452,6 +463,12 @@ Output:
         args.aliasSub = rest[++i] ?? "list";
         args.aliasRest = rest.slice(i + 1);
         i = rest.length; // stop consuming — alias owns the rest
+        break;
+      case "cursor-hook":
+        args.command = "cursor-hook";
+        args.cursorHookSub = rest[++i] ?? "status";
+        args.cursorHookRest = rest.slice(i + 1);
+        i = rest.length; // cursor-hook owns the rest (--home, --node, --json)
         break;
       case "config":
         args.command = "config";
@@ -974,6 +991,11 @@ async function tryServeFromDaemon(
 // ---- Main ----
 
 async function main() {
+  // `tokmeter cursor sync`: opt-in, credentialed, handled on its own path so
+  // the shared flag parser never sees its options.
+  if (process.argv[2] === "cursor" && process.argv[3] === "sync") {
+    process.exit(await runCursorSyncCommand(process.argv.slice(3)));
+  }
   const args = parseArgs(process.argv);
 
   // Translate --older-than Nx into an ISO --until cutoff. "Older than N days"
@@ -991,6 +1013,18 @@ async function main() {
       process.exit(1);
     }
     args.until = cutoff;
+  }
+
+  // Needs no scan: handle before TokmeterCore is built.
+  if (args.command === "cursor-hook") {
+    const { runCursorHook } = await import("./cursor-hook.js");
+    process.exit(
+      await runCursorHook({
+        sub: args.cursorHookSub ?? "status",
+        rest: args.cursorHookRest ?? [],
+        json: args.json,
+      })
+    );
   }
 
   const core = new TokmeterCore({ skipPricing: args.light });

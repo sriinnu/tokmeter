@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tokmeter cursor-hook install | uninstall | status`. It adds a Cursor `stop`
+  hook that writes each finished agent turn's real token counts (input,
+  output, cache read, cache write) to `~/.tokmeter/cursor-turns/`. No
+  credentials are needed: Cursor hands the counts to the hook. Other hooks in
+  `~/.cursor/hooks.json` are kept, and a file that doesn't parse is left alone.
+  The hook stores no message text and no email. Only turns after the install
+  are seen.
+  The daemon installs the hook on its own when `~/.cursor` exists, and checks
+  it once a day. Cursor 3.11 and later write no token counts to their local
+  database (every message saved since then reads 0), so without the hook
+  Cursor shows turns but no usage. It never fights you: after
+  `tokmeter cursor-hook uninstall`, or if you delete its entry from
+  `hooks.json` by hand, it stays off, and `daemon.cursorHook: false` in
+  `~/.tokmeter/config.json` turns the check off. An old or missing hook script
+  is replaced in place.
+  The hook records turns now, but they aren't counted yet. Its numbers still
+  need checking against a live turn: does input include cache reads, and is
+  it the whole turn or the last step? Until then the totals come from Cursor's
+  local database alone, and each scan says how many turns the hook recorded.
+  `tokmeter cursor-hook status` lists today's turns and sums their input,
+  output, cache read and cache write, so you can check one.
+  Install and uninstall are written to a ledger, `coverage.jsonl`. The ledger
+  decides, not `hooks.json`: install adds "installed" only when no span is
+  open, and uninstall adds "uninstalled" whenever one is, even if the
+  `hooks.json` entry was already removed by hand. Lines are read in the order
+  they were written, and an event dated earlier than the one before it is
+  moved up to that time. Once the counts are verified, the hook owns the time
+  inside its spans and the database the rest, so no turn counts twice.
+  A symlinked `hooks.json` is written through, and the link is kept. If the
+  file changes while tokmeter is updating it, nothing is written.
+  A repeat of a conversation's last counts under a new id is dropped only
+  when it lands within 10 seconds of the line before it.
+- `tokmeter cursor sync`, an opt-in download of your own Cursor usage export
+  from cursor.com: billed cost, Tab completions, cloud agents and other
+  machines, which Cursor never writes locally. It is Tokmeter's first
+  credentialed call, so it runs only when you invoke it. It reads the Cursor
+  app's session read-only, refuses an expired one instead of refreshing it,
+  sends it only to cursor.com's usage export, and keeps the token, cookie and
+  email out of all output. `--dry-run` sends nothing and shows only whether a
+  session exists and when it expires. Exports are saved to
+  `~/.cache/tokmeter/cursor-usage/`, one file per UTC calendar month, so a
+  later run rewrites the same files. When two files hold the same row, the
+  one written last wins. Redirects are refused, and a download over 64 MB is
+  cut off while it streams. They aren't in the totals yet: an export
+  covers time after the fact, and taking over a stretch of time later would
+  make the daemon count what it replaced a second time.
+
 ### Fixed
 
 - The daemon no longer bursts to 2–4 GB of memory. Its today refresh, every
@@ -16,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each refresh took about 6 s and 3 GB. A session untouched today is now
   never opened by the refresh, and an unchanged one is read once and
   reused. On the machine that showed it: 86 ms and 9 MB per refresh.
+- Cursor requests get the right model. Read from Cursor's own database, every
+  request in a conversation was given the first model seen in it, and
+  conversations switch models. Each user message now opens a request, the
+  model comes from that message, and each message after it that carries a
+  token count is its own record, joined to the request by time order. Auto mode shows as
+  `cursor-auto`. Input is marked estimated, since Cursor's count is the context size, not billed input. Each
+  scan says how many requests have no count, like "4 of 80". Token totals
+  don't change. Days already sealed keep their old models.
 - A response logged without a usable timestamp keeps one time. It used to be
   stamped with the time of the scan, so it landed on whichever day its session
   file was last read, and was counted again on each later day the file
