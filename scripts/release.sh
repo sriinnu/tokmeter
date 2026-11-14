@@ -240,6 +240,165 @@ upgrade_local_install() {
   fi
 }
 
+# The menubar app on this machine. Sparkle checks once a day, so after a
+# release the bar here sat a version behind (1.21.0 while 1.22.1 was out)
+# until someone noticed. Stage 12 installs CI's signed zip itself, and only
+# after the checks Gatekeeper makes plus one it doesn't: the new app must be
+# signed by the same team as the installed one, under the bar's bundle id.
+BAR_APP="${TOKMETER_BAR_APP:-/Applications/TokmeterBar.app}"
+BAR_ID="com.sriinnu.tokmeterbar"
+BAR_PROC="TokmeterBar"
+bar_version() {  # bar_version <app> — CFBundleShortVersionString, or nothing
+  node -e '
+    try {
+      const m = require("fs").readFileSync(process.argv[1], "utf8")
+        .match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]*)<\/string>/);
+      console.log(m ? m[1] : "");
+    } catch {}' "$1/Contents/Info.plist" 2>/dev/null || true
+}
+version_at_least() {  # version_at_least <a> <b> — a >= b, numeric per dotted part
+  node -e '
+    const p = (v) => v.split(/[.-]/).map((x) => (/^\d+$/.test(x) ? Number(x) : NaN));
+    const [a, b] = [p(process.argv[1]), p(process.argv[2])];
+    if ([...a, ...b].some(Number.isNaN)) process.exit(1);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      if ((a[i] ?? 0) !== (b[i] ?? 0)) process.exit((a[i] ?? 0) > (b[i] ?? 0) ? 0 : 1);
+    }' "$1" "$2" 2>/dev/null
+}
+bar_running() { pgrep -x "$BAR_PROC" >/dev/null 2>&1; }
+# Sparkle's installer runs outside the app bundle; after a quit it may be
+# rewriting the same bundle, so the swap waits for it.
+sparkle_installing() { pgrep -f 'Sparkle.*(Autoupdate|Installer)' >/dev/null 2>&1; }
+team_of() {  # team_of <app> — the signing team, or nothing (ad-hoc, unsigned)
+  codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p' | grep -v '^not set$' || true
+}
+bar_upgrade_warn() {  # bar_upgrade_warn <what went wrong>
+  {
+    echo
+    echo "  !! THE BAR ON THIS MACHINE IS NOT ON ${VERSION}: $1"
+    echo "  !! Sparkle offers ${VERSION} on its next daily check,"
+    echo "  !! or rerun: bash scripts/release.sh ${VERSION}"
+  } >&2
+}
+# Never fails the release, like the npm upgrade above.
+upgrade_local_bar() {
+  local cur tmp rc=0
+  # The path gets moved and deleted below; refuse anything that isn't a bundle.
+  if [[ "$BAR_APP" != /*.app ]]; then
+    bar_upgrade_warn "TOKMETER_BAR_APP must be an absolute path to a .app, not '${BAR_APP}'."
+    return 0
+  fi
+  if [[ ! -d "$BAR_APP" ]]; then
+    echo "  no TokmeterBar at ${BAR_APP}, so no bar to upgrade."
+    return 0
+  fi
+  cur="$(bar_version "$BAR_APP")"
+  if [[ -n "$cur" ]] && version_at_least "$cur" "$VERSION"; then
+    skip "TokmeterBar is at ${cur} (release ${VERSION})"
+    return 0
+  fi
+  echo "  installed bar: ${cur:-unknown}"
+  if [[ $DRY -eq 1 ]]; then
+    echo "DRY: download TokmeterBar-${VERSION}.zip, verify it, replace ${BAR_APP}"
+    return 0
+  fi
+  tmp="$(mktemp -d)" || { bar_upgrade_warn "could not make a scratch directory. Nothing was replaced."; return 0; }
+  install_bar_from "$tmp" || rc=$?
+  rm -rf "$tmp"
+  return $rc
+}
+install_bar_from() {  # install_bar_from <scratch dir>
+  local tmp="$1" zip="TokmeterBar-${VERSION}.zip" new team assess was_running=0 waited=0 qpid now
+  local keep="Nothing was replaced."
+  team="$(team_of "$BAR_APP")"
+  if [[ -z "$team" ]]; then
+    bar_upgrade_warn "the installed bar isn't Developer ID signed (a dev build?), so there's no team to check the release against. ${keep}"
+    return 0
+  fi
+  if ! gh release download "$TAG" --repo "$REPO" -p "$zip" -D "$tmp" >/dev/null; then
+    bar_upgrade_warn "could not download ${zip} from ${TAG}. ${keep}"; return 0
+  fi
+  if ! ditto -x -k "$tmp/$zip" "$tmp/x"; then
+    bar_upgrade_warn "could not unpack ${zip}. ${keep}"; return 0
+  fi
+  new="$tmp/x/TokmeterBar.app"
+  # ditto keeps a top-level symlink, and copying it later would install
+  # whatever it points at.
+  if [[ -L "$new" || ! -d "$new" ]]; then
+    bar_upgrade_warn "${zip} has no TokmeterBar.app directory at its top. ${keep}"; return 0
+  fi
+  if [[ "$(bar_version "$new")" != "$VERSION" ]]; then
+    bar_upgrade_warn "${zip} holds version '$(bar_version "$new")', not ${VERSION}. ${keep}"; return 0
+  fi
+  if ! codesign --verify --deep --strict \
+    -R="anchor apple generic and identifier \"${BAR_ID}\" and certificate leaf[subject.OU] = \"${team}\"" \
+    "$new"; then
+    bar_upgrade_warn "${zip} isn't validly signed as ${BAR_ID} by the installed bar's team. ${keep}"; return 0
+  fi
+  if ! assess="$(spctl -a -t exec -vv "$new" 2>&1)" || ! grep -q '^source=Notarized Developer ID$' <<<"$assess"; then
+    bar_upgrade_warn "Gatekeeper doesn't accept ${zip} as notarized Developer ID. ${keep}"; return 0
+  fi
+  if ! xcrun stapler validate "$new" >/dev/null; then
+    bar_upgrade_warn "${zip} has no valid stapled notarization ticket. ${keep}"; return 0
+  fi
+  echo "  ✓ ${zip} verified: team signature, notarized Developer ID, stapled, ${VERSION}"
+
+  # Copy beside the old app first, so a failed copy never leaves no bar.
+  rm -rf "${BAR_APP}.new" "${BAR_APP}.old"
+  if ! ditto "$new" "${BAR_APP}.new"; then
+    rm -rf "${BAR_APP}.new"
+    bar_upgrade_warn "could not copy the new bar next to ${BAR_APP}. ${keep}"; return 0
+  fi
+
+  # Quit by bundle id, in the background: osascript can wait on an Automation
+  # prompt, and a --yes run must not hang on it. TERM after 10 s.
+  if bar_running; then
+    was_running=1
+    osascript -e "tell application id \"${BAR_ID}\" to quit" >/dev/null 2>&1 &
+    qpid=$!
+    while bar_running || sparkle_installing; do
+      (( waited == 10 )) && pkill -TERM -x "$BAR_PROC" 2>/dev/null
+      if (( waited >= 20 )); then
+        kill "$qpid" 2>/dev/null || true
+        rm -rf "${BAR_APP}.new"
+        bar_upgrade_warn "the running bar (or a Sparkle install) didn't finish within 20 seconds. ${keep}"
+        return 0
+      fi
+      # The test suite sleeps 0 to run the timeout fast.
+      sleep "${RELEASE_BAR_SLEEP:-1}"; waited=$((waited + 1))
+    done
+    kill "$qpid" 2>/dev/null || true
+  fi
+  # Sparkle may have installed the update while the bar quit.
+  now="$(bar_version "$BAR_APP")"
+  if [[ -n "$now" ]] && version_at_least "$now" "$VERSION"; then
+    rm -rf "${BAR_APP}.new"
+    skip "TokmeterBar is at ${now} (installed while it quit)"
+    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+    return 0
+  fi
+
+  # Swap by rename, keeping the old app until the new one is in place.
+  if ! mv "$BAR_APP" "${BAR_APP}.old"; then
+    rm -rf "${BAR_APP}.new"
+    bar_upgrade_warn "could not move the old bar aside. ${keep}"
+    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+    return 0
+  fi
+  if [[ -e "$BAR_APP" ]] || ! mv "${BAR_APP}.new" "$BAR_APP"; then
+    if [[ ! -e "$BAR_APP" ]] && mv "${BAR_APP}.old" "$BAR_APP"; then
+      bar_upgrade_warn "installing the new bar failed; the old one is back in place."
+    else
+      bar_upgrade_warn "installing the new bar failed and the old one couldn't be put back: it is at ${BAR_APP}.old, the verified new one at ${BAR_APP}.new."
+    fi
+    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+    return 0
+  fi
+  rm -rf "${BAR_APP}.old"
+  (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+  echo "  ✓ TokmeterBar upgraded to ${VERSION}$( (( was_running )) && echo ' and relaunched')"
+}
+
 # ── 1. preflight ─────────────────────────────────────────────────────────────
 say "1/12 preflight ${TAG}"
 branch="$(git branch --show-current)"
@@ -537,6 +696,7 @@ fi
 if [[ $SKIP_LOCAL -eq 0 ]]; then
   say "12/12 this machine's install"
   upgrade_local_install || local_upgrade_warn "the local upgrade stage stopped unexpectedly."
+  upgrade_local_bar || bar_upgrade_warn "the bar upgrade stopped unexpectedly."
 else say "12/12 this machine's install — skipped (--skip-local-upgrade)"; fi
 
 say "Release ${TAG} complete."
