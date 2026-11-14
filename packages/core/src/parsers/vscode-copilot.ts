@@ -16,16 +16,19 @@
  * defaultUsageProvenance in utils.ts) rather than guessed at.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   createRecord,
   expandHome,
+  filterFilesByMtime,
   findFiles,
+  getCachedRecords,
   getConfiguredProviderPaths,
   readJsonFile,
+  setCachedRecords,
   vscodeFamilyUserDirs,
 } from "./utils.js";
 
@@ -140,36 +143,89 @@ export class VSCodeCopilotParser implements SessionParser {
     ]);
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  /**
+   * A chat session is rewritten in place (a .json) or replayed from its
+   * first line (a .jsonl mutation log), so neither can be read from an
+   * offset: a changed file is parsed whole. Two things keep that rare:
+   *
+   * - `modifiedSinceMs`: the daemon's today refresh runs every ~12 s; a
+   *   session last touched months ago must not be opened at all.
+   * - the per-file record cache, keyed on mtime and size: a full scan
+   *   reuses an unchanged file's records.
+   *
+   * Without both, every refresh re-read every session. One real log was
+   * 427 MB with a 291 MB first line (the whole session state), and each
+   * refresh took 6 s and ~3 GB, which showed up as the daemon's 2–4 GB
+   * bursts.
+   */
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
+    const since = opts?.modifiedSinceMs;
+    const recent = async (files: string[]) =>
+      since === undefined ? files : filterFilesByMtime(files, since);
 
     for (const userDir of copilotUserDirs(homeDir)) {
       const workspaceStorageDir = join(userDir, "workspaceStorage");
-      const sessionFiles = preferMutationLogs(
-        await findFiles(workspaceStorageDir, (f) => f.endsWith(".json") || f.endsWith(".jsonl"), 3)
+      const sessionFiles = await recent(
+        preferMutationLogs(
+          await findFiles(
+            workspaceStorageDir,
+            (f) => f.endsWith(".json") || f.endsWith(".jsonl"),
+            3
+          )
+        ).filter((file) => dirname(file).endsWith("chatSessions"))
       );
 
       for (const file of sessionFiles) {
-        const chatSessionsDir = dirname(file);
-        if (!chatSessionsDir.endsWith("chatSessions")) continue;
-        const session = file.endsWith(".jsonl")
-          ? await readMutationLog(file)
-          : await readJsonFile<ChatSessionFile>(file);
-        if (!Array.isArray(session?.requests)) continue;
-        const project = await resolveWorkspaceProject(chatSessionsDir);
-        records.push(...requestsToRecords(session.requests, project, file));
+        records.push(
+          ...(await cachedSessionRecords(file, async () => {
+            const session = file.endsWith(".jsonl")
+              ? await readMutationLog(file)
+              : await readJsonFile<ChatSessionFile>(file);
+            if (!Array.isArray(session?.requests)) return [];
+            const project = await resolveWorkspaceProject(dirname(file));
+            return requestsToRecords(session.requests, project, file);
+          }))
+        );
       }
 
       const emptyWindowDir = join(userDir, "globalStorage", "emptyWindowChatSessions");
-      const emptyWindowFiles = await findFiles(emptyWindowDir, (f) => f.endsWith(".jsonl"), 1);
+      const emptyWindowFiles = await recent(
+        await findFiles(emptyWindowDir, (f) => f.endsWith(".jsonl"), 1)
+      );
 
       for (const file of emptyWindowFiles) {
-        const session = await readMutationLog(file);
-        records.push(...requestsToRecords(session?.requests, "vscode-copilot", file));
+        records.push(
+          ...(await cachedSessionRecords(file, async () => {
+            const session = await readMutationLog(file);
+            return requestsToRecords(session?.requests, "vscode-copilot", file);
+          }))
+        );
       }
     }
     return records;
   }
+}
+
+/**
+ * An unchanged file's cached records, else `parse()`'s, cached under the
+ * mtime and size seen BEFORE reading: a write that lands mid-parse leaves the
+ * file newer than its cache entry, so the next scan reads it again.
+ */
+async function cachedSessionRecords(
+  file: string,
+  parse: () => Promise<TokenRecord[]>
+): Promise<TokenRecord[]> {
+  const cached = await getCachedRecords(file);
+  if (cached.hit) return cached.records;
+  let before: { mtimeMs: number; sizeBytes: number } | undefined;
+  try {
+    const s = await stat(file);
+    before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
+  } catch {}
+  const records = await parse();
+  if (before) await setCachedRecords(file, records, before);
+  return records;
 }
 
 /**
