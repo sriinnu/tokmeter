@@ -724,7 +724,7 @@ function foldCodexEvent(
   if (!structured) state.legacyRecordTurns.set(out.length, payload.turn_id ?? state.currentTurn);
   out.push(
     createRecord({
-      timestamp: evt.timestamp ? new Date(evt.timestamp).getTime() : Date.now(),
+      timestamp: evt.timestamp ? new Date(evt.timestamp).getTime() : undefined,
       provider: "codex",
       model: state.currentModel,
       project: state.project,

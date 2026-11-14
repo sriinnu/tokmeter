@@ -143,6 +143,12 @@ export interface TokenRecord {
   compaction?: CompactionTelemetry;
   /** Original session file path (for debugging). */
   sourceFile?: string;
+  /**
+   * The line carried no usable timestamp, so `timestamp` was inferred: from
+   * the line before it in the same file, else from when the file was created
+   * (see `settleInferredTimes`).
+   */
+  timestampInferred?: boolean;
   /** Actual working directory the session ran in (not the session log path). */
   cwd?: string;
   /**

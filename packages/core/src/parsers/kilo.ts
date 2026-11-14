@@ -69,7 +69,7 @@ export class KiloParser implements SessionParser {
 
             records.push(
               createRecord({
-                timestamp: msg.ts ? new Date(msg.ts).getTime() : Date.now(),
+                timestamp: msg.ts ? new Date(msg.ts).getTime() : undefined,
                 provider: "kilo",
                 model: data.model || data.modelName || "unknown",
                 project: "kilo",

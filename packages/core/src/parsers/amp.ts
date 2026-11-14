@@ -42,7 +42,7 @@ export class AmpParser implements SessionParser {
             ? msg.timestamp
             : msg.timestamp
               ? new Date(msg.timestamp).getTime()
-              : Date.now();
+              : undefined;
 
         records.push(
           createRecord({

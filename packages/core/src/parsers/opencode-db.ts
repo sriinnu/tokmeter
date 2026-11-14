@@ -95,7 +95,7 @@ export function openCodeMessageToRecord(
   const cwd = msg.path?.cwd || fallback.cwd || undefined;
   const t = msg.tokens;
   const rec = createRecord({
-    timestamp: msg.time?.created ?? fallback.timestamp ?? Date.now(),
+    timestamp: msg.time?.created ?? fallback.timestamp,
     provider,
     // The same model costs very differently per route (DeepSeek on Ollama
     // Cloud is half Alibaba's rate), so the record names who served it and
@@ -205,7 +205,7 @@ function readFlatMessages(db: ReadonlySqlite, dbPath: string, provider: Provider
   );
   return rows.map((row) =>
     createRecord({
-      timestamp: row.created_at ?? Date.now(),
+      timestamp: row.created_at ?? undefined,
       provider,
       model: withServedBy(row.model_id || "unknown", row.provider_id),
       project: (row.session_id && sessionProjects.get(row.session_id)) || provider,

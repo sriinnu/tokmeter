@@ -39,7 +39,7 @@ export class DroidParser implements SessionParser {
 
         records.push(
           createRecord({
-            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
             provider: "droid",
             model: msg.model || "unknown",
             project: "droid",

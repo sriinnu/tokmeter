@@ -63,7 +63,7 @@ export class PiParser implements SessionParser {
 
         records.push(
           createRecord({
-            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
             provider: "pi",
             model: msg.message.model || "unknown",
             project,

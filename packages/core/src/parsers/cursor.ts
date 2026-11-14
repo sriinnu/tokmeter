@@ -109,7 +109,7 @@ export class CursorParser implements SessionParser {
 
           records.push(
             createRecord({
-              timestamp: cols[0] ? new Date(cols[0]).getTime() : Date.now(),
+              timestamp: cols[0] ? new Date(cols[0]).getTime() : undefined,
               provider: "cursor",
               model: cols[1] || "unknown",
               project: canonicalizeProjectName(cols[2] || "cursor", "cursor"),
@@ -193,7 +193,7 @@ export class CursorParser implements SessionParser {
 
         records.push(
           createRecord({
-            timestamp: bubble.createdAt ? new Date(bubble.createdAt).getTime() : Date.now(),
+            timestamp: bubble.createdAt ? new Date(bubble.createdAt).getTime() : undefined,
             provider: "cursor",
             model: modelByComposer.get(composerId) || "unknown",
             project: projectByComposer.get(composerId) || "cursor",

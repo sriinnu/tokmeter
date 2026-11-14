@@ -28,9 +28,15 @@ import {
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
 import { attachDayPrices, type DayPrices, pricesForRebuild, priceWithCard } from "./day-prices.js";
 import { getParsers } from "./parsers/index.js";
+import { settleInferredTimes } from "./parsers/utils.js";
 import type { PriceCard } from "./pricing.js";
 import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
-import { providerFault, type ScanContext, scanRawRecords } from "./scan-pipeline.js";
+import {
+  inferredTimesNotice,
+  providerFault,
+  type ScanContext,
+  scanRawRecords,
+} from "./scan-pipeline.js";
 import { carriedRecordsFor, journalDates, withCarried } from "./today-journal.js";
 import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 import { warningsBlockDay } from "./warning-coverage.js";
@@ -239,8 +245,11 @@ async function foldRawIntoDays(
     acc.fold(r);
   };
 
-  const foldFile = async (records: TokenRecord[]): Promise<void> => {
-    if (records.length === 0) return;
+  let inferredTimes = 0;
+  const foldFile = async (scanned: TokenRecord[]): Promise<void> => {
+    if (scanned.length === 0) return;
+    const { records, inferred } = settleInferredTimes(scanned);
+    inferredTimes += inferred;
     if (!ctx.skipPricing) {
       try {
         await enrichCosts(records, ctx.pricing, "history", warnings, undefined, cardFor);
@@ -271,11 +280,15 @@ async function foldRawIntoDays(
           notice: true,
         }),
     };
+    inferredTimes = 0;
     try {
       if (parser.scanStreaming) {
         await parser.scanStreaming(ctx.homeDir, scanOpts, foldFile);
       } else {
         await foldFile(await parser.scan(ctx.homeDir, scanOpts));
+      }
+      if (inferredTimes > 0) {
+        warnings.push(inferredTimesNotice(parser.providerId, "history", inferredTimes));
       }
     } catch (error) {
       warnings.push({

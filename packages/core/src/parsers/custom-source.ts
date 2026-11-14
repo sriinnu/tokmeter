@@ -130,13 +130,13 @@ function resolveProvider(source: CustomSource): ProviderId {
   return p && CUSTOM_ELIGIBLE.has(p) ? p : "custom";
 }
 
-function toMillis(ts: number | string | undefined): number {
+function toMillis(ts: number | string | undefined): number | undefined {
   if (typeof ts === "number" && Number.isFinite(ts)) return ts;
   if (typeof ts === "string") {
     const parsed = Date.parse(ts);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return Date.now();
+  return undefined;
 }
 
 /** Custom sources this parser reads: enabled and in the canonical format. */

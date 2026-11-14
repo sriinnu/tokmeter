@@ -56,7 +56,7 @@ export class QwenParser implements SessionParser {
 
         records.push(
           createRecord({
-            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
             provider: "qwen",
             model: msg.model || "qwen",
             project,

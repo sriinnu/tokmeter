@@ -87,7 +87,7 @@ export class ClineParser implements SessionParser {
         );
       }
 
-      const ts = typeof line.ts === "number" && Number.isFinite(line.ts) ? line.ts : Date.now();
+      const ts = typeof line.ts === "number" && Number.isFinite(line.ts) ? line.ts : undefined;
 
       const rec = createRecord({
         timestamp: ts,

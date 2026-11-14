@@ -97,11 +97,11 @@ export class OpenClawParser implements SessionParser {
 
             records.push(
               createRecord({
-                timestamp: msg.message.timestamp ?? Date.now(),
+                timestamp: msg.message.timestamp,
                 provider: "openclaw",
                 model: currentModel,
                 project: "openclaw",
-                sourceFile: entry.sessionFile,
+                sourceFile: sessionFilePath,
                 inputTokens: msg.message.usage.input ?? 0,
                 outputTokens: msg.message.usage.output ?? 0,
                 cacheReadTokens: msg.message.usage.cacheRead ?? 0,

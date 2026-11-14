@@ -114,7 +114,7 @@ export class KimiParser implements SessionParser {
             ? line.timestamp > 1e12
               ? line.timestamp
               : line.timestamp * 1000
-            : Date.now(),
+            : undefined,
           provider: "kimi",
           model: "kimi",
           project: "kimi",

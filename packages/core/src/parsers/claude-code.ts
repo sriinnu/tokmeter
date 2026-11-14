@@ -351,7 +351,7 @@ export class ClaudeCodeParser implements SessionParser {
         if (usageKey) lastUsageKey = usageKey;
 
         const record = createRecord({
-          timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+          timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
           provider: "claude-code",
           model: msg.message.model || "unknown",
           project,

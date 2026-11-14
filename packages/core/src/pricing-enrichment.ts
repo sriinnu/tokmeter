@@ -117,8 +117,12 @@ export async function enrichCosts(
           r.cacheWriteTokens +
           r.reasoningTokens >
         0;
+      // A free model's $0 is its price, so it is neither hidden nor unpriced.
       const pricingUnavailable =
-        r.cost === 0 && hasBillableTokens && !pricing.hasUserOverride(r.model);
+        r.cost === 0 &&
+        hasBillableTokens &&
+        !pricing.hasUserOverride(r.model) &&
+        !pricing.isPricedFree(r.model);
       // An opaque model's $0 is "price hidden", not a price: mark it so the
       // surfaces show "—" rather than a $0.00 that reads as free. It still
       // stays out of the unpriced tracker below; nothing will ever price it

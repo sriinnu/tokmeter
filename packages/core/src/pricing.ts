@@ -149,6 +149,9 @@ export function withServedBy(model: string, servedBy: string | undefined | null)
 // inconsistent (Claude uses -YYYYMMDD, Qwen proxies use -MM-DD, etc).
 const DATE_SUFFIX_RE = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{2}|\d{2}-\d{2})$/;
 
+/** An id that names a free route: "beam-free", "kimi-k2-6:free". */
+const FREE_TAG_RE = /[-:]free$/i;
+
 /** Expected `schemaVersion` of ~/.kosha/registry.json. Bump when reading
  *  the manifest fallback would break (renamed fields, removed pricing block). */
 const KOSHA_SCHEMA_VERSION = 1;
@@ -167,16 +170,32 @@ const KOSHA_SCHEMA_VERSION = 1;
  * proxied routes whose direct API exposed only an identity stub. Same class
  * of bug fixed in kosha-discovery 1.0.0 (`hasUsablePricing` predicate).
  */
-function pickUsablePricing(entry: {
-  pricing?: ModelPricing | null;
-  originPricing?: ModelPricing | null;
-}): ModelPricing | null {
+function pickUsablePricing(
+  entry: {
+    pricing?: ModelPricing | null;
+    originPricing?: ModelPricing | null;
+    mode?: string | null;
+  },
+  opts: { inputOnly?: boolean } = {}
+): ModelPricing | null {
+  const inputOnly = opts.inputOnly === true && INPUT_ONLY_MODES.has(entry.mode ?? "");
   const isUsable = (p: ModelPricing | null | undefined): p is ModelPricing =>
-    !!p && (p.inputPerMillion ?? 0) > 0 && (p.outputPerMillion ?? 0) > 0;
+    !!p &&
+    (p.inputPerMillion ?? 0) > 0 &&
+    ((p.outputPerMillion ?? 0) > 0 || (inputOnly && (p.outputPerMillion ?? 0) === 0));
   if (isUsable(entry.originPricing)) return entry.originPricing;
   if (isUsable(entry.pricing)) return entry.pricing;
   return null;
 }
+
+/**
+ * Modes that produce no output tokens, so a row with an input rate and a $0
+ * output rate is a whole price, not half of one (an embedding model has no
+ * output to bill). Accepted on the exact id and the manifest's normalized-id
+ * match, never by the fuzzy search: a loose match must never price a chat
+ * model as an embedding model.
+ */
+const INPUT_ONLY_MODES = new Set(["embedding", "rerank"]);
 
 // ─── PricingService ──────────────────────────────────────────────────
 
@@ -456,6 +475,17 @@ export class PricingService {
   }
 
   /**
+   * True when the last lookup of `modelId` found a real $0 price: a free
+   * route ("beam-free@opencode", see lookupServedBy) or a $0 override. Its $0
+   * cost is then the price, not a missing one, so it must not be reported as
+   * unpriced. Reads the lookup cache only; call it after `getPricing`.
+   */
+  isPricedFree(modelId: string): boolean {
+    const card = this.cache.get(modelId);
+    return !!card && card.inputPerMillion === 0 && card.outputPerMillion === 0;
+  }
+
+  /**
    * Get pricing for a model.
    *
    * Resolution order:
@@ -464,7 +494,13 @@ export class PricingService {
    *  3. kosha direct — `registry.model(id)` resolves canonical IDs;
    *     prefers `card.originPricing` (direct-provider rate) over `card.pricing`
    *  4. kosha fuzzy — exact-first search across all discovered models
-   *  5. null
+   *  5. saved catalog (~/.kosha/registry.json) — exact, then normalized id
+   *  6. null
+   *
+   * The exact tiers (3, 5) accept an embedding or rerank row priced on input
+   * alone; the fuzzy match never does. A $0 card is never taken as a price
+   * except on a "-free"/":free" route (see `lookupServedBy`), and a free id
+   * skips tiers 3 and 4, which would drop its tag and price the paid model.
    */
   async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
@@ -510,19 +546,27 @@ export class PricingService {
       return target;
     }
 
-    if (this.registry) {
+    // A "-free"/":free" id is priced by an override, its own $0 row on a route
+    // (lookupServedBy), or a saved-catalog row with that exact id. kosha's
+    // live lookup and the fuzzy match drop the tag, so they'd land on the
+    // paid model and bill a free call at its rate; unpriced is the honest
+    // answer instead.
+    const freeTagged = FREE_TAG_RE.test(modelId);
+
+    if (this.registry && !freeTagged) {
       // Tier 2: kosha canonical lookup
       try {
         const card = this.registry.model(modelId) as
           | {
               pricing?: ModelPricing;
               originPricing?: ModelPricing;
+              mode?: string;
             }
           | undefined;
         // pickUsablePricing prefers originPricing but falls through to
         // `pricing` when origin is a zero stub — important for proxy routes
         // (perplexity, openrouter) where origin is just an identity row.
-        const raw = card ? pickUsablePricing(card) : null;
+        const raw = card ? pickUsablePricing(card, { inputOnly: true }) : null;
         if (raw) {
           const p = this.roundPricing(raw);
           this.cache.set(modelId, p);
@@ -607,12 +651,15 @@ export class PricingService {
       originPricing?: ModelPricing;
       providerId?: string;
       canonicalProviderId?: string;
+      mode?: string | null;
     };
     // Two-sided pricing predicate: an entry is priced if EITHER side carries
     // non-zero rates. Naive `originPricing ?? pricing` short-circuits on a
     // zero origin stub and falsely reports the row as unpriced for proxy
     // routes — fixed centrally via pickUsablePricing.
-    const isPriced = (e: ManifestEntry): boolean => pickUsablePricing(e) !== null;
+    // An exact id may be an embedding or rerank model, priced on input alone.
+    const isPriced = (e: ManifestEntry): boolean =>
+      pickUsablePricing(e, { inputOnly: true }) !== null;
 
     // Tie-break for proxied entries: when the same modelId exists for the
     // canonical (direct) provider AND a proxied provider (perplexity/openrouter),
@@ -626,7 +673,7 @@ export class PricingService {
     );
     if (exactMatches.length > 0) {
       const winner = exactMatches.find(isDirect) ?? exactMatches[0];
-      const eff = pickUsablePricing(winner);
+      const eff = pickUsablePricing(winner, { inputOnly: true });
       const pricing = eff ? this.roundPricing(eff) : null;
       return pricing ? { pricing, matchedId: winner.modelId } : null;
     }
@@ -637,7 +684,7 @@ export class PricingService {
     });
     if (normalizedMatches.length > 0) {
       const winner = normalizedMatches.find(isDirect) ?? normalizedMatches[0];
-      const eff = pickUsablePricing(winner);
+      const eff = pickUsablePricing(winner, { inputOnly: true });
       const pricing = eff ? this.roundPricing(eff) : null;
       return pricing ? { pricing, matchedId: winner.modelId } : null;
     }
@@ -660,29 +707,32 @@ export class PricingService {
     model: string,
     provider: string
   ): { pricing: FullPricing; matchedId: string } | null {
-    const fromRegistry = this.matchRoute(this.loadRegistryManifest() ?? [], model, provider);
-    if (fromRegistry) return fromRegistry;
+    const registryRows = this.loadRegistryManifest() ?? [];
 
-    const fromCatalog = this.loadCatalogOnly() ?? [];
-    const priced = this.matchRoute(fromCatalog, model, provider);
-    if (priced) return priced;
     // A catalog's $0 is only a price when the id itself says free: on a coding
     // plan or an unmetered listing it means the rate is unknown, so those fall
-    // through and price as the bare model.
-    if (!/[-:]free$/i.test(model)) return null;
-    const free = fromCatalog.find(
-      (e) =>
-        e.providerId?.toLowerCase() === provider &&
-        e.modelId?.toLowerCase() === model.toLowerCase() &&
-        e.pricing?.inputPerMillion === 0 &&
-        e.pricing?.outputPerMillion === 0
-    );
-    return free
-      ? {
+    // through and price as the bare model. It's checked first, on the exact
+    // id: the loose forms below drop a ":free" tag, and would otherwise bill
+    // "kimi-k2-6:free" at the same provider's paid "kimi-k2-6" row.
+    if (FREE_TAG_RE.test(model)) {
+      const free = [...registryRows, ...(this.loadCatalogOnly() ?? [])].find(
+        (e) =>
+          e.providerId?.toLowerCase() === provider &&
+          e.modelId?.toLowerCase() === model.toLowerCase() &&
+          e.pricing?.inputPerMillion === 0 &&
+          e.pricing?.outputPerMillion === 0
+      );
+      if (free) {
+        return {
           pricing: { inputPerMillion: 0, outputPerMillion: 0 },
           matchedId: `${provider}:${free.modelId}`,
-        }
-      : null;
+        };
+      }
+    }
+
+    const fromRegistry = this.matchRoute(registryRows, model, provider);
+    if (fromRegistry) return fromRegistry;
+    return this.matchRoute(this.loadCatalogOnly() ?? [], model, provider);
   }
 
   private matchRoute(
@@ -709,13 +759,16 @@ export class PricingService {
     const lastSegment = (id: string) => id.slice(id.lastIndexOf("/") + 1);
     const untagged = (id: string) => id.replace(/:[^:/]+$/, "");
     const dashed = (id: string) => id.replace(/\./g, "-");
-    const forms: ((id: string) => string)[] = [
-      (id) => id,
-      lastSegment,
-      (id) => untagged(lastSegment(id)),
-      (id) => dashed(untagged(lastSegment(id))),
-    ];
     const want = model.toLowerCase();
+    // A free id keeps its tag: dropping it lands on the paid route.
+    const forms: ((id: string) => string)[] = FREE_TAG_RE.test(want)
+      ? [(id) => id, lastSegment]
+      : [
+          (id) => id,
+          lastSegment,
+          (id) => untagged(lastSegment(id)),
+          (id) => dashed(untagged(lastSegment(id))),
+        ];
     for (const form of forms) {
       const target = form(want);
       const hit = entries.find((e) => form((e.modelId ?? "").toLowerCase()) === target);

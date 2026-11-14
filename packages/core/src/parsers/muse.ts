@@ -123,7 +123,7 @@ export class MuseParser implements SessionParser {
       const ts =
         typeof rec.recorded_at === "number" && Number.isFinite(rec.recorded_at)
           ? Math.round(rec.recorded_at / 1000)
-          : Date.now();
+          : undefined;
 
       records.push(
         createRecord({
