@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The daemon's refresh no longer re-parses every Muse session. Muse ignored
+  "changed since" and kept no per-file cache, so each ~12 s refresh read all
+  of `~/.local/share/muse/sessions` (6,249 sessions, 799 MB): 9-12 s a
+  refresh. An unchanged session is now read once and reused: about 2.7 s,
+  most of it walking the folder, which a saved file index will remove.
+
 ## [1.22.0] - 2026-11-14
 
 ### Added
