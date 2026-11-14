@@ -30,6 +30,7 @@ import { homedir, setPriority } from "node:os";
 import { join } from "node:path";
 import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
 import {
+  ensureCursorHook,
   loadConfig,
   localDateKey,
   nullMap,
@@ -86,6 +87,31 @@ let sessionManager: SessionManager | null = null;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 let antigravityLivePollInterval: ReturnType<typeof setInterval> | null = null;
+let cursorHookInterval: ReturnType<typeof setInterval> | null = null;
+
+/** How often the daemon re-checks the Cursor hook (it also checks at start). */
+const CURSOR_HOOK_CHECK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Keep tokmeter's Cursor stop hook in place: Cursor 3.11+ keeps no token
+ * counts on disk, so without it Cursor shows turns but no usage. Logs only
+ * when something changed or failed; a user's uninstall is respected.
+ */
+async function keepCursorHook(): Promise<void> {
+  // Daemon tests start the real server; they must never edit ~/.cursor.
+  if (process.env.VITEST) return;
+  const result = await ensureCursorHook({ enabled: loadConfig().daemon.cursorHook });
+  if (result.action === "installed" || result.action === "refreshed") {
+    console.log(
+      `【♾️】 Cursor hook ${result.action}: Cursor turns' token usage is now recorded. ` +
+        "Remove with `tokmeter cursor-hook uninstall` or daemon.cursorHook=false."
+    );
+  } else if (result.action === "skipped" && result.reason === "removed-by-hand") {
+    console.log("【♾️】 Cursor hook was removed from hooks.json by hand; leaving it off.");
+  } else if (result.action === "error") {
+    console.error(`Cursor hook check failed: ${result.message}`);
+  }
+}
 const HTTP_PORT = DAEMON_PORT + 1;
 
 /**
@@ -364,6 +390,14 @@ export function startDaemon(): void {
         });
       }, scanIntervalMs);
     }
+
+    // Cursor hook: once now, then daily (picks up a newer hook script after
+    // an upgrade, and notices a removal).
+    void keepCursorHook().catch(() => {});
+    cursorHookInterval = setInterval(() => {
+      void keepCursorHook().catch(() => {});
+    }, CURSOR_HOOK_CHECK_MS);
+    cursorHookInterval.unref?.();
 
     // Warm the HTTP core asynchronously so the first user request doesn't
     // pay the full-disk-scan tax. We don't await — the WebSocket server is
@@ -691,6 +725,10 @@ export function stopDaemon(): void {
   if (antigravityLivePollInterval) {
     clearInterval(antigravityLivePollInterval);
     antigravityLivePollInterval = null;
+  }
+  if (cursorHookInterval) {
+    clearInterval(cursorHookInterval);
+    cursorHookInterval = null;
   }
 
   if (wss) {

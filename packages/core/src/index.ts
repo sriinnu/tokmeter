@@ -71,6 +71,41 @@ export {
 } from "./config-service.js";
 export type { CoverageReport, UnreadFile } from "./coverage-check.js";
 export { readCoverageReports, summarizeCoverage } from "./coverage-check.js";
+export type {
+  BeforeHooksCommit,
+  CursorHookPaths,
+  CursorHookStatus,
+  EnsureCursorHookResult,
+  InstallResult,
+  LastTurn,
+  TodayTurn,
+  TokenTotals,
+  UninstallResult,
+} from "./cursor-hook.js";
+export {
+  cursorHookPaths,
+  cursorHookStatus,
+  ensureCursorHook,
+  HooksFileError,
+  hookCommand,
+  installCursorHook,
+  resolveNodePath,
+  shellQuote,
+  uninstallCursorHook,
+} from "./cursor-hook.js";
+export { buildCursorHookScript, CURSOR_HOOK_SCRIPT_VERSION } from "./cursor-hook-script.js";
+export type {
+  CursorSyncOptions,
+  CursorSyncResult,
+  CursorSyncWindow,
+  CursorTokenStatus,
+} from "./cursor-sync.js";
+export {
+  CursorSyncError,
+  cursorTokenStatus,
+  cursorUsageCacheDir,
+  syncCursorUsage,
+} from "./cursor-sync.js";
 export {
   endOfLocalDay,
   isBeforeToday,
@@ -83,6 +118,26 @@ export { sanitizeDataLabel } from "./display-safety.js";
 export { invalidateHistorySnapshot } from "./history-snapshot.js";
 export type { ModelRateCard, ModelRatesResponse, Rate } from "./model-rates.js";
 export { computeModelRates } from "./model-rates.js";
+export type {
+  CoverageSpan,
+  CursorTurnJournalOptions,
+  CursorTurnJournalResult,
+} from "./parsers/cursor-turn-journal.js";
+export {
+  CURSOR_HOOK_COVERAGE_FILE,
+  CURSOR_TURN_SEMANTICS,
+  cursorTurnJournalDir,
+  hasOpenCoverageSpan,
+  parseCursorHookCoverage,
+  readCursorHookCoverage,
+  readCursorTurnJournal,
+} from "./parsers/cursor-turn-journal.js";
+export type { CursorUsageCsvParse, CursorUsageRow } from "./parsers/cursor-usage-csv.js";
+export {
+  mergeCursorUsageCsvs,
+  parseCursorUsageCsv,
+  readCursorUsageCsvDir,
+} from "./parsers/cursor-usage-csv.js";
 export {
   ALL_PARSERS,
   ALL_PROVIDER_IDS,

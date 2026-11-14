@@ -43,6 +43,8 @@ For a scoped report, call `core.getSummary({ week: true, project: "my-app", prov
 
 Claude Code, OpenCode, Codex CLI, Codex Desktop, Gemini CLI, Cursor, Amp, Droid, OpenClaw, Pi, Kimi, Qwen, Roo Code, Kilo, Kilo CLI, Mux, VS Code Copilot, Antigravity, Zed, Muse, Cline, Augment, Copilot CLI, DeepSeek Harness, plus custom sources registered under `customSources` in `~/.tokmeter/config.json`.
 
+Cursor's local database gives one record per counted message, with the model named by its request's user message (`cursor-auto` for Auto mode). The record's `apiCallId` is the request's `requestId`. Cursor's input count is the context size, not billed input, so `usage.inputTokens` is `"estimated"`, and cache and reasoning are `"not_exposed"`. Requests with no count are reported through `onNotice`.
+
 ## Pricing
 
 After the in-memory cache, pricing resolves through:
@@ -66,6 +68,14 @@ Every `TokenRecord` also carries optional `usage` provenance so consumers can
 distinguish direct provider/tool telemetry from normalized, calculated,
 estimated, or not-exposed buckets. Cache rates are derived from canonical
 input buckets: `cacheRead / (input + cacheRead + cacheWrite)`.
+
+## Cursor sync (opt-in)
+
+`tokmeter cursor sync [--since YYYY-MM-DD] [--json] [--dry-run]` downloads your Cursor usage export from cursor.com. It is the only source for Cursor's billed cost, Tab completions, cloud agents and usage from other machines, none of which Cursor writes locally. It runs only when you invoke it.
+
+It reads the Cursor app's own session read-only (`cursorAuth/accessToken` in `state.vscdb`), refuses an expired one rather than refreshing it, and sends it as a cookie only to `GET https://cursor.com/api/dashboard/export-usage-events-csv`. Exports land owner-only in `~/.cache/tokmeter/cursor-usage/usage-YYYY-MM.csv`, one per UTC calendar month. The session, cookie and email never appear in output or errors. `--dry-run` sends nothing.
+
+In code: `syncCursorUsage()` and `cursorTokenStatus()` (both take an injectable `fetch`, paths and clock), and `parseCursorUsageCsv()` / `mergeCursorUsageCsvs()` / `readCursorUsageCsvDir()` to turn the files into deduplicated `TokenRecord`s. The Cursor parser doesn't read these files yet.
 
 ## Data freshness & immutability
 

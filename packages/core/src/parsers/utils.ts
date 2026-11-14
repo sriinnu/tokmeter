@@ -157,7 +157,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      caches hold such records at the time they were first scanned; rebuild.
 // 27 — project names: eval trial folders and per-run temp folders get a
 //      stable name, fixed at parse time; v26 caches hold `1`, `2`, `3`.
-const CACHE_VERSION = 27;
+// 28 — Cursor's local database is read as one record per counted bubble, with
+//      the model from its request's user bubble. v26 gave every record in a
+//      conversation the first model seen in it.
+const CACHE_VERSION = 28;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

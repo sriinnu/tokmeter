@@ -94,6 +94,13 @@ export interface UserConfig {
      * explicitly once you've decided you want it standing.
      */
     antigravityLivePolling: boolean;
+    /**
+     * On by default. Cursor 3.11+ keeps no token counts on disk, so the
+     * daemon keeps tokmeter's Cursor stop hook installed (see
+     * ensureCursorHook). Set false to stop it; `tokmeter cursor-hook
+     * uninstall` also opts out for good.
+     */
+    cursorHook: boolean;
   };
   cli: {
     /** Default time window when no --today/--week/... flag is passed. */
@@ -146,7 +153,7 @@ export const DEFAULT_CONFIG: UserConfig = {
     weekChartStyle: "line",
     dashboardPort: 8888,
   },
-  daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false },
+  daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false, cursorHook: true },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
   providerPaths: {},
@@ -241,6 +248,8 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
       // Strict === true, not truthy coercion — a malformed or garbage value
       // in the config file must never accidentally turn this on.
       antigravityLivePolling: raw.daemon?.antigravityLivePolling === true,
+      // Only an explicit false turns it off; garbage keeps the default.
+      cursorHook: raw.daemon?.cursorHook !== false,
     },
     cli: {
       defaultRange: isDefaultRange(raw.cli?.defaultRange)
@@ -386,6 +395,13 @@ export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
       "running language_server process and calls its undocumented internal status RPC for live " +
       "model/credit data. Same technique the community antigravity-panel extension uses, but an " +
       "internal channel Antigravity didn't publish for this — deliberately opt-in only.",
+  },
+  {
+    path: "daemon.cursorHook",
+    type: "bool",
+    description:
+      "On by default. The daemon keeps tokmeter's Cursor stop hook in ~/.cursor/hooks.json, " +
+      "because Cursor 3.11+ keeps no token counts on disk. Set false to stop it.",
   },
 ] as const;
 

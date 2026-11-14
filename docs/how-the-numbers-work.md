@@ -8,7 +8,35 @@ Input, cached input, cache writes, visible output, and reasoning are separate le
 
 New Codex response receipts are preferred within a covered turn. Mirrored cumulative events are excluded, repeated response IDs are deduplicated, and a subagent's replay of a parent receipt is excluded. Older turns still use their cumulative counters.
 
+**Cursor's local database gives one record per request.** Each user message opens a request, and the messages after it, in time order, belong to it. The model comes from that user message, so a conversation that switches models is split correctly. Each later message that carries a token count is its own record, with the model, project and request id of that user message. A conversation with no user message gives each counted message the model `unknown`. Some requests have no count at all; each scan says how many, and they aren't guessed. Cursor's input count is the size of the context when the request was made, not billed input, so it's marked estimated. Cursor keeps no cache split. Auto mode is logged as `cursor-auto`, because Cursor doesn't say which model ran. Until this fix, every request in a conversation got the first model seen in it.
+
 Some tools expose only an activity signal or a lifetime token total. Tokmeter does not invent an input/output breakdown to attach a dollar cost. See [coverage and verification](compatibility.md).
+
+### Cursor's stop hook
+
+Cursor's local database often holds no token counts for a turn. `tokmeter cursor-hook install` adds a `stop` hook to `~/.cursor/hooks.json` that records the counts Cursor itself hands over when a turn ends. It needs no login, key or cookie. Other hooks in that file are kept, and `tokmeter cursor-hook uninstall` removes only tokmeter's entry.
+
+Each finished turn adds one line to `~/.tokmeter/cursor-turns/YYYY-MM-DD.jsonl`. A line holds the conversation and generation ids, the model, the status, the four counts (input, output, cache read, cache write), Cursor's version and the first workspace folder. It never holds message text or your email. A turn that ends without usage, such as an error or an abort, still gets a line with its status, so tokmeter can say how many turns had no counts.
+
+**Recorded now, counted later.** The hook's numbers haven't been checked against a live turn yet. Two things are open: does `input_tokens` include cache reads, and are the counts for the whole turn or only its last step? Until that is settled the hook runs in shadow mode. It records every turn, but the totals come from Cursor's local database alone, and the ledger below is not read. Each scan says how many turns the hook recorded and how many had usage. `tokmeter cursor-hook status` lists today's turns and sums their input, output, cache read and cache write, so a live turn can be compared with what Cursor shows.
+
+**The ledger.** Install and uninstall are written to `~/.tokmeter/cursor-turns/coverage.jsonl`. The ledger, not `hooks.json`, says whether the hook is installed:
+
+- Install adds "installed" only when no span is open, so a reinstall never moves the start.
+- Uninstall adds "uninstalled" whenever a span is open, even if tokmeter's entry was already removed from `hooks.json` by hand.
+- Lines are read in the order they were written, not sorted by time. An event dated earlier than the one before it (a clock that stepped back) is moved up to that time, so spans never overlap.
+- A missing ledger means the hook was never installed. A ledger or journal that exists but can't be read fails the Cursor scan, so the day isn't sealed on a guess.
+
+**Which source counts a turn, once verified.** While the hook is installed, its turns are Cursor's usage and the database's counts for that time are left out; outside those times the database's counts are used. The split is decided by when the hook was installed, never by which source showed up first, so a turn's source never changes later. Tokmeter keeps today's records as it goes, and one that vanished from a file still on disk would be kept as deleted history and counted twice. A hook line written outside an installed span isn't used.
+
+Limits:
+
+- Only turns that end after the install are recorded. Earlier turns can't be recovered this way.
+- Cursor gives no reasoning count, so reasoning is not shown separately.
+- Cursor gives no cost. Cost is estimated from the counts, like any other agent.
+- Subagents end with a different event that carries no counts. Whether a parent turn's counts include its subagents isn't known yet.
+- The same generation id counts once. A repeat of a conversation's last counts under a new id counts once too, but only when it lands within 10 seconds of the line before it. Two real turns are further apart than that.
+- If `~/.cursor/hooks.json` is a symlink, its target is written and the link stays. If the file changes while tokmeter is updating it, nothing is written.
 
 ## Costs
 
@@ -62,6 +90,16 @@ A change in the published rates restarts the wait. A smaller move takes effect a
 - Two catalogs agreeing on the same lie are accepted after 1 day.
 
 Only 174 of 3,419 models in that day's registry (5%) had a second source, so most prices rest on one catalog's word. A hold narrows the risk from a bad catalog without closing it. A day seals with the price it was billed at, so a bad price that gets through stays in that day.
+
+## Cursor sync (opt-in)
+
+Cursor keeps most of its usage on its servers. Tab completions, cloud agents, other machines and the cost Cursor billed never reach a local file, so a local scan can't count them. `tokmeter cursor sync` is the only way Tokmeter gets them, and it is off unless you run it. Nothing runs it automatically: not the daemon, not a scan, not the menu bar.
+
+**What is sent where.** It reads the session the Cursor app already holds (`cursorAuth/accessToken` in Cursor's `state.vscdb`), read-only, at the moment you run it. It sends that session as a cookie to one endpoint, `GET https://cursor.com/api/dashboard/export-usage-events-csv`, once per UTC calendar month from the month holding `--since` (default 90 days ago) to now, and nowhere else. Redirects are refused, so the cookie can't be sent anywhere else. It never refreshes the session, never writes Cursor's files and never stores the session; an expired one is refused and you sign in to Cursor again. The session, the cookie and any email are scrubbed from every message it prints. `--dry-run` sends nothing and reports only whether a session exists and how many hours it has left.
+
+**What it keeps.** Each month's export is written owner-only to `~/.cache/tokmeter/cursor-usage/usage-YYYY-MM.csv`. Months are fixed, so a later run rewrites the same files. A re-download never replaces a file with fewer rows. A download over 64 MB is cut off while it streams, and nothing is written for that month.
+
+**How the rows are counted.** The export's two Input columns are separate buckets: "Input (w/ Cache Write)" is cache write, "Input (w/o Cache Write)" is plain input, and their sum with Cache Read and Output equals Cursor's Total Tokens on every real row published by tokscale. Total Tokens is a check, never added. A numeric Cost is Cursor's own figure (tool-reported); "Included" is left to the normal estimate; a row Cursor marked errored or not charged keeps its tokens at cost 0. Rows repeated across files are counted once, and the file written last wins, so a later download's settled cost replaces an older one. The parser exists and is tested, but the scan doesn't read these files yet. An export covers time after the fact, so letting it take over a stretch the local sources already counted would make Tokmeter count those records twice; it needs its own place in the ledger first.
 
 ## History and corrections
 
