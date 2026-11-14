@@ -44,6 +44,16 @@ const INFRA_SEGMENTS = new Set([
   "workspaces",
 ]);
 
+/** Dot-folders under home that hold editor config, not a tool's own work. */
+const HOME_CONFIG_DOTDIRS = new Set([
+  ".cache",
+  ".config",
+  ".cursor",
+  ".local",
+  ".vscode",
+  ".vscode-server",
+]);
+
 const WORKSPACE_SUFFIXES = [".code-workspace", ".cursor-workspace", ".workspace"];
 
 function safeDecode(value: string): string {
@@ -137,8 +147,92 @@ function looksLikeAcronym(segment: string): boolean {
   return /^[A-Z0-9]{2,8}$/.test(segment);
 }
 
+/**
+ * A leaf that can't name a project on its own: a generic folder like `web`, or
+ * a bare number (a trial, run or shard index such as `.../core/1`).
+ */
 function isGenericLeafName(segment: string): boolean {
-  return GENERIC_LEAF_NAMES.has(segment.toLowerCase());
+  return GENERIC_LEAF_NAMES.has(segment.toLowerCase()) || /^\d+$/.test(segment);
+}
+
+/**
+ * A session in a numbered folder inside a tool's own work folder under home
+ * (`~/.ribhu/eval/work/<run>/<task>/<variant>/1`) is named for the tool and its
+ * first subfolder (`ribhu/eval`). Eval harnesses nest hundreds of throwaway
+ * trial folders there; naming each by its number split one workload into
+ * cards called `1`, `2`, `3`. A named leaf (`~/.codex/worktrees/<id>/AUriva`)
+ * is a real project and keeps the normal rules.
+ */
+function homeToolLabel(segments: string[]): string | undefined {
+  const root = segments[0]?.toLowerCase() ?? "";
+  const dotdir = segments[2];
+  if (!ROOT_SEGMENTS.has(root) || !dotdir?.startsWith(".") || dotdir.length < 2) return undefined;
+  if (HOME_CONFIG_DOTDIRS.has(dotdir.toLowerCase())) return undefined;
+  if (segments.length < 5 || !/^\d+$/.test(segments.at(-1) ?? "")) return undefined;
+  return `${dotdir.slice(1)}/${segments[3]}`;
+}
+
+/**
+ * The random tail `mkdtemp` adds (`ribhu-live-ws-06Wwnk`, `tmp.Ab3dE9xQ`):
+ * 6–12 letters/digits that mix cases or put a letter after a digit. A word
+ * (`server`, `Harbor`) or a word and a number (`accept2417`, `build42`) never
+ * looks like that.
+ */
+const RANDOM_TAIL_RE = /[._-]?([A-Za-z0-9]{6,12})$/;
+
+function isRandomToken(token: string): boolean {
+  if (!/^[A-Za-z0-9]{6,12}$/.test(token)) return false;
+  return /\d[A-Za-z]/.test(token) || (/[a-z]/.test(token) && /[A-Z]/.test(token));
+}
+
+/** A temp folder's name without its random tail; `tmp` when nothing is left. */
+function stripRandomTail(name: string): string {
+  const match = RANDOM_TAIL_RE.exec(name);
+  if (!match?.[1] || !isRandomToken(match[1])) return name;
+  const base = name.slice(0, match.index).replace(/[._-]+$/, "");
+  return base || "tmp";
+}
+
+/**
+ * A session started in a fresh temp folder (`/tmp/x-AbC123`, macOS
+ * `/var/folders/<a>/<b>/T/x-AbC123`) is named for the folder's prefix, so a
+ * tool that makes a new temp workspace per run gets one card, not one per run.
+ */
+function tempDirLabel(segments: string[]): string | undefined {
+  const lower = segments.map((s) => s.toLowerCase());
+  let i = lower[0] === "private" ? 1 : 0;
+  if (lower[i] === "tmp") i += 1;
+  else if (lower[i] === "var" && lower[i + 1] === "folders" && lower[i + 4] === "t") i += 5;
+  else if (lower[i] === "var" && lower[i + 1] === "tmp") i += 2;
+  else return undefined;
+  // Only a session sitting directly in the temp folder; deeper paths name normally.
+  if (segments.length !== i + 1) return undefined;
+  return stripRandomTail(segments[i] ?? "");
+}
+
+/**
+ * The slug form of {@link tempDirLabel}. A slug can't tell `/tmp/a-b` from
+ * `/tmp/a/b`, so it only applies when the slug ends in a random tail: only a
+ * per-run temp folder looks like that, while deeper paths (`/tmp/claude-501/
+ * .../scratchpad`) keep the normal rules.
+ */
+function tempDirSlugLabel(slug: string): string | undefined {
+  const match = /^-(?:private-)?(?:tmp|var-tmp|var-folders-[^-]+-[^-]+-T)-(.+)$/i.exec(slug.trim());
+  const rest = match?.[1];
+  if (!rest) return undefined;
+  const stripped = stripRandomTail(rest);
+  return stripped === rest ? undefined : stripped;
+}
+
+/** The slug form of {@link homeToolLabel}: Claude Code writes `/.` as `--`. */
+function homeToolSlugLabel(slug: string): string | undefined {
+  const match = /^-(users|home|user)-[^-]+--([^-]+)-(.+)$/i.exec(slug.trim());
+  if (!match) return undefined;
+  const tool = match[2] ?? "";
+  if (HOME_CONFIG_DOTDIRS.has(`.${tool.toLowerCase()}`)) return undefined;
+  const rest = (match[3] ?? "").split("-").filter(Boolean);
+  if (rest.length < 2 || !/^\d+$/.test(rest.at(-1) ?? "")) return undefined;
+  return `${tool}/${rest[0]}`;
 }
 
 function buildPathLabel(segments: string[], fallback: string): string {
@@ -187,7 +281,16 @@ export function canonicalizeProjectName(rawProject: string, fallback = "unknown"
     return fallback;
   }
 
-  const segments = trimInfrastructureSegments(normalized.split("/").filter(Boolean));
+  const rawSegments = normalized.split("/").filter(Boolean);
+  const toolLabel =
+    rawSegments.length > 1
+      ? (homeToolLabel(rawSegments) ?? tempDirLabel(rawSegments))
+      : (homeToolSlugLabel(normalized) ?? tempDirSlugLabel(normalized));
+  if (toolLabel) {
+    return toolLabel;
+  }
+
+  const segments = trimInfrastructureSegments(rawSegments);
 
   if (segments.length > 1) {
     return buildPathLabel(segments, fallback);

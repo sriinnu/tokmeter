@@ -155,7 +155,9 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 26 — a record with no usable timestamp is marked timestampInferred and
 //      dated by its file (settleInferredTimes), not the scan's clock. v25
 //      caches hold such records at the time they were first scanned; rebuild.
-const CACHE_VERSION = 26;
+// 27 — project names: eval trial folders and per-run temp folders get a
+//      stable name, fixed at parse time; v26 caches hold `1`, `2`, `3`.
+const CACHE_VERSION = 27;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
