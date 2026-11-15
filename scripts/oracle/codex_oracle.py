@@ -247,6 +247,7 @@ def fold_file(path, skips):
     task_started = False
     saw_compacted = False
     prev = {}  # the previous LEGACY total: the token_count series is differenced only against itself
+    prev_total = prev_last = None  # the previous token_count as written, to spot an exact repeat
     response_ids = set()
     receipt_turns = set()
     rows = []  # (row, legacy_turn or None)
@@ -254,7 +255,9 @@ def fold_file(path, skips):
         "receipts": {},  # every complete receipt on disk in this file: id -> (thread, tokens)
         "final_total": None,  # last legacy cumulative total, buckets as the oracle counts them
         "baseline": None,  # inherited baseline total, if any
-        "first_call_after_compacted": 0,  # first totals that carried nothing in
+        "step_repeats": 0,  # the same total and last usage written again
+        "step_checks": 0,  # legacy steps whose delta could be checked against last_token_usage
+        "step_mismatches": [],  # (ts, delta, last) where they disagree
         "resets": 0,  # legacy totals that went down (a resumed counter)
         "has_receipts": False,
     }
@@ -316,17 +319,15 @@ def fold_file(path, skips):
             if not (isinstance(total, dict) and any(num(total.get(k)) is not None for k in COUNTER_KEYS)):
                 total = None
             if total and not task_started and saw_compacted:
-                last = info.get("last_token_usage")
-                own = isinstance(last, dict) and all(g(total, k) == g(last, k) for k in COUNTER_KEYS)
-                if not own:
-                    # The total holds more than this response: earlier work, carried in.
-                    prev = dict(total)
-                    info_out["baseline"] = usage_tokens(total)
-                    skips["inherited_baseline"] += 1
-                    continue
-                # The total is exactly this response's own usage, so nothing came
-                # before it: a real first call (a fresh guardian, say), counted.
-                info_out["first_call_after_compacted"] += 1
+                # Restored with the compaction, not a new call: Codex writes this
+                # total within milliseconds of `compacted` (2026-11-15: 0-2 ms on
+                # all 52 real cases), even when it equals last_token_usage.
+                prev = dict(total)
+                prev_total, prev_last = total, info.get("last_token_usage")
+                info_out["baseline"] = usage_tokens(total)
+                skips["inherited_baseline"] += 1
+                continue
+            last = info.get("last_token_usage") if isinstance(info.get("last_token_usage"), dict) else None
             if total:
                 if g(total, "input_tokens") < g(prev, "input_tokens"):
                     # The counter went down: a resumed process restarted it. What
@@ -334,10 +335,26 @@ def fold_file(path, skips):
                     info_out["resets"] += 1
                     prev = {}
                 u = {k: max(0, g(total, k) - g(prev, k)) for k in COUNTER_KEYS}
+                repeat = last is not None and total == prev_total and last == prev_last
+                if repeat:
+                    # Codex sometimes writes the same total and last usage twice
+                    # (789 of 26,849 real steps, 2026-11-15): nothing new, a delta of zero.
+                    info_out["step_repeats"] += 1
+                elif last is not None:
+                    # Rule-free: the step's own usage, written beside the total,
+                    # must equal the delta we derived. A missed restart, a clamp or
+                    # a wrong baseline shows up here.
+                    info_out["step_checks"] += 1
+                    if any(g(u, k) != g(last, k) for k in ("input_tokens", "output_tokens")):
+                        info_out["step_mismatches"].append((evt.get("timestamp"), usage_tokens(u), usage_tokens(last)))
                 prev = dict(total)
+                prev_total, prev_last = total, last
                 info_out["final_total"] = usage_tokens(total)
-            elif info.get("last_token_usage"):
-                u = info["last_token_usage"]
+            elif last is not None:
+                # No total, only this step's usage: count it, and move the running
+                # total on by it, so a later cumulative total doesn't count it again.
+                u = last
+                prev = {k: g(prev, k) + g(last, k) for k in COUNTER_KEYS}
             else:
                 continue
 
@@ -365,14 +382,23 @@ def fold_file(path, skips):
             "response_id": (p.get("response_id") if receipt else None),
             "subagent": sub,
         }
-        rows.append((row, None if receipt else (p.get("turn_id") or turn)))
+        rows.append((row, None if receipt else (p.get("turn_id") or turn), (p.get("turn_id") or turn) if receipt else None))
 
     kept = []
-    for row, legacy_turn in rows:
+    receipt_sum, dropped_sum = defaultdict(int), defaultdict(int)
+    for row, legacy_turn, receipt_turn in rows:
+        if receipt_turn is not None:
+            receipt_sum[receipt_turn] += row_tokens(row)
         if legacy_turn is not None and legacy_turn in receipt_turns:
             skips["legacy_turn_with_receipts"] += 1
+            dropped_sum[legacy_turn] += row_tokens(row)
             continue
         kept.append(row)
+    # Rule-free: a turn's dropped legacy counters saw that turn's work too. If
+    # they add up to more than its receipts, the receipts missed some of it.
+    info_out["receipt_turns_short"] = [
+        (t, receipt_sum[t], n) for t, n in dropped_sum.items() if n > receipt_sum[t]
+    ]
     return kept, info_out
 
 
@@ -479,13 +505,19 @@ def main():
         "legacy_counter_resets": sum(i["resets"] for i in infos.values() if True),
         "inherited_baselines": sum(1 for i in infos.values() if i["baseline"] is not None),
         "inherited_baselines_unverified": unverified[:20],
-        "first_calls_after_compacted": sum(i["first_call_after_compacted"] for i in infos.values()),
+        "legacy_steps_checked": sum(i["step_checks"] for i in infos.values()),
+        "legacy_steps_repeated": sum(i["step_repeats"] for i in infos.values()),
+        "legacy_steps_not_matching_own_usage": sum(len(i["step_mismatches"]) for i in infos.values()),
+        "legacy_step_mismatch_sample": [(f, m) for f, i in infos.items() for m in i["step_mismatches"]][:10],
+        "receipt_turns_short_of_legacy": sum(len(i["receipt_turns_short"]) for i in infos.values()),
+        "receipt_turns_short_tokens": sum(n - r for i in infos.values() for _, r, n in i["receipt_turns_short"]),
+        "receipt_turns_short_sample": [(f, t) for f, i in infos.items() for t in i["receipt_turns_short"]][:10],
         "assumed_rules": [
             "fork families count only their largest file",
             "a subagent thread counts on its own",
             "a receipt counts only in its own thread's file, and once per response id across all files",
             "legacy counters of a turn that has receipts are dropped",
-            "a counter written after `compacted`, before the first task_started, is inherited unless it equals that response's own usage",
+            "a counter written after `compacted`, before the first task_started, is inherited",
             "a legacy total that goes down restarts the counter from zero",
         ],
     }

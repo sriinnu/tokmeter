@@ -34,12 +34,20 @@ w("f6", "rollout-nots.jsonl", [meta("H"), start("t1"), ctx("t1"), rec("r7", "H",
 w("f7", "rollout-a.jsonl", [meta("J1"), start("t1"), ctx("t1"), rec("same", "J1", "t1", 2)])
 w("f7", "rollout-b.jsonl", [meta("J2"), start("t1"), ctx("t1"), rec("same", "J2", "t1", 2)])
 os.makedirs(os.path.join(root, "f8", "sessions"), exist_ok=True)
-# F9 a fresh guardian: its first total after `compacted` is its own call (total == last)
+# F9 a guardian whose total is restored with the compaction, equal to its last
+# usage (the real shape: written within ms of `compacted`): inherited, skipped
 guardian = {"subagent": {"other": "guardian"}}
 def tc2(s, total, last):
     u = lambda i, o: {"input_tokens": i, "cached_input_tokens": 0, "output_tokens": o, "reasoning_output_tokens": 0}
     return {"timestamp": T(s), "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": u(*total), "last_token_usage": u(*last)}}}
 compacted = {"timestamp": T(1), "type": "compacted", "payload": {"message": "summary"}}
-w("f9", "rollout-guardian-fresh.jsonl", [meta("K", source=guardian), compacted, ctx("t0"), tc2(2, (500, 50), (500, 50)), start("t1", 3), ctx("t1", 3), tc2(4, (800, 80), (300, 30))])
+w("f9", "rollout-guardian-restored.jsonl", [meta("K", source=guardian), compacted, ctx("t0"), tc2(2, (500, 50), (500, 50)), start("t1", 3), ctx("t1", 3), tc2(4, (800, 80), (300, 30))])
 # F10 a reused guardian: its first total carries earlier work in (total > last), skipped
 w("f10", "rollout-guardian-carried.jsonl", [meta("L", source=guardian), compacted, ctx("t0"), tc2(2, (500, 50), (100, 10)), start("t1", 3), ctx("t1", 3), tc2(4, (800, 80), (300, 30))])
+# F11 a turn with one receipt and three legacy steps: the receipt misses two calls
+legacy3 = [tc2(2, (100, 10), (100, 10)), tc2(3, (200, 20), (100, 10)), tc2(4, (300, 30), (100, 10))]
+w("f11", "rollout-receipt-short.jsonl", [meta("M"), start("t1"), ctx("t1")] + legacy3[:1] + [rec("rm", "M", "t1", 2, i=100, c=0, o=10, r=0)] + legacy3[1:])
+# F12 a counter restart the input check can't see: it restarts higher than before
+w("f12", "rollout-restart-up.jsonl", [meta("N"), start("t1"), ctx("t1"), tc2(2, (100, 10), (100, 10)), tc2(3, (150, 15), (150, 15))])
+# F13 Codex writes the same total and last usage twice: nothing new
+w("f13", "rollout-repeat.jsonl", [meta("P"), start("t1"), ctx("t1"), tc2(2, (100, 10), (100, 10)), tc2(3, (100, 10), (100, 10)), tc2(4, (200, 20), (100, 10))])
