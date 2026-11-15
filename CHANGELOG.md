@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Correction to 1.22.2's notes: they claimed the Codex parser skipped
+  229,158 tokens of auto-review (guardian) calls. It didn't. Those totals
+  are written within milliseconds of a compaction, so they are restored
+  state, not new calls, and tokmeter was right to skip them. The numbers
+  tokmeter showed were never affected; the oracle rule behind the claim is
+  reverted.
+- The Codex oracle (`scripts/oracle/`) is a stricter judge. Two new checks
+  use no counting rule: every legacy step's delta must equal the usage
+  written beside it, and no turn's receipts may hold less than the legacy
+  counters they replace. Each fixture must now be counted exactly or raise a
+  gap, and each known parser bug must fail for its stated reason. A
+  hand-worked total that was wrong (an empty total beside its own usage) is
+  fixed. On this machine's full history, the oracle and the parser still
+  agree on all 151,966 responses.
+
 ## [1.22.2] - 2026-11-14
 
 ### Added

@@ -14,7 +14,9 @@
  *      path into the relay) match the oracle's per-day sums;
  *   3. neither side saw a problem: no parser warnings, no unreadable files;
  *   4. the oracle's rule-free cross-checks found no gap (every response id on
- *      disk counted; legacy-only files add up to their last cumulative total).
+ *      disk counted; legacy-only files add up to their last cumulative total;
+ *      every legacy step's delta equals the last_token_usage written beside it;
+ *      no receipt turn holds less than the legacy counters it replaced).
  *      A gap there means a rule both sides share is losing or inventing work.
  *      A carried-in total whose source rollout has aged off disk is printed
  *      as a note, not a gap: it can't be matched, only bounded;
@@ -149,9 +151,16 @@ if (x.legacy_files_not_matching_final_total.length)
   gaps.push(
     `${x.legacy_files_not_matching_final_total.length} legacy-only files don't add up to their last total`
   );
-// Not a gap: every baseline here already holds more than its own response
-// (the oracle counts one that doesn't), so it carried earlier work in; only the
-// rollout it came from has aged off disk, so the number can't be matched.
+if (x.legacy_steps_not_matching_own_usage)
+  gaps.push(
+    `${x.legacy_steps_not_matching_own_usage} of ${x.legacy_steps_checked} legacy steps disagree with their own last_token_usage`
+  );
+if (x.receipt_turns_short_of_legacy)
+  gaps.push(
+    `${x.receipt_turns_short_of_legacy} receipt turns hold less than their dropped legacy counters saw (${x.receipt_turns_short_tokens} tokens)`
+  );
+// Not a gap: a total restored with a compaction whose source rollout has aged
+// off disk can't be matched to it, only noted.
 const notes = [];
 if (x.inherited_baselines_unverified.length)
   notes.push(
