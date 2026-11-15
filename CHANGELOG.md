@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `bun run release`'s bar upgrade on the releasing machine can no longer
+  leave the bar quit or missing: the old app is kept until the new one is in
+  place and has launched, any failure rolls back and relaunches it, and it
+  never swaps while Sparkle is installing. Pre-release builds are left alone,
+  and the installed bar's own signature is checked before it is trusted.
+
 ## [1.22.3] - 2026-11-15
 
 ### Fixed
