@@ -280,6 +280,45 @@ bar_upgrade_warn() {  # bar_upgrade_warn <what went wrong>
     echo "  !! or rerun: bash scripts/release.sh ${VERSION}"
   } >&2
 }
+# When the swap fails and the old app can't be put back, there is no bar at
+# BAR_APP: Sparkle has nothing to update and a rerun says "no TokmeterBar",
+# so the only way out is putting the old bundle back by hand.
+bar_stranded_warn() {  # bar_stranded_warn <what went wrong>
+  {
+    echo
+    echo "  !! THE BAR ON THIS MACHINE IS NOT ON ${VERSION}: $1"
+    echo "  !! The previous bar could not be put back. It is at ${BAR_APP}.old"
+    if [[ -e "${BAR_APP}.new" ]]; then echo "  !! (the verified ${VERSION} bar is at ${BAR_APP}.new)."; fi
+    if [[ -e "$BAR_APP" ]]; then
+      echo "  !! Something else is at ${BAR_APP}; move it out of the way, then restore with:"
+    else
+      echo "  !! No bar is at ${BAR_APP}, so a rerun finds nothing to upgrade. Restore it with:"
+    fi
+    echo "  !!   mv \"${BAR_APP}.old\" \"${BAR_APP}\" && open \"${BAR_APP}\""
+  } >&2
+}
+bar_relaunch() {  # bar_relaunch — start the bar at BAR_APP again, or say how to
+  open "$BAR_APP" >/dev/null 2>&1 \
+    || echo "  !! could not relaunch the bar; start it with: open \"${BAR_APP}\"" >&2
+}
+# Undo the swap: the old app goes back to BAR_APP and runs again if it ran.
+# Whatever sits at BAR_APP moves to .new rather than being deleted, since it
+# may not be ours.
+bar_roll_back() {  # bar_roll_back <what failed> <was_running 0|1>
+  if [[ -e "$BAR_APP" ]]; then
+    rm -rf "${BAR_APP}.new"
+    if ! mv "$BAR_APP" "${BAR_APP}.new"; then
+      bar_stranded_warn "$1."; return 0
+    fi
+  fi
+  if ! mv "${BAR_APP}.old" "$BAR_APP"; then
+    bar_stranded_warn "$1."; return 0
+  fi
+  rm -rf "${BAR_APP}.new"
+  bar_upgrade_warn "$1; the old bar is back in place$( (( $2 )) && echo ' and relaunched')."
+  if (( $2 )); then bar_relaunch; fi
+  return 0
+}
 # Never fails the release, like the npm upgrade above.
 upgrade_local_bar() {
   local cur tmp rc=0
@@ -293,6 +332,12 @@ upgrade_local_bar() {
     return 0
   fi
   cur="$(bar_version "$BAR_APP")"
+  # A dev or pre-release build (1.23.0-dev) has no order against a release,
+  # and replacing it would throw away whatever is being tried on it.
+  if [[ -n "$cur" && ! "$cur" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "  !! TokmeterBar at ${BAR_APP} is '${cur}', not a plain X.Y.Z release; leaving it alone." >&2
+    return 0
+  fi
   if [[ -n "$cur" ]] && version_at_least "$cur" "$VERSION"; then
     skip "TokmeterBar is at ${cur} (release ${VERSION})"
     return 0
@@ -310,9 +355,22 @@ upgrade_local_bar() {
 install_bar_from() {  # install_bar_from <scratch dir>
   local tmp="$1" zip="TokmeterBar-${VERSION}.zip" new team assess was_running=0 waited=0 qpid now
   local keep="Nothing was replaced."
+  # The installed bar is the trust anchor: its team gets pinned on the new
+  # one below. A TeamIdentifier read off a bundle whose signature doesn't
+  # hold proves nothing, so the signature is checked first.
+  if ! codesign --verify --strict "$BAR_APP" >/dev/null 2>&1; then
+    bar_upgrade_warn "the installed bar's own signature doesn't verify, so it can't vouch for the release's team. ${keep}"
+    return 0
+  fi
   team="$(team_of "$BAR_APP")"
   if [[ -z "$team" ]]; then
     bar_upgrade_warn "the installed bar isn't Developer ID signed (a dev build?), so there's no team to check the release against. ${keep}"
+    return 0
+  fi
+  # It goes inside a codesign requirement string, where a quote or an extra
+  # clause would change what the requirement means.
+  if [[ ! "$team" =~ ^[A-Z0-9]{10}$ ]]; then
+    bar_upgrade_warn "the installed bar's team identifier isn't in Apple's 10-character form. ${keep}"
     return 0
   fi
   if ! gh release download "$TAG" --repo "$REPO" -p "$zip" -D "$tmp" >/dev/null; then
@@ -350,18 +408,37 @@ install_bar_from() {  # install_bar_from <scratch dir>
     bar_upgrade_warn "could not copy the new bar next to ${BAR_APP}. ${keep}"; return 0
   fi
 
+  # Sparkle swaps this same bundle when it installs, and two swaps at once
+  # can leave neither app. Checked whether or not the bar runs: a bar that
+  # isn't running is exactly when Sparkle's install-on-quit is at work.
+  if sparkle_installing; then
+    rm -rf "${BAR_APP}.new"
+    bar_upgrade_warn "a Sparkle install is running right now, and this won't race its swap. ${keep}"
+    return 0
+  fi
+
   # Quit by bundle id, in the background: osascript can wait on an Automation
-  # prompt, and a --yes run must not hang on it. TERM after 10 s.
+  # prompt, and a --yes run must not hang on it. TERM after 10 s. Quitting
+  # can start Sparkle's install-on-quit, so the wait covers that too.
   if bar_running; then
     was_running=1
     osascript -e "tell application id \"${BAR_ID}\" to quit" >/dev/null 2>&1 &
     qpid=$!
     while bar_running || sparkle_installing; do
-      (( waited == 10 )) && pkill -TERM -x "$BAR_PROC" 2>/dev/null
+      if (( waited == 10 )) && bar_running; then
+        echo "  the bar didn't quit within 10 s; sending it TERM"
+        pkill -TERM -x "$BAR_PROC" 2>/dev/null || true
+      fi
       if (( waited >= 20 )); then
         kill "$qpid" 2>/dev/null || true
         rm -rf "${BAR_APP}.new"
-        bar_upgrade_warn "the running bar (or a Sparkle install) didn't finish within 20 seconds. ${keep}"
+        if bar_running; then
+          bar_upgrade_warn "the bar didn't quit within 20 seconds, even after a TERM; it is still running the old version. ${keep}"
+        else
+          # Opening a bundle Sparkle is rewriting could start a half-written
+          # app, so the bar stays down and Sparkle finishes on its own.
+          bar_upgrade_warn "the bar quit, but a Sparkle install was still running after 20 seconds, so the bar was NOT relaunched (Sparkle may relaunch it when it's done). This script replaced nothing. If the bar isn't back once Sparkle is done: open \"${BAR_APP}\""
+        fi
         return 0
       fi
       # The test suite sleeps 0 to run the timeout fast.
@@ -374,28 +451,27 @@ install_bar_from() {  # install_bar_from <scratch dir>
   if [[ -n "$now" ]] && version_at_least "$now" "$VERSION"; then
     rm -rf "${BAR_APP}.new"
     skip "TokmeterBar is at ${now} (installed while it quit)"
-    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+    if (( was_running )); then bar_relaunch; fi
     return 0
   fi
 
-  # Swap by rename, keeping the old app until the new one is in place.
+  # Swap by rename. The old app stays at .old until the new one is in place,
+  # reads as ${VERSION} and, if the bar was running, has launched; a failure
+  # before that puts the old one back.
   if ! mv "$BAR_APP" "${BAR_APP}.old"; then
     rm -rf "${BAR_APP}.new"
     bar_upgrade_warn "could not move the old bar aside. ${keep}"
-    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
+    if (( was_running )); then bar_relaunch; fi
     return 0
   fi
-  if [[ -e "$BAR_APP" ]] || ! mv "${BAR_APP}.new" "$BAR_APP"; then
-    if [[ ! -e "$BAR_APP" ]] && mv "${BAR_APP}.old" "$BAR_APP"; then
-      bar_upgrade_warn "installing the new bar failed; the old one is back in place."
-    else
-      bar_upgrade_warn "installing the new bar failed and the old one couldn't be put back: it is at ${BAR_APP}.old, the verified new one at ${BAR_APP}.new."
-    fi
-    (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
-    return 0
+  if [[ -e "$BAR_APP" ]] || ! mv "${BAR_APP}.new" "$BAR_APP" \
+    || [[ "$(bar_version "$BAR_APP")" != "$VERSION" ]]; then
+    bar_roll_back "installing the new bar failed" "$was_running"; return 0
+  fi
+  if (( was_running )) && ! open "$BAR_APP" >/dev/null 2>&1; then
+    bar_roll_back "the new bar wouldn't launch" 1; return 0
   fi
   rm -rf "${BAR_APP}.old"
-  (( was_running )) && { open "$BAR_APP" >/dev/null 2>&1 || true; }
   echo "  ✓ TokmeterBar upgraded to ${VERSION}$( (( was_running )) && echo ' and relaunched')"
 }
 

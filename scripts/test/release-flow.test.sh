@@ -136,15 +136,20 @@ if [[ "$1" == -x ]]; then
     "${FAKE_BAR_ZIP_VERSION:-$FAKE_VERSION}" > "$4/TokmeterBar.app/Contents/Info.plist"
 else cp -R "$1" "$2"; fi
 EOF
-# codesign -dv: the installed bar's team (none when bar_adhoc exists).
-# --verify -R=…: fails on codesign_fail, or on identity_fail (another team).
+# codesign -dv: the installed bar's team (none when bar_adhoc exists, a
+# malformed one when bar_team_bad exists).
+# --verify without -R (the installed bar): fails on installed_sig_fail.
+# --verify -R=… (the zip): fails on codesign_fail, or on identity_fail.
 cat > "$BIN/codesign" <<'EOF'
 #!/usr/bin/env bash
 echo "codesign $*" >> "$GH_STATE/log"
 if [[ "$1" == -dv ]]; then
-  if [[ -f "$GH_STATE/bar_adhoc" ]]; then echo "TeamIdentifier=not set" >&2; else echo "TeamIdentifier=SANDBOXTEAM" >&2; fi
+  if [[ -f "$GH_STATE/bar_adhoc" ]]; then echo "TeamIdentifier=not set" >&2
+  elif [[ -f "$GH_STATE/bar_team_bad" ]]; then echo 'TeamIdentifier=SANDBOXT01" or anchor apple' >&2
+  else echo "TeamIdentifier=SANDBOXT01" >&2; fi
   exit 0
 fi
+if [[ "$*" != *-R=* ]]; then [[ ! -f "$GH_STATE/installed_sig_fail" ]]; exit; fi
 [[ ! -f "$GH_STATE/codesign_fail" && ! -f "$GH_STATE/identity_fail" ]]
 EOF
 # spctl: spctl_adhoc rejects; spctl_exit_fail prints the right source but exits 3.
@@ -159,32 +164,68 @@ cat > "$BIN/xcrun" <<'EOF'
 #!/usr/bin/env bash
 echo "xcrun $*" >> "$GH_STATE/log"; [[ ! -f "$GH_STATE/stapler_fail" ]]
 EOF
-# shellcheck disable=SC2016  # the $ belongs in the written fake, unexpanded
-printf '#!/usr/bin/env bash\necho "open $*" >> "$GH_STATE/log"\n' > "$BIN/open"
+# open: open_fail_once makes the next launch fail (a broken new bundle).
+cat > "$BIN/open" <<'EOF'
+#!/usr/bin/env bash
+echo "open $*" >> "$GH_STATE/log"
+if [[ -f "$GH_STATE/open_fail_once" ]]; then rm -f "$GH_STATE/open_fail_once"; exit 1; fi
+EOF
 # osascript "quits" the bar (logging first, so the log always shows it),
-# unless bar_stuck says it ignores the quit.
+# unless bar_stuck says it ignores the quit. sparkle_starts_on_quit starts
+# an install that never ends; sparkle_upgrades_on_quit installs the release
+# as the bar quits. osascript_done tells the fake pgrep it has returned.
 cat > "$BIN/osascript" <<'EOF'
 #!/usr/bin/env bash
 echo "osascript $*" >> "$GH_STATE/log"
-[[ -f "$GH_STATE/bar_stuck" ]] || rm -f "$GH_STATE/bar_running"
+if [[ ! -f "$GH_STATE/bar_stuck" ]]; then
+  rm -f "$GH_STATE/bar_running"
+  [[ -f "$GH_STATE/sparkle_starts_on_quit" ]] && touch "$GH_STATE/sparkle_installing"
+  if [[ -f "$GH_STATE/sparkle_upgrades_on_quit" ]]; then
+    printf '<plist><dict><key>CFBundleShortVersionString</key>\n<string>%s</string></dict></plist>\n' \
+      "$FAKE_VERSION" > "$TOKMETER_BAR_APP/Contents/Info.plist"
+  fi
+fi
+touch "$GH_STATE/osascript_done"
 EOF
 # pgrep: only the bar's own lookups are faked; everything else (the signing
 # helper's key-wait) reaches the real pgrep. The bar runs while bar_running
 # exists; sparkle_installing makes the installer "run".
+# release.sh asks once whether the bar runs, starts osascript in the
+# background, then asks again in its wait loop. At RELEASE_BAR_SLEEP=0 that
+# loop could reach its TERM before the forked fake had run at all (a CI
+# flake), so every later ask first waits for osascript to have returned:
+# the test checks the loop's logic, not the scheduler.
 cat > "$BIN/pgrep" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$*" == "-x TokmeterBar" ]]; then
+  n=$(( $(cat "$GH_STATE/bar_asks" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$GH_STATE/bar_asks"
+  if (( n > 1 )); then
+    for _ in $(seq 1 1000); do [[ -f "$GH_STATE/osascript_done" ]] && break; sleep 0.01; done
+  fi
   [[ -f "$GH_STATE/bar_running" ]] || exit 1
   echo 4242; exit 0
 fi
 if [[ "$*" == *Sparkle* ]]; then [[ -f "$GH_STATE/sparkle_installing" ]] && { echo 4343; exit 0; }; exit 1; fi
 exec /usr/bin/pgrep "$@"
 EOF
+# pkill: TERM ends the bar, unless bar_unkillable.
 cat > "$BIN/pkill" <<'EOF'
 #!/usr/bin/env bash
 echo "pkill $*" >> "$GH_STATE/log"
-[[ "$*" == *TokmeterBar* ]] && rm -f "$GH_STATE/bar_running"
+[[ "$*" == *TokmeterBar* && ! -f "$GH_STATE/bar_unkillable" ]] && rm -f "$GH_STATE/bar_running"
 true
+EOF
+# mv: the real one, except the bar renames a marker says to fail:
+# mv_fail_aside (app → .old), mv_fail_in (.new → app), mv_fail_back (.old → app).
+cat > "$BIN/mv" <<'EOF'
+#!/usr/bin/env bash
+src="${*: -2:1}" dst="${*: -1}"
+if [[ -f "$GH_STATE/mv_fail_aside" && "$dst" == *.app.old ]] \
+  || [[ -f "$GH_STATE/mv_fail_in" && "$src" == *.app.new ]] \
+  || [[ -f "$GH_STATE/mv_fail_back" && "$src" == *.app.old ]]; then
+  echo "mv: $src: refused by the test" >&2; exit 1
+fi
+exec /bin/mv "$@"
 EOF
 cat > "$BIN/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -500,7 +541,7 @@ global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running"
 if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
 check "downloads the release zip" grep -q "gh release download v$V .*-p TokmeterBar-$V.zip" "$GH_STATE/log"
 check "pins the bundle id and the installed bar's team" \
-  grep -q 'codesign --verify --deep --strict -R=anchor apple generic and identifier "com.sriinnu.tokmeterbar" and certificate leaf\[subject.OU\] = "SANDBOXTEAM"' "$GH_STATE/log"
+  grep -q 'codesign --verify --deep --strict -R=anchor apple generic and identifier "com.sriinnu.tokmeterbar" and certificate leaf\[subject.OU\] = "SANDBOXT01"' "$GH_STATE/log"
 check "checks Gatekeeper and the staple" test "$(count 'spctl -a -t exec')$(count 'xcrun stapler validate')" = 11
 check "the bar is now $V" bar_is "$V"
 check "no .new or .old left behind" no_leftovers
@@ -524,14 +565,107 @@ sandbox bar_stuck
 global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/bar_stuck"
 if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
 check "sends TERM to the bar" grep -q '^pkill -TERM -x TokmeterBar' "$GH_STATE/log"
+check "says it sent TERM" grep -q "didn't quit within 10 s; sending it TERM" "$GH_STATE/out"
 check "the bar is now $V" bar_is "$V"
+check "relaunches it" test "$(count "^open $TOKMETER_BAR_APP")" = 1
 
-echo "• a Sparkle install never finishes: give up, keep the old bar"
+echo "• the bar survives TERM too: give up, say it's still running"
+sandbox bar_unkillable
+global_install "$V"; bar_install 1.0.0
+touch "$GH_STATE/bar_running" "$GH_STATE/bar_stuck" "$GH_STATE/bar_unkillable"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "says the old bar is still running" grep -q "even after a TERM; it is still running the old version" "$GH_STATE/out"
+check "old bar untouched" bar_is 1.0.0
+check "doesn't open a second copy" test "$(count '^open ')" = 0
+check "no .new or .old left behind" no_leftovers
+
+echo "• a Sparkle install is already running: don't quit, don't swap"
 sandbox bar_sparkle_busy
 global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/sparkle_installing"
 if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
-check "warns it didn't finish" grep -q "didn't finish within 20 seconds" "$GH_STATE/out"
+check "warns it won't race Sparkle" grep -q "a Sparkle install is running right now" "$GH_STATE/out"
+check "never quits the bar" test "$(count '^osascript')" = 0
 check "old bar untouched" bar_is 1.0.0
+check "no .new or .old left behind" no_leftovers
+
+echo "• Sparkle is installing and the bar isn't running: still don't swap"
+sandbox bar_sparkle_busy_quiet
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/sparkle_installing"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "warns it won't race Sparkle" grep -q "a Sparkle install is running right now" "$GH_STATE/out"
+check "old bar untouched" bar_is 1.0.0
+check "no .new or .old left behind" no_leftovers
+
+echo "• quitting starts a Sparkle install that never ends: give up, say so"
+sandbox bar_sparkle_on_quit
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/sparkle_starts_on_quit"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "says the bar was not relaunched, and how to start it" \
+  grep -q "so the bar was NOT relaunched .*open \"$TOKMETER_BAR_APP\"" "$GH_STATE/out"
+check "doesn't open a bundle Sparkle is rewriting" test "$(count '^open ')" = 0
+check "never TERMs a bar that already quit" test "$(count '^pkill')" = 0
+check "old bar untouched" bar_is 1.0.0
+check "no .new or .old left behind" no_leftovers
+
+echo "• Sparkle installs the release while the bar quits: no swap, relaunch"
+sandbox bar_sparkle_won
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/sparkle_upgrades_on_quit"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "says Sparkle got there first" grep -q "already done: TokmeterBar is at $V (installed while it quit)" "$GH_STATE/out"
+check "the bar is $V" bar_is "$V"
+check "relaunches it" test "$(count "^open $TOKMETER_BAR_APP")" = 1
+check "no .new or .old left behind" no_leftovers
+
+echo "• the old bar can't be moved aside: keep it, relaunch it"
+sandbox bar_mv_aside
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/mv_fail_aside"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "warns" grep -q "could not move the old bar aside" "$GH_STATE/out"
+check "old bar untouched" bar_is 1.0.0
+check "relaunches the old bar" test "$(count "^open $TOKMETER_BAR_APP")" = 1
+check "no .new or .old left behind" no_leftovers
+
+echo "• the new bar can't be moved in: roll back, relaunch the old one"
+sandbox bar_mv_in
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/mv_fail_in"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "warns the old one is back" grep -q "the old bar is back in place and relaunched" "$GH_STATE/out"
+check "old bar back" bar_is 1.0.0
+check "relaunches the old bar" test "$(count "^open $TOKMETER_BAR_APP")" = 1
+check "no .new or .old left behind" no_leftovers
+
+echo "• the roll-back fails too: name where the old bar is and how to restore it"
+sandbox bar_stranded
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/mv_fail_in" "$GH_STATE/mv_fail_back"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "names the .old path" grep -q "It is at $TOKMETER_BAR_APP.old" "$GH_STATE/out"
+check "gives the restore command" grep -qF "mv \"$TOKMETER_BAR_APP.old\" \"$TOKMETER_BAR_APP\"" "$GH_STATE/out"
+check "doesn't promise a rerun fixes it" test "$(grep -c 'or rerun' "$GH_STATE/out")" = 0
+check "the old bar is intact at .old" grep -q "<string>1.0.0</string>" "$TOKMETER_BAR_APP.old/Contents/Info.plist"
+check "still reports the release complete" grep -q "Release v$V complete" "$GH_STATE/out"
+
+echo "• the new bar won't launch: roll back to the old one and launch that"
+sandbox bar_open_fails
+global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running" "$GH_STATE/open_fail_once"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "warns the new bar wouldn't launch" grep -q "the new bar wouldn't launch; the old bar is back in place and relaunched" "$GH_STATE/out"
+check "old bar back" bar_is 1.0.0
+check "opened twice: the new one, then the old one" test "$(count "^open $TOKMETER_BAR_APP")" = 2
+check "no .new or .old left behind" no_leftovers
+
+echo "• a pre-release bar (1.23.0-dev): left alone"
+sandbox bar_dev
+global_install "$V"; bar_install 1.23.0-dev; touch "$GH_STATE/bar_running"
+if release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "says it leaves it alone" grep -q "is '1.23.0-dev', not a plain X.Y.Z release; leaving it alone" "$GH_STATE/out"
+check "no bar download" test "$(count 'gh release download')" = 0
+check "bar still 1.23.0-dev" bar_is 1.23.0-dev
+
+echo "• 1.9.0 installed, 1.10.0 released: numeric, not string, order"
+V=1.10.0 sandbox bar_numeric
+global_install 1.10.0; bar_install 1.9.0
+if V=1.10.0 release; then ok "exits 0"; else bad "exits 0"; show_out; fi
+check "upgrades to 1.10.0" bar_is 1.10.0
 check "no .new or .old left behind" no_leftovers
 
 echo "• the bar is ahead of the release: never downgrade"
@@ -555,7 +689,7 @@ if TOKMETER_BAR_APP=Applications/TokmeterBar.app release; then ok "exits 0"; els
 check "refuses the path" grep -q "must be an absolute path to a .app" "$GH_STATE/out"
 check "no bar download" test "$(count 'gh release download')" = 0
 
-for failing in bar_adhoc codesign_fail identity_fail spctl_adhoc spctl_exit_fail stapler_fail bar_zip_symlink zip_version; do
+for failing in installed_sig_fail bar_adhoc bar_team_bad codesign_fail identity_fail spctl_adhoc spctl_exit_fail stapler_fail bar_zip_symlink zip_version; do
   echo "• the zip or the installed bar fails a check ($failing): warn, keep the old bar"
   sandbox "bar_$failing"
   global_install "$V"; bar_install 1.0.0; touch "$GH_STATE/bar_running"
@@ -565,6 +699,9 @@ for failing in bar_adhoc codesign_fail identity_fail spctl_adhoc spctl_exit_fail
   check "warns the bar is behind" grep -q "THE BAR ON THIS MACHINE IS NOT ON $V" "$GH_STATE/out"
   check "old bar untouched" bar_is 1.0.0
   check "never quit the running bar" test "$(count '^osascript')" = 0
+  if [[ "$failing" == bar_team_bad || "$failing" == installed_sig_fail ]]; then
+    check "never builds a requirement from an untrusted team" test "$(count 'codesign --verify --deep --strict -R=')" = 0
+  fi
   check "no .new or .old left behind" no_leftovers
   check "still reports the release complete" grep -q "Release v$V complete" "$GH_STATE/out"
 done
