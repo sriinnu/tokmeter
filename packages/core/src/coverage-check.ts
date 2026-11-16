@@ -14,6 +14,14 @@
  * ~/.codex/sessions), because the files a parser doesn't know about are by
  * definition outside the roots it declares.
  *
+ * Databases get a narrower question. Walking every SQLite file under an
+ * agent folder would flag caches and app state, so only a database a parser
+ * names in usageDatabases() is checked: if it changed that day (the
+ * file or its -wal) and no record came from it, the agent is still writing
+ * and the parser has stopped hearing it. That is how an upstream schema move
+ * looks from outside: OpenCode's session v2 update (2026-11-16) moved new
+ * messages to a table the parser didn't read, and the day went quiet.
+ *
  * "Looks like usage" is deliberately narrow, to keep the warning trustworthy:
  * a .jsonl/.ndjson/.json whose last 64 KB has a token-count key with a
  * positive number, or a compressed file (which can't be sniffed). Databases,
@@ -31,8 +39,12 @@ import type { ProviderId, SessionParser } from "./types.js";
 export interface UnreadFile {
   path: string;
   bytes: number;
-  /** "usage": a positive token count in the file; "compressed": can't be read to tell. */
-  kind: "usage" | "compressed";
+  /**
+   * "usage": a positive token count in the file; "compressed": can't be read
+   * to tell; "database": a database a parser reads changed that day but gave
+   * no record (the agent moved its data, or the parser lost its schema).
+   */
+  kind: "usage" | "compressed" | "database";
   /** Providers whose agent folder holds the file. */
   providers: ProviderId[];
 }
@@ -132,6 +144,12 @@ export async function findUnreadFiles(opts: {
   homeDir: string;
   date: string;
   readFiles: Iterable<string>;
+  /**
+   * The records behind `readFiles`, with their times. When given, a declared
+   * database counts as read only if a record dated that day came from it:
+   * one database holds every day, so "read at all" says nothing about D.
+   */
+  records?: Iterable<{ sourceFile?: string; timestamp: number }>;
   parsers: SessionParser[];
   budgetMs?: number;
   now?: () => number;
@@ -146,6 +164,14 @@ export async function findUnreadFiles(opts: {
 
   const read = new Set<string>();
   for (const f of opts.readFiles) read.add(f.split("#")[0]);
+
+  let readThatDay = read;
+  if (opts.records) {
+    readThatDay = new Set();
+    for (const r of opts.records)
+      if (r.sourceFile && r.timestamp >= start && r.timestamp < end)
+        readThatDay.add(r.sourceFile.split("#")[0]);
+  }
 
   const homes = agentHomes(opts.parsers, opts.homeDir);
   const found = new Map<string, UnreadFile>();
@@ -214,6 +240,31 @@ export async function findUnreadFiles(opts: {
 
   for (const [home, providers] of homes) await walk(home, 0, providers);
 
+  // Declared databases: changed that day, fed no record.
+  for (const p of opts.parsers) {
+    for (const root of p.usageDatabases?.(opts.homeDir) ?? []) {
+      if (readThatDay.has(root)) continue;
+      let changed = 0;
+      let bytes = 0;
+      for (const f of [root, `${root}-wal`]) {
+        try {
+          const st = await stat(f);
+          changed = Math.max(changed, st.mtimeMs);
+          if (f === root) bytes = st.size;
+        } catch {
+          /* no such file */
+        }
+      }
+      if (changed < start || changed >= end) continue;
+      const prior = found.get(root);
+      if (prior) {
+        if (!prior.providers.includes(p.providerId)) prior.providers.push(p.providerId);
+        continue;
+      }
+      found.set(root, { path: root, bytes, kind: "database", providers: [p.providerId] });
+    }
+  }
+
   return {
     date: opts.date,
     checkedAt: now(),
@@ -238,7 +289,13 @@ export function summarizeCoverage(report: CoverageReport, homeDir: string): stri
     .map(([d, n]) => `${n} in ${d}`)
     .join(", ");
   const n = report.unread.length;
-  return `${report.date} may be missing usage: ${n} session file${n === 1 ? "" : "s"} changed that day that no parser read (${top}). Run \`tokmeter coverage --date ${report.date}\` for the list.`;
+  const quiet = [
+    ...new Set(report.unread.filter((f) => f.kind === "database").flatMap((f) => f.providers)),
+  ];
+  const dbNote = quiet.length
+    ? ` ${quiet.join(", ")} kept writing ${quiet.length === 1 ? "its database" : "their databases"} but gave no records; the app may have changed its format.`
+    : "";
+  return `${report.date} may be missing usage: ${n} session file${n === 1 ? "" : "s"} changed that day that no parser read (${top}).${dbNote} Run \`tokmeter coverage --date ${report.date}\` for the list.`;
 }
 
 // ─── Persistence: ~/.cache/tokmeter/coverage/<date>.json ───────────────────

@@ -126,6 +126,10 @@ export class ZedParser implements SessionParser {
     ].map((appDir) => join(appDir, "threads", "threads.db"));
   }
 
+  usageDatabases(homeDir: string): string[] {
+    return this.sessionRoots(homeDir);
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
     const baselines = readBaselines(homeDir);

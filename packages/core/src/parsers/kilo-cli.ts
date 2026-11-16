@@ -23,6 +23,10 @@ export class KiloCliParser implements SessionParser {
     return [expandHome("~/.local/share/kilo/kilo.db", homeDir)];
   }
 
+  usageDatabases(homeDir: string): string[] {
+    return this.sessionRoots(homeDir);
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const [dbPath] = this.sessionRoots(homeDir);
 

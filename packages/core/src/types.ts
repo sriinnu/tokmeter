@@ -696,6 +696,15 @@ export interface SessionParser {
    */
   restoreRoots?(homeDir: string): string[];
   /**
+   * Databases that hold this parser's usage AND that its records name as
+   * their sourceFile. The coverage check flags one that changed on a day
+   * with no record dated that day from it: the agent kept writing and the
+   * parser stopped hearing it (an upstream format change). Opt-in, because
+   * app-state stores (Cursor's state.vscdb) change without any usage, and
+   * some parsers' records name another file (codex-desktop's rollouts).
+   */
+  usageDatabases?(homeDir: string): string[];
+  /**
    * Optional memory-bounded variant: parse file-by-file, handing each file's
    * records to `onFile` so a caller (the relay rebuild) can fold + release them
    * instead of holding the whole corpus. Parsers that omit this fall back to

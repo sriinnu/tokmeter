@@ -118,6 +118,58 @@ describe("OpenCodeParser", () => {
     expect(records.find((r) => r.apiCallId === "msg_old")?.model).toBe("glm-4.7@opencode");
   });
 
+  it("reads session v2 `session_message` rows and dedups them against `message`", async () => {
+    const dir = join(home, ".local/share/opencode");
+    mkdirSync(dir, { recursive: true });
+    const dbPath = join(dir, "opencode.db");
+    // An old row the migration copied into session_message, with identical usage.
+    seedDb(dbPath, [{ id: "msg_old", session: "s1", data: assistant("msg_old") }]);
+    // Shape copied from a live OpenCode install: model nested, no role/path,
+    // role carried by the `type` column.
+    const v2 = (id: string, model: string, provider: string) => ({
+      time: { created: 1790000002000, completed: 1790000003000 },
+      agent: "build",
+      model: { id: model, providerID: provider, variant: "default" },
+      finish: "tool-calls",
+      cost: 0.0969158,
+      tokens: { input: 7202, output: 202, reasoning: 2014, cache: { read: 603518, write: 0 } },
+    });
+    const rows: Array<[string, string, string, object]> = [
+      ["msg_old", "s2", "assistant", assistant("msg_old")],
+      ["msg_new", "s2", "assistant", v2("msg_new", "gemini-4-carbon", "google")],
+      ["msg_user", "s2", "user", { time: { created: 1790000001000 } }],
+    ];
+    execFileSync("sqlite3", [dbPath], {
+      input: [
+        "CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, directory text NOT NULL);",
+        "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);",
+        "INSERT INTO session_v2 VALUES ('s2', 'p1', '/Users/me/code/delta');",
+        ...rows.map(
+          ([id, session, type, data], i) =>
+            `INSERT INTO session_message VALUES (${sq(id)}, ${sq(session)}, ${sq(type)}, ${i}, 1790000002000, 1790000002000, ${sq(JSON.stringify(data))});`
+        ),
+      ].join("\n"),
+    });
+
+    const records = await new OpenCodeParser().scan(home);
+
+    expect(records.map((r) => r.apiCallId).sort()).toEqual(["msg_new", "msg_old"]);
+    // A migrated row still in the v1 shape keeps its model and provider.
+    expect(records.find((r) => r.apiCallId === "msg_old")?.model).toBe(
+      "muse-spark-1.3-contributor-free@opencode"
+    );
+    expect(records.find((r) => r.apiCallId === "msg_new")).toMatchObject({
+      model: "gemini-4-carbon@google",
+      inputTokens: 7202,
+      outputTokens: 202,
+      reasoningTokens: 2014,
+      cacheReadTokens: 603518,
+      cost: 0.0969158,
+      timestamp: 1790000002000,
+      cwd: "/Users/me/code/delta",
+    });
+  });
+
   it("reports a free-tier $0 as a fact, but leaves a coding-plan $0 to pricing", async () => {
     const dir = join(home, ".local/share/opencode");
     mkdirSync(dir, { recursive: true });

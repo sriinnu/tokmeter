@@ -160,7 +160,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 28 — Cursor's local database is read as one record per counted bubble, with
 //      the model from its request's user bubble. v26 gave every record in a
 //      conversation the first model seen in it.
-const CACHE_VERSION = 28;
+// 29 — OpenCode's session v2 table `session_message` is read too. v28 read
+//      only `message`, which OpenCode stopped writing, so newer messages
+//      (e.g. every Gemini 4 call) were missing.
+const CACHE_VERSION = 29;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
