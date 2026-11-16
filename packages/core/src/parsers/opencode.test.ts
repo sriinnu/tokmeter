@@ -154,6 +154,10 @@ describe("OpenCodeParser", () => {
     const records = await new OpenCodeParser().scan(home);
 
     expect(records.map((r) => r.apiCallId).sort()).toEqual(["msg_new", "msg_old"]);
+    // A migrated row still in the v1 shape keeps its model and provider.
+    expect(records.find((r) => r.apiCallId === "msg_old")?.model).toBe(
+      "muse-spark-1.3-contributor-free@opencode"
+    );
     expect(records.find((r) => r.apiCallId === "msg_new")).toMatchObject({
       model: "gemini-4-carbon@google",
       inputTokens: 7202,

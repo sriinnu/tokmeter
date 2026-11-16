@@ -55,8 +55,12 @@ interface MessageRow {
   worktree?: string | null;
 }
 
-/** A `session_message.data` blob (session v2): no role/path, model nested. */
-interface SessionMessageData {
+/**
+ * A `session_message.data` blob (session v2): no role/path, model nested.
+ * A migrated row may still carry the v1 fields, so those are read as a
+ * fallback rather than labelling it "unknown".
+ */
+interface SessionMessageData extends Omit<OpenCodeMessageData, "role"> {
   model?: { id?: string; providerID?: string };
   cost?: number;
   tokens?: OpenCodeMessageData["tokens"];
@@ -228,8 +232,9 @@ function readSessionMessages(
       {
         id: row.id,
         role: "assistant",
-        modelID: msg.model?.id,
-        providerID: msg.model?.providerID,
+        modelID: msg.model?.id ?? msg.modelID,
+        providerID: msg.model?.providerID ?? msg.providerID,
+        path: msg.path,
         cost: msg.cost,
         tokens: msg.tokens,
         time: msg.time,
