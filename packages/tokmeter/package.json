@@ -31,7 +31,7 @@
     "build": "node bundle.mjs"
   },
   "dependencies": {
-    "@sriinnu/kosha-discovery": "^1.13.0",
+    "@sriinnu/kosha-discovery": "^1.14.0",
     "cli-table3": "^0.6.5",
     "chalk": "^6.0.1",
     "ink": "^5.0.0",
