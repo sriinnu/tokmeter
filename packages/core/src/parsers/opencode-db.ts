@@ -12,6 +12,14 @@
  * the parsers used to query only the flat one, so on the current schema the
  * query threw and every DB-era message was silently dropped.
  *
+ * OpenCode 1.x+ (session v2, migration 2026-10) writes new messages to
+ * `session_message` instead: `type` column ("assistant", "user", ...) and a
+ * blob whose model sits at `model.{id,providerID}`, sessions in `session_v2`.
+ * The migration copied old rows in and left `message` frozen, so the two
+ * overlap on id (identical usage, checked on a live install) and each also
+ * holds rows the other lacks. Both are read and deduped on message id;
+ * reading only `message` silently dropped every message since the switch.
+ *
  * OpenCode's `tokens.input` is already the UNCACHED prompt: it subtracts
  * cache reads for OpenAI-style providers and leaves Anthropic-style ones as
  * reported, so it maps straight onto inputTokens without adjustment.
@@ -45,6 +53,21 @@ interface MessageRow {
   data: string;
   directory?: string | null;
   worktree?: string | null;
+}
+
+/** A `session_message.data` blob (session v2): no role/path, model nested. */
+interface SessionMessageData {
+  model?: { id?: string; providerID?: string };
+  cost?: number;
+  tokens?: OpenCodeMessageData["tokens"];
+  time?: { created?: number };
+}
+
+interface SessionMessageRow {
+  id: string;
+  time_created: number;
+  data: string;
+  directory?: string | null;
 }
 
 interface FlatMessageRow {
@@ -149,13 +172,71 @@ export function readOpenCodeDb(
   dbPath: string,
   provider: ProviderId
 ): TokenRecord[] {
-  if (hasTable(db, "message") && hasColumn(db, "message", "data")) {
-    return readJsonMessages(db, dbPath, provider);
+  const hasV2 = hasTable(db, "session_message") && hasColumn(db, "session_message", "data");
+  const hasV1 = hasTable(db, "message") && hasColumn(db, "message", "data");
+  if (hasV1 || hasV2) {
+    const records: TokenRecord[] = [];
+    const seen = new Set<string>();
+    const add = (rec: TokenRecord) => {
+      if (rec.apiCallId) {
+        if (seen.has(rec.apiCallId)) return;
+        seen.add(rec.apiCallId);
+      }
+      records.push(rec);
+    };
+    if (hasV2) for (const rec of readSessionMessages(db, dbPath, provider)) add(rec);
+    if (hasV1) for (const rec of readJsonMessages(db, dbPath, provider)) add(rec);
+    return records;
   }
   if (hasTable(db, "messages")) {
     return readFlatMessages(db, dbPath, provider);
   }
   throw new Error(`${provider}: unrecognised database schema`);
+}
+
+function parseBlob<T>(provider: ProviderId, id: string, data: string): T {
+  try {
+    return JSON.parse(data) as T;
+  } catch (error) {
+    throw new Error(
+      `Malformed ${provider} message ${id}: ${error instanceof Error ? error.message : error}`
+    );
+  }
+}
+
+function readSessionMessages(
+  db: ReadonlySqlite,
+  dbPath: string,
+  provider: ProviderId
+): TokenRecord[] {
+  const joinSession = hasTable(db, "session_v2");
+  const rows = db.all<SessionMessageRow>(
+    `SELECT m.id, m.time_created, m.data${joinSession ? ", s.directory" : ""}
+       FROM session_message m
+       ${joinSession ? "LEFT JOIN session_v2 s ON s.id = m.session_id" : ""}
+      WHERE m.type = 'assistant'`
+  );
+  const records: TokenRecord[] = [];
+  for (const row of rows) {
+    const msg = parseBlob<SessionMessageData | null>(provider, row.id, row.data);
+    if (!msg || typeof msg !== "object") continue;
+    const rec = openCodeMessageToRecord(
+      {
+        id: row.id,
+        role: "assistant",
+        modelID: msg.model?.id,
+        providerID: msg.model?.providerID,
+        cost: msg.cost,
+        tokens: msg.tokens,
+        time: msg.time,
+      },
+      provider,
+      dbPath,
+      { id: row.id, timestamp: row.time_created, cwd: row.directory }
+    );
+    if (rec) records.push(rec);
+  }
+  return records;
 }
 
 function readJsonMessages(db: ReadonlySqlite, dbPath: string, provider: ProviderId): TokenRecord[] {
@@ -170,14 +251,7 @@ function readJsonMessages(db: ReadonlySqlite, dbPath: string, provider: Provider
 
   const records: TokenRecord[] = [];
   for (const row of rows) {
-    let msg: OpenCodeMessageData;
-    try {
-      msg = JSON.parse(row.data) as OpenCodeMessageData;
-    } catch (error) {
-      throw new Error(
-        `Malformed ${provider} message ${row.id}: ${error instanceof Error ? error.message : error}`
-      );
-    }
+    const msg = parseBlob<OpenCodeMessageData>(provider, row.id, row.data);
     const rec = openCodeMessageToRecord(msg, provider, dbPath, {
       id: row.id,
       timestamp: row.time_created,
