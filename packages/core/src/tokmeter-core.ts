@@ -381,8 +381,9 @@ export class TokmeterCore {
     if (sealed.length > 0) {
       // Off the tick: the walk is async and budgeted, and a failure must never
       // touch the seal that just happened.
-      const readFiles = [...this.recentRecords, ...stragglers].map((r) => r.sourceFile ?? "");
-      for (const date of sealed) void this.checkSealedDayCoverage(date, readFiles);
+      const held = [...this.recentRecords, ...stragglers];
+      const readFiles = held.map((r) => r.sourceFile ?? "");
+      for (const date of sealed) void this.checkSealedDayCoverage(date, readFiles, held);
     }
 
     this.scanMeta = {
@@ -632,12 +633,17 @@ export class TokmeterCore {
    * the daemon already holds, so this re-parses nothing. The report is kept
    * on disk and summarized as a history warning.
    */
-  private async checkSealedDayCoverage(date: string, readFiles: string[]): Promise<void> {
+  private async checkSealedDayCoverage(
+    date: string,
+    readFiles: string[],
+    records: TokenRecord[]
+  ): Promise<void> {
     try {
       const report = await findUnreadFiles({
         homeDir: this.homeDir,
         date,
         readFiles,
+        records,
         parsers: getParsers(undefined),
         budgetMs: 10_000,
       });
@@ -680,6 +686,7 @@ export class TokmeterCore {
       homeDir: this.homeDir,
       date,
       readFiles: records.map((r) => r.sourceFile ?? ""),
+      records,
       parsers: getParsers(undefined),
       budgetMs: 60_000,
     });

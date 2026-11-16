@@ -29,6 +29,11 @@ export class OpenCodeParser implements SessionParser {
     ];
   }
 
+  /** The database's records name it as their sourceFile (coverage check). */
+  usageDatabases(homeDir: string): string[] {
+    return [this.sessionRoots(homeDir)[0]];
+  }
+
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const [dbPath, storageDir] = this.sessionRoots(homeDir);
     const records: TokenRecord[] = [];

@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tables are read now and deduplicated by message id. The parser cache
   version is bumped, so cached OpenCode records are rebuilt.
 
+### Added
+
+- The daily coverage check now notices when an agent changes its storage
+  format. If OpenCode, Kilo CLI or Zed keeps writing its database on a day
+  but tokmeter gets no records from it, the sealed day carries a warning
+  saying the app may have changed its format, instead of quietly coming up
+  short. On today's OpenCode change it fires with the old parser and stays
+  quiet with the fix.
+
 ## [1.22.4] - 2026-11-15
 
 ### Fixed

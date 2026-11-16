@@ -54,6 +54,56 @@ describe("findUnreadFiles", () => {
     expect(report.homes).toEqual([join(home, ".codex")]);
   });
 
+  describe("declared databases", () => {
+    const opencode = () =>
+      ({
+        ...parser("opencode", (h) => [join(h, ".local/share/opencode/opencode.db")]),
+        usageDatabases: (h: string) => [join(h, ".local/share/opencode/opencode.db")],
+      }) as SessionParser;
+    const DB = ".local/share/opencode/opencode.db";
+    const at = (iso: string) => new Date(iso).getTime();
+
+    // The 2026-11-16 shape: OpenCode moved new messages to a table the
+    // parser didn't read. The db kept changing; only old records came out.
+    test("flags a database that changed that day but gave no record dated that day", async () => {
+      const db = put(DB, "sqlite");
+      const records = [{ sourceFile: `${db}#old`, timestamp: at("2026-10-12T10:00:00") }];
+      const report = await check([db], [opencode()], { records });
+      expect(report.unread).toEqual([
+        { path: db, bytes: 6, kind: "database", providers: ["opencode"] },
+      ]);
+      expect(summarizeCoverage(report, home)).toContain(
+        "opencode kept writing its database but gave no records"
+      );
+    });
+
+    // codex-desktop names its state db as a root, but its records point at
+    // rollout files: inferring "watched" from the extension fired every day.
+    test("a database a parser only lists as a root is never watched", async () => {
+      put(".codex/state_5.sqlite", "sqlite");
+      const desktop = parser("codex-desktop", (h) => [join(h, ".codex/state_5.sqlite")]);
+      expect((await check([], [desktop], { records: [] })).unread).toEqual([]);
+    });
+
+    test("a database with a record dated that day is not flagged", async () => {
+      const db = put(DB, "sqlite");
+      const records = [{ sourceFile: db, timestamp: at(`${DAY}T09:00:00`) }];
+      expect((await check([db], [opencode()], { records })).unread).toEqual([]);
+    });
+
+    test("a database unchanged that day is not flagged", async () => {
+      put(DB, "sqlite", new Date("2026-10-12T12:00:00"));
+      expect((await check([], [opencode()], { records: [] })).unread).toEqual([]);
+    });
+
+    test("a write that lands only in the -wal counts as a change", async () => {
+      const db = put(DB, "sqlite", new Date("2026-10-12T12:00:00"));
+      put(`${DB}-wal`, "wal");
+      const report = await check([], [opencode()], { records: [] });
+      expect(report.unread.map((f) => f.path)).toEqual([db]);
+    });
+  });
+
   test("a file that fed a record is not flagged, with or without a #row suffix", async () => {
     const a = put(".codex/sessions/a.jsonl", USAGE);
     const b = put(".codex/sessions/b.jsonl", USAGE);

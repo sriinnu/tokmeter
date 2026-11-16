@@ -15,7 +15,7 @@
  * OpenCode 1.x+ (session v2, migration 2026-10) writes new messages to
  * `session_message` instead: `type` column ("assistant", "user", ...) and a
  * blob whose model sits at `model.{id,providerID}`, sessions in `session_v2`.
- * The migration copied old rows in and left `message` frozen, so the two
+ * The migration copied old rows in and `message` gets no new ones, so the two
  * overlap on id (identical usage, checked on a live install) and each also
  * holds rows the other lacks. Both are read and deduped on message id;
  * reading only `message` silently dropped every message since the switch.
@@ -172,7 +172,11 @@ export function readOpenCodeDb(
   dbPath: string,
   provider: ProviderId
 ): TokenRecord[] {
-  const hasV2 = hasTable(db, "session_message") && hasColumn(db, "session_message", "data");
+  const hasV2 =
+    hasTable(db, "session_message") &&
+    ["data", "type", "session_id", "time_created"].every((c) =>
+      hasColumn(db, "session_message", c)
+    );
   const hasV1 = hasTable(db, "message") && hasColumn(db, "message", "data");
   if (hasV1 || hasV2) {
     const records: TokenRecord[] = [];
