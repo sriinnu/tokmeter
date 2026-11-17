@@ -15,7 +15,7 @@
  *      change. That keeps the list honest in both directions.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,12 @@ const KNOWN_BUGS = {
 };
 
 const root = mkdtempSync(join(tmpdir(), "codex-fixtures-"));
+// tokmeter writes under HOME (~/.tokmeter, ~/.cache/tokmeter) while it scans;
+// a hand run of this test must not leave that in the real one.
+const home = join(root, ".home");
+mkdirSync(home);
+const env = { ...process.env, HOME: home, USERPROFILE: home };
+delete env.CODEX_HOME;
 let failed = 0;
 try {
   const mk = spawnSync("python3", ["-I", join(here, "fixtures", "mkfix.py"), root], {
@@ -68,7 +74,7 @@ try {
     const r = spawnSync(
       process.execPath,
       [join(here, "compare-codex.mjs"), "--codex-home", join(root, name), "--allow-empty"],
-      { encoding: "utf8", maxBuffer: 64 << 20 }
+      { encoding: "utf8", maxBuffer: 64 << 20, env }
     );
     const out = r.stdout ?? "";
     const end = out.indexOf("\n}\n");
