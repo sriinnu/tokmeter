@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Antigravity usage is counted. Antigravity 2.x (IDE and CLI) keeps each
+  conversation in its own database under `~/.gemini/antigravity/` and
+  `~/.gemini/antigravity-cli/`, and those record every API call's tokens and
+  model. tokmeter only read the older session summaries, which hold neither,
+  so every Antigravity call counted 0 tokens. Each call is now one record
+  (retries included, by response id), with uncached input, cache read,
+  thinking and response tokens, and the model the call used. On the machine
+  it was built on, 2,418 calls over 13 days match an independent reader
+  (`scripts/oracle/antigravity_oracle.py`) exactly. The parser cache version
+  is bumped. Sealed past days aren't rewritten; days whose conversations are
+  still on disk can be backfilled with a forced rescan.
+- The coverage check no longer treats an empty SQLite `-wal` as a write.
+  macOS leaves one behind, and opening a database read-only creates one, so
+  an untouched database could look changed that day.
+
+### Added
+
+- Antigravity's conversation databases are watched by the coverage check,
+  so a future format change shows up as a warning instead of a quiet day.
+  A conversation that was only opened, with no new step that day, isn't
+  flagged.
+
 ## [1.22.5] - 2026-11-16
 
 ### Fixed

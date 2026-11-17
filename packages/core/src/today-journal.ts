@@ -77,8 +77,9 @@ class JournalIntegrityError extends Error {}
  * file-level carry can't see a deleted thread. Zed and Cursor tag each record
  * with a {@link TokenRecord.threadKey} instead and are carried per thread
  * (so are OpenCode and Kilo CLI database rows; their JSON store has a file
- * per message and carries as files). Antigravity and VS Code Copilot record
- * no tokens.
+ * per message and carries as files). VS Code Copilot records no tokens.
+ * Antigravity isn't listed: its usage is one database per conversation,
+ * carried as files like a JSONL; its state.vscdb summaries hold no tokens.
  * Cursor's CSV exports are excluded too: the parser reads either the CSVs or
  * the database, so when one appears the other's records all disappear, and
  * carrying them would count the same usage twice.
@@ -93,7 +94,6 @@ class JournalIntegrityError extends Error {}
 const NEVER_CARRIED_WITHOUT_THREAD = new Set<ProviderId>([
   "zed",
   "cursor",
-  "antigravity",
   "vscode-copilot",
   "codex-desktop",
 ]);

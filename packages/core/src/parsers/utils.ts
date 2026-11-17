@@ -163,7 +163,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 29 — OpenCode's session v2 table `session_message` is read too. v28 read
 //      only `message`, which OpenCode stopped writing, so newer messages
 //      (e.g. every Gemini 4 call) were missing.
-const CACHE_VERSION = 29;
+// 30 — Antigravity 2.x conversation databases are read: one record per API
+//      call with tokens and model. v29 read only the state.vscdb summaries,
+//      which carry no usage, so every Antigravity call counted 0.
+const CACHE_VERSION = 30;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
@@ -1150,13 +1153,11 @@ function defaultUsageProvenance(provider: ProviderId): UsageProvenance {
       });
     case "antigravity":
       return withMetrics(baseProvenance("tool_sqlite"), {
-        inputTokens: notExposedMetric,
-        outputTokens: notExposedMetric,
-        cacheReadTokens: notExposedMetric,
+        reasoningTokens: directMetric,
+        // Never written: absent from all 2,429 usages decoded on 2026-11-17.
         cacheWriteTokens: notExposedMetric,
-        cost: notExposedMetric,
         notes: [
-          "Antigravity's local trajectory store has no public schema and, after manual decoding, exposes no model id, token count, or cost anywhere — only session timestamps and touched-file paths.",
+          "Antigravity 2.x conversation databases (no public schema, decoded by hand) record per-call usage: uncached input, cache read, thinking and response tokens, each call once by its response id.",
         ],
       });
     case "zed":

@@ -11,25 +11,33 @@
  * using the wire format only (varint + length-delimited fields) — after
  * walking the full nested structure (title, timestamps, tool-call records,
  * even raw response text is present), no model id, token count, or cost
- * figure exists anywhere in it, nor anywhere else in the app's local state
- * or logs. The only per-agent-model reference found on disk is a single
- * *global*, app-wide "last selected model" enum constant with no public
- * mapping back to a model name — not usable per-session.
+ * figure exists anywhere in it.
  *
- * What IS reliably recoverable, and is what this parser reports: one record
- * per agent session ("trajectory") with a start timestamp and a project
- * (resolved from the first file:// reference touched in that session).
- * model stays "unknown" and tokens/cost stay 0/not_exposed rather than
- * guessed at — see defaultUsageProvenance in utils.ts.
+ * What IS reliably recoverable from a summary: one record per agent session
+ * ("trajectory") with a start timestamp and a project (resolved from the
+ * first file:// reference touched in that session). model stays "unknown"
+ * and tokens/cost stay 0/not_exposed rather than guessed at.
  *
  * Reads the SQLite file via bun:sqlite (Bun) or better-sqlite3 (Node),
  * whichever is available — see openReadonlySqlite in utils.ts. Bails to []
  * if neither driver is available or the on-disk schema no longer matches.
+ *
+ * Antigravity 2.x moved conversations to one database each under
+ * ~/.gemini/antigravity{,-cli}/conversations/, and those DO carry per-call
+ * token counts and model ids: see antigravity-conversations.ts. A summary
+ * entry whose conversation database exists is skipped, so the session isn't
+ * counted twice (once empty, once with its calls).
  */
 
 import { join } from "node:path";
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord, UsageProvenance } from "../types.js";
+import {
+  conversationActiveBetween,
+  conversationDirs,
+  listConversationDbs,
+  scanConversations,
+} from "./antigravity-conversations.js";
 import {
   createRecord,
   expandHome,
@@ -41,6 +49,17 @@ import {
 
 const APP_NAMES = ["Antigravity", "Antigravity IDE"];
 const TRAJECTORY_SUMMARIES_KEY = "antigravityUnifiedStateSync.trajectorySummaries";
+
+/** Summary entries hold a session's time and files, never its tokens. */
+const SUMMARY_ONLY_USAGE: Partial<UsageProvenance> = {
+  inputTokens: "not_exposed",
+  outputTokens: "not_exposed",
+  cacheReadTokens: "not_exposed",
+  cacheWriteTokens: "not_exposed",
+  reasoningTokens: "not_exposed",
+  cost: "not_exposed",
+  notes: ["Session summary only (state.vscdb): no model, token count or cost is stored there."],
+};
 
 // ─── Minimal protobuf wire-format reader ───────────────────────────
 // Only varint (wire type 0) and length-delimited (wire type 2) are needed
@@ -100,12 +119,15 @@ function field(fields: WireField[], num: number): WireField | undefined {
 const FILE_URI_RE = /file:\/\/(\/[\x20-\x7e]+)/;
 
 interface DecodedTrajectory {
+  id: string;
   timestamp: number;
   project: string;
 }
 
 function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
   const outer = readFields(entryBytes);
+  const idBytes = field(outer, 1)?.bytes;
+  const id = idBytes ? Buffer.from(idBytes).toString("utf-8") : "";
   const summaryWrapper = field(outer, 2)?.bytes;
   if (!summaryWrapper) return null;
 
@@ -155,7 +177,7 @@ function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
     }
   }
 
-  return { timestamp, project };
+  return { id, timestamp, project };
 }
 
 export class AntigravityParser implements SessionParser {
@@ -163,16 +185,30 @@ export class AntigravityParser implements SessionParser {
 
   /** Paths this parser reads; restore validates archive paths against them. */
   sessionRoots(homeDir: string): string[] {
+    return [...this.summaryStores(homeDir), ...conversationDirs(homeDir)];
+  }
+
+  /** The conversation databases' records name them as their sourceFile (coverage check). */
+  usageDatabases(homeDir: string): string[] {
+    return listConversationDbs(homeDir);
+  }
+
+  /** Opening an old conversation rewrites its file; only a new step is activity. */
+  databaseActiveBetween(dbPath: string, startMs: number, endMs: number): Promise<boolean> {
+    return conversationActiveBetween(dbPath, startMs, endMs);
+  }
+
+  private summaryStores(homeDir: string): string[] {
     return [
       ...vscodeFamilyUserDirs(APP_NAMES, homeDir),
       ...getConfiguredProviderPaths("antigravity", homeDir).map((p) => expandHome(p, homeDir)),
     ].map((userDir) => join(userDir, "globalStorage", "state.vscdb"));
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
-    const records: TokenRecord[] = [];
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+    const { records, cascades } = await scanConversations(homeDir, opts);
 
-    for (const dbPath of this.sessionRoots(homeDir)) {
+    for (const dbPath of this.summaryStores(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
 
       const db = await openReadonlySqlite(dbPath);
@@ -188,7 +224,7 @@ export class AntigravityParser implements SessionParser {
 
         for (const entry of entries) {
           const decoded = decodeTrajectory(entry.bytes as Uint8Array);
-          if (!decoded) continue;
+          if (!decoded || cascades.has(decoded.id)) continue;
           records.push(
             createRecord({
               timestamp: decoded.timestamp,
@@ -196,6 +232,7 @@ export class AntigravityParser implements SessionParser {
               model: "unknown",
               project: decoded.project,
               sourceFile: dbPath,
+              usage: SUMMARY_ONLY_USAGE,
             })
           );
         }

@@ -705,6 +705,13 @@ export interface SessionParser {
    */
   usageDatabases?(homeDir: string): string[];
   /**
+   * For a database from usageDatabases() that changed in [startMs, endMs)
+   * and fed no record then: did the app do anything in it then? Lets a
+   * parser rule out writes that aren't usage (Antigravity rewrites a
+   * conversation's file when it's merely opened). Omitted: every change counts.
+   */
+  databaseActiveBetween?(dbPath: string, startMs: number, endMs: number): Promise<boolean>;
+  /**
    * Optional memory-bounded variant: parse file-by-file, handing each file's
    * records to `onFile` so a caller (the relay rebuild) can fold + release them
    * instead of holding the whole corpus. Parsers that omit this fall back to
