@@ -3,6 +3,7 @@
 // motivated it — Codex moving finished rollouts to ~/.codex/archived_sessions
 // and compressing idle ones to .jsonl.zst, outside the parser's declared root.
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import {
   summarizeCoverage,
   writeCoverageReport,
 } from "./coverage-check.js";
+import { AntigravityParser } from "./parsers/antigravity.js";
 import type { ProviderId, SessionParser } from "./types.js";
 
 const DAY = "2026-10-19";
@@ -101,6 +103,60 @@ describe("findUnreadFiles", () => {
       put(`${DB}-wal`, "wal");
       const report = await check([], [opencode()], { records: [] });
       expect(report.unread.map((f) => f.path)).toEqual([db]);
+    });
+
+    // Antigravity rewrites a conversation's file when it's merely opened.
+    // Real case: last call 09-23, file changed 11-11; and CLI conversations
+    // that never billed a call. Only a step dated that day is activity.
+    describe("antigravity conversations", () => {
+      const stepRow = (ms: number) => {
+        const secs = Math.floor(ms / 1000);
+        const v: number[] = [];
+        for (let x = secs; ; x = Math.floor(x / 128)) {
+          if (x < 128) {
+            v.push(x);
+            break;
+          }
+          v.push((x % 128) | 0x80);
+        }
+        const ts = Buffer.from([0x08, ...v]);
+        return Buffer.concat([Buffer.from([0x0a, ts.length]), ts]).toString("hex");
+      };
+      const seed = (name: string, stepMs: number[]) => {
+        const dir = join(home, ".gemini", "antigravity", "conversations");
+        mkdirSync(dir, { recursive: true });
+        const db = join(dir, `${name}.db`);
+        execFileSync("sqlite3", [db], {
+          input: [
+            "CREATE TABLE steps (idx integer PRIMARY KEY, metadata blob);",
+            "CREATE TABLE gen_metadata (idx integer PRIMARY KEY, data blob);",
+            ...stepMs.map((ms, i) => `INSERT INTO steps VALUES (${i}, X'${stepRow(ms)}');`),
+          ].join("\n"),
+        });
+        utimesSync(db, NOON, NOON);
+        return db;
+      };
+
+      test("an opened-but-not-continued conversation is not flagged", async () => {
+        seed("opened", [at("2026-09-23T10:00:00")]);
+        seed("never-billed", []);
+        const report = await check([], [new AntigravityParser()], { records: [] });
+        expect(report.unread).toEqual([]);
+      });
+
+      test("a conversation with a step that day and no record is flagged", async () => {
+        const db = seed("quiet", [at(`${DAY}T09:00:00`)]);
+        const report = await check([], [new AntigravityParser()], { records: [] });
+        expect(report.unread.map((f) => f.path)).toEqual([db]);
+      });
+    });
+
+    // macOS SQLite leaves an empty -wal behind, and a read-only open (the
+    // parser's own) creates one stamped with the open time: not a write.
+    test("an empty -wal created that day is not a change", async () => {
+      put(DB, "sqlite", new Date("2026-10-12T12:00:00"));
+      put(`${DB}-wal`, "");
+      expect((await check([], [opencode()], { records: [] })).unread).toEqual([]);
     });
   });
 

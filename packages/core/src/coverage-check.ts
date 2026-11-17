@@ -249,13 +249,17 @@ export async function findUnreadFiles(opts: {
       for (const f of [root, `${root}-wal`]) {
         try {
           const st = await stat(f);
-          changed = Math.max(changed, st.mtimeMs);
+          // An empty -wal holds no writes; a read-only open (the parser's
+          // own) creates one, which would otherwise look like a change.
+          if (f === root || st.size > 0) changed = Math.max(changed, st.mtimeMs);
           if (f === root) bytes = st.size;
         } catch {
           /* no such file */
         }
       }
       if (changed < start || changed >= end) continue;
+      // A write that isn't activity (a conversation merely opened) is not quiet.
+      if (p.databaseActiveBetween && !(await p.databaseActiveBetween(root, start, end))) continue;
       const prior = found.get(root);
       if (prior) {
         if (!prior.providers.includes(p.providerId)) prior.providers.push(p.providerId);
