@@ -83,7 +83,9 @@ the [tokmeter skill](https://github.com/sriinnu/tokmeter-skill/blob/main/skills/
 ## Pull requests
 
 - Branch from `main` and open a PR against it. `main` only takes squash
-  merges, and the maintainer reviews every change.
+  merges, and the maintainer reviews every change. Maintainers merge with
+  `bun run merge <N>`: GitHub's default squash message adds
+  `Co-authored-by:` trailers, and main carries none.
 - Write the description about **why**, with evidence: what was wrong, how you
   proved it, and what you checked after the fix.
 - Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for

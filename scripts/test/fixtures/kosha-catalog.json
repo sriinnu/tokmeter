@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "kind": "kosha-catalog",
+  "fetchedAt": "2026-11-17T00:00:00.000Z",
+  "providerScope": "all",
+  "modelCount": 3,
+  "providerCount": 2,
+  "discoveredAt": 1794873600000,
+  "providers": [
+    {
+      "id": "anthropic",
+      "models": [
+        {
+          "id": "claude-sonnet-4-20250514",
+          "name": "Claude Sonnet 4",
+          "provider": "anthropic",
+          "mode": "chat",
+          "capabilities": ["chat"],
+          "aliases": [],
+          "contextWindow": 200000,
+          "maxOutputTokens": 64000,
+          "pricing": {
+            "inputPerMillion": 3,
+            "outputPerMillion": 15,
+            "cacheReadPerMillion": 0.3,
+            "cacheWritePerMillion": 3.75
+          },
+          "discoveredAt": 1794873600000,
+          "source": "fixture"
+        },
+        {
+          "id": "claude-opus-4-1",
+          "name": "Claude Opus 4.1",
+          "provider": "anthropic",
+          "mode": "chat",
+          "capabilities": ["chat"],
+          "aliases": [],
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000,
+          "pricing": {
+            "inputPerMillion": 15,
+            "outputPerMillion": 75,
+            "cacheReadPerMillion": 1.5,
+            "cacheWritePerMillion": 18.75
+          },
+          "discoveredAt": 1794873600000,
+          "source": "fixture"
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "models": [
+        {
+          "id": "gpt-5",
+          "name": "GPT-5",
+          "provider": "openai",
+          "mode": "chat",
+          "capabilities": ["chat"],
+          "aliases": [],
+          "contextWindow": 400000,
+          "maxOutputTokens": 128000,
+          "pricing": {
+            "inputPerMillion": 1.25,
+            "outputPerMillion": 10,
+            "cacheReadPerMillion": 0.125
+          },
+          "discoveredAt": 1794873600000,
+          "source": "fixture"
+        }
+      ]
+    }
+  ]
+}

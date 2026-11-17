@@ -54,6 +54,11 @@ jobs:
       - name: Release flow
         run: bash scripts/test/release-flow.test.sh
 
+      # Feature PRs merge through scripts/merge-pr.sh so main gets no
+      # Co-authored-by trailers from GitHub's default squash message.
+      - name: Merge script
+        run: bash scripts/test/merge-pr.test.sh
+
       # Tests run under Bun; users run Node. A Node-only API imported at module
       # top level (zstd, 22.15+) once stopped the CLI from starting on Node 20.
       - name: Setup oldest supported Node
@@ -66,6 +71,14 @@ jobs:
           # A real version, not the "latest" fallback a path bug once gave.
           node packages/tokmeter/dist/cli/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
           node packages/mcp/dist/cli.js --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+      # The independent Codex oracle (python, no tokmeter imports) judges the
+      # built parser on hand-worked fixtures. Its KNOWN_BUGS list must still
+      # fail and every other fixture must pass, so a parser fix that lands
+      # without updating the list, or a regression, turns this red. It was
+      # run only by hand before.
+      - name: Codex oracle fixtures
+        run: node scripts/oracle/test-fixtures.mjs
 
   # Windows is not a supported platform yet. This job exists to show what
   # breaks before any Windows app work starts. It is not a required check, so

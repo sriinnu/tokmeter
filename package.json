@@ -50,6 +50,7 @@
     "fix": "biome check --write . && biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "merge": "bash scripts/merge-pr.sh",
     "bar": "cd packages/macos-bar && ./bundle.sh",
     "bar:build": "cd packages/macos-bar && ./bundle.sh --no-install",
     "bar:signed": "cd packages/macos-bar && set -a && . ./.env && set +a && ./bundle.sh --signed",

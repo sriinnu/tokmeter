@@ -26,28 +26,25 @@ describe("PricingService", () => {
     expect(pricing).toBeDefined();
   });
 
-  // Skip network-dependent tests in CI environment
-  (process.env.CI ? it.skip : it)("should initialize without errors", async () => {
+  // Hermetic: scripts/test/vitest-setup.ts points HOME at a temp dir and kosha
+  // at the committed catalog fixture, so these run offline and in CI.
+  const fixtureIt = process.env.TOKMETER_TEST_REAL_HOME === "1" ? it.skip : it;
+  fixtureIt("should initialize from the local kosha catalog", async () => {
     const pricing = new PricingService();
-    try {
-      await pricing.init();
-    } catch {
-      // Acceptable if network/service issues
-    }
+    await pricing.init();
+    expect(pricing.pricingUnavailable).toBe(false);
   });
 
-  (process.env.CI ? it.skip : it)("should return pricing for known models or null", async () => {
+  fixtureIt("should return the fixture's pricing for a known model", async () => {
     const pricing = new PricingService();
     await pricing.init();
 
     const claudePricing = await pricing.getPricing("claude-sonnet-4-20250514");
-    if (claudePricing) {
-      expect(claudePricing.inputPerMillion).toBeGreaterThanOrEqual(0);
-      expect(claudePricing.outputPerMillion).toBeGreaterThanOrEqual(0);
-    }
+    expect(claudePricing?.inputPerMillion).toBe(3);
+    expect(claudePricing?.outputPerMillion).toBe(15);
   });
 
-  (process.env.CI ? it.skip : it)("should return null for unknown models", async () => {
+  it("should return null for unknown models", async () => {
     const pricing = new PricingService();
     await pricing.init();
 
