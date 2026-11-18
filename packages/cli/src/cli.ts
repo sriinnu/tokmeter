@@ -247,6 +247,18 @@ function parseArgs(argv: string[]): CliArgs {
       case "--synthetic":
         args.providers = [...(args.providers || []), "synthetic" as ProviderId];
         break;
+      case "--antigravity":
+        args.providers = [...(args.providers || []), "antigravity" as ProviderId];
+        break;
+      case "--zed":
+        args.providers = [...(args.providers || []), "zed" as ProviderId];
+        break;
+      case "--vscode-copilot":
+        args.providers = [...(args.providers || []), "vscode-copilot" as ProviderId];
+        break;
+      case "--codex-desktop":
+        args.providers = [...(args.providers || []), "codex-desktop" as ProviderId];
+        break;
       case "--dry-run":
         args.dryRun = true;
         break;
@@ -395,6 +407,10 @@ Other Filters:
   --grok          Only Grok (custom source)
   --custom        Only custom sources
   --synthetic     Only Synthetic
+  --antigravity   Only Antigravity
+  --zed           Only Zed
+  --vscode-copilot  Only VS Code Copilot
+  --codex-desktop Only Codex Desktop
 
 Output:
   --json          Output as JSON
@@ -481,7 +497,14 @@ Output:
         args.command = "digest";
         break;
       default:
-        if (!arg.startsWith("-") && !args.pricingModel && args.command === "pricing") {
+        // An unknown option used to be dropped silently, so a typo or a
+        // provider with no flag (`--antigravity` before 1.23.1) printed every
+        // provider's totals as if it were the filtered view.
+        if (arg.startsWith("-")) {
+          console.error(`Error: unknown option ${arg}. Run \`tokmeter --help\` for the list.`);
+          process.exit(2);
+        }
+        if (!args.pricingModel && args.command === "pricing") {
           args.pricingModel = arg;
         }
         // Daemon subcommand

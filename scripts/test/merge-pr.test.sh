@@ -36,8 +36,10 @@ if [[ "$1 $2" == "pr merge" ]]; then
 fi
 if [[ "$1" == "api" ]]; then
   echo "$*" >> "$S/api.log"
-  [[ -f "$S/api_fail" ]] && exit 1
-  exit 0
+  if [[ "$2" == "-X" ]]; then [[ -f "$S/api_fail" ]] && exit 1; exit 0; fi
+  # GET of the ref: exists only when the test says so.
+  [[ -f "$S/branch_exists" ]] && exit 0
+  exit 1
 fi
 echo "fake gh: unexpected: $*" >&2; exit 1
 EOF
@@ -108,9 +110,16 @@ check "number not doubled" [ "$(arg --subject 2>/dev/null)" = "fix: thing (#7)" 
 
 echo "branch delete fails after a real merge"
 setup apifail
-touch "$GH_STATE/api_fail"
+touch "$GH_STATE/api_fail" "$GH_STATE/branch_exists"
 if run 8; then ok "still exits 0: the merge landed"; else bad "exited non-zero after the merge landed"; fi
 check "says so" grep -q "could not delete remote branch" "$GH_STATE/out"
+
+echo "branch already deleted by GitHub on merge"
+setup autodeleted
+touch "$GH_STATE/api_fail"
+if run 9; then ok "exits 0"; else bad "exited non-zero"; fi
+check "no false warning" bash -c '! grep -q "could not delete" "$1"' _ "$GH_STATE/out"
+check "says it's already gone" grep -q "already deleted" "$GH_STATE/out"
 
 echo "merge call returns but the PR isn't merged"
 setup noop

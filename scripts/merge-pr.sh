@@ -79,6 +79,10 @@ if [[ "$cross" == "true" || -z "$branch" ]]; then
   echo "Head branch is in a fork or unknown; left it alone."
 elif gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$branch" > /dev/null 2>&1; then
   echo "Deleted remote branch $branch."
+elif ! gh api "repos/{owner}/{repo}/git/ref/heads/$branch" > /dev/null 2>&1; then
+  # The repo deletes head branches on merge (delete_branch_on_merge), so the
+  # branch is usually gone before we ask. Gone is the outcome we wanted.
+  echo "Remote branch $branch is already deleted."
 else
   echo "warning: merged, but could not delete remote branch $branch; delete it by hand." >&2
 fi

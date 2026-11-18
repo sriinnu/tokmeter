@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `tokmeter` rejects an unknown option instead of ignoring it. `tokmeter
+  daily --antigravity` used to print every provider's totals as if they were
+  Antigravity's, because that flag didn't exist and the parser dropped it.
+  A typo now exits with code 2 and names the option.
+- Antigravity, Zed, VS Code Copilot and Codex Desktop get filter flags
+  (`--antigravity`, `--zed`, `--vscode-copilot`, `--codex-desktop`), so
+  every provider can now be filtered; a test fails if a new provider ships
+  without one.
+
 ## [1.23.0] - 2026-11-17
 
 ### Fixed
