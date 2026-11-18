@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Grok Bot's weekly plan meter shows in `tokmeter quota`, the daemon's
+  `/api/quota` and the menu bar's Plan quota section, next to Codex and
+  Claude Code. It is read from the app's own weekly-usage cache, and only
+  that file: the folder also holds transcripts and secrets, and nothing else
+  in it is opened. The account id in the file name is never stored or
+  printed. Grok Bot's transcripts carry no token, model or cost fields, so
+  it is a plan meter only, labelled "vendor plan meter: no token data". A
+  reading whose weekly window has already reset shows as expired.
+
+### Changed
+
+- `tokmeter quota` no longer prints an expired window's last % in the used
+  column, where it read as the current figure. The column shows `-` and the
+  old figure moves to the note ("100% then").
+
 ### Fixed
 
 - `tokmeter` rejects an unknown option instead of ignoring it. `tokmeter

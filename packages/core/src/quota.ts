@@ -2,12 +2,20 @@
  * @sriinnu/tokmeter-core — Plan quota: how much of each agent's rate-limit
  * window is used, and whether the current pace runs out before it resets.
  *
- * Two sources, neither of them a token count:
+ * Three sources, none of them a token count:
  * - Codex writes `rate_limits` on every `token_count` event: the weekly window's
  *   used %, its reset time and the credit balance. The newest rollouts carry the
  *   newest reading, so only their tails are read, never a rescan.
  * - Claude Code hands its 5-hour and 7-day windows to the statusline command on
  *   stdin and writes them nowhere. The statusline records them here.
+ * - Grok Bot (xAI's desktop app) caches its plan's weekly used % and reset
+ *   time on disk. Its transcripts carry no token, model or cost fields, so this
+ *   meter is all tokmeter can show for it: a vendor plan meter, not usage.
+ *
+ * Claude Duet has no meter of its own here: it draws on the same account-wide
+ * Claude weekly window the statusline already reports for Claude Code (the
+ * Claude app's plan-usage history `sd` matched the statusline's 7d % within a
+ * point on 2026-11-16).
  *
  * A window is fixed, not rolling: it starts at `resetsAt - windowMinutes` and
  * its used % only grows until the reset. Parallel Codex threads report a stale
@@ -27,7 +35,7 @@ import { localDateKey } from "./date-utils.js";
 import { codexHomeDir } from "./parsers/codex.js";
 import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 
-export type QuotaAgent = "codex" | "claude-code";
+export type QuotaAgent = "codex" | "claude-code" | "grok-bot";
 
 /** One reading of one window, as the agent reported it. */
 export interface QuotaSample {
@@ -265,6 +273,156 @@ export function claudeCodeQuota(
   return out;
 }
 
+// ─── Grok Bot ─────────────────────────────────────────────────────────────
+//
+// ~/Library/Application Support/Grok Bot/sand-client-persistence/ holds one
+// <base32(key)>.blob per stored slice. The weekly reading's key is
+//   sand.client.slice.account.<url-encoded account>.weekly-usage.cache
+// Only file NAMES are decoded to find it; no other file in that folder is
+// opened — it also holds transcripts, and the app keeps secrets beside it.
+
+/** xAI documents a weekly allowance; the cache gives only the reset time, so
+ *  the window length is inferred, not reported. */
+const GROK_BOT_WINDOW_MINUTES = 10080;
+const GROK_BOT_KEY_PREFIX = "sand.client.slice.account.";
+const GROK_BOT_KEY_SUFFIX = ".weekly-usage.cache";
+const GROK_BOT_MAX_BYTES = 64 * 1024;
+
+export function grokBotPersistenceDir(homeDir: string): string {
+  return join(homeDir, "Library", "Application Support", "Grok Bot", "sand-client-persistence");
+}
+
+const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** RFC 4648 base32, lowercase, unpadded; null when it isn't. Exported for tests. */
+export function decodeBase32Name(name: string): string | null {
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const ch of name.toLowerCase()) {
+    const i = BASE32.indexOf(ch);
+    if (i < 0) return null;
+    value = (value << 5) | i;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(out));
+  } catch {
+    return null;
+  }
+}
+
+/** The sample in one weekly-usage.cache file's text, or a reason it has none. */
+export function grokBotQuotaFromCache(text: string): QuotaSample | { notice: string } {
+  let doc: {
+    schemaVersion?: unknown;
+    value?: {
+      kind?: unknown;
+      reading?: {
+        readAtMs?: unknown;
+        usage?: { percentUsed?: unknown; nextResetMs?: unknown; grokPlanLabel?: unknown };
+      };
+    };
+  };
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return { notice: "Grok Bot's weekly usage cache is not valid JSON" };
+  }
+  if (doc?.schemaVersion !== 3) {
+    return {
+      notice: `Grok Bot's weekly usage cache has schema ${String(doc?.schemaVersion)}, not 3`,
+    };
+  }
+  if (doc.value?.kind !== "present") return { notice: "Grok Bot has no weekly usage reading yet" };
+  const r = doc.value.reading;
+  const u = r?.usage;
+  if (
+    typeof u?.percentUsed !== "number" ||
+    !Number.isFinite(u.percentUsed) ||
+    typeof u.nextResetMs !== "number" ||
+    !Number.isFinite(u.nextResetMs) ||
+    typeof r?.readAtMs !== "number" ||
+    !Number.isFinite(r.readAtMs)
+  ) {
+    return { notice: "Grok Bot's weekly usage cache is missing its used % or reset time" };
+  }
+  return {
+    agent: "grok-bot",
+    windowMinutes: GROK_BOT_WINDOW_MINUTES,
+    usedPct: u.percentUsed,
+    resetsAt: Math.round(u.nextResetMs / 1000),
+    at: r.readAtMs,
+    ...(typeof u.grokPlanLabel === "string" && u.grokPlanLabel ? { plan: u.grokPlanLabel } : {}),
+  };
+}
+
+const grokBotCache = new Map<
+  string,
+  { mtimeMs: number; size: number; result: QuotaSample | null }
+>();
+
+/**
+ * Grok Bot's newest weekly reading. With several signed-in accounts the one
+ * read most recently wins: that is the account the app is using now, and a
+ * window has no account field to keep two apart. A file is re-read only when
+ * its mtime or size changed. Account ids never leave this function.
+ */
+export async function readGrokBotQuota(
+  homeDir: string,
+  onNotice?: (message: string) => void
+): Promise<QuotaSample[]> {
+  const dir = grokBotPersistenceDir(homeDir);
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return []; // no Grok Bot on this machine
+  }
+  let best: QuotaSample | null = null;
+  for (const name of names) {
+    if (!name.endsWith(".blob")) continue;
+    const key = decodeBase32Name(name.slice(0, -".blob".length));
+    if (!key?.startsWith(GROK_BOT_KEY_PREFIX) || !key.endsWith(GROK_BOT_KEY_SUFFIX)) continue;
+    const file = join(dir, name);
+    let result: QuotaSample | null;
+    try {
+      const st = await stat(file);
+      const hit = grokBotCache.get(file);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+        result = hit.result;
+      } else {
+        if (st.size > GROK_BOT_MAX_BYTES) {
+          onNotice?.("Grok Bot's weekly usage cache is unexpectedly large; skipped");
+          result = null;
+        } else {
+          const parsed = grokBotQuotaFromCache(readFileSync(file, "utf8"));
+          if ("notice" in parsed) {
+            onNotice?.(parsed.notice);
+            result = null;
+          } else {
+            result = parsed;
+          }
+        }
+        grokBotCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, result });
+      }
+    } catch {
+      continue; // vanished or unreadable between readdir and read
+    }
+    if (result && (!best || result.at > best.at)) best = result;
+  }
+  return best ? [best] : [];
+}
+
+/** Test hook: forget the mtime cache. */
+export function resetGrokBotQuotaCache(): void {
+  grokBotCache.clear();
+}
+
 // ─── Store: ~/.cache/tokmeter/quota/<agent>.jsonl ─────────────────────────
 
 function quotaDir(homeDir: string): string {
@@ -410,13 +568,26 @@ function forecast(g: QuotaSample[], now: number): QuotaWindow {
 }
 
 /**
- * Read Codex's newest readings, record them, and return every agent's current
- * windows. The daemon serves this as /api/quota; the CLI runs it directly.
+ * Read Codex's and Grok Bot's newest readings, record them, and return every
+ * agent's current windows. The daemon serves this as /api/quota; the CLI runs
+ * it directly. `onNotice` hears why a source gave no reading (a Grok Bot cache
+ * in a format this version doesn't know), never an account id.
  */
-export async function getQuota(homeDir: string, now = Date.now()): Promise<QuotaWindow[]> {
-  recordQuotaSamples(homeDir, await readCodexQuota(homeDir, now));
+export async function getQuota(
+  homeDir: string,
+  now = Date.now(),
+  onNotice?: (message: string) => void
+): Promise<QuotaWindow[]> {
+  recordQuotaSamples(homeDir, [
+    ...(await readCodexQuota(homeDir, now)),
+    ...(await readGrokBotQuota(homeDir, onNotice)),
+  ]);
   return quotaWindows(
-    [...readQuotaStore(homeDir, "codex"), ...readQuotaStore(homeDir, "claude-code")],
+    [
+      ...readQuotaStore(homeDir, "codex"),
+      ...readQuotaStore(homeDir, "claude-code"),
+      ...readQuotaStore(homeDir, "grok-bot"),
+    ],
     now
   );
 }

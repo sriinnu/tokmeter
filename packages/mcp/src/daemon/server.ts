@@ -1214,13 +1214,16 @@ function startHttpApi(handlers: {
           const { homedir } = await import("node:os");
           json(res, { reports: await readCoverageReports(homedir(), 7) });
         } else if (pathname === "/api/quota") {
-          // Each agent's plan windows (Codex weekly, Claude Code 5h/7d): used %,
-          // reset time, and whether the current pace hits 100% first. Codex is
-          // read from its newest rollouts' tails; Claude Code's windows are
-          // whatever the statusline last recorded.
+          // Each agent's plan windows (Codex weekly, Claude Code 5h/7d, Grok
+          // Bot weekly): used %, reset time, and whether the current pace hits
+          // 100% first. Codex is read from its newest rollouts' tails, Grok Bot
+          // from its app's weekly-usage cache (re-read only when it changes);
+          // Claude Code's windows are whatever the statusline last recorded.
           const { getQuota } = await import("@sriinnu/tokmeter");
           const { homedir } = await import("node:os");
-          json(res, { windows: await getQuota(homedir()) });
+          json(res, {
+            windows: await getQuota(homedir(), Date.now(), (msg) => console.warn(`[quota] ${msg}`)),
+          });
         } else if (pathname === "/api/cron-status") {
           // Report whether the daily kosha-refresh launchd job is installed
           // and the result of its last run. The plist truncates the log on

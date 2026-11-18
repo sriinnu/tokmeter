@@ -128,6 +128,7 @@ enum QuotaFormat {
                 ? "read \(Int(ageMinutes / 60))h ago"
                 : "read \(Int(ageMinutes / 1440))d ago")
         }
+        if let note = w.footnote { parts.append(note) }
         return parts.joined(separator: " · ")
     }
 }
