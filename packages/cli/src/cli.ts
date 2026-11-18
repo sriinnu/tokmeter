@@ -301,7 +301,7 @@ Commands:
   cursor sync     Opt-in: download your billed Cursor usage from
                   cursor.com (--since D, --dry-run, --json)
   quota           Plan windows per agent (Codex weekly, Claude Code 5h
-                  and 7d): used %, reset time, and whether the current
+                  and 7d, Grok Bot weekly): used %, reset time, and whether the current
                   pace runs out before the reset
 
 Live & Daemon:
@@ -1174,14 +1174,14 @@ async function main() {
 
   if (args.command === "quota") {
     const { getQuota } = await import("@sriinnu/tokmeter");
-    const windows = await getQuota(homedir());
+    const windows = await getQuota(homedir(), Date.now(), (msg) => console.error(`note: ${msg}`));
     if (args.json) {
       console.log(JSON.stringify({ windows }, null, 2));
       return;
     }
     if (windows.length === 0) {
       console.log(
-        "No plan windows seen yet. Codex reports them in its session files; Claude Code only to the tokmeter statusline."
+        "No plan windows seen yet. Codex reports them in its session files, Grok Bot in its app cache; Claude Code only to the tokmeter statusline."
       );
       return;
     }
@@ -1204,19 +1204,20 @@ async function main() {
       const pace = (w.recentPctPerHour ?? w.avgPctPerHour).toFixed(1);
       const verdict =
         w.verdict === "expired"
-          ? "window has reset since the last reading"
+          ? `window has reset since the last reading (${w.usedPct.toFixed(0)}% then)`
           : w.verdict === "at-limit"
             ? `at the limit until ${when(w.resetsAt)}`
             : w.verdict === "hits-limit" && w.hitsLimitAt
               ? `at ${pace}%/h you hit 100% ${when(w.hitsLimitAt)}, before the reset`
               : `at ${pace}%/h it resets first`;
       console.log(
-        `  ${w.agent.padEnd(12)} ${w.window.padEnd(3)} ${`${w.usedPct.toFixed(0)}%`.padStart(4)}  resets ${when(w.resetsAt)}  ${verdict}`
+        `  ${w.agent.padEnd(12)} ${w.window.padEnd(3)} ${(w.verdict === "expired" ? "-" : `${w.usedPct.toFixed(0)}%`).padStart(4)}  resets ${when(w.resetsAt)}  ${verdict}`
       );
       const extra = [
         `read ${ago(w.sampledAt)}`,
         ...(w.plan ? [`plan ${w.plan}`] : []),
         ...(w.creditsBalance !== undefined ? [`${w.creditsBalance.toFixed(0)} credits`] : []),
+        ...(w.agent === "grok-bot" ? ["vendor plan meter: no token data"] : []),
       ];
       console.log(`  ${"".padEnd(17)}${extra.join(" · ")}`);
     }
