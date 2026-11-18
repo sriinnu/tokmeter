@@ -18,7 +18,8 @@ for keyless discovery only.
 
 ## What leaves your machine
 
-Your usage data doesn't. There's no telemetry and no account.
+Your usage data doesn't. There's no telemetry and no account. The one command
+that sends a credential is the opt-in [`tokmeter cursor sync`](#cursor-sync-opt-in).
 
 Tokmeter does download public price catalogs, and it does this without being
 asked. The daemon, or any command that prices usage, refreshes them when the
@@ -81,6 +82,16 @@ Deleting and restoring run from the terminal or the TUI, and the 22 MCP tools
 are read-only. Releases before 1.21.0 had token-gated POST routes for cleanup and
 restore that nothing in the repository called.
 
+## Cursor sync (opt-in)
+
+Cursor keeps most of its usage on its servers. `tokmeter cursor sync` (since
+1.22.0) runs only when you run it. It reads the session the Cursor app already
+holds (`cursorAuth/accessToken` in Cursor's `state.vscdb`, read-only) and sends
+it as a cookie to `https://cursor.com/api/dashboard/export-usage-events-csv`,
+the only endpoint it calls, to download your own usage export. Tokmeter never
+stores, refreshes or logs the token; an expired one is refused. The export is
+saved owner-only under `~/.cache/tokmeter/cursor-usage/`, one file per month.
+
 ## Antigravity live polling
 
 Antigravity keeps no per-session cost on disk, so its credit status comes from
@@ -138,7 +149,8 @@ The old listing's findings, against the code at that scan:
   line is gone.
 - **Persistence:** the daemon's and daily price job's LaunchAgents. Both are real,
   and you install them yourself.
-- **Credential access:** the Antigravity CSRF read, described above.
+- **Credential access:** the Antigravity CSRF read, described above, and the
+  opt-in `cursor sync`, which sends Cursor's own session to cursor.com.
 - **Command execution:** `ps`, `lsof`, `launchctl`, `tar` and `sqlite3`. Real and
   needed.
 - **Indirect prompt injection:** transcripts. Real, and described above.
