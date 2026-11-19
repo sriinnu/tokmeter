@@ -672,7 +672,10 @@ registry_listed() {
   # The response is data: node only JSON.parses it from the environment.
   # Nothing fetched from the network is ever piped into an interpreter.
   local body
-  body="$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=tokmeter")" || return 1
+  # Ask for this exact version: an unfiltered search returns one page of 30,
+  # and from 1.23.1 tokmeter has more versions than that, so the newest one
+  # landed on page 2 and this wait never saw it.
+  body="$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=tokmeter&version=${VERSION}")" || return 1
   REGISTRY_BODY="$body" node -e '
     const hit = JSON.parse(process.env.REGISTRY_BODY).servers?.some(s =>
       s.server?.name === "io.github.sriinnu/tokmeter" && s.server?.version === process.argv[1]);
