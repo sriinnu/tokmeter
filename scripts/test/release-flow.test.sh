@@ -234,8 +234,13 @@ if [[ "$url" == *appcast.xml && -f "$GH_STATE/appcast_pending" ]]; then
   echo "<sparkle:shortVersionString>0.0.0</sparkle:shortVersionString>"  # not merged yet
 elif [[ "$url" == *registry* && -f "$GH_STATE/registry_needs_dispatch" && ! -f "$GH_STATE/mcp_dispatched" ]]; then
   echo '{"servers":[]}'  # the MCP job gave up before the approval
-elif [[ "$url" == *registry* ]]; then
+elif [[ "$url" == *registry* && "$url" == *"version=$FAKE_VERSION"* ]]; then
   echo "{\"servers\":[{\"server\":{\"name\":\"io.github.sriinnu/tokmeter\",\"version\":\"$FAKE_VERSION\"}}]}"
+elif [[ "$url" == *registry* ]]; then
+  # Like the real registry: an unfiltered search is one page of 30 older
+  # versions, and the newest one sits on the next page.
+  page=""; for i in $(seq 1 30); do page+="${page:+,}{\"server\":{\"name\":\"io.github.sriinnu/tokmeter\",\"version\":\"0.$i.0\"}}"; done
+  echo "{\"servers\":[$page],\"metadata\":{\"count\":30,\"nextCursor\":\"x\"}}"
 else
   echo "<sparkle:shortVersionString>$FAKE_VERSION</sparkle:shortVersionString>"
 fi
