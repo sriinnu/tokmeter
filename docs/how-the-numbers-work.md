@@ -101,6 +101,16 @@ Cursor keeps most of its usage on its servers. Tab completions, cloud agents, ot
 
 **How the rows are counted.** The export's two Input columns are separate buckets: "Input (w/ Cache Write)" is cache write, "Input (w/o Cache Write)" is plain input, and their sum with Cache Read and Output equals Cursor's Total Tokens on every real row published by tokscale. Total Tokens is a check, never added. A numeric Cost is Cursor's own figure (tool-reported); "Included" is left to the normal estimate; a row Cursor marked errored or not charged keeps its tokens at cost 0. Rows repeated across files are counted once, and the file written last wins, so a later download's settled cost replaces an older one. The parser exists and is tested, but the scan doesn't read these files yet. An export covers time after the fact, so letting it take over a stretch the local sources already counted would make Tokmeter count those records twice; it needs its own place in the ledger first.
 
+## Plan quota
+
+`tokmeter quota`, the daemon's `/api/quota` and the menu bar's Plan quota section show each plan window's used %, its reset time and whether the current pace reaches 100% before the reset. These are the vendors' own meters, not tokens, and never feed a token or cost total. Each reading is stored in `~/.cache/tokmeter/quota/<agent>.jsonl`; a window keeps its highest reading, and only the newest window per agent and length is shown. A window whose reset time has passed shows as expired, never as its last %.
+
+- **Codex**: the 5-hour and weekly windows in the tails of its newest session files.
+- **Claude Code**: the 5-hour and weekly windows the statusline is handed. Claude Code writes them nowhere else, so they exist only if the tokmeter statusline is installed.
+- **Grok Bot**: the weekly used %, reset time and plan name from the app's weekly-usage cache in `~/Library/Application Support/Grok Bot/sand-client-persistence/`. Only the file names in that folder are decoded, to find that one cache; no other file there is opened, and the account id in the name is never stored or printed. The cache gives the reset time but not the window length, so the 7-day length is inferred from xAI describing a weekly allowance. With several signed-in accounts, the most recently read cache wins. A cache in an unknown format gives no reading and a notice. Grok Bot's transcripts have no token, model or cost fields, so this meter is all Tokmeter shows for Grok Bot: a vendor plan meter with no token data.
+
+Claude Duet has no meter of its own. It draws on the same account-wide Claude weekly window that Claude Code reports: the weekly figure in the Claude app's plan-usage history matched the statusline's 7-day % within one point at two readings on 2026-11-16 (45% vs 44–45%, and 52% vs 51–52%).
+
 ## History and corrections
 
 Completed days are stored in the local relay. Normal refreshes update today's usage and read saved history. Only today is repriced when the price catalog updates; since 1.15.0, editing `~/.tokmeter/pricing-overrides.json` also reprices today. Completed days keep the cost they were sealed with. A deliberate rescan can rebuild a bounded historical window; retention guards protect against replacing a day with incomplete input. Back up a day before applying a reviewed correction.

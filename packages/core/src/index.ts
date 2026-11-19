@@ -169,6 +169,7 @@ export {
   getQuota,
   quotaWindows,
   readCodexQuota,
+  readGrokBotQuota,
   recordQuotaSamples,
   windowLabel,
 } from "./quota.js";

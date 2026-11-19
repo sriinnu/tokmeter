@@ -43,6 +43,19 @@ final class QuotaSectionTests: XCTestCase {
         XCTAssertTrue(QuotaFormat.detail(codex, now: later).hasSuffix(" · read 3h ago"))
     }
 
+    /// Grok Bot gets its label and footnote; an agent this build doesn't know
+    /// decodes and shows under its wire name without breaking the others.
+    func testGrokBotAndUnknownAgents() throws {
+        let json = #"""
+{"windows":[{"agent":"grok-bot","window":"7d","windowMinutes":10080,"usedPct":40,"windowStart":1792202400,"resetsAt":1792807200,"sampledAt":1792601871449,"plan":"Grok Bot Plan","avgPctPerHour":0.36,"recentPctPerHour":null,"hitsLimitAt":null,"verdict":"resets-first"},{"agent":"some-future-agent","window":"5h","windowMinutes":300,"usedPct":4,"windowStart":1792595400,"resetsAt":1792613400,"sampledAt":1792601403146,"avgPctPerHour":1,"recentPctPerHour":null,"hitsLimitAt":null,"verdict":"resets-first"}]}
+"""#
+        let ws = try JSONDecoder().decode(QuotaResponse.self, from: Data(json.utf8)).windows
+        XCTAssertEqual(ws.map(\.agentLabel), ["Grok Bot", "some-future-agent"])
+        XCTAssertTrue(QuotaFormat.detail(ws[0], now: now).hasSuffix(" · vendor plan meter: no token data"))
+        XCTAssertNil(ws[1].footnote)
+        XCTAssertNil(try windows.first?.footnote)
+    }
+
     func testPaceFormat() {
         XCTAssertEqual(QuotaFormat.pace(1.124), "1.1%/h")
         XCTAssertEqual(QuotaFormat.pace(12.4), "12%/h")

@@ -29,8 +29,15 @@ struct QuotaWindow: Codable, Identifiable, Equatable {
         switch agent {
         case "codex": return "Codex"
         case "claude-code": return "Claude Code"
+        case "grok-bot": return "Grok Bot"
+        // An agent this build doesn't know still shows, under its wire name.
         default: return agent
         }
+    }
+
+    /// What the meter is, for sources whose window is all tokmeter sees.
+    var footnote: String? {
+        agent == "grok-bot" ? "vendor plan meter: no token data" : nil
     }
 
     /// The pace the forecast used: recent when there is one.
