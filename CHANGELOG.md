@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Claude Code worktree counts as its repo. Sessions started in
+  `<repo>/.claude/worktrees/<name>` used to get their own project card,
+  named for the worktree (`agent-a67da452…`) or for half of its name, so a
+  repo's spend was split across cards. Days already sealed keep the names
+  they were sealed with.
 - The daemon's logs no longer grow without limit. launchd writes
   `~/.tokmeter/daemon/daemon.out.log` and `daemon.err.log` and never rotates
   them; one had reached 261 MB, nearly all an old kosha warning repeated on
