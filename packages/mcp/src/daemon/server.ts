@@ -61,6 +61,7 @@ import {
   kickstartAgent,
   uninstallAgent,
 } from "./launchd.js";
+import { capDaemonLogs, LOG_CAP_CHECK_MS } from "./log-cap.js";
 import { DAEMON_PORT_ENV, daemonPortOverride } from "./port.js";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
@@ -88,6 +89,7 @@ let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 let antigravityLivePollInterval: ReturnType<typeof setInterval> | null = null;
 let cursorHookInterval: ReturnType<typeof setInterval> | null = null;
+let logCapInterval: ReturnType<typeof setInterval> | null = null;
 
 /** How often the daemon re-checks the Cursor hook (it also checks at start). */
 const CURSOR_HOOK_CHECK_MS = 24 * 60 * 60 * 1000;
@@ -276,6 +278,12 @@ export function startDaemon(): void {
     return;
   }
 
+  // launchd never rotates the daemon's stdout/stderr files (log-cap.ts).
+  // Check first, before anything that can fail: a daemon that dies during
+  // startup and is respawned every 10s appends a stack each time, and would
+  // never reach the interval below.
+  capDaemonLogs(DAEMON_STATE_DIR);
+
   // Lower the daemon's CPU priority so the macOS scheduler keeps interactive
   // UI (Ghostty, Cursor, the menubar) responsive while we GC, refresh today,
   // and aggregate. We are background data infrastructure; we MUST yield to
@@ -398,6 +406,10 @@ export function startDaemon(): void {
       void keepCursorHook().catch(() => {});
     }, CURSOR_HOOK_CHECK_MS);
     cursorHookInterval.unref?.();
+
+    // Keep the launchd logs bounded while we run (first check: top of startDaemon).
+    logCapInterval = setInterval(() => capDaemonLogs(DAEMON_STATE_DIR), LOG_CAP_CHECK_MS);
+    logCapInterval.unref?.();
 
     // Warm the HTTP core asynchronously so the first user request doesn't
     // pay the full-disk-scan tax. We don't await — the WebSocket server is
@@ -729,6 +741,10 @@ export function stopDaemon(): void {
   if (cursorHookInterval) {
     clearInterval(cursorHookInterval);
     cursorHookInterval = null;
+  }
+  if (logCapInterval) {
+    clearInterval(logCapInterval);
+    logCapInterval = null;
   }
 
   if (wss) {
