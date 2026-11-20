@@ -7,8 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The Claude Code statusline shows how well the session is caching:
+  `cache 94% hit · 59m`. The share is Claude Code's own figure (input tokens
+  read from cache, over all input tokens this session), the same definition
+  the menu bar uses for today. When a request loses its cached prefix for no
+  expected reason, the segment counts it (`2 breaks`) and line 2 says so for
+  five minutes with Claude Code's diagnosis and what it cost:
+  `cache break 40s ago · tools changed · 2 this session, 310K tok re-cached`.
+  Needs a Claude Code recent enough to send these fields (checked on
+  2.1.329); older versions keep the plain countdown.
+- Behind a Claude gateway with a spend limit, line 2 shows it:
+  `spend 54% · $27.0 of $50.0 monthly`, with a warning from 90%.
+- The branch shows in a linked git worktree. It was looked up at
+  `.git/HEAD`, and in a worktree `.git` is a file. The project chip names
+  the repo, not the worktree's folder: `tokmeter (worktree)` instead of
+  `agent-a50b67477698b126d`.
+
+### Changed
+
+- A narrow terminal now shortens the statusline before it drops anything.
+  Each segment has a short form that keeps the number (`ctx 16%`,
+  `cache 94% hit`, `5h 71%`), and what stays is chosen most valuable
+  first, so a wider terminal never shows less of value than a narrower one.
+  Widths are counted in terminal cells, so a CJK or emoji folder name takes
+  two; no line is wider than the terminal, and one that still can't fit is
+  clipped with `…`.
+- Only one alert fits on line 2. When others are waiting behind the worst
+  one, it says how many: `■ 5h limit reached · resets 17:31 (+2)`.
+- Statusline dollars say what they cover: `session $26.0`, and this repo's
+  part of today sits inside today (`today $75.3 · $9.42 here`) instead of
+  reading as a second total.
+- A plan window on course to run out says when (`5h 71% → out ~16:56`)
+  instead of a projection like `~237%`, and a forecast more than 18 hours
+  away names its day (`Wed 00:07`).
+- `TERM=dumb` gets the statusline without color and in ASCII.
+- Folder names, model labels and router names are stripped of terminal
+  control sequences before they reach the statusline, as branch names
+  already were. A router's authority and the PR number are taken only when
+  they are a known word and a whole number.
+
+### Removed
+
+- The statusline's `$/h active` burn rate. It drove no decision and took the
+  room the cache figures now use.
+
 ### Fixed
 
+- The statusline's "here" finds the repo in more places. It matched the
+  folder's last name against today's projects, so it missed a session in a
+  worktree, and repos whose Claude Code name differs from their folder
+  (`harness-docs` is `docs` there, `clipforge/PAKT` is `clipforge-PAKT`).
+  It now names the session's start folder both ways the parsers do, and
+  never renames a project it reads from the ledger (`ribhu/eval` stayed
+  `eval`).
+- A warm prompt cache with no expiry, or a payload that doesn't say, no
+  longer reads as `cache cold`; unknown is shown as unknown.
+- A plan window or context at 99.5–99.9% reads `99%`, not a `100%` with no
+  limit alert beside it. A context fill that isn't a number no longer prints
+  `ctx NaN%`.
 - A Claude Code worktree counts as its repo. Sessions started in
   `<repo>/.claude/worktrees/<name>` used to get their own project card,
   named for the worktree (`agent-a67da452…`) or for half of its name, so a
