@@ -224,6 +224,38 @@ function tempDirSlugLabel(slug: string): string | undefined {
   return stripped === rest ? undefined : stripped;
 }
 
+/**
+ * A Claude Code worktree (`<repo>/.claude/worktrees/<name>`) is the repo's
+ * work, so its segments are dropped and the path names as the repo. Without
+ * this every worktree became its own project card (`agent-a67da452…`), and
+ * the statusline's "here" never matched a session started in one.
+ */
+function dropClaudeWorktree(segments: string[]): string[] {
+  // Past home: `~/.claude` is Claude Code's own config, not a repo.
+  const from = ROOT_SEGMENTS.has(segments[0]?.toLowerCase() ?? "") ? 3 : 1;
+  for (let i = from; i + 2 < segments.length; i++) {
+    if (
+      segments[i]?.toLowerCase() === ".claude" &&
+      segments[i + 1]?.toLowerCase() === "worktrees"
+    ) {
+      return [...segments.slice(0, i), ...segments.slice(i + 3)];
+    }
+  }
+  return segments;
+}
+
+/**
+ * The slug form of {@link dropClaudeWorktree}. A slug can't show where the
+ * worktree's name ends (`agent-a50b…` has its own dash), so everything from
+ * `--claude-worktrees-` on is dropped; Claude Code slugs the session's start
+ * folder, which is the worktree root.
+ */
+function dropClaudeWorktreeSlug(slug: string): string {
+  const at = slug.toLowerCase().indexOf("--claude-worktrees-");
+  if (at <= 0 || /^-(users|home|user)-[^-]+$/i.test(slug.slice(0, at))) return slug;
+  return slug.slice(0, at);
+}
+
 /** The slug form of {@link homeToolLabel}: Claude Code writes `/.` as `--`. */
 function homeToolSlugLabel(slug: string): string | undefined {
   const match = /^-(users|home|user)-[^-]+--([^-]+)-(.+)$/i.exec(slug.trim());
@@ -275,13 +307,13 @@ function buildSlugLabel(rawProject: string, fallback: string): string {
  * display-friendly project name.
  */
 export function canonicalizeProjectName(rawProject: string, fallback = "unknown"): string {
-  const normalized = normalizePathSeparators(rawProject).trim();
+  const normalized = dropClaudeWorktreeSlug(normalizePathSeparators(rawProject).trim());
 
   if (!normalized) {
     return fallback;
   }
 
-  const rawSegments = normalized.split("/").filter(Boolean);
+  const rawSegments = dropClaudeWorktree(normalized.split("/").filter(Boolean));
   const toolLabel =
     rawSegments.length > 1
       ? (homeToolLabel(rawSegments) ?? tempDirLabel(rawSegments))

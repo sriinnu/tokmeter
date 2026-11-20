@@ -30,6 +30,24 @@ describe("project-name helpers", () => {
     expect(canonicalizeProjectName("-Users-me--config-nvim-lua")).toBe("lua");
   });
 
+  it("names a Claude Code worktree as its repo, in path and slug form", () => {
+    const repo = "/Users/me/Sriinnu/Personal/tokmeter";
+    const wt = `${repo}/.claude/worktrees/agent-a50b67477698b126d`;
+    const slug = "-Users-me-Sriinnu-Personal-tokmeter--claude-worktrees-agent-a50b67477698b126d";
+    expect(canonicalizeProjectName(wt)).toBe("tokmeter");
+    expect(canonicalizeProjectName(slug)).toBe("tokmeter");
+    expect(canonicalizeProjectName(`${repo}/.claude/worktrees/cli-flags/packages/web`)).toBe(
+      "packages/web"
+    );
+    expect(canonicalizeProjectName("-Users-me-Sriinnu-clipforge-PAKT--claude-worktrees-x")).toBe(
+      "clipforge-PAKT"
+    );
+    expect(projectMatchKey(wt)).toBe(projectMatchKey(repo));
+    // Home's own ~/.claude is config, not a repo: left to the normal rules.
+    expect(canonicalizeProjectName("/Users/me/.claude/worktrees/x")).toBe("x");
+    expect(canonicalizeProjectName("-Users-me--claude-worktrees-x")).toBe("x");
+  });
+
   it("names a per-run temp workspace for its prefix, not its random tail", () => {
     const mac = "/private/var/folders/3p/3f62sd0j57/T/ribhu-live-ws-06Wwnk";
     const macSlug = "-private-var-folders-3p-3f62sd0j57114nppqn2x67hm0000gn-T-ribhu-live-ws-9AGabi";

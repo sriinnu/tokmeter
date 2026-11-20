@@ -166,7 +166,9 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 // 30 — Antigravity 2.x conversation databases are read: one record per API
 //      call with tokens and model. v29 read only the state.vscdb summaries,
 //      which carry no usage, so every Antigravity call counted 0.
-const CACHE_VERSION = 30;
+// 31 — project names: a Claude Code worktree (`<repo>/.claude/worktrees/<n>`)
+//      names as its repo, fixed at parse time; v30 caches hold `agent-a67d…`.
+const CACHE_VERSION = 31;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;
