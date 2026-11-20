@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The daemon's logs no longer grow without limit. launchd writes
+  `~/.tokmeter/daemon/daemon.out.log` and `daemon.err.log` and never rotates
+  them; one had reached 261 MB, nearly all an old kosha warning repeated on
+  every refresh. The daemon now checks both at startup and every five
+  minutes: a log over 10 MB keeps its newest 10 MB in `.1` and starts again
+  with one line saying so, so the two take at most about 40 MB.
+
 ## [1.23.1] - 2026-11-19
 
 ### Added
