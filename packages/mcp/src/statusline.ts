@@ -1,21 +1,24 @@
 /**
  * @sriinnu/tokmeter-mcp — Claude Code statusline hook handler.
  *
- * Two-line instrument:
- *   line 1 — this session: project · model · context · git · cost, then
- *            live tokens, cache temperature, burn rate, elapsed.
- *   line 2 — the world: subscription windows (5h / 7d), today's cross-provider
- *            spend, this repo's share, concurrent sessions, open PR.
+ * Two-line instrument (drawn by statusline-view.ts):
+ *   line 1 — this session: project · model · context · prompt cache (hit
+ *            share, breaks, time left) · session cost · branch · PR.
+ *   line 2 — the limits and the day: the one alert that matters most, the
+ *            plan windows (5h / 7d), a gateway spend limit, today's spend
+ *            across every agent and this repo's part of it.
  *
- * Cross-provider aggregation comes from the Tokmeter daemon.
+ * Session numbers come from the harness's own payload. Today's totals come
+ * from the Tokmeter daemon; nothing on this path reads a transcript.
  */
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
+  canonicalizeProjectName,
   claudeCodeQuota,
   ensurePrivateDirectory,
   getKoshaRegistryMtime,
@@ -27,9 +30,11 @@ import type { TokenUsage } from "./daemon/protocol.js";
 import type { SessionPush } from "./daemon/push.js";
 import { C, FALLBACK_STATUSLINE } from "./formatter.js";
 import {
+  type CacheView,
   type RateWindowView,
   type RouteView,
   renderStatusline,
+  type SpendLimitView,
   type StatusView,
 } from "./statusline-view.js";
 
@@ -139,6 +144,40 @@ interface RateWindow {
   resets_at?: number;
 }
 
+interface SpendLimit extends RateWindow {
+  /** Spend so far this period, from the gateway's meter. */
+  used_usd?: number;
+  limit_usd?: number;
+  period?: "daily" | "weekly" | "monthly";
+}
+
+/**
+ * Prompt-cache health for the main conversation, kept by Claude Code's own
+ * ledger. Every field below is in the schema embedded in the 2.1.329 binary;
+ * older versions send fewer, so each is optional.
+ */
+export interface PromptCacheInput {
+  warm?: boolean;
+  caching_observed?: boolean;
+  ttl?: "5m" | "1h";
+  expires_at?: number | null;
+  /** Main-conversation requests this session. */
+  requests?: number;
+  /** Requests whose cached prefix shrank with no compaction explaining it. */
+  misses?: number;
+  /** Prefix rebuilds a compaction or tool-result clearing announced. */
+  expected_rebuilds?: number;
+  /** cache_read / (cache_read + cache_creation + uncached input), 0-1. */
+  hit_ratio?: number | null;
+  cache_write_tokens?: number;
+  /** cache_creation tokens written by the requests counted as misses. */
+  miss_recache_tokens?: number;
+  last_miss_at?: number | null;
+  last_miss_cause?: { causes?: string[] } | null;
+  miss_causes?: Record<string, number>;
+  recache_tokens_if_cold?: number | null;
+}
+
 interface StatuslineInput {
   session_id?: string;
   session_name?: string;
@@ -149,7 +188,7 @@ interface StatuslineInput {
   cost?: {
     total_cost_usd?: number;
     total_duration_ms?: number;
-    /** Time the model spent working; the honest denominator for a burn rate. */
+    /** Time the model spent working. */
     total_api_duration_ms?: number;
     total_lines_added?: number;
     total_lines_removed?: number;
@@ -172,16 +211,9 @@ interface StatuslineInput {
   rate_limits?: {
     five_hour?: RateWindow;
     seven_day?: RateWindow;
-    spend_limit?: RateWindow;
+    spend_limit?: SpendLimit;
   };
-  prompt_cache?: {
-    warm?: boolean;
-    caching_observed?: boolean;
-    expires_at?: number | null;
-    misses?: number;
-    hit_ratio?: number | null;
-    recache_tokens_if_cold?: number | null;
-  };
+  prompt_cache?: PromptCacheInput;
   /** Last API call's context passed 200K — long-context pricing on 1M models. */
   exceeds_200k_tokens?: boolean;
   /** Undocumented but emitted by the payload builder in 2.1.274. */
@@ -220,17 +252,67 @@ function rateWindow(w: RateWindow | undefined, spanSec: number): RateWindowView 
   return { pct: w.used_percentage, spanSec, ...(w.resets_at ? { resetsAt: w.resets_at } : {}) };
 }
 
-function routeFromInput(input: StatuslineInput): RouteView | undefined {
+const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+/**
+ * The cache segment's numbers, straight from the harness. Nothing is derived:
+ * a field the harness didn't send stays absent, and the view leaves it out.
+ * No caching observed (off, or a provider that doesn't report it) is no
+ * segment at all, not a 0% hit rate.
+ */
+export function cacheFromInput(pc: PromptCacheInput | undefined): CacheView | undefined {
+  if (!pc?.caching_observed) return undefined;
+  const causes = pc.last_miss_cause?.causes;
+  return {
+    warm: typeof pc.warm === "boolean" ? pc.warm : null,
+    expiresAt: finite(pc.expires_at) ? pc.expires_at : null,
+    rebuildTokens: finite(pc.recache_tokens_if_cold) ? pc.recache_tokens_if_cold : null,
+    ...(finite(pc.hit_ratio) ? { hitRatio: pc.hit_ratio } : {}),
+    ...(finite(pc.misses) && pc.misses > 0 ? { breaks: pc.misses } : {}),
+    ...(finite(pc.miss_recache_tokens) && pc.miss_recache_tokens > 0
+      ? { breakTokens: pc.miss_recache_tokens }
+      : {}),
+    ...(finite(pc.last_miss_at) ? { lastBreakAt: pc.last_miss_at } : {}),
+    ...(Array.isArray(causes)
+      ? { lastBreakCauses: causes.filter((c): c is string => typeof c === "string") }
+      : {}),
+  };
+}
+
+function spendFromInput(w: SpendLimit | undefined): SpendLimitView | undefined {
+  if (!w || !finite(w.used_percentage)) return undefined;
+  return {
+    pct: w.used_percentage,
+    ...(finite(w.resets_at) ? { resetsAt: w.resets_at } : {}),
+    // Dollars only as a pair: half of "used of limit" says nothing.
+    ...(finite(w.used_usd) && finite(w.limit_usd)
+      ? { usedUsd: w.used_usd, limitUsd: w.limit_usd }
+      : {}),
+    ...(w.period === "daily" || w.period === "weekly" || w.period === "monthly"
+      ? { period: w.period }
+      : {}),
+  };
+}
+
+const AUTHORITIES = new Set<string>(["kernel", "fallback", "pinned"]);
+
+export function routeFromInput(input: StatuslineInput): RouteView | undefined {
   const r = input.route;
   if (!r?.via) return undefined;
   return {
     via: r.via,
     ...(r.provider ? { provider: r.provider } : {}),
     ...(r.model ? { model: r.model } : {}),
-    ...(r.authority ? { authority: r.authority } : {}),
+    // The payload is untyped JSON: only a known word reaches the terminal.
+    ...(r.authority && AUTHORITIES.has(r.authority) ? { authority: r.authority } : {}),
     ...(r.offline ? { offline: true } : {}),
-    ...(r.recent_total
-      ? { recent: { fallbacks: r.recent_fallbacks ?? 0, total: r.recent_total } }
+    ...(finite(r.recent_total) && r.recent_total > 0
+      ? {
+          recent: {
+            fallbacks: finite(r.recent_fallbacks) ? r.recent_fallbacks : 0,
+            total: r.recent_total,
+          },
+        }
       : {}),
   };
 }
@@ -239,14 +321,24 @@ function routeFromInput(input: StatuslineInput): RouteView | undefined {
 function terminalColumns(): number {
   const fromEnv = Number(process.env.COLUMNS);
   const cols = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : (process.stdout.columns ?? 200);
-  return Math.max(40, cols - 2);
+  // No floor: a narrow terminal gets a clipped line, never one wider than it.
+  return Math.max(1, cols - 2);
 }
 
-/** NO_COLOR disables color; FORCE_COLOR (anything but "0") re-enables it. */
-function colorEnabled(): boolean {
-  const force = process.env.FORCE_COLOR;
+/** A terminal that declares itself dumb gets no color and ASCII glyphs. */
+export function isDumbTerminal(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TERM === "dumb";
+}
+
+/**
+ * NO_COLOR and a dumb terminal disable color; FORCE_COLOR (anything but "0")
+ * re-enables it. cli.ts sets FORCE_COLOR itself for chalk, but only when
+ * neither of those asked for plain text.
+ */
+export function colorEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const force = env.FORCE_COLOR;
   if (force !== undefined) return force !== "0";
-  return !process.env.NO_COLOR;
+  return !env.NO_COLOR && !isDumbTerminal(env);
 }
 
 /**
@@ -278,8 +370,10 @@ function trackContextTurns(sessionId: string, pct: number): number | null {
     if (!Array.isArray(history)) history = [];
   } catch {}
   const last = history[history.length - 1];
+  // Most renders repeat the last fill; only a new one is worth a write.
+  if (last !== undefined && pct === last) return estimateTurnsLeft(history, pct);
   if (last !== undefined && pct < last - 5) history = [];
-  if (last === undefined || pct !== last) history.push(pct);
+  history.push(pct);
   history = history.slice(-8);
   try {
     if (path) writePrivateFile(path, JSON.stringify(history));
@@ -388,9 +482,9 @@ export function runGit(cwd: string, args: string[]): string {
  * busy repo; the cache cuts that to a single fs read on the hot path.
  */
 function getGitInfo(cwd: string): GitInfo | null {
-  const headPath = join(cwd, ".git", "HEAD");
-  // If .git/HEAD doesn't exist, we're not in a git repo. Skip the cache.
-  if (!existsSync(headPath)) return null;
+  const headPath = gitHeadPath(cwd);
+  // No HEAD, no repo. Skip the cache.
+  if (!headPath) return null;
 
   const headKey = safeMtimeKey(headPath);
   const cachePath = cacheFile(`git-${cwdHash(cwd)}.json`);
@@ -412,13 +506,35 @@ function getGitInfo(cwd: string): GitInfo | null {
   }
 }
 
-interface ProjectTotal {
+/**
+ * The HEAD file whose mtime tells one checkout state from the next:
+ * `.git/HEAD`, or for a linked worktree (where `.git` is a one-line file
+ * naming its git dir) that dir's HEAD. Only ever stat'ed; null when `cwd` is
+ * not a repo root.
+ */
+export function gitHeadPath(cwd: string): string | null {
+  const dotGit = join(cwd, ".git");
+  try {
+    if (statSync(dotGit).isDirectory()) {
+      const head = join(dotGit, "HEAD");
+      return existsSync(head) ? head : null;
+    }
+    const match = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, "utf-8").slice(0, 4096));
+    if (!match) return null;
+    const head = join(resolve(cwd, match[1].trim()), "HEAD");
+    return existsSync(head) ? head : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ProjectTotal {
   cost: number;
   in: number;
   out: number;
 }
 
-interface TodayTotals {
+export interface TodayTotals {
   cost: number;
   in: number;
   out: number;
@@ -580,23 +696,38 @@ async function startDaemonThrottled(): Promise<void> {
   } catch {}
 }
 
+/** A ledger key as a comparison key: case and punctuation only, no path rules. */
+function ledgerKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 /**
- * Match the current cwd-derived project name against TodayTotals.projects keys.
- * Parsers store `project` as a flattened path or full path (e.g.
- * `-Users-srinivaspendela-Sriinnu-Personal-tokmeter`); a straightforward
- * case-insensitive suffix/contains match is enough to pin the active project.
+ * Today's total for the project this session belongs to.
+ *
+ * Ledger keys are already canonical names, so they are only normalized, never
+ * put through the path rules again (that turned `ribhu/eval` into `eval`).
+ * The folder is named both ways a parser names it: from its path (Codex and
+ * most others) and from Claude Code's slug of it (`/` and `.` become `-`),
+ * which names `harness-docs` as `docs` and `clipforge/PAKT` as
+ * `clipforge-PAKT`. Keys that name one project (cased differently by two
+ * agents) are summed, not first-wins.
  */
-function findProjectTotal(totals: TodayTotals, projectName: string): ProjectTotal | null {
-  if (!projectName) return null;
-  const needle = projectName.toLowerCase();
-  // Segment boundary so "app" doesn't claim "-src-webapp".
-  const isLastSegment = (k: string) =>
-    k === needle || k.endsWith(`-${needle}`) || k.endsWith(`/${needle}`);
+export function findProjectTotal(totals: TodayTotals, projectDir: string): ProjectTotal | null {
+  if (!projectDir) return null;
+  const slug = projectDir.replace(/[^A-Za-z0-9]/g, "-");
+  const needles = new Set(
+    [canonicalizeProjectName(projectDir, ""), canonicalizeProjectName(slug, "")]
+      .map(ledgerKey)
+      .filter(Boolean)
+  );
+  if (needles.size === 0) return null;
   let hit: ProjectTotal | null = null;
   for (const [key, v] of Object.entries(totals.projects)) {
-    const k = key.toLowerCase();
-    if (isLastSegment(k)) return v;
-    if (!hit && (k.includes(`-${needle}-`) || k.includes(`/${needle}/`))) hit = v;
+    if (!needles.has(ledgerKey(key))) continue;
+    hit = hit ? { cost: hit.cost + v.cost, in: hit.in + v.in, out: hit.out + v.out } : { ...v };
   }
   return hit;
 }
@@ -629,7 +760,9 @@ export async function runStatusline(): Promise<void> {
       // Animated waiting state
       const f = frame();
       const dots = ".".repeat(f % 4);
-      process.stdout.write(`${logoIcon(f, false)} ${C.dim(`waiting${dots}`)}`);
+      process.stdout.write(
+        isDumbTerminal() ? `* waiting${dots}` : `${logoIcon(f, false)} ${C.dim(`waiting${dots}`)}`
+      );
       return;
     }
 
@@ -637,6 +770,12 @@ export async function runStatusline(): Promise<void> {
     const now = Date.now();
     const projectDir = input.cwd ?? input.workspace?.project_dir ?? "";
     const projectName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "";
+    // In a worktree the folder is a throwaway name (`agent-a50b…`); show the
+    // repo's name, as the ledger counts it, and say it's a worktree.
+    const startDir = input.workspace?.project_dir || projectDir;
+    const inWorktree =
+      Boolean(input.workspace?.git_worktree) || /[/\\]\.claude[/\\]worktrees[/\\]/.test(startDir);
+    const shownProject = inWorktree ? canonicalizeProjectName(startDir, projectName) : projectName;
     const git = projectDir ? getGitInfo(projectDir) : null;
     const modelId = input.model?.id ?? input.model?.display_name;
     const sessionCost = input.cost?.total_cost_usd ?? 0;
@@ -647,12 +786,12 @@ export async function runStatusline(): Promise<void> {
     const ctxMax = cw?.context_window_size ?? 0;
     // Claude Code pre-computes the fill against its effective window; trust it
     // over our own ratio when present (their number is what triggers compaction).
-    const ctxPct =
-      cw?.used_percentage !== null && cw?.used_percentage !== undefined
-        ? cw.used_percentage
-        : ctxMax > 0
-          ? (ctxUsed / ctxMax) * 100
-          : null;
+    const usedPct = cw?.used_percentage;
+    const ctxPct = finite(usedPct)
+      ? usedPct
+      : finite(ctxMax) && ctxMax > 0 && finite(ctxUsed)
+        ? (ctxUsed / ctxMax) * 100
+        : null;
 
     // Last API call's usage — the payload carries no session-cumulative token
     // counts, so this is the honest live signal we can give the daemon.
@@ -678,15 +817,19 @@ export async function runStatusline(): Promise<void> {
       // triggers compaction) against its window, else the raw token ratio.
       // Only when both a fill and a window size exist — never a guessed fill.
       const fillUsed =
-        ctxMax > 0 && cw?.used_percentage !== null && cw?.used_percentage !== undefined
-          ? Math.round((cw.used_percentage / 100) * ctxMax)
-          : ctxUsed;
+        finite(ctxMax) && ctxMax > 0 && finite(usedPct)
+          ? Math.round((usedPct / 100) * ctxMax)
+          : finite(ctxUsed)
+            ? ctxUsed
+            : 0;
       pendingPush = {
         session: {
           provider: "claude-code",
           sessionId: input.session_id,
           model: modelId ?? "unknown",
-          project: projectName,
+          // The ledger's name for it, so /api/live and today agree (a
+          // worktree session is its repo, not `agent-a50b…`).
+          project: canonicalizeProjectName(input.workspace?.project_dir || projectDir, projectName),
           cwd: projectDir,
           ...(input.transcript_path ? { transcriptPath: input.transcript_path } : {}),
         },
@@ -707,9 +850,12 @@ export async function runStatusline(): Promise<void> {
 
     // ── Render ──
     const todayRead = await todayPromise;
+    const cache = cacheFromInput(input.prompt_cache);
+    const spend = spendFromInput(input.rate_limits?.spend_limit);
     const view: StatusView = {
       now,
-      project: projectName,
+      project: shownProject,
+      ...(inWorktree ? { worktree: true } : {}),
       model: modelLabel(input.model),
       ...(input.effort?.level ? { effort: shortEffort(input.effort.level) } : {}),
       ...(routeFromInput(input) ? { route: routeFromInput(input) } : {}),
@@ -718,31 +864,15 @@ export async function runStatusline(): Promise<void> {
         ...(ctxMax > 0 ? { windowTokens: ctxMax } : {}),
         turnsLeft: ctxPct === null ? null : trackContextTurns(sessionId, ctxPct),
       },
-      ...(input.prompt_cache?.caching_observed
-        ? {
-            cache: {
-              warm: input.prompt_cache.warm ?? false,
-              expiresAt: input.prompt_cache.expires_at ?? null,
-              rebuildTokens: input.prompt_cache.recache_tokens_if_cold ?? null,
-            },
-          }
-        : {}),
-      ...(input.cost
-        ? {
-            cost: {
-              usd: input.cost.total_cost_usd ?? null,
-              ...(input.cost.total_api_duration_ms
-                ? { activeMs: input.cost.total_api_duration_ms }
-                : {}),
-            },
-          }
-        : {}),
+      ...(cache ? { cache } : {}),
+      ...(input.cost ? { cost: { usd: input.cost.total_cost_usd ?? null } } : {}),
       ...(rateWindow(input.rate_limits?.five_hour, 5 * 3600)
         ? { five: rateWindow(input.rate_limits?.five_hour, 5 * 3600) }
         : {}),
       ...(rateWindow(input.rate_limits?.seven_day, 7 * 86400)
         ? { seven: rateWindow(input.rate_limits?.seven_day, 7 * 86400) }
         : {}),
+      ...(spend ? { spend } : {}),
       today:
         todayRead.state === "down"
           ? { state: "down" }
@@ -750,16 +880,23 @@ export async function runStatusline(): Promise<void> {
             ? { state: todayRead.state, usd: todayRead.totals.cost, ageMs: todayRead.ageMs }
             : { state: "none" },
       ...(git ? { git: { branch: git.branch, dirty: git.dirty } } : {}),
-      ...(input.pr?.number ? { pr: { number: input.pr.number } } : {}),
+      ...(Number.isSafeInteger(input.pr?.number) && (input.pr?.number ?? 0) > 0
+        ? { pr: { number: input.pr?.number as number } }
+        : {}),
     };
     if (todayRead.state !== "down") {
-      const proj = findProjectTotal(todayRead.totals, projectName);
+      // The ledger names a session by the folder it started in, not where it cd'd to.
+      const proj = findProjectTotal(todayRead.totals, input.workspace?.project_dir || projectDir);
       if (proj && proj.cost > 0 && proj.cost < todayRead.totals.cost - 0.005) {
         view.repo = { usd: proj.cost, stale: todayRead.state === "stale" };
       }
     }
     process.stdout.write(
-      renderStatusline(view, { cols: terminalColumns(), color: colorEnabled() })
+      renderStatusline(view, {
+        cols: terminalColumns(),
+        color: colorEnabled(),
+        ascii: isDumbTerminal(),
+      })
     );
   } catch {
     // Nuclear fallback — if ANYTHING above threw, still produce output
