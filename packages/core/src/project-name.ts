@@ -228,32 +228,32 @@ function tempDirSlugLabel(slug: string): string | undefined {
  * A Claude Code worktree (`<repo>/.claude/worktrees/<name>`) is the repo's
  * work, so its segments are dropped and the path names as the repo. Without
  * this every worktree became its own project card (`agent-a67da452…`), and
- * the statusline's "here" never matched a session started in one.
+ * the statusline's "here" never matched a session started in one. The folder
+ * only exists because Claude Code made a worktree of the folder above it, so
+ * that folder is the repo even when it is a home folder: a worktree of `~`
+ * names as `~` does. Nested worktrees fold all the way down.
  */
 function dropClaudeWorktree(segments: string[]): string[] {
-  // Past home: `~/.claude` is Claude Code's own config, not a repo.
-  const from = ROOT_SEGMENTS.has(segments[0]?.toLowerCase() ?? "") ? 3 : 1;
-  for (let i = from; i + 2 < segments.length; i++) {
-    if (
-      segments[i]?.toLowerCase() === ".claude" &&
-      segments[i + 1]?.toLowerCase() === "worktrees"
-    ) {
-      return [...segments.slice(0, i), ...segments.slice(i + 3)];
+  let out = segments;
+  for (let i = 1; i + 2 < out.length; i++) {
+    if (out[i]?.toLowerCase() === ".claude" && out[i + 1]?.toLowerCase() === "worktrees") {
+      out = [...out.slice(0, i), ...out.slice(i + 3)];
+      i -= 1;
     }
   }
-  return segments;
+  return out;
 }
 
 /**
  * The slug form of {@link dropClaudeWorktree}. A slug can't show where the
  * worktree's name ends (`agent-a50b…` has its own dash), so everything from
- * `--claude-worktrees-` on is dropped; Claude Code slugs the session's start
- * folder, which is the worktree root.
+ * the first `--claude-worktrees-` on is dropped. A session started below a
+ * worktree's root therefore names as the repo, where its path would name the
+ * subfolder; the slug holds no way to tell them apart.
  */
 function dropClaudeWorktreeSlug(slug: string): string {
   const at = slug.toLowerCase().indexOf("--claude-worktrees-");
-  if (at <= 0 || /^-(users|home|user)-[^-]+$/i.test(slug.slice(0, at))) return slug;
-  return slug.slice(0, at);
+  return at > 0 ? slug.slice(0, at) : slug;
 }
 
 /** The slug form of {@link homeToolLabel}: Claude Code writes `/.` as `--`. */

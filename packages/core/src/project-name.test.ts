@@ -43,9 +43,18 @@ describe("project-name helpers", () => {
       "clipforge-PAKT"
     );
     expect(projectMatchKey(wt)).toBe(projectMatchKey(repo));
-    // Home's own ~/.claude is config, not a repo: left to the normal rules.
-    expect(canonicalizeProjectName("/Users/me/.claude/worktrees/x")).toBe("x");
-    expect(canonicalizeProjectName("-Users-me--claude-worktrees-x")).toBe("x");
+    // A worktree of a home folder names as that home folder's sessions do.
+    for (const home of ["/Users/me", "/root", "C:\\Users\\me", "/mnt/c/Users/me"]) {
+      expect(canonicalizeProjectName(`${home}/.claude/worktrees/x`)).toBe(
+        canonicalizeProjectName(home)
+      );
+    }
+    expect(canonicalizeProjectName("-Users-me--claude-worktrees-x")).toBe(
+      canonicalizeProjectName("-Users-me")
+    );
+    expect(canonicalizeProjectName(`${repo}/.claude/worktrees/a/.claude/worktrees/b`)).toBe(
+      "tokmeter"
+    );
   });
 
   it("names a per-run temp workspace for its prefix, not its random tail", () => {
