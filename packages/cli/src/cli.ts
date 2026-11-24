@@ -25,6 +25,7 @@ import {
   daemonReadAuthorization,
   daemonReadEligible,
 } from "./daemon-read.js";
+import { loadMcpModule } from "./mcp-bridge.js";
 
 // ---- Arg parser (lightweight, no deps) ----
 
@@ -1059,56 +1060,80 @@ async function main() {
   }
 
   if (args.command === "serve") {
-    console.log("Web server — run `tokmeter-serve` or use packages/web");
+    console.log("Web dashboard — run `bun run dev:web` from the repo or open it from TokmeterBar");
     process.exit(0);
   }
 
   // Delegate to tokmeter-mcp for live/statusline/daemon commands
   if (args.command === "live") {
-    const { startLive } = await import("@sriinnu/tokmeter-mcp/live.js");
+    const { startLive } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/live.js"),
+      "live"
+    );
     await startLive();
     return;
   }
 
   if (args.command === "statusline") {
-    const { runStatusline } = await import("@sriinnu/tokmeter-mcp/statusline.js");
+    const { runStatusline } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/statusline.js"),
+      "statusline"
+    );
     await runStatusline();
     return;
   }
 
   if (args.command === "daemon") {
-    const { runDaemonCLI } = await import("@sriinnu/tokmeter-mcp/daemon/server.js");
+    const { runDaemonCLI } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/daemon/server.js"),
+      "daemon"
+    );
     runDaemonCLI(args.daemonCmd ?? "status");
     return;
   }
 
   // Installer commands
   if (args.command === "install-statusline") {
-    const { installStatusline } = await import("@sriinnu/tokmeter-mcp/installer.js");
+    const { installStatusline } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "install-statusline"
+    );
     installStatusline();
     return;
   }
 
   if (args.command === "install-mcp") {
-    const { installMCP } = await import("@sriinnu/tokmeter-mcp/installer.js");
+    const { installMCP } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "install-mcp"
+    );
     installMCP();
     return;
   }
 
   if (args.command === "uninstall-statusline") {
-    const { uninstallStatusline } = await import("@sriinnu/tokmeter-mcp/installer.js");
+    const { uninstallStatusline } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "uninstall-statusline"
+    );
     uninstallStatusline();
     return;
   }
 
   if (args.command === "uninstall-mcp") {
-    const { uninstallMCP } = await import("@sriinnu/tokmeter-mcp/installer.js");
+    const { uninstallMCP } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "uninstall-mcp"
+    );
     uninstallMCP();
     return;
   }
 
   if (args.command === "editors") {
-    const { listEditors } = await import("@sriinnu/tokmeter-mcp/installer.js");
+    const { listEditors } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "editors"
+    );
     listEditors();
     return;
   }

@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Secret guard
+        run: bash scripts/check-no-secrets.sh
+
       - name: Lint
         run: bun run lint
 
@@ -53,6 +56,9 @@ jobs:
       # went to another repo's commit).
       - name: Release flow
         run: bash scripts/test/release-flow.test.sh
+
+      - name: Secret guard tests
+        run: bash scripts/test/check-no-secrets.test.sh
 
       # Feature PRs merge through scripts/merge-pr.sh so main gets no
       # Co-authored-by trailers from GitHub's default squash message.

@@ -545,4 +545,49 @@ describe("DailyAccumulator.fold — malformed records can't poison totals", () =
     expect(day.cost).toBe(3);
     expect(day.totalTokens).toBe(30);
   });
+
+  test("preserves null-prototype maps across toAggregate and hydrate when keys hit Object.prototype names", () => {
+    const acc = new DailyAccumulator("2026-05-22");
+    const ctorKey = "constructor";
+    const protoKey = "__proto__";
+    const toStrKey = "toString";
+    acc.fold(
+      r({
+        timestamp: ts("2026-05-22"),
+        model: ctorKey,
+        project: protoKey,
+        provider: toStrKey as never,
+        inputTokens: 40,
+        cost: 1.5,
+      })
+    );
+
+    const snapshot = acc.toAggregate();
+    expect(Object.getPrototypeOf(snapshot.models)).toBeNull();
+    expect(Object.getPrototypeOf(snapshot.projects)).toBeNull();
+    expect(Object.getPrototypeOf(snapshot.providers)).toBeNull();
+    expect(Object.getPrototypeOf(snapshot.projects[protoKey]?.modelBuckets)).toBeNull();
+
+    const restored = new DailyAccumulator("2026-05-22");
+    restored.hydrate(snapshot);
+    expect(
+      restored.fold(
+        r({
+          timestamp: ts("2026-05-22") + 1,
+          model: ctorKey,
+          project: protoKey,
+          provider: toStrKey as never,
+          inputTokens: 60,
+          cost: 2.5,
+        })
+      )
+    ).toBe(true);
+
+    const after = restored.toAggregate();
+    expect(Object.getPrototypeOf(after.models)).toBeNull();
+    expect(Object.getPrototypeOf(after.projects)).toBeNull();
+    expect(Object.getPrototypeOf(after.providers)).toBeNull();
+    expect(after.models[ctorKey]?.inputTokens).toBe(100);
+    expect(after.cost).toBe(4);
+  });
 });

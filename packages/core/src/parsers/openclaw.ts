@@ -5,7 +5,8 @@
  * Also scans legacy paths: ~/.clawdbot/, ~/.moltbot/, ~/.moldbot/
  */
 
-import { dirname, isAbsolute, join } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import type { SessionParser, TokenRecord } from "../types.js";
 import {
   ANY_PATH_SEGMENT,
@@ -67,6 +68,12 @@ export class OpenClawParser implements SessionParser {
     const records: TokenRecord[] = [];
 
     for (const dir of this.sessionRoots(homeDir)) {
+      let realRoot: string;
+      try {
+        realRoot = realpathSync(dir);
+      } catch {
+        continue;
+      }
       const sessionFiles = await findFiles(dir, (f) => f === "sessions.json", 4);
 
       for (const sf of sessionFiles) {
@@ -77,12 +84,20 @@ export class OpenClawParser implements SessionParser {
         for (const entry of Object.values(index)) {
           if (!entry.sessionFile) continue;
 
-          // Resolve sessionFile relative to the sessions.json directory
+          // Resolve sessionFile relative to the sessions.json directory and enforce root containment.
           const sessionFilePath = isAbsolute(entry.sessionFile)
             ? entry.sessionFile
             : join(sfDir, entry.sessionFile);
+          let resolvedSessionFile: string;
+          try {
+            if (lstatSync(sessionFilePath).isSymbolicLink()) continue;
+            resolvedSessionFile = realpathSync(sessionFilePath);
+          } catch {
+            continue;
+          }
+          if (!resolvedSessionFile.startsWith(realRoot + sep)) continue;
 
-          const lines = await readJsonlFile<OpenClawMessage>(sessionFilePath);
+          const lines = await readJsonlFile<OpenClawMessage>(resolvedSessionFile);
           let currentModel = "unknown";
 
           for (const msg of lines) {

@@ -17,13 +17,13 @@ needs_build=0
 if [[ ! -f "$BUNDLE" ]]; then
   needs_build=1
   reason="bundle missing"
-elif [[ -n "$(find packages/core/src packages/cli/src packages/tui/src \
-              -name '*.ts' -newer "$BUNDLE" -print -quit 2>/dev/null)" ]]; then
+elif [[ -n "$(find packages/core/src packages/mcp/src packages/cli/src packages/tui/src \
+              \( -name '*.ts' -o -name '*.tsx' \) -newer "$BUNDLE" -print -quit 2>/dev/null)" ]]; then
   needs_build=1
   reason="source newer than bundle"
 fi
 
 if [[ "$needs_build" == "1" ]]; then
-  echo "==> tokmeter bundle ${reason} — rebuilding core + cli + tui + meta"
-  bun run build:core && bun run build:cli && bun run build:tui && bun run build:tokmeter
+  echo "==> tokmeter bundle ${reason} — rebuilding core + mcp + cli + tui + meta"
+  bun run build:core && bun run build:mcp && bun run build:cli && bun run build:tui && bun run build:tokmeter
 fi

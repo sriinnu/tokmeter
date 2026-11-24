@@ -4,6 +4,14 @@
 # Keeps Sparkle's appcast URL (which points at this zip) in sync with reality.
 set -euo pipefail
 
+if [[ "${ALLOW_LOCAL_BAR_PUBLISH:-0}" != "1" ]]; then
+    echo "ERROR: Local macOS bar publishing is disabled." >&2
+    echo "       CI (.github/workflows/release-macos.yml) builds, notarizes, signs Sparkle," >&2
+    echo "       and attaches TokmeterBar-*.zip so the archive matches CI's Sparkle EdDSA signature." >&2
+    echo "       Set ALLOW_LOCAL_BAR_PUBLISH=1 only for an explicit emergency manual recovery." >&2
+    exit 1
+fi
+
 REPO="${REPO:-sriinnu/tokmeter}"
 APP_NAME="${APP_NAME:-TokmeterBar}"
 
@@ -39,6 +47,7 @@ fi
 echo "==> Creating GitHub release ${TAG} on ${REPO}"
 gh release create "${TAG}" "${ZIP}" \
     --repo "${REPO}" \
+    --verify-tag \
     --title "TokmeterBar ${VERSION}" \
     --notes "Notarized + stapled release build.
 

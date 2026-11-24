@@ -22,8 +22,8 @@ cd "$ROOT"
 
 # Secret-shaped FILE names (basename match). .env.example is explicitly allowed.
 NAME_RE='(^|/)\.env($|\.)|\.p8$|\.p12$|\.pem$|(^|/)sparkle_ed25519_priv$|sparkle_private_key|AuthKey[_A-Za-z0-9]*\.p8|(^|/)id_(rsa|ed25519)$|\.keystore$|\.key$'
-# Secret VALUE patterns (file contents).
-VALUE_RE='sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|AuthKey_[A-Z0-9]{10}|aws_secret_access_key|APPLE_APP_PASSWORD=["'\'']?[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}'
+# Secret VALUE patterns (POSIX ERE compatible with BSD/macOS and GNU grep -E).
+VALUE_RE='sk-(ant|proj|live|test)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{35}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|AuthKey_[A-Z0-9]{10}|aws_secret_access_key|APPLE_APP_PASSWORD=["'\'']?[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}'
 # Allowlist: the detector itself holds these patterns as strings, and *.example
 # files are placeholder templates by definition — neither is a leak.
 ALLOW_RE='(^|/)check-no-secrets\.sh$|\.example$'
@@ -50,15 +50,15 @@ done < <(find . -path ./node_modules -prune -o -path ./.git -prune -o \
                -o -name 'sparkle_ed25519_priv' -o -name 'sparkle_private_key' \) -print 2>/dev/null)
 echo "  ✓ on-disk sensitive files are all gitignored"
 
-# ── 3. No staged file carries a secret VALUE ─────────────────────────────────
-staged_hits=""
+# ── 3. No tracked or staged file carries a secret VALUE ──────────────────────
+content_hits=""
 while IFS= read -r f; do
   [[ -f "$f" ]] || continue
   [[ "$f" =~ $ALLOW_RE ]] && continue
-  if grep -IlE "$VALUE_RE" "$f" >/dev/null 2>&1; then staged_hits+="$f"$'\n'; fi
-done < <(git diff --cached --name-only)
-[[ -z "$staged_hits" ]] || { echo "$staged_hits" >&2; fail "staged file(s) contain a secret value (above)."; }
-echo "  ✓ no staged file contains a secret value"
+  if grep -IlE "$VALUE_RE" "$f" >/dev/null 2>&1; then content_hits+="$f"$'\n'; fi
+done < <({ git ls-files; git diff --cached --name-only; } | sort -u)
+[[ -z "$content_hits" ]] || { echo "$content_hits" >&2; fail "tracked or staged file(s) contain a secret value (above)."; }
+echo "  ✓ no tracked or staged file contains a secret value"
 
 # ── 4. npm publish surface ───────────────────────────────────────────────────
 for pj in packages/*/package.json; do
