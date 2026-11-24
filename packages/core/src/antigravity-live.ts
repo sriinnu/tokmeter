@@ -24,12 +24,17 @@
  */
 
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { sanitizeDataLabel } from "./display-safety.js";
-import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
+import {
+  ensurePrivateDirectory,
+  ensurePrivateFile,
+  withFileLockSync,
+  writePrivateFile,
+} from "./private-files.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,11 +287,29 @@ export async function pollAntigravityLiveStatus(
   return null;
 }
 
-function appendSnapshot(snapshot: AntigravitySnapshot, homeDir: string): void {
+export const MAX_SNAPSHOT_LOG_BYTES = 512 * 1024;
+export const DEFAULT_KEEP_SNAPSHOTS = 1000;
+
+export function appendAntigravitySnapshot(
+  snapshot: AntigravitySnapshot,
+  homeDir: string = homedir(),
+  options?: { maxBytes?: number; keepLast?: number }
+): void {
   const path = snapshotLogPath(homeDir);
-  ensurePrivateDirectory(dirname(path));
-  ensurePrivateFile(path);
-  appendFileSync(path, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
+  const maxBytes = options?.maxBytes ?? MAX_SNAPSHOT_LOG_BYTES;
+  const keepLast = options?.keepLast ?? DEFAULT_KEEP_SNAPSHOTS;
+  withFileLockSync(`${path}.lock`, () => {
+    ensurePrivateDirectory(dirname(path));
+    ensurePrivateFile(path);
+    appendFileSync(path, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
+    if (statSync(path).size > maxBytes) {
+      pruneSnapshotHistoryUnlocked(keepLast, homeDir);
+    }
+  });
+}
+
+function appendSnapshot(snapshot: AntigravitySnapshot, homeDir: string): void {
+  appendAntigravitySnapshot(snapshot, homeDir);
 }
 
 // ─── Reads (cache-only — never trigger a poll) ─────────────────────────
@@ -358,15 +381,22 @@ export function computeCreditsUsedToday(
   return { promptCreditsUsed, flowCreditsUsed, sinceSnapshotAt: last?.timestamp ?? todayStartMs };
 }
 
-/**
- * Truncates the snapshot log to its most recent N entries. The log is
- * append-only and unbounded by default — call this periodically (e.g. once
- * a day) if long-term disk growth matters; nothing does this automatically.
- */
-export function pruneSnapshotHistory(keepLast: number, homeDir: string = homedir()): void {
+function pruneSnapshotHistoryUnlocked(keepLast: number, homeDir: string): void {
   const history = readSnapshotHistory(homeDir);
   if (history.length <= keepLast) return;
   const trimmed = history.slice(-keepLast);
   const path = snapshotLogPath(homeDir);
   writePrivateFile(path, `${trimmed.map((s) => JSON.stringify(s)).join("\n")}\n`);
+}
+
+/**
+ * Truncates the snapshot log to its most recent N entries. Also called
+ * automatically from `appendAntigravitySnapshot` once the log exceeds
+ * {@link MAX_SNAPSHOT_LOG_BYTES}.
+ */
+export function pruneSnapshotHistory(keepLast: number, homeDir: string = homedir()): void {
+  const path = snapshotLogPath(homeDir);
+  withFileLockSync(`${path}.lock`, () => {
+    pruneSnapshotHistoryUnlocked(keepLast, homeDir);
+  });
 }

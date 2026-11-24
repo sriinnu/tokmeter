@@ -195,20 +195,24 @@ export class DeepSeekHarnessParser implements SessionParser {
 
     const records: TokenRecord[] = [];
     for (const file of files) {
-      const cached = await getCachedRecords(file);
+      const cached = await getCachedRecords(file, homeDir);
       if (cached.hit) {
         records.push(...cached.records);
         continue;
       }
       // Compressed bytes can't resume from an offset, so a changed file is
       // re-read whole.
-      const parsed = await this.parseFile(file, opts);
+      const parsed = await this.parseFile(file, opts, homeDir);
       records.push(...parsed);
     }
     return dedupAcrossFiles(records);
   }
 
-  private async parseFile(file: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+  private async parseFile(
+    file: string,
+    opts?: ScanFilterOptions,
+    homeDir?: string
+  ): Promise<TokenRecord[]> {
     // Stat before reading: an append during the read then fails the next
     // exact-match cache check instead of being skipped.
     let bytes: Buffer;
@@ -329,7 +333,12 @@ export class DeepSeekHarnessParser implements SessionParser {
         file,
       });
     }
-    await setCachedRecords(file, records, { mtimeMs: snapshot.mtimeMs, sizeBytes: snapshot.size });
+    await setCachedRecords(
+      file,
+      records,
+      { mtimeMs: snapshot.mtimeMs, sizeBytes: snapshot.size },
+      homeDir
+    );
     return records;
   }
 }

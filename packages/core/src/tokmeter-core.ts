@@ -39,10 +39,11 @@ import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "
 import { attachDayPrices, type DayPrices, priceCardsFor } from "./day-prices.js";
 import { writeKoshaWishlist } from "./kosha-wishlist.js";
 import { computeModelRates, type ModelRatesResponse } from "./model-rates.js";
-import { getParsers } from "./parsers/index.js";
+import { createParsers } from "./parsers/index.js";
 import {
   getCachedKoshaMtime,
   getCachedOverridesMtime,
+  markRecordCacheDirty,
   saveRecordCacheToDisk,
   setCachedKoshaMtime,
   setCachedOverridesMtime,
@@ -81,6 +82,7 @@ import type {
   ScanMeta,
   ScanOptions,
   ScanWarning,
+  SessionParser,
   StatbarSignals,
   TokenRecord,
   TokmeterConfig,
@@ -127,17 +129,34 @@ export class TokmeterCore {
   >();
   // Last records of files that vanished today, so the day only grows.
   private readonly todayJournal: TodayJournal;
+  private readonly parsers: SessionParser[] = createParsers();
   private pricing: PricingService;
   private homeDir: string;
   private skipPricing: boolean;
   private scanMeta: ScanMeta = EMPTY_SCAN_META;
   private aliases: AliasMap | null = null;
+  private scanChain: Promise<unknown> = Promise.resolve();
 
   constructor(config?: TokmeterConfig) {
     this.homeDir = config?.homeDir || homedir();
     this.skipPricing = config?.skipPricing ?? false;
-    this.pricing = new PricingService(config?.cacheDir);
+    this.pricing = new PricingService(config?.cacheDir, this.homeDir);
     this.todayJournal = new TodayJournal(this.homeDir);
+  }
+
+  getHomeDir(): string {
+    return this.homeDir;
+  }
+
+  /** Force-flush any dirty in-memory record cache entries for this core to disk. */
+  flushRecordCache(): void {
+    saveRecordCacheToDisk(this.homeDir, { force: true });
+  }
+
+  private runSerialized<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.scanChain.then(fn, fn);
+    this.scanChain = next.catch(() => {});
+    return next;
   }
 
   private getAliases(): AliasMap {
@@ -151,7 +170,12 @@ export class TokmeterCore {
   }
 
   private ctx(): ScanContext {
-    return { homeDir: this.homeDir, pricing: this.pricing, skipPricing: this.skipPricing };
+    return {
+      homeDir: this.homeDir,
+      pricing: this.pricing,
+      skipPricing: this.skipPricing,
+      parsers: this.parsers,
+    };
   }
 
   /**
@@ -161,7 +185,11 @@ export class TokmeterCore {
    * Explicit-range (`since`/`until`/...): ad-hoc bounded raw scan for the
    * requested window; instance state still refreshes.
    */
-  async scan(options?: ScanOptions): Promise<TokenRecord[]> {
+  scan(options?: ScanOptions): Promise<TokenRecord[]> {
+    return this.runSerialized(() => this.scanUnlocked(options));
+  }
+
+  private async scanUnlocked(options?: ScanOptions): Promise<TokenRecord[]> {
     this.reloadAliases();
 
     const referenceTimestamp = Date.now();
@@ -179,7 +207,10 @@ export class TokmeterCore {
     if (!this.skipPricing) {
       try {
         await this.pricing.init();
-        maybeBackgroundRefresh();
+        maybeBackgroundRefresh({
+          homeDir: this.homeDir,
+          cacheDir: this.pricing.getCacheDir(),
+        });
       } catch {
         /* enrichCosts will re-warn if pricing stays unavailable */
       }
@@ -193,7 +224,10 @@ export class TokmeterCore {
       !this.skipPricing &&
       todayPricingStale(
         { registryMtime: currentKoshaMtime, overridesMtime: currentOverridesMtime },
-        { registryMtime: getCachedKoshaMtime(), overridesMtime: getCachedOverridesMtime() }
+        {
+          registryMtime: getCachedKoshaMtime(this.homeDir),
+          overridesMtime: getCachedOverridesMtime(this.homeDir),
+        }
       );
 
     let historySource: ScanMeta["historySource"] = "snapshot";
@@ -230,10 +264,18 @@ export class TokmeterCore {
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (todayRecords.length > 0 && !this.skipPricing) {
       if (koshaChanged) resetCalculatedCosts(todayRecords);
-      await enrichCosts(todayRecords, this.pricing, "today", todayWarnings, unpricedTracker);
-      if (currentKoshaMtime > 0) setCachedKoshaMtime(currentKoshaMtime);
-      setCachedOverridesMtime(currentOverridesMtime);
-      saveRecordCacheToDisk();
+      const enriched = await enrichCosts(
+        todayRecords,
+        this.pricing,
+        "today",
+        todayWarnings,
+        unpricedTracker
+      );
+      if (enriched > 0) markRecordCacheDirty(this.homeDir);
+      const latestKoshaMtime = this.pricing.getRegistryMtime();
+      if (latestKoshaMtime > 0) setCachedKoshaMtime(latestKoshaMtime, this.homeDir);
+      setCachedOverridesMtime(this.pricing.getOverridesMtime(), this.homeDir);
+      saveRecordCacheToDisk(this.homeDir, { force: true });
     }
 
     // recentRecords accumulates FORWARD — it is never re-derived from a raw
@@ -330,9 +372,13 @@ export class TokmeterCore {
    * Warm-path refresh: today-only scan + splice into the rolling window.
    * The daemon's hot path. Falls back to a full {@link scan} on cold start.
    */
-  async refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
-    if (this.todayAccumulator === null) return this.scan();
+  refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
+    return this.runSerialized(() =>
+      this.todayAccumulator === null ? this.scanUnlocked() : this.refreshTodayUnlocked(now)
+    );
+  }
 
+  private async refreshTodayUnlocked(now: number): Promise<TokenRecord[]> {
     const todayWarnings: ScanWarning[] = [];
     let koshaChanged = false;
     if (!this.skipPricing) {
@@ -340,7 +386,10 @@ export class TokmeterCore {
       // without this a long-running daemon never refreshed kosha unless the
       // macOS launchd job was installed, and prices went stale on Linux and
       // Windows. Fresh registry or a recent attempt → no-op.
-      maybeBackgroundRefresh();
+      maybeBackgroundRefresh({
+        homeDir: this.homeDir,
+        cacheDir: this.pricing.getCacheDir(),
+      });
       try {
         await this.pricing.init();
       } catch {
@@ -349,7 +398,10 @@ export class TokmeterCore {
       const mtime = this.pricing.getRegistryMtime();
       koshaChanged = todayPricingStale(
         { registryMtime: mtime, overridesMtime: this.pricing.getOverridesMtime() },
-        { registryMtime: getCachedKoshaMtime(), overridesMtime: getCachedOverridesMtime() }
+        {
+          registryMtime: getCachedKoshaMtime(this.homeDir),
+          overridesMtime: getCachedOverridesMtime(this.homeDir),
+        }
       );
     }
 
@@ -372,11 +424,18 @@ export class TokmeterCore {
       markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
       resetCalculatedCosts(today);
-      await enrichCosts(today, this.pricing, "today", todayWarnings, unpricedTracker);
+      const enriched = await enrichCosts(
+        today,
+        this.pricing,
+        "today",
+        todayWarnings,
+        unpricedTracker
+      );
+      if (enriched > 0) markRecordCacheDirty(this.homeDir);
       const mtime = this.pricing.getRegistryMtime();
-      if (mtime > 0) setCachedKoshaMtime(mtime);
-      setCachedOverridesMtime(this.pricing.getOverridesMtime());
-      saveRecordCacheToDisk();
+      if (mtime > 0) setCachedKoshaMtime(mtime, this.homeDir);
+      setCachedOverridesMtime(this.pricing.getOverridesMtime(), this.homeDir);
+      saveRecordCacheToDisk(this.homeDir, { force: true });
     }
 
     const todayUnpriced: UnpricedTracker = this.skipPricing
@@ -754,7 +813,7 @@ export class TokmeterCore {
     // Scan with skipPricing: true so cached scan-cache costs & direct tool costs
     // stay intact without repricing existing history at today's rates.
     const allRaw = await scanRawRecords(
-      { homeDir: this.homeDir, pricing: this.pricing, skipPricing: true },
+      { ...this.ctx(), skipPricing: true },
       undefined,
       "history",
       warnings
@@ -851,24 +910,22 @@ export class TokmeterCore {
    * can exhaust memory. Older days (which pace never reads) are left as-is.
    * Streaming + windowed, so peak memory stays bounded. Today is untouched.
    */
-  async rebuildRecentDays(
-    windowDays: number,
-    now: number = Date.now(),
-    force = false
-  ): Promise<void> {
-    const warnings: ScanWarning[] = [];
-    const relay = await rebuildRecentWindow(this.ctx(), now, warnings, windowDays, force);
-    this.aggregates = relay.aggregates;
-    this.scanMeta = {
-      ...this.scanMeta,
-      lastScanAt: Date.now(),
-      // The rebuild emits history AND provider warnings — replace both kinds
-      // rather than stacking a fresh copy per rescan.
-      warnings: [
-        ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
-        ...warnings,
-      ],
-    };
+  rebuildRecentDays(windowDays: number, now: number = Date.now(), force = false): Promise<void> {
+    return this.runSerialized(async () => {
+      const warnings: ScanWarning[] = [];
+      const relay = await rebuildRecentWindow(this.ctx(), now, warnings, windowDays, force);
+      this.aggregates = relay.aggregates;
+      this.scanMeta = {
+        ...this.scanMeta,
+        lastScanAt: Date.now(),
+        // The rebuild emits history AND provider warnings — replace both kinds
+        // rather than stacking a fresh copy per rescan.
+        warnings: [
+          ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
+          ...warnings,
+        ],
+      };
+    });
   }
 
   /**
@@ -888,7 +945,7 @@ export class TokmeterCore {
         date,
         readFiles,
         records,
-        parsers: getParsers(undefined),
+        parsers: this.parsers,
         budgetMs: 10_000,
       });
       await writeCoverageReport(this.homeDir, report);
@@ -931,7 +988,7 @@ export class TokmeterCore {
       date,
       readFiles: records.map((r) => r.sourceFile ?? ""),
       records,
-      parsers: getParsers(undefined),
+      parsers: this.parsers,
       budgetMs: 60_000,
     });
     await writeCoverageReport(this.homeDir, report);
@@ -945,28 +1002,30 @@ export class TokmeterCore {
    * registered custom source on a machine where a full deep rescan would shrink
    * days whose other providers' raw has aged out. Today is never touched.
    */
-  async backfillProvider(
+  backfillProvider(
     providerId: ProviderId,
     windowDays: number,
     now: number = Date.now()
   ): Promise<void> {
-    const warnings: ScanWarning[] = [];
-    const relay = await backfillProviderIntoRelay(
-      this.ctx(),
-      providerId,
-      now,
-      warnings,
-      windowDays
-    );
-    this.aggregates = relay.aggregates;
-    this.scanMeta = {
-      ...this.scanMeta,
-      lastScanAt: Date.now(),
-      warnings: [
-        ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
-        ...warnings,
-      ],
-    };
+    return this.runSerialized(async () => {
+      const warnings: ScanWarning[] = [];
+      const relay = await backfillProviderIntoRelay(
+        this.ctx(),
+        providerId,
+        now,
+        warnings,
+        windowDays
+      );
+      this.aggregates = relay.aggregates;
+      this.scanMeta = {
+        ...this.scanMeta,
+        lastScanAt: Date.now(),
+        warnings: [
+          ...this.scanMeta.warnings.filter((w) => w.scope !== "history" && w.scope !== "provider"),
+          ...warnings,
+        ],
+      };
+    });
   }
 
   getTodayAggregate(): DailyAggregate | null {

@@ -626,7 +626,8 @@ function sessionLedgerFor(transcriptPath: string) {
       if (f.endsWith(".jsonl")) files.push(`${subagentDir}/${f}`);
     }
   } catch {}
-  const records = files.flatMap((f) => peekCachedRecords(f) ?? []);
+  const homeDir = _httpCore.core?.getHomeDir?.();
+  const records = files.flatMap((f) => peekCachedRecords(f, homeDir) ?? []);
   // No fallback to the recentRecords window: every record there came through
   // the same cache, so an uncached transcript is absent from it too.
   return records.length > 0 ? computeSessionLedger(records, transcriptPath) : null;
@@ -724,7 +725,10 @@ function loadState(): void {
 
 export function stopDaemon(): void {
   // A losing startup process must not save over or unlink the winner's state.
-  if (_ownsDaemonState) saveState();
+  if (_ownsDaemonState) {
+    saveState();
+    _httpCore?.core?.flushRecordCache?.();
+  }
 
   if (cleanupInterval) {
     clearInterval(cleanupInterval);

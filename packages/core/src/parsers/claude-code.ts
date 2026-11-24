@@ -242,7 +242,7 @@ export class ClaudeCodeParser implements SessionParser {
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const cacheResult = await getCachedRecords(file);
+      const cacheResult = await getCachedRecords(file, homeDir);
 
       // Exact cache hit — file unchanged, skip entirely
       if (cacheResult.hit) {
@@ -452,10 +452,15 @@ export class ClaudeCodeParser implements SessionParser {
       // Never seal a read failure as an empty/partial successful cache entry.
       // The previous good cache remains usable and the next scan retries.
       if (!readFailed && visit) {
-        await setCachedRecords(file, allFileRecords, {
-          mtimeMs: visit.snapshot.mtimeMs,
-          sizeBytes: visit.consumedThroughBytes,
-        });
+        await setCachedRecords(
+          file,
+          allFileRecords,
+          {
+            mtimeMs: visit.snapshot.mtimeMs,
+            sizeBytes: visit.consumedThroughBytes,
+          },
+          homeDir
+        );
       }
       records.push(...(cacheWouldExceedLimit ? cacheResult.cachedRecords : allFileRecords));
     }

@@ -7,7 +7,8 @@
 import type { Dirent } from "node:fs";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { type FileHandle, open, readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { loadConfig } from "../config-service.js";
 import { localDateKey } from "../date-utils.js";
 import { sanitizeDataLabel } from "../display-safety.js";
@@ -59,25 +60,36 @@ interface CacheFile {
   files: Record<string, RecordCacheEntry>;
 }
 
-let recordCache: Map<string, RecordCacheEntry> | null = null;
-let cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
-let cacheCreatedAt: string | null = null;
-let cacheKoshaMtime = 0;
-let cacheOverridesMtime = 0;
-/** Set of paths touched in the current process so far — files we've actually
- *  observed live during a scan in this daemon lifetime. On save, paths in the
- *  cache that we've NOT touched recently AND that no longer exist on disk get
- *  dropped, so a long-lived daemon doesn't keep growing as the user cleans up
- *  or ages out old sessions. We rely on disk-existence (not "touched") as the
- *  drop condition so a quiet session file (claude-code project that wasn't
- *  active today) isn't evicted just because no parser visited it. */
-let cacheTouchedPaths: Set<string> | null = null;
-/** Throttle stale-path GC so a daemon scanning every 12s isn't fanning out N
- *  stats every tick. Run at most every ~5 minutes. */
-let cacheLastGcAtMs = 0;
 const CACHE_GC_INTERVAL_MS = 5 * 60 * 1000;
-const CACHE_DIR = join(process.env.HOME || "", ".cache", "tokmeter");
-const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
+const CACHE_SAVE_MIN_INTERVAL_MS = 60_000;
+
+interface RecordCacheStore {
+  cacheDir: string;
+  cacheFile: string;
+  entries: Map<string, RecordCacheEntry>;
+  stats: {
+    files: number;
+    records: number;
+    cacheHits: number;
+    cacheMisses: number;
+    appends: number;
+  };
+  createdAt: string | null;
+  koshaMtime: number;
+  overridesMtime: number;
+  /** Paths observed since the last GC sweep. Cleared each sweep so deleted
+   *  files eventually lose immunity and are evicted on a future sweep. */
+  touchedPaths: Set<string>;
+  lastGcAtMs: number;
+  dirty: boolean;
+  lastSavedAtMs: number;
+}
+
+const recordCachesByHome = new Map<string, RecordCacheStore>();
+
+function cacheHomeKey(homeDir?: string): string {
+  return resolve(homeDir || homedir());
+}
 
 /**
  * Cache schema version. Bump this whenever a parser changes how it derives
@@ -173,19 +185,31 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      repricing never resets those records to $0.
 const CACHE_VERSION = 32;
 
-function loadRecordCache(): Map<string, RecordCacheEntry> {
-  if (recordCache) return recordCache;
-  recordCache = new Map();
-  cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
-  cacheKoshaMtime = 0;
-  cacheOverridesMtime = 0;
-  cacheTouchedPaths = new Set();
-  cacheLastGcAtMs = 0;
+function loadRecordCache(homeDir?: string): RecordCacheStore {
+  const key = cacheHomeKey(homeDir);
+  const existing = recordCachesByHome.get(key);
+  if (existing) return existing;
+  const cacheDir = join(key, ".cache", "tokmeter");
+  const cacheFile = join(cacheDir, "scan-cache.json");
+  const store: RecordCacheStore = {
+    cacheDir,
+    cacheFile,
+    entries: new Map(),
+    stats: { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 },
+    createdAt: null,
+    koshaMtime: 0,
+    overridesMtime: 0,
+    touchedPaths: new Set(),
+    lastGcAtMs: 0,
+    dirty: false,
+    lastSavedAtMs: 0,
+  };
+  recordCachesByHome.set(key, store);
   try {
-    ensurePrivateDirectory(CACHE_DIR);
-    ensurePrivateFile(CACHE_FILE);
-    if (existsSync(CACHE_FILE)) {
-      const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8")) as CacheFile;
+    ensurePrivateDirectory(cacheDir);
+    ensurePrivateFile(cacheFile);
+    if (existsSync(cacheFile)) {
+      const data = JSON.parse(readFileSync(cacheFile, "utf-8")) as CacheFile;
       // Reject old cache versions — fall through to empty map so all files
       // get re-parsed with the current parser semantics.
       if (data.version !== CACHE_VERSION) {
@@ -195,18 +219,18 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
         console.warn(
           `[tokmeter] scan-cache schema bumped ${data.version} → ${CACHE_VERSION}, rebuilding from JSONL on next scan. One-time cost.`
         );
-        cacheCreatedAt = new Date().toISOString();
-        return recordCache;
+        store.createdAt = new Date().toISOString();
+        return store;
       }
-      cacheCreatedAt = data.createdAt;
-      cacheKoshaMtime = data.koshaMtime ?? 0;
-      cacheOverridesMtime = data.overridesMtime ?? 0;
+      store.createdAt = data.createdAt;
+      store.koshaMtime = data.koshaMtime ?? 0;
+      store.overridesMtime = data.overridesMtime ?? 0;
       for (const [k, v] of Object.entries(data.files)) {
-        recordCache.set(k, v);
+        store.entries.set(k, v);
       }
     }
   } catch {}
-  return recordCache;
+  return store;
 }
 
 /**
@@ -216,73 +240,103 @@ function loadRecordCache(): Map<string, RecordCacheEntry> {
  * retention. We sweep at most every {@link CACHE_GC_INTERVAL_MS} so a tight
  * scan loop (every 12 s) doesn't fan out N stats per tick.
  *
- * Eviction rule: a path is dropped only if (a) it wasn't observed live during
- * this process AND (b) it does not exist on disk. The "observed live" guard
- * keeps a quiet session file (e.g. a claude-code project the user didn't
- * touch today) safe — we only evict files that are genuinely gone. This is
- * safe to do synchronously: an evicted path that gets re-created later will
- * just miss the cache once and re-parse.
+ * Eviction rule: a path is dropped only if (a) it wasn't observed live since
+ * the previous sweep AND (b) it does not exist on disk. `touchedPaths` resets
+ * at the end of each sweep so files deleted after an earlier scan do not stay
+ * pinned in RAM forever.
  */
-function gcStalePathsIfDue(): void {
-  if (!recordCache) return;
+function gcStalePathsIfDue(store: RecordCacheStore): void {
   const nowMs = Date.now();
-  if (nowMs - cacheLastGcAtMs < CACHE_GC_INTERVAL_MS) return;
-  cacheLastGcAtMs = nowMs;
-  const touched = cacheTouchedPaths;
-  if (!touched) return;
-  for (const key of [...recordCache.keys()]) {
-    if (touched.has(key)) continue;
+  if (nowMs - store.lastGcAtMs < CACHE_GC_INTERVAL_MS) return;
+  store.lastGcAtMs = nowMs;
+  for (const key of [...store.entries.keys()]) {
+    if (store.touchedPaths.has(key)) continue;
     if (!existsSync(key)) {
-      recordCache.delete(key);
+      store.entries.delete(key);
+      store.dirty = true;
     }
   }
+  store.touchedPaths.clear();
 }
 
-function saveRecordCache(): void {
-  if (!recordCache) return;
+function saveRecordCacheStore(
+  store: RecordCacheStore,
+  options?: { force?: boolean; minIntervalMs?: number }
+): void {
   try {
-    gcStalePathsIfDue();
-    ensurePrivateDirectory(CACHE_DIR);
+    gcStalePathsIfDue(store);
+    if (!store.dirty) return;
+    const minIntervalMs = options?.minIntervalMs ?? CACHE_SAVE_MIN_INTERVAL_MS;
+    if (
+      !options?.force &&
+      store.lastSavedAtMs > 0 &&
+      Date.now() - store.lastSavedAtMs < minIntervalMs
+    ) {
+      return;
+    }
+    ensurePrivateDirectory(store.cacheDir);
     const data: CacheFile = {
       version: CACHE_VERSION,
-      createdAt: cacheCreatedAt || new Date().toISOString(),
+      createdAt: store.createdAt || new Date().toISOString(),
       lastScanAt: new Date().toISOString(),
-      koshaMtime: cacheKoshaMtime,
-      overridesMtime: cacheOverridesMtime,
+      koshaMtime: store.koshaMtime,
+      overridesMtime: store.overridesMtime,
       stats: {
-        ...cacheStats,
-        files: recordCache.size,
-        records: [...recordCache.values()].reduce((s, e) => s + e.records.length, 0),
+        ...store.stats,
+        files: store.entries.size,
+        records: [...store.entries.values()].reduce((s, e) => s + e.records.length, 0),
       },
-      files: Object.fromEntries(recordCache),
+      files: Object.fromEntries(store.entries),
     };
     // Atomic write: tmp file + rename prevents corruption from concurrent processes
-    writePrivateFile(CACHE_FILE, JSON.stringify(data));
+    writePrivateFile(store.cacheFile, JSON.stringify(data));
+    store.dirty = false;
+    store.lastSavedAtMs = Date.now();
   } catch {}
 }
 
 /** Kosha registry mtime associated with the currently-loaded cache, or 0. */
-export function getCachedKoshaMtime(): number {
-  loadRecordCache();
-  return cacheKoshaMtime;
+export function getCachedKoshaMtime(homeDir?: string): number {
+  return loadRecordCache(homeDir).koshaMtime;
 }
 
 /** Record the kosha registry mtime that cached `cost` fields were priced against. */
-export function setCachedKoshaMtime(mtimeMs: number): void {
-  loadRecordCache();
-  cacheKoshaMtime = mtimeMs;
+export function setCachedKoshaMtime(mtimeMs: number, homeDir?: string): void {
+  const store = loadRecordCache(homeDir);
+  if (store.koshaMtime !== mtimeMs) {
+    store.koshaMtime = mtimeMs;
+    store.dirty = true;
+  }
 }
 
 /** Pricing-overrides mtime associated with the currently-loaded cache, or 0. */
-export function getCachedOverridesMtime(): number {
-  loadRecordCache();
-  return cacheOverridesMtime;
+export function getCachedOverridesMtime(homeDir?: string): number {
+  return loadRecordCache(homeDir).overridesMtime;
 }
 
 /** Record the pricing-overrides mtime that today's cached costs were priced against. */
-export function setCachedOverridesMtime(mtimeMs: number): void {
-  loadRecordCache();
-  cacheOverridesMtime = mtimeMs;
+export function setCachedOverridesMtime(mtimeMs: number, homeDir?: string): void {
+  const store = loadRecordCache(homeDir);
+  if (store.overridesMtime !== mtimeMs) {
+    store.overridesMtime = mtimeMs;
+    store.dirty = true;
+  }
+}
+
+/** Mark the record cache for `homeDir` dirty after in-place cost enrichment. */
+export function markRecordCacheDirty(homeDir?: string): void {
+  loadRecordCache(homeDir).dirty = true;
+}
+
+/**
+ * Records last parsed for a file, straight from the in-memory cache — no stat,
+ * no freshness check, never touches disk. For hot-path readers (a statusline
+ * tick) that want "everything the daemon has parsed from this transcript"
+ * and can tolerate the tail being as stale as the daemon's refresh cadence.
+ */
+export function peekCachedRecords(path: string, homeDir?: string): TokenRecord[] | null {
+  const entry = loadRecordCache(homeDir).entries.get(path);
+  return entry ? [...entry.records] : null;
 }
 
 /**
@@ -297,17 +351,10 @@ export function setCachedOverridesMtime(mtimeMs: number): void {
  * cache-set race that would otherwise let a concurrent writer's appended
  * bytes vanish on the next exact-match check).
  */
-/**
- * Records last parsed for a file, straight from the in-memory cache — no stat,
- * no freshness check, never touches disk. For hot-path readers (a statusline
- * tick) that want "everything the daemon has parsed from this transcript"
- * and can tolerate the tail being as stale as the daemon's refresh cadence.
- */
-export function peekCachedRecords(path: string): TokenRecord[] | null {
-  return loadRecordCache().get(path)?.records ?? null;
-}
-
-export async function getCachedRecords(path: string): Promise<
+export async function getCachedRecords(
+  path: string,
+  homeDir?: string
+): Promise<
   | { hit: true; records: TokenRecord[] }
   | {
       hit: false;
@@ -316,14 +363,13 @@ export async function getCachedRecords(path: string): Promise<
       statHint?: { mtimeMs: number; sizeBytes: number };
     }
 > {
-  const cache = loadRecordCache();
-  // Record that we've observed this path live during this process — keeps the
-  // GC sweep from evicting files we're actively scanning even if a transient
-  // stat fails inside the sweep.
-  cacheTouchedPaths?.add(path);
-  const entry = cache.get(path);
+  const store = loadRecordCache(homeDir);
+  // Record that we've observed this path live — keeps the GC sweep from
+  // evicting files we're actively scanning even if a transient stat fails.
+  store.touchedPaths.add(path);
+  const entry = store.entries.get(path);
   if (!entry) {
-    cacheStats.cacheMisses++;
+    store.stats.cacheMisses++;
     return { hit: false, appendOffset: 0, cachedRecords: [] };
   }
   try {
@@ -331,24 +377,24 @@ export async function getCachedRecords(path: string): Promise<
     const statHint = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
     // Exact hit: nothing changed
     if (s.mtimeMs === entry.mtimeMs && s.size === entry.sizeBytes) {
-      cacheStats.cacheHits++;
-      return { hit: true, records: entry.records };
+      store.stats.cacheHits++;
+      return { hit: true, records: [...entry.records] };
     }
     // File grew: append-only parse from where we left off
     if (s.size > entry.sizeBytes) {
-      cacheStats.appends++;
+      store.stats.appends++;
       return {
         hit: false,
         appendOffset: entry.sizeBytes,
-        cachedRecords: entry.records,
+        cachedRecords: [...entry.records],
         statHint,
       };
     }
     // File shrunk or rewritten: full re-parse
-    cacheStats.cacheMisses++;
+    store.stats.cacheMisses++;
     return { hit: false, appendOffset: 0, cachedRecords: [], statHint };
   } catch {
-    cacheStats.cacheMisses++;
+    store.stats.cacheMisses++;
     return { hit: false, appendOffset: 0, cachedRecords: [] };
   }
 }
@@ -366,58 +412,90 @@ export async function getCachedRecords(path: string): Promise<
 export async function setCachedRecords(
   path: string,
   records: TokenRecord[],
-  statHint?: { mtimeMs: number; sizeBytes: number }
+  statHint?: { mtimeMs: number; sizeBytes: number },
+  homeDir?: string
 ): Promise<void> {
-  const cache = loadRecordCache();
-  cacheTouchedPaths?.add(path);
+  const store = loadRecordCache(homeDir);
+  store.touchedPaths.add(path);
+  const snapshot = [...records];
   try {
     if (statHint) {
-      cache.set(path, {
+      store.entries.set(path, {
         mtimeMs: statHint.mtimeMs,
         sizeBytes: statHint.sizeBytes,
-        records,
+        records: snapshot,
       });
+      store.dirty = true;
       return;
     }
     const s = await stat(path);
-    cache.set(path, { mtimeMs: s.mtimeMs, sizeBytes: s.size, records });
+    store.entries.set(path, { mtimeMs: s.mtimeMs, sizeBytes: s.size, records: snapshot });
+    store.dirty = true;
   } catch {}
 }
 
-/** Flush the in-memory record cache to disk. */
-export function saveRecordCacheToDisk(): void {
-  saveRecordCache();
+/** Flush the in-memory record cache to disk when dirty (throttled unless forced). */
+export function saveRecordCacheToDisk(
+  homeDir?: string,
+  options?: { force?: boolean; minIntervalMs?: number }
+): void {
+  const store = recordCachesByHome.get(cacheHomeKey(homeDir));
+  if (!store) return;
+  saveRecordCacheStore(store, options);
 }
 
-/** Remove specific entries from both in-memory and disk cache (used after cleanup). */
-export function invalidateRecordCache(paths: string[]): void {
-  const cache = loadRecordCache();
+/** Force-flush every dirty in-memory record cache across all home dirs (for shutdown). */
+export function flushAllRecordCaches(): void {
+  for (const store of recordCachesByHome.values()) {
+    saveRecordCacheStore(store, { force: true });
+  }
+}
+
+function invalidateInStore(store: RecordCacheStore, paths: string[]): boolean {
+  let removed = false;
   for (const p of paths) {
-    cache.delete(p);
+    if (store.entries.delete(p)) removed = true;
 
     const directoryPrefix = p.endsWith("/") || p.endsWith("\\") ? p : `${p}/`;
     const windowsDirectoryPrefix = p.endsWith("\\") || p.endsWith("/") ? p : `${p}\\`;
 
-    for (const key of cache.keys()) {
+    for (const key of store.entries.keys()) {
       if (key.startsWith(directoryPrefix) || key.startsWith(windowsDirectoryPrefix)) {
-        cache.delete(key);
+        store.entries.delete(key);
+        removed = true;
       }
     }
   }
-  saveRecordCache();
+  return removed;
+}
+
+/** Remove specific entries from both in-memory and disk cache (used after cleanup). */
+export function invalidateRecordCache(paths: string[], homeDir?: string): void {
+  const stores =
+    homeDir !== undefined ? [loadRecordCache(homeDir)] : [...recordCachesByHome.values()];
+  if (stores.length === 0 && homeDir === undefined) {
+    stores.push(loadRecordCache(undefined));
+  }
+  for (const store of stores) {
+    if (invalidateInStore(store, paths)) {
+      store.dirty = true;
+      saveRecordCacheStore(store, { force: true });
+    }
+  }
 }
 
 /** Clear the entire record cache, forcing a full rescan. */
-export function clearRecordCache(): void {
-  const cache = loadRecordCache();
-  cache.clear();
-  recordCache = cache;
-  cacheStats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
-  cacheTouchedPaths = new Set();
-  cacheLastGcAtMs = 0;
+export function clearRecordCache(homeDir?: string): void {
+  const store = loadRecordCache(homeDir);
+  store.entries.clear();
+  store.stats = { files: 0, records: 0, cacheHits: 0, cacheMisses: 0, appends: 0 };
+  store.touchedPaths.clear();
+  store.lastGcAtMs = 0;
+  store.dirty = false;
+  store.lastSavedAtMs = 0;
   try {
-    if (existsSync(CACHE_FILE)) {
-      unlinkSync(CACHE_FILE);
+    if (existsSync(store.cacheFile)) {
+      unlinkSync(store.cacheFile);
     }
   } catch {}
 }

@@ -141,11 +141,13 @@ export {
 export {
   ALL_PARSERS,
   ALL_PROVIDER_IDS,
+  createParsers,
   getParser,
   getParsers,
 } from "./parsers/index.js";
 export {
   clearRecordCache,
+  flushAllRecordCaches,
   invalidateRecordCache,
   peekCachedRecords,
 } from "./parsers/utils.js";

@@ -448,7 +448,7 @@ export class CleanupService {
         (t) => (t.type === "file" || t.type === "directory") && !failedTargets.has(resolve(t.path))
       )
       .map((t) => t.path);
-    invalidateRecordCache(deletedPaths);
+    invalidateRecordCache(deletedPaths, this.homeDir);
     pruneJournalPaths(this.homeDir, deletedPaths);
     prunePendingRestorePaths(this.homeDir, deletedPaths);
 

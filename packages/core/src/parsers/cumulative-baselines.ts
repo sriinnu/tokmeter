@@ -22,7 +22,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
+import {
+  ensurePrivateDirectory,
+  ensurePrivateFile,
+  withFileLockSync,
+  writePrivateFile,
+} from "../private-files.js";
 
 export interface Buckets {
   inputTokens: number;
@@ -82,6 +87,20 @@ export function readBaselines(homeDir: string): CumulativeBaselines {
 export function writeBaselines(baselines: CumulativeBaselines, homeDir: string): void {
   const path = baselinePath(homeDir);
   writePrivateFile(path, JSON.stringify(baselines));
+}
+
+/** Synchronize read-modify-write of cumulative-baselines.json across parsers and processes. */
+export function updateBaselines<T>(
+  homeDir: string,
+  fn: (baselines: CumulativeBaselines, changed: { value: boolean }) => T
+): T {
+  return withFileLockSync(`${baselinePath(homeDir)}.lock`, () => {
+    const baselines = readBaselines(homeDir);
+    const changed = { value: false };
+    const result = fn(baselines, changed);
+    if (changed.value) writeBaselines(baselines, homeDir);
+    return result;
+  });
 }
 
 /**

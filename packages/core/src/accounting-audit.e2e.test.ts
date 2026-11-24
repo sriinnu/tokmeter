@@ -266,11 +266,12 @@ describe("midnight seal", () => {
   });
 
   function writeHermeticPricing(
+    targetHome: string,
     overrides: Record<string, { inputPerMillion: number; outputPerMillion: number }>,
     mtimeMs: number
   ): void {
-    const koshaDir = join(scratchHome, ".kosha");
-    const tokmeterDir = join(scratchHome, ".tokmeter");
+    const koshaDir = join(targetHome, ".kosha");
+    const tokmeterDir = join(targetHome, ".tokmeter");
     mkdirSync(koshaDir, { recursive: true });
     mkdirSync(tokmeterDir, { recursive: true });
     const regPath = join(koshaDir, "registry.json");
@@ -284,69 +285,62 @@ describe("midnight seal", () => {
   test("prices a late straggler written before midnight when sealing with pricing enabled", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-28T23:50:00"));
-    try {
-      writeHermeticPricing(
-        { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
-        at("2026-10-28T23:00:00")
-      );
-      session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
-      const daemon = new TokmeterCore({ homeDir: home, skipPricing: false });
-      await daemon.scan();
+    writeHermeticPricing(
+      home,
+      { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
+      at("2026-10-28T23:00:00")
+    );
+    session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: false });
+    await daemon.scan();
 
-      // Written at 23:57 — after pre-midnight tick, before midnight.
-      session("b.jsonl", [line("B", at("2026-10-28T23:57:44"), 90)], at("2026-10-28T23:57:44"));
+    // Written at 23:57 — after pre-midnight tick, before midnight.
+    session("b.jsonl", [line("B", at("2026-10-28T23:57:44"), 90)], at("2026-10-28T23:57:44"));
 
-      vi.setSystemTime(at("2026-10-29T00:00:04"));
-      await daemon.refreshToday(at("2026-10-29T00:00:04"));
+    vi.setSystemTime(at("2026-10-29T00:00:04"));
+    await daemon.refreshToday(at("2026-10-29T00:00:04"));
 
-      // Combined: 20 input ($0.0002) + 790 output ($0.0790) = $0.0792 (not $0.0701).
-      const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-28");
-      expect(sealed?.recordCount).toBe(2);
-      expect(sealed?.outputTokens).toBe(790);
-      expect(sealed?.cost).toBeCloseTo(0.0792, 6);
-      expect(store.readDayFile(home, "2026-10-28")?.cost).toBeCloseTo(0.0792, 6);
-    } finally {
-      rmSync(join(scratchHome, ".tokmeter"), { recursive: true, force: true });
-      rmSync(join(scratchHome, ".kosha"), { recursive: true, force: true });
-    }
+    // Combined: 20 input ($0.0002) + 790 output ($0.0790) = $0.0792 (not $0.0701).
+    const sealed = daemon.getDailyAggregates().find((day) => day.date === "2026-10-28");
+    expect(sealed?.recordCount).toBe(2);
+    expect(sealed?.outputTokens).toBe(790);
+    expect(sealed?.cost).toBeCloseTo(0.0792, 6);
+    expect(store.readDayFile(home, "2026-10-28")?.cost).toBeCloseTo(0.0792, 6);
   });
 
   test("prices a late straggler using outgoing day cards when pricing changes across midnight", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-28T23:50:00"));
-    try {
-      writeHermeticPricing(
-        { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
-        at("2026-10-28T23:00:00")
-      );
-      session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
-      const daemon = new TokmeterCore({ homeDir: home, skipPricing: false });
-      await daemon.scan();
+    writeHermeticPricing(
+      home,
+      { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
+      at("2026-10-28T23:00:00")
+    );
+    session("a.jsonl", [line("A", at("2026-10-28T23:40:00"), 700)], at("2026-10-28T23:40:00"));
+    const daemon = new TokmeterCore({ homeDir: home, skipPricing: false });
+    await daemon.scan();
 
-      session("b.jsonl", [line("B", at("2026-10-28T23:57:44"), 90)], at("2026-10-28T23:57:44"));
+    session("b.jsonl", [line("B", at("2026-10-28T23:57:44"), 90)], at("2026-10-28T23:57:44"));
 
-      // Rate triples/quintuples right after midnight before the first post-midnight tick.
-      writeHermeticPricing(
-        { "claude-x": { inputPerMillion: 10, outputPerMillion: 500 } },
-        at("2026-10-29T00:00:02")
-      );
-      session("t.jsonl", [line("T", at("2026-10-29T00:00:03"), 20)], at("2026-10-29T00:00:03"));
+    // Rate triples/quintuples right after midnight before the first post-midnight tick.
+    writeHermeticPricing(
+      home,
+      { "claude-x": { inputPerMillion: 10, outputPerMillion: 500 } },
+      at("2026-10-29T00:00:02")
+    );
+    session("t.jsonl", [line("T", at("2026-10-29T00:00:03"), 20)], at("2026-10-29T00:00:03"));
 
-      vi.setSystemTime(at("2026-10-29T00:00:04"));
-      await daemon.refreshToday(at("2026-10-29T00:00:04"));
+    vi.setSystemTime(at("2026-10-29T00:00:04"));
+    await daemon.refreshToday(at("2026-10-29T00:00:04"));
 
-      // Yesterday must keep 100/M output for both A and straggler B ($0.0792).
-      const sealed = store.readDayFile(home, "2026-10-28");
-      expect(sealed?.recordCount).toBe(2);
-      expect(sealed?.cost).toBeCloseTo(0.0792, 6);
-      expect(sealed?.prices?.["claude-x"]?.card.outputPerMillion).toBe(100);
+    // Yesterday must keep 100/M output for both A and straggler B ($0.0792).
+    const sealed = store.readDayFile(home, "2026-10-28");
+    expect(sealed?.recordCount).toBe(2);
+    expect(sealed?.cost).toBeCloseTo(0.0792, 6);
+    expect(sealed?.prices?.["claude-x"]?.card.outputPerMillion).toBe(100);
 
-      // Today gets billed at the new 500/M rate: 10*10/1e6 + 20*500/1e6 = $0.0101.
-      expect(daemon.getTodayAggregate()?.cost).toBeCloseTo(0.0101, 6);
-    } finally {
-      rmSync(join(scratchHome, ".tokmeter"), { recursive: true, force: true });
-      rmSync(join(scratchHome, ".kosha"), { recursive: true, force: true });
-    }
+    // Today gets billed at the new 500/M rate: 10*10/1e6 + 20*500/1e6 = $0.0101.
+    expect(daemon.getTodayAggregate()?.cost).toBeCloseTo(0.0101, 6);
   });
 });
 

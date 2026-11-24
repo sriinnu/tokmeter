@@ -212,15 +212,14 @@ const INPUT_ONLY_MODES = new Set(["embedding", "rerank"]);
  * refresh (via `kosha-update` or the `kosha` CLI) always bumps the signal,
  * even when the manifest itself happens to be byte-identical.
  */
-export function getKoshaRegistryMtime(): number {
-  const home = homedir();
+export function getKoshaRegistryMtime(homeDir: string = homedir()): number {
   let maxMtime = 0;
   try {
-    const manifest = statSync(join(home, ".kosha", "registry.json")).mtimeMs;
+    const manifest = statSync(join(homeDir, ".kosha", "registry.json")).mtimeMs;
     if (manifest > maxMtime) maxMtime = manifest;
   } catch {}
   try {
-    const cacheDir = statSync(join(home, ".kosha", "cache")).mtimeMs;
+    const cacheDir = statSync(join(homeDir, ".kosha", "cache")).mtimeMs;
     if (cacheDir > maxMtime) maxMtime = cacheDir;
   } catch {}
   return maxMtime;
@@ -271,16 +270,18 @@ const RETRY_AFTER_MS = 60 * 60 * 1000;
 let backgroundRefreshInFlight: Promise<void> | null = null;
 let lastRefreshAttemptAt = 0;
 export function maybeBackgroundRefresh(
-  options: { staleAfterMs?: number; cacheDir?: string; now?: number } = {}
+  options: { staleAfterMs?: number; cacheDir?: string; homeDir?: string; now?: number } = {}
 ): void {
   const staleAfter = options.staleAfterMs ?? STALE_AFTER_MS;
   const now = options.now ?? Date.now();
-  const mtime = getKoshaRegistryMtime();
+  const mtime = getKoshaRegistryMtime(options.homeDir);
   if (mtime > 0 && now - mtime < staleAfter) return; // fresh
   if (backgroundRefreshInFlight) return; // already refreshing
   if (lastRefreshAttemptAt > 0 && now - lastRefreshAttemptAt < RETRY_AFTER_MS) return;
   lastRefreshAttemptAt = now;
-  backgroundRefreshInFlight = refreshKoshaRegistry(options.cacheDir)
+  const cacheDir =
+    options.cacheDir ?? (options.homeDir ? join(options.homeDir, ".kosha", "cache") : undefined);
+  backgroundRefreshInFlight = refreshKoshaRegistry(cacheDir)
     .catch(() => {
       // Background refresh failures are non-fatal — the next scan still works
       // off whatever cache we have, and a manual `tokmeter update` can retry.
@@ -291,8 +292,8 @@ export function maybeBackgroundRefresh(
 }
 
 /** Path to the user-config pricing override file. */
-function userOverridesPath(): string {
-  return join(homedir(), ".tokmeter", "pricing-overrides.json");
+function userOverridesPath(homeDir: string = homedir()): string {
+  return join(homeDir, ".tokmeter", "pricing-overrides.json");
 }
 
 /**
@@ -310,9 +311,9 @@ export function todayPricingStale(
 }
 
 /** mtime of the user-overrides file (0 if absent). */
-function userOverridesMtime(): number {
+function userOverridesMtime(homeDir: string = homedir()): number {
   try {
-    return statSync(userOverridesPath()).mtimeMs;
+    return statSync(userOverridesPath(homeDir)).mtimeMs;
   } catch {
     return 0;
   }
@@ -329,9 +330,9 @@ export interface UserOverrides {
   priceAs: Map<string, string>;
 }
 
-function loadUserOverrides(): UserOverrides {
+function loadUserOverrides(homeDir: string = homedir()): UserOverrides {
   try {
-    return parseUserOverrides(JSON.parse(readFileSync(userOverridesPath(), "utf-8")));
+    return parseUserOverrides(JSON.parse(readFileSync(userOverridesPath(homeDir), "utf-8")));
   } catch {
     // missing or malformed — quietly fall through with empty maps
     return { prices: new Map(), priceAs: new Map() };
@@ -384,13 +385,26 @@ export class PricingService {
   private registry: any = null;
   private initialized = false;
   private cacheDir?: string;
+  private configuredHomeDir?: string;
   private registryMtime = 0;
 
   /** True if kosha-discovery failed to load (e.g. not installed). */
   public pricingUnavailable = false;
 
-  constructor(cacheDir?: string) {
+  constructor(cacheDir?: string, homeDir?: string) {
     this.cacheDir = cacheDir;
+    this.configuredHomeDir = homeDir;
+  }
+
+  private effectiveHomeDir(): string {
+    return this.configuredHomeDir ?? homedir();
+  }
+
+  getCacheDir(): string | undefined {
+    return (
+      this.cacheDir ??
+      (this.configuredHomeDir ? join(this.configuredHomeDir, ".kosha", "cache") : undefined)
+    );
   }
 
   /**
@@ -417,8 +431,9 @@ export class PricingService {
    * cache is cleared so the next `getPricing()` call returns fresh rates.
    */
   async init(): Promise<void> {
-    const currentMtime = getKoshaRegistryMtime();
-    const overridesMtime = userOverridesMtime();
+    const homeDir = this.effectiveHomeDir();
+    const currentMtime = getKoshaRegistryMtime(homeDir);
+    const overridesMtime = userOverridesMtime(homeDir);
     if (
       this.initialized &&
       currentMtime === this.registryMtime &&
@@ -433,17 +448,18 @@ export class PricingService {
     }
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
-      this.registry = await createKosha(koshaConfig(this.cacheDir));
+      this.registry = await createKosha(koshaConfig(this.getCacheDir()));
       this.pricingUnavailable = false;
     } catch {
       this.registry = null;
       this.pricingUnavailable = true;
     }
-    const loaded = loadUserOverrides();
+    const loaded = loadUserOverrides(homeDir);
+    const postInitMtime = getKoshaRegistryMtime(homeDir);
     this.userOverrides = loaded.prices;
     this.userPriceAs = loaded.priceAs;
     this.userOverridesMtime = overridesMtime;
-    this.registryMtime = currentMtime;
+    this.registryMtime = Math.max(currentMtime, postInitMtime);
     this.initialized = true;
   }
 
@@ -837,7 +853,7 @@ export class PricingService {
     providerId?: string;
     canonicalProviderId?: string;
   }> | null {
-    const path = join(homedir(), ".kosha", "registry.json");
+    const path = join(this.effectiveHomeDir(), ".kosha", "registry.json");
     let mtime = 0;
     let size = 0;
     try {
@@ -938,7 +954,7 @@ export class PricingService {
     pricing?: ModelPricing;
     providerId?: string;
   }> | null {
-    const path = join(homedir(), ".kosha", "catalog-only.json");
+    const path = join(this.effectiveHomeDir(), ".kosha", "catalog-only.json");
     try {
       const { mtimeMs, size } = statSync(path);
       if (this.catalogOnlyCache?.mtimeMs === mtimeMs && this.catalogOnlyCache.sizeBytes === size) {

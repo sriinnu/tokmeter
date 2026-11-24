@@ -12,15 +12,27 @@
 import { isBeforeToday, startOfLocalDay } from "./date-utils.js";
 import { CUSTOM_ELIGIBLE } from "./parsers/custom-source.js";
 import { getParsers } from "./parsers/index.js";
-import { saveRecordCacheToDisk, settleInferredTimes } from "./parsers/utils.js";
+import {
+  markRecordCacheDirty,
+  saveRecordCacheToDisk,
+  settleInferredTimes,
+} from "./parsers/utils.js";
 import type { PricingService } from "./pricing.js";
 import { enrichCosts, toErrorMessage, type UnpricedTracker } from "./pricing-enrichment.js";
-import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
+import type {
+  ProviderId,
+  ScanFaultDetail,
+  ScanMeta,
+  ScanWarning,
+  SessionParser,
+  TokenRecord,
+} from "./types.js";
 
 export interface ScanContext {
   homeDir: string;
   pricing: PricingService;
   skipPricing: boolean;
+  parsers?: SessionParser[];
 }
 
 /**
@@ -107,7 +119,11 @@ export async function scanRawRecords(
   const parserIds = providers?.length
     ? [...new Set(providers.map((p): ProviderId => (CUSTOM_ELIGIBLE.has(p) ? "custom" : p)))]
     : undefined;
-  const parsers = getParsers(parserIds);
+  const parsers = ctx.parsers
+    ? parserIds?.length
+      ? ctx.parsers.filter((p) => parserIds.includes(p.providerId))
+      : ctx.parsers
+    : getParsers(parserIds);
   const results = await Promise.all(
     parsers.map(async (parser) => {
       try {
@@ -170,11 +186,18 @@ export async function scanRawRecords(
     const referenceTimestamp = Date.now();
     const recordsToPrice = selectRecordsToPrice(records, warningScope, referenceTimestamp);
     if (recordsToPrice.length > 0) {
-      await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings, unpricedTracker);
+      const enriched = await enrichCosts(
+        recordsToPrice,
+        ctx.pricing,
+        warningScope,
+        warnings,
+        unpricedTracker
+      );
+      if (enriched > 0) markRecordCacheDirty(ctx.homeDir);
     }
   }
 
-  saveRecordCacheToDisk();
+  saveRecordCacheToDisk(ctx.homeDir, { force: warningScope === "history" });
   return records;
 }
 
