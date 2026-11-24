@@ -46,6 +46,7 @@ export default function BarField3D({
   const hostRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BarFieldScene | null>(null);
+  const scheduleRef = useRef<(() => void) | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -112,16 +113,27 @@ export default function BarField3D({
       field.render();
       placeLabels();
     };
-    const loop = () => {
+    const tick = () => {
+      frame = 0;
       // update() returns true while damping is still settling the camera.
-      if (controls.update() || dirty) {
+      const damping = controls.update();
+      if (damping || dirty) {
         dirty = false;
         draw();
       }
-      frame = requestAnimationFrame(loop);
+      if (damping || dirty) {
+        frame = requestAnimationFrame(tick);
+      }
     };
-    const onChange = () => {
+    const schedule = () => {
       dirty = true;
+      if (frame === 0) {
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    scheduleRef.current = schedule;
+    const onChange = () => {
+      schedule();
     };
     controls.addEventListener("change", onChange);
 
@@ -133,12 +145,11 @@ export default function BarField3D({
         framed = true;
         field.resetView();
       }
-      dirty = true;
+      schedule();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
-    frame = requestAnimationFrame(loop);
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -148,7 +159,7 @@ export default function BarField3D({
         mesh.setColorAt(lit, field.colorOf(lit));
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         lit = -1;
-        dirty = true;
+        schedule();
       }
     };
     const onMove = (event: PointerEvent) => {
@@ -169,7 +180,7 @@ export default function BarField3D({
         lit = hit.instanceId;
         mesh.setColorAt(lit, field.colorOf(lit).clone().lerp(palette.highlight, 0.45));
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-        dirty = true;
+        schedule();
       }
       const [row, col] = field.cellOf(hit.instanceId);
       setHover({ x: event.clientX - rect.left, y: event.clientY - rect.top, row, col });
@@ -183,6 +194,7 @@ export default function BarField3D({
 
     return () => {
       cancelAnimationFrame(frame);
+      scheduleRef.current = null;
       observer.disconnect();
       controls.removeEventListener("change", onChange);
       host.removeEventListener("pointermove", onMove);
@@ -204,8 +216,10 @@ export default function BarField3D({
   }
 
   const value = hover ? matrix.values[hover.row]?.[hover.col] : undefined;
-  const nudge = (dTheta: number, dPhi: number, zoom: number) =>
+  const nudge = (dTheta: number, dPhi: number, zoom: number) => {
     sceneRef.current?.orbit(dTheta, dPhi, zoom);
+    scheduleRef.current?.();
+  };
 
   return (
     <div className="grid gap-2">
@@ -274,7 +288,14 @@ export default function BarField3D({
         >
           <Minus aria-hidden />
         </Button>
-        <Button variant="outline" size="sm" onClick={() => sceneRef.current?.resetView()}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            sceneRef.current?.resetView();
+            scheduleRef.current?.();
+          }}
+        >
           <Undo2 aria-hidden /> Reset view
         </Button>
         <span className="text-xs text-muted-foreground">

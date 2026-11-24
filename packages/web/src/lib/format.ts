@@ -65,6 +65,25 @@ export function plural(count: number, noun: string): string {
   return `${formatInteger(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+export interface TokenBucketFields {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
+/** Total tokens across the five canonical usage buckets. */
+export function sumTokenBuckets(r: TokenBucketFields): number {
+  return (
+    (r.inputTokens ?? 0) +
+    (r.outputTokens ?? 0) +
+    (r.cacheReadTokens ?? 0) +
+    (r.cacheWriteTokens ?? 0) +
+    (r.reasoningTokens ?? 0)
+  );
+}
+
 /** Axis ticks: short and never "$0.0000" (the tile formatter's sub-dollar precision). */
 export function formatAxisCurrency(value: number): string {
   if (value === 0) return "$0";

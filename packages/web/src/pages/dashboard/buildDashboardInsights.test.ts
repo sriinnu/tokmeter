@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LiveData } from "../../hooks/useLiveData.js";
 import type { TokmeterData } from "../../hooks/useTokmeterData.js";
+import { sumTokenBuckets } from "../../lib/format.js";
 import { buildDashboardInsights } from "./buildDashboardInsights.js";
 
 function createLiveData(overrides?: Partial<LiveData>): LiveData {
@@ -353,5 +354,47 @@ describe("buildDashboardInsights", () => {
       topModel: "m-a",
     });
     expect(live.today.hourly).toHaveLength(24);
+  });
+
+  it("handles today records with undefined cost without NaN poisoning and shares sumTokenBuckets", () => {
+    const now = new Date();
+    const data = createTokmeterData();
+    const ts = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 0).getTime();
+    data.records = [
+      {
+        timestamp: ts,
+        model: "m-undef",
+        provider: "p",
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        cost: 2.5,
+      },
+      {
+        timestamp: ts + 1,
+        model: "m-undef",
+        provider: "p",
+        inputTokens: 40,
+        outputTokens: 10,
+        cost: undefined,
+      },
+    ];
+
+    const insights = buildDashboardInsights(data, createLiveData());
+    expect(insights.todayModels).toHaveLength(1);
+    expect(insights.todayModels[0].cost).toBe(2.5);
+    expect(Number.isNaN(insights.todayModels[0].cost)).toBe(false);
+    expect(insights.todayModels[0].totalTokens).toBe(200);
+    expect(
+      sumTokenBuckets({
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 25,
+        cacheWriteTokens: 10,
+        reasoningTokens: 15,
+      })
+    ).toBe(200);
   });
 });

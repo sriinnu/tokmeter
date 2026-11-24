@@ -1,36 +1,20 @@
-import type { LiveData } from "../../hooks/useLiveData.js";
 import type {
   TokmeterDailyEntry,
   TokmeterData,
   TokmeterProjectSummary,
 } from "../../hooks/useTokmeterData.js";
+import { localDateKey } from "../../lib/dates.js";
+import { sumTokenBuckets } from "../../lib/format.js";
 import {
   formatDashboardCostPerMillion,
   formatDashboardCurrency,
-  formatDashboardDate,
   formatDashboardNumber,
   formatDashboardPercent,
-  formatDashboardTimestamp,
 } from "./dashboardFormatters.js";
 
-const TREND_WINDOW_DAYS = 30;
 const SPARKLINE_WINDOW_DAYS = 14;
 const MAX_TOP_PROJECTS = 6;
 const MAX_TOP_MODELS = 8;
-const MAX_RECENT_DAYS = 8;
-
-export interface DashboardHeroMetric {
-  label: string;
-  value: string;
-  note: string;
-}
-
-export interface DashboardSpotlight {
-  eyebrow: string;
-  title: string;
-  body: string;
-  chips: string[];
-}
 
 export interface DashboardKpi {
   label: string;
@@ -74,20 +58,6 @@ export interface DashboardModelInsight {
   percentageOfTotal: number;
 }
 
-export interface DashboardRecentDayInsight {
-  date: string;
-  totalTokens: number;
-  cost: number;
-  records: number;
-  cacheTokens: number;
-}
-
-export interface DashboardActivityHighlight {
-  label: string;
-  value: string;
-  helper: string;
-}
-
 /** One local-hour bucket of today's activity, derived from the raw records window. */
 export interface DashboardTodayHour {
   hour: number;
@@ -109,23 +79,18 @@ export interface DashboardTodayInsight {
 }
 
 export interface DashboardInsights {
-  spotlight: DashboardSpotlight;
-  heroMetrics: DashboardHeroMetric[];
   kpis: DashboardKpi[];
-  activityHighlights: DashboardActivityHighlight[];
   providerInsights: DashboardProviderInsight[];
   topProjects: DashboardProjectInsight[];
   topModels: DashboardModelInsight[];
   todayModels: DashboardModelInsight[];
   today: DashboardTodayInsight;
-  recentDays: DashboardRecentDayInsight[];
-  trendWindow: TokmeterDailyEntry[];
 }
 
 /**
  * Build the derived dashboard view-model from Tokmeter summary data and live daemon state.
  */
-export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): DashboardInsights {
+export function buildDashboardInsights(data: TokmeterData, _liveData?: unknown): DashboardInsights {
   const { stats, daily, projects, models, records } = data;
   const cacheTokens = stats.cacheReadTokens + stats.cacheWriteTokens;
   const cacheShare = stats.totalTokens > 0 ? cacheTokens / stats.totalTokens : 0;
@@ -133,22 +98,13 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
   const costPerMillion =
     stats.totalTokens > 0 ? (stats.totalCost / stats.totalTokens) * 1_000_000 : null;
 
-  const trendWindow = daily.slice(-TREND_WINDOW_DAYS);
-  const recentWindow = trendWindow.length > 0 ? trendWindow : daily;
   // "Today" must actually BE today. The last daily entry is just the most
   // recent active day — on a fresh morning or against a stale summary it's a
   // previous day, and presenting it as today misreports spend (the
   // display-vs-ledger scare class). No entry for the local date → no today.
-  const todayKey = rawLocalDateKey(Date.now());
+  const todayKey = localDateKey(Date.now());
   const latestDay = daily[daily.length - 1] ?? null;
   const today = latestDay && latestDay.date === todayKey ? latestDay : null;
-  const peakDay = daily.reduce<TokmeterDailyEntry | null>((best, entry) => {
-    if (!best || entry.cost > best.cost) {
-      return entry;
-    }
-
-    return best;
-  }, null);
 
   const providerInsights = aggregateProviderInsights(projects);
   const topProjects = [...projects]
@@ -174,69 +130,7 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
   const todayModels = buildTodayModels(records, todayKey);
   const todayInsight = buildTodayInsight(records, todayKey, today);
 
-  const recentDays = [...daily]
-    .slice(-MAX_RECENT_DAYS)
-    .reverse()
-    .map((entry) => ({
-      date: entry.date,
-      totalTokens: entry.totalTokens,
-      cost: entry.cost,
-      records: entry.records,
-      cacheTokens: entry.cacheReadTokens + entry.cacheWriteTokens,
-    }));
-
   const topProject = topProjects[0] ?? null;
-  const topProvider = providerInsights[0] ?? null;
-  const liveLabel =
-    liveData.status === "connected"
-      ? `${liveData.aggregated?.sessions ?? 0} live session${
-          liveData.aggregated?.sessions === 1 ? "" : "s"
-        }`
-      : liveData.status === "connecting"
-        ? "Daemon reconnecting"
-        : "Daemon offline";
-
-  const spotlight: DashboardSpotlight = {
-    eyebrow: "Transparent command center",
-    title:
-      liveData.status === "connected"
-        ? "Live sessions layered over stable history."
-        : "Stable history, resilient fallback, clear spend lanes.",
-    body: buildSpotlightBody({
-      peakDay,
-      topProject,
-      topProvider,
-      totalProjects: stats.projects,
-      totalProviders: stats.providers,
-      totalRecords: stats.totalRecords,
-    }),
-    chips: [
-      `${stats.projects} projects`,
-      `${stats.providers} providers`,
-      `${formatDashboardPercent(cacheShare)} cache share`,
-      liveLabel,
-    ],
-  };
-
-  const heroMetrics: DashboardHeroMetric[] = [
-    {
-      label: "Records",
-      value: formatDashboardNumber(stats.totalRecords),
-      note: `${formatDashboardNumber(stats.models)} models tracked`,
-    },
-    {
-      label: "Last activity",
-      value: stats.lastUsed ? formatDashboardTimestamp(stats.lastUsed) : "Awaiting activity",
-      note: stats.firstUsed
-        ? `Since ${formatDashboardTimestamp(stats.firstUsed)}`
-        : "First scan warming up",
-    },
-    {
-      label: "Peak day",
-      value: peakDay ? formatDashboardDate(peakDay.date) : "No peak yet",
-      note: peakDay ? `${formatDashboardCurrency(peakDay.cost)} spent` : "Need more history",
-    },
-  ];
 
   const kpis: DashboardKpi[] = [
     {
@@ -299,50 +193,13 @@ export function buildDashboardInsights(data: TokmeterData, liveData: LiveData): 
     },
   ];
 
-  const activityHighlights: DashboardActivityHighlight[] = [
-    {
-      label: "Window",
-      value: `${recentWindow.length} days`,
-      helper:
-        recentWindow.length === TREND_WINDOW_DAYS ? "Latest rolling view" : "All available history",
-    },
-    {
-      label: "Peak spend",
-      value: peakDay ? formatDashboardCurrency(peakDay.cost) : "$0.00",
-      helper: peakDay ? formatDashboardDate(peakDay.date) : "No peak yet",
-    },
-    {
-      label: "Recent tokens",
-      value: formatDashboardNumber(recentWindow.reduce((sum, entry) => sum + entry.totalTokens, 0)),
-      helper: `${formatDashboardNumber(
-        recentWindow.reduce((sum, entry) => sum + entry.records, 0)
-      )} records in window`,
-    },
-    {
-      label: "Today state",
-      value: liveLabel,
-      helper: today
-        ? `${formatDashboardPercent(
-            today.totalTokens > 0
-              ? (today.cacheReadTokens + today.cacheWriteTokens) / today.totalTokens
-              : 0
-          )} cached today`
-        : "Live overlay pending",
-    },
-  ];
-
   return {
-    spotlight,
-    heroMetrics,
     kpis,
-    activityHighlights,
     providerInsights,
     topProjects,
     topModels,
     todayModels,
     today: todayInsight,
-    recentDays,
-    trendWindow,
   };
 }
 
@@ -374,14 +231,9 @@ function buildTodayInsight(
   let records = 0;
   for (const raw of rawRecords) {
     const r = raw as unknown as RawRecord;
-    if (rawLocalDateKey(r.timestamp) !== todayKey) continue;
+    if (localDateKey(r.timestamp) !== todayKey) continue;
     const hour = new Date(r.timestamp).getHours();
-    const tokens =
-      (r.inputTokens ?? 0) +
-      (r.outputTokens ?? 0) +
-      (r.cacheReadTokens ?? 0) +
-      (r.cacheWriteTokens ?? 0) +
-      (r.reasoningTokens ?? 0);
+    const tokens = sumTokenBuckets(r);
     const bucket = hourly[hour];
     bucket.cost += r.cost ?? 0;
     bucket.totalTokens += tokens;
@@ -489,48 +341,6 @@ function buildProjectInsight(project: TokmeterProjectSummary): DashboardProjectI
   };
 }
 
-function buildSpotlightBody({
-  peakDay,
-  topProject,
-  topProvider,
-  totalProjects,
-  totalProviders,
-  totalRecords,
-}: {
-  peakDay: TokmeterDailyEntry | null;
-  topProject: DashboardProjectInsight | null;
-  topProvider: DashboardProviderInsight | null;
-  totalProjects: number;
-  totalProviders: number;
-  totalRecords: number;
-}): string {
-  const fragments = [
-    `${formatDashboardNumber(totalRecords)} records span ${totalProjects} projects across ${totalProviders} providers.`,
-  ];
-
-  if (topProject) {
-    fragments.push(
-      `${topProject.project} currently leads spend at ${formatDashboardCurrency(
-        topProject.totalCost
-      )}.`
-    );
-  }
-
-  if (topProvider) {
-    fragments.push(
-      `${topProvider.provider} owns the widest lane at ${formatDashboardPercent(
-        topProvider.percentageOfTotal / 100
-      )} of tracked spend.`
-    );
-  }
-
-  if (peakDay) {
-    fragments.push(`${formatDashboardDate(peakDay.date)} stands out as the busiest day so far.`);
-  }
-
-  return fragments.join(" ");
-}
-
 function getAverageDailyCost(daily: TokmeterDailyEntry[]): number {
   if (daily.length === 0) {
     return 0;
@@ -549,11 +359,6 @@ interface RawRecord {
   cacheWriteTokens: number;
   reasoningTokens: number;
   cost: number;
-}
-
-function rawLocalDateKey(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function buildTodayModels(
@@ -576,12 +381,13 @@ function buildTodayModels(
 
   for (const raw of rawRecords) {
     const r = raw as unknown as RawRecord;
-    if (rawLocalDateKey(r.timestamp) !== todayDate) continue;
+    if (localDateKey(r.timestamp) !== todayDate) continue;
 
     const key = `${r.provider}::${r.model}`;
+    const recordCost = Number.isFinite(r.cost) ? r.cost : 0;
     const cur = byKey.get(key);
     if (cur) {
-      cur.cost += r.cost;
+      cur.cost += recordCost;
       cur.inputTokens += r.inputTokens ?? 0;
       cur.outputTokens += r.outputTokens ?? 0;
       cur.cacheTokens += (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0);
@@ -590,7 +396,7 @@ function buildTodayModels(
       byKey.set(key, {
         model: r.model,
         provider: r.provider,
-        cost: r.cost ?? 0,
+        cost: recordCost,
         inputTokens: r.inputTokens ?? 0,
         outputTokens: r.outputTokens ?? 0,
         cacheTokens: (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0),

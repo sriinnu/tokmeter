@@ -36,6 +36,14 @@ export type MenubarColorSource = "off" | "context" | "block" | "budget";
 const MENUBAR_COLOR_SOURCES: readonly MenubarColorSource[] = ["off", "context", "block", "budget"];
 export type WeekChartStyle = "line" | "bars" | "area";
 const WEEK_CHART_STYLES: readonly WeekChartStyle[] = ["line", "bars", "area"];
+export const BUILT_IN_THEME_IDS = [
+  "default",
+  "tokyo-night",
+  "catppuccin",
+  "dracula",
+  "solarized-dark",
+  "high-contrast",
+] as const;
 
 /** Formats a custom source's files can be written in. */
 export type CustomSourceFormat = "tokmeter-usage-jsonl";
@@ -60,6 +68,10 @@ export interface CustomSource {
 
 export interface UserConfig {
   version: 1;
+  /** Color theme id shared across CLI/statusline/TUI. */
+  theme: string;
+  /** Enable Nerd Font glyphs in statusline/TUI when true. */
+  nerdFont: boolean;
   bar: {
     /** Seconds between bar fetches from the daemon. */
     refreshSeconds: number;
@@ -147,6 +159,8 @@ export interface UserConfig {
  */
 export const DEFAULT_CONFIG: UserConfig = {
   version: 1,
+  theme: "default",
+  nerdFont: false,
   bar: {
     refreshSeconds: 30,
     menubarColorSource: "context",
@@ -178,11 +192,30 @@ export function configFilePath(home: string = homedir()): string {
  * Load config, overlaying on DEFAULT_CONFIG. Missing or malformed files are
  * tolerated — the user gets defaults and a .bak copy if the file was junk.
  */
+function readLegacyThemeConfig(home: string): { theme?: string; nerdFont?: boolean } | null {
+  const legacyPath = join(home, ".config", "tokmeter", "config.json");
+  if (!existsSync(legacyPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(legacyPath, "utf-8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    return {
+      ...(typeof obj.theme === "string" ? { theme: obj.theme } : {}),
+      ...(typeof obj.nerdFont === "boolean" ? { nerdFont: obj.nerdFont } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function loadConfig(home: string = homedir()): UserConfig {
   const path = configFilePath(home);
   ensurePrivateDirectory(dirname(path));
   ensurePrivateFile(path);
-  if (!existsSync(path)) return { ...DEFAULT_CONFIG };
+  const legacy = readLegacyThemeConfig(home);
+  if (!existsSync(path)) {
+    return legacy ? normalizeConfig(legacy as Partial<UserConfig>) : { ...DEFAULT_CONFIG };
+  }
 
   const raw = readFileSync(path, "utf-8");
   let parsed: unknown;
@@ -190,14 +223,26 @@ export function loadConfig(home: string = homedir()): UserConfig {
     parsed = JSON.parse(raw);
   } catch (err) {
     backupBrokenConfigFile(path, `JSON parse error: ${(err as Error).message}`);
-    return { ...DEFAULT_CONFIG };
+    return legacy ? normalizeConfig(legacy as Partial<UserConfig>) : { ...DEFAULT_CONFIG };
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     backupBrokenConfigFile(path, "root is not an object");
-    return { ...DEFAULT_CONFIG };
+    return legacy ? normalizeConfig(legacy as Partial<UserConfig>) : { ...DEFAULT_CONFIG };
   }
 
-  return normalizeConfig(parsed as Partial<UserConfig>);
+  const rawObj = parsed as Partial<UserConfig>;
+  const merged: Partial<UserConfig> = legacy
+    ? {
+        ...rawObj,
+        ...(rawObj.theme === undefined && legacy.theme !== undefined
+          ? { theme: legacy.theme }
+          : {}),
+        ...(rawObj.nerdFont === undefined && legacy.nerdFont !== undefined
+          ? { nerdFont: legacy.nerdFont }
+          : {}),
+      }
+    : rawObj;
+  return normalizeConfig(merged);
 }
 
 /** Atomic write — tmp + rename. Safe against power loss and concurrent CLIs. */
@@ -224,8 +269,11 @@ function backupBrokenConfigFile(path: string, reason: string): void {
  */
 function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
   const d = DEFAULT_CONFIG;
+  const rawTheme = typeof raw.theme === "string" ? raw.theme.trim() : "";
   return {
     version: 1,
+    theme: rawTheme.length > 0 ? rawTheme : d.theme,
+    nerdFont: raw.nerdFont === true,
     bar: {
       refreshSeconds: clampPositiveInt(raw.bar?.refreshSeconds, d.bar.refreshSeconds, 5, 3600),
       menubarColorSource: MENUBAR_COLOR_SOURCES.includes(
@@ -348,6 +396,17 @@ export interface ConfigFieldMeta {
 }
 
 export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
+  {
+    path: "theme",
+    type: "enum",
+    enumValues: BUILT_IN_THEME_IDS,
+    description: "Built-in color theme id for statusline and TUI.",
+  },
+  {
+    path: "nerdFont",
+    type: "bool",
+    description: "Enable Nerd Font glyphs in statusline/TUI (requires a patched font).",
+  },
   {
     path: "bar.refreshSeconds",
     type: "int",

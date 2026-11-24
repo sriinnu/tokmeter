@@ -1029,7 +1029,12 @@ export class TokmeterCore {
     today?: boolean;
     providers?: ProviderId[];
   }): ModelSummary[] {
-    return computeModelCostsFromState(this.aggregates, this.todayAccumulator, options ?? {});
+    return computeModelCostsFromState(
+      this.aggregates,
+      this.todayAccumulator,
+      options ?? {},
+      this.getAliases()
+    );
   }
 
   getProviderBreakdown() {
@@ -1095,7 +1100,12 @@ export class TokmeterCore {
     project?: string;
     providers?: ProviderId[];
   }): DailyEntry[] {
-    return computeDailyBreakdownFromState(this.aggregates, this.todayAccumulator, options);
+    return computeDailyBreakdownFromState(
+      this.aggregates,
+      this.todayAccumulator,
+      options,
+      this.getAliases()
+    );
   }
 
   /**
@@ -1142,25 +1152,35 @@ export class TokmeterCore {
         ...(today ? [today] : []),
       ]);
       const meta = this.getScanMeta();
+      const extraWarnings: ScanWarning[] = [];
+      if (query.narrowedBuckets) {
+        extraWarnings.push({
+          scope: "history",
+          message:
+            "Filtered totals use saved project/provider buckets. First/last timestamps retain project-day bounds; scan metadata describes the full refresh.",
+        });
+      }
+      if (query.skippedLegacyDays.length > 0) {
+        const sample = query.skippedLegacyDays.slice(0, 3).join(", ");
+        const suffix = query.skippedLegacyDays.length > 3 ? ", ..." : "";
+        extraWarnings.push({
+          scope: "history",
+          message: `${query.skippedLegacyDays.length} legacy sealed day(s) (${sample}${suffix}) lacked per-model buckets and were omitted from the filtered summary.`,
+        });
+      }
       return {
         records: this.recentRecords.filter(query.matchesRecord),
         projects: computeAllProjectsFromState(days, null, aliases),
         models: computeModelCostsFromState(days, null, {}),
         daily: computeDailyBreakdownFromState(days, null),
         stats: computeStatsFromState(days, null, aliases),
-        meta: query.narrowedBuckets
-          ? {
-              ...meta,
-              warnings: [
-                ...meta.warnings,
-                {
-                  scope: "history",
-                  message:
-                    "Filtered totals use saved project/provider buckets. First/last timestamps retain project-day bounds; scan metadata describes the full refresh.",
-                },
-              ],
-            }
-          : meta,
+        meta:
+          extraWarnings.length > 0
+            ? {
+                ...meta,
+                warnings: [...meta.warnings, ...extraWarnings],
+              }
+            : meta,
         // Live signals have rolling/intraday scopes that daily buckets cannot reconstruct.
       };
     }
