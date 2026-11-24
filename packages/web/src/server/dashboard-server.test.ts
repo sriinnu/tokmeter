@@ -124,8 +124,12 @@ describe("app-owned dashboard server", () => {
     ).toBe("ready");
     const bootstrap = await get(url, `/?session=${launchNonce}`);
     expect(bootstrap.status).toBe(302);
-    expect(String(bootstrap.headers["set-cookie"])).toContain("HttpOnly; SameSite=Strict");
-    const headers = { Cookie: String(bootstrap.headers["set-cookie"]).split(";")[0] };
+    const rawCookie = String(bootstrap.headers["set-cookie"]);
+    expect(rawCookie).toContain("HttpOnly; SameSite=Strict");
+    expect(rawCookie).not.toContain(launchNonce);
+    // Launch nonce is single-use: replaying it without the minted cookie returns 403.
+    expect((await get(url, `/?session=${launchNonce}`)).status).toBe(403);
+    const headers = { Cookie: rawCookie.split(";")[0] };
     for (const path of [
       "/",
       "/projects",
@@ -151,11 +155,20 @@ describe("app-owned dashboard server", () => {
   });
 
   it("refuses foreign requests, mutations, private exports and escaped paths", async () => {
-    const { url } = await launch();
+    const { child, url } = await launch();
     expect((await get(url, "/", { Host: "evil.example:3000" })).status).toBe(403);
     expect((await get(url, "/", { Origin: "https://evil.example" })).status).toBe(403);
     expect((await get(url, "/api/summary", {}, "POST")).status).toBe(405);
     expect((await get(url, "/?session=wrong")).status).toBe(403);
+    // Multi-byte UTF-8 string with the same UTF-16 length must fail closed without throwing RangeError.
+    const sameCharLenUtf8 = "é".repeat(launchNonce.length);
+    expect((await get(url, `/?session=${encodeURIComponent(sameCharLenUtf8)}`)).status).toBe(403);
+    // Parent can issue a fresh single-use reopen nonce over stdin.
+    const reopenNonce = "fedcba98-7654-3210-fedc-ba9876543210";
+    child.stdin.write(`${reopenNonce}\n`);
+    await new Promise((resolveTick) => setTimeout(resolveTick, 50));
+    expect((await get(url, `/?session=${reopenNonce}`)).status).toBe(302);
+    expect((await get(url, `/?session=${reopenNonce}`)).status).toBe(403);
     for (const path of [
       "/data.json",
       "/private.txt",

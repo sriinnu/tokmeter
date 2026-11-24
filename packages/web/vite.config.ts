@@ -27,11 +27,10 @@ const devCapability = randomBytes(32).toString("hex");
 const devCookieName = `tokmeter_web_dev_${randomBytes(4).toString("hex")}`;
 
 function hasDevCapability(value: string | undefined): boolean {
-  return (
-    !!value &&
-    value.length === devCapability.length &&
-    timingSafeEqual(Buffer.from(value), Buffer.from(devCapability))
-  );
+  if (!value) return false;
+  const a = Buffer.from(value, "utf8");
+  const b = Buffer.from(devCapability, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function tokmeterSummaryDevPlugin(): Plugin {

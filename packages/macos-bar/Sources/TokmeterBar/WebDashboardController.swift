@@ -57,9 +57,9 @@ final class WebDashboardController: ObservableObject {
 
     /// A per-launch browser capability. The dashboard trades it for an
     /// HttpOnly cookie, then redirects to `/` so it leaves the address bar.
-    private var launchURL: URL {
+    private func launchURL(nonce: String) -> URL {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "session", value: generation.uuidString)]
+        components.queryItems = [URLQueryItem(name: "session", value: nonce)]
         return components.url!
     }
 
@@ -118,10 +118,15 @@ final class WebDashboardController: ObservableObject {
         let preferred = preferredPort()
         if isRunning, process?.isRunning == true {
             if preferred == startedPreferred {
-                openURL(launchURL)
-                return
+                let reopenNonce = UUID().uuidString
+                if (try? input?.fileHandleForWriting.write(contentsOf: Data("\(reopenNonce)\n".utf8))) != nil {
+                    openURL(launchURL(nonce: reopenNonce))
+                    return
+                }
+                stop()
+            } else {
+                stop()
             }
-            stop()
         }
         isStarting = true
         error = nil
@@ -185,7 +190,7 @@ final class WebDashboardController: ObservableObject {
                String(data: data, encoding: .utf8) == "ready" {
                 guard generation == attempt, child.isRunning, !Task.isCancelled else { return }
                 isRunning = true
-                openURL(launchURL)
+                openURL(launchURL(nonce: attempt.uuidString))
                 return
             }
             try? await Task.sleep(nanoseconds: 150_000_000)

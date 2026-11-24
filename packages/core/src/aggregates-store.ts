@@ -46,13 +46,15 @@ import {
   type ModelDayBucket,
   nullMap,
   type ProjectDayBucket,
+  type ProjectModelDayBucket,
   type ProviderDayBucket,
   recordFingerprint,
   type TokenBuckets,
   toNullMap,
 } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
-import type { DayPrices } from "./day-prices.js";
+import type { DayPrice, DayPrices } from "./day-prices.js";
+import type { PriceCard } from "./pricing.js";
 import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
 import type { TokenRecord } from "./types.js";
 
@@ -680,7 +682,7 @@ export class DailyAccumulator {
    * Useful for read-side queries (`/api/today`, `getStats()`).
    */
   toAggregate(): DailyAggregate {
-    return finalizeDay(structuredClone(this.agg));
+    return finalizeDay(cloneAggregate(this.agg));
   }
 
   /**
@@ -703,9 +705,56 @@ export class DailyAccumulator {
    * via this method MUST own the input, because we trust it without re-dedup.
    */
   hydrate(seed: DailyAggregate): void {
-    this.agg = structuredClone(seed);
+    this.agg = cloneAggregate(seed);
     this.fingerprints.clear();
   }
+}
+
+function clonePriceCard(card: PriceCard): PriceCard {
+  if (!card.schedule) return { ...card };
+  return {
+    ...card,
+    schedule: {
+      ...card.schedule,
+      peakWindows: card.schedule.peakWindows.map((w) => ({ ...w, days: [...w.days] })),
+      offPeak: { ...card.schedule.offPeak },
+    },
+  };
+}
+
+/** Deep-clone a DailyAggregate while preserving null-prototype maps on every dictionary. */
+function cloneAggregate(agg: DailyAggregate): DailyAggregate {
+  const models = nullMap<ModelDayBucket>();
+  for (const [k, v] of Object.entries(agg.models)) {
+    models[k] = { ...v, providers: [...v.providers] };
+  }
+  const projects = nullMap<ProjectDayBucket>();
+  for (const [k, p] of Object.entries(agg.projects)) {
+    const modelBuckets = nullMap<ProjectModelDayBucket>();
+    for (const [mk, mv] of Object.entries(p.modelBuckets)) {
+      modelBuckets[mk] = { ...mv };
+    }
+    projects[k] = { ...p, models: [...p.models], modelBuckets };
+  }
+  const providers = nullMap<ProviderDayBucket>();
+  for (const [k, v] of Object.entries(agg.providers)) {
+    providers[k] = { ...v };
+  }
+  let prices: DayPrices | undefined;
+  if (agg.prices) {
+    prices = nullMap<DayPrice>();
+    for (const [k, v] of Object.entries(agg.prices)) {
+      prices[k] = { ...v, card: clonePriceCard(v.card) };
+    }
+  }
+  return {
+    ...agg,
+    models,
+    projects,
+    providers,
+    ...(agg.costByHour ? { costByHour: [...agg.costByHour] } : {}),
+    ...(prices ? { prices } : {}),
+  };
 }
 
 function makeEmptyDay(date: string): DailyAggregate {

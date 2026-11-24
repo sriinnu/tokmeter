@@ -15,8 +15,8 @@
 # Stages:
 #   1. preflight        — semver, release branch, and where a previous run got to
 #   2. bump             — scripts/bump-version.sh
-#   3. secret gate      — scripts/check-no-secrets.sh   (NON-skippable)
-#   4. quality gate     — bun run build && test && lint
+#   3. quality gate     — bun run build && test && lint
+#   4. secret gate      — scripts/check-no-secrets.sh   (NON-skippable)
 #   5. commit           — signed release commit
 #   6. PR + squash      — push, open PR, wait for CI, squash-merge
 #   7. tag              — signed tag on the squashed commit ON MAIN, push
@@ -50,6 +50,13 @@ cd "$ROOT"
 source "$ROOT/scripts/lib/signing.sh"
 
 REPO="sriinnu/tokmeter"
+notes=""
+cleanup() {
+  if [[ -n "${notes:-}" ]]; then
+    rm -f "$notes"
+  fi
+}
+trap cleanup EXIT
 VERSION=""; DRY=0; ASSUME_YES=0; NO_PUBLISH=0; SKIP_BREW=0; SKIP_LOCAL=0
 for arg in "$@"; do
   case "$arg" in
@@ -543,24 +550,28 @@ if [[ -z "$merged" ]]; then
     grep -q "_TODO_" <<<"$section" && die "CHANGELOG section for ${VERSION} still has _TODO_ placeholders — fill it in, commit, rerun."
   fi
 
-  # ── 3. secret gate (mandatory) ─────────────────────────────────────────────
-  # Runs on every pass, resumed or not: a release commit made by hand never
-  # went through it.
-  say "3/12 secret gate"
-  run "bash scripts/check-no-secrets.sh"
-
-  # ── 4. quality gate ────────────────────────────────────────────────────────
-  say "4/12 build + test + lint"
+  # ── 3. quality gate ────────────────────────────────────────────────────────
+  say "3/12 build + test + lint"
   run "bun run build"
   run "bun run test"
   run "bun run lint"
+
+  # ── 4. secret gate (mandatory) ─────────────────────────────────────────────
+  # Runs after build (so dist/ exists for npm pack --dry-run) and after staging
+  # the bump changes on every pass — a release commit made by hand never went
+  # through it.
+  say "4/12 secret gate"
+  if [[ $committed -eq 0 ]]; then
+    # Preflight allowed only bump files to be dirty, so every tracked change is the bump.
+    run "git add -u"
+  fi
+  run "bash scripts/check-no-secrets.sh"
 
   # ── 5. commit (signed) ─────────────────────────────────────────────────────
   say "5/12 release commit (signed)"
   if [[ $committed -eq 1 ]]; then
     skip "$(git log -1 --format='%h %s')"
   else
-    # Preflight allowed only bump files to be dirty, so every tracked change is the bump.
     run "git add -u"
     run_signed "release commit" "git commit -S -m '${SUBJECT}'"
   fi
@@ -647,6 +658,8 @@ else
   confirm "Publish GitHub release ${TAG}? CI then publishes npm, the MCP registry and the bar." \
     || die "release not published. Rerun to resume."
   run "gh release create '${TAG}' --repo '${REPO}' --verify-tag --title '${TAG}' --notes-file '${notes}'"
+  rm -f "$notes"
+  notes=""
 fi
 
 # ── 9. wait for CI ───────────────────────────────────────────────────────────

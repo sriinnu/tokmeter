@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 // App-owned, read-only dashboard server. stdin lifetime belongs to the parent.
 import { createServer } from "node:http";
@@ -10,20 +10,27 @@ const assets = await realpath(assetsArg);
 const tokenPath =
   process.env.TOKMETER_DAEMON_TOKEN_FILE ?? resolve(homedir(), ".tokmeter/daemon/daemon.token");
 
+const sessionSecret = randomBytes(32).toString("hex");
+let pendingStdin = "";
+let activeLaunchNonce = null;
+
+function isValidNonce(value) {
+  return typeof value === "string" && value.length >= 32 && value.length <= 128;
+}
+
 // The parent sends this one-time capability through the private stdin pipe.
 // Putting it in argv would expose it to other local users through `ps`.
-const nonce = await new Promise((resolveNonce, rejectNonce) => {
-  let pending = "";
+const readyNonce = await new Promise((resolveNonce, rejectNonce) => {
   const timeout = setTimeout(() => finish(new Error("Dashboard launch timed out")), 5000);
   const onEnd = () => finish(new Error("Dashboard parent closed before launch"));
   const onData = (chunk) => {
-    pending += chunk.toString("utf8");
-    if (pending.length > 256) return finish(new Error("Invalid dashboard launch"));
-    const newline = pending.indexOf("\n");
+    pendingStdin += chunk.toString("utf8");
+    if (pendingStdin.length > 256) return finish(new Error("Invalid dashboard launch"));
+    const newline = pendingStdin.indexOf("\n");
     if (newline < 0) return;
-    const value = pending.slice(0, newline).trim();
-    if (value.length < 32 || value.length > 128)
-      return finish(new Error("Invalid dashboard launch"));
+    const value = pendingStdin.slice(0, newline).trim();
+    pendingStdin = pendingStdin.slice(newline + 1);
+    if (!isValidNonce(value)) return finish(new Error("Invalid dashboard launch"));
     finish(null, value);
   };
   function finish(error, value) {
@@ -36,10 +43,29 @@ const nonce = await new Promise((resolveNonce, rejectNonce) => {
   process.stdin.on("data", onData);
   process.stdin.once("end", onEnd);
 });
+activeLaunchNonce = readyNonce;
 
-function matchesCapability(value) {
-  if (typeof value !== "string" || value.length !== nonce.length) return false;
-  return timingSafeEqual(Buffer.from(value), Buffer.from(nonce));
+// Subsequent newline-delimited nonces rotate the single-use launch token for reopen requests.
+process.stdin.on("data", (chunk) => {
+  pendingStdin += chunk.toString("utf8");
+  if (pendingStdin.length > 1024) {
+    pendingStdin = "";
+    return;
+  }
+  let newline = pendingStdin.indexOf("\n");
+  while (newline >= 0) {
+    const candidate = pendingStdin.slice(0, newline).trim();
+    pendingStdin = pendingStdin.slice(newline + 1);
+    if (isValidNonce(candidate)) activeLaunchNonce = candidate;
+    newline = pendingStdin.indexOf("\n");
+  }
+});
+
+function matchesSecret(value, expected) {
+  if (typeof value !== "string" || typeof expected !== "string") return false;
+  const a = Buffer.from(value, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 const mime = {
@@ -78,7 +104,7 @@ const server = createServer(async (req, res) => {
     const requestURL = new URL(req.url, "http://localhost");
     const path = requestURL.pathname;
     if (path === "/_tokmeter/ready") {
-      if (!matchesCapability(req.headers["x-tokmeter-launch-nonce"])) {
+      if (!matchesSecret(req.headers["x-tokmeter-launch-nonce"], readyNonce)) {
         reply(403, "text/plain", "Forbidden");
         return;
       }
@@ -86,22 +112,37 @@ const server = createServer(async (req, res) => {
       return;
     }
     const cookieName = `tokmeter_session_${address.port}`;
-    if (path === "/" && matchesCapability(requestURL.searchParams.get("session"))) {
-      res.writeHead(302, {
-        Location: "/",
-        "Set-Cookie": `${cookieName}=${nonce}; HttpOnly; SameSite=Strict; Path=/`,
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-      });
-      res.end();
-      return;
-    }
     const cookie = req.headers.cookie
       ?.split(";")
       .map((part) => part.trim())
       .find((part) => part.startsWith(`${cookieName}=`))
       ?.slice(cookieName.length + 1);
-    if (!matchesCapability(cookie)) {
+    const sessionParam = path === "/" ? requestURL.searchParams.get("session") : null;
+    if (sessionParam !== null) {
+      if (activeLaunchNonce && matchesSecret(sessionParam, activeLaunchNonce)) {
+        activeLaunchNonce = null;
+        res.writeHead(302, {
+          Location: "/",
+          "Set-Cookie": `${cookieName}=${sessionSecret}; HttpOnly; SameSite=Strict; Path=/`,
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
+        });
+        res.end();
+        return;
+      }
+      if (matchesSecret(cookie, sessionSecret)) {
+        res.writeHead(302, {
+          Location: "/",
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
+        });
+        res.end();
+        return;
+      }
+      reply(403, "text/plain", "Forbidden");
+      return;
+    }
+    if (!matchesSecret(cookie, sessionSecret)) {
       reply(403, "text/plain", "Forbidden");
       return;
     }

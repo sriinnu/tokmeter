@@ -8,5 +8,6 @@
       "@sriinnu/tokmeter": ["../core/dist/index.d.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
