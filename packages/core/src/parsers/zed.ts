@@ -30,7 +30,7 @@ import * as zlib from "node:zlib";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { dayDelta, readBaselines, writeBaselines } from "./cumulative-baselines.js";
+import { type Buckets, dayDelta, updateBaselines } from "./cumulative-baselines.js";
 import {
   createRecord,
   expandHome,
@@ -131,9 +131,15 @@ export class ZedParser implements SessionParser {
   }
 
   async scan(homeDir: string): Promise<TokenRecord[]> {
-    const records: TokenRecord[] = [];
-    const baselines = readBaselines(homeDir);
-    const changed = { value: false };
+    const observations: Array<{
+      dbPath: string;
+      threadId: string;
+      updatedMs: number;
+      createdOn?: string;
+      model: string;
+      project: string;
+      current: Buckets;
+    }> = [];
 
     for (const dbPath of this.sessionRoots(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
@@ -149,52 +155,67 @@ export class ZedParser implements SessionParser {
           if (!thread) continue;
 
           const usage = thread.cumulative_token_usage;
-          const current = {
+          const current: Buckets = {
             inputTokens: usage?.input_tokens ?? 0,
             outputTokens: usage?.output_tokens ?? 0,
             cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
             cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
             reasoningTokens: 0,
           };
-          // cumulative_token_usage is the thread's running total "as of its
-          // latest save", so it belongs to updated_at (created_at is kept
-          // unchanged across every later save of a reused thread). Only the
-          // growth since that day began is that day's usage; emitting the
-          // whole total counted a long thread's history again every day it
-          // was touched. See cumulative-baselines.ts.
           const updatedMs = new Date(row.updated_at || row.created_at || "").getTime();
           if (!Number.isFinite(updatedMs)) continue;
           const createdMs = row.created_at ? new Date(row.created_at).getTime() : Number.NaN;
-          const delta = dayDelta(
-            baselines,
-            `zed:${dbPath}#${row.id}`,
-            localDateKey(updatedMs),
+          observations.push({
+            dbPath,
+            threadId: row.id,
+            updatedMs,
+            createdOn: Number.isFinite(createdMs) ? localDateKey(createdMs) : undefined,
+            model: thread.model?.model || "unknown",
+            project: resolveProject(row.folder_paths, row.folder_paths_order),
             current,
-            Number.isFinite(createdMs) ? localDateKey(createdMs) : undefined,
-            changed
-          );
-          if (!delta) continue;
-
-          records.push(
-            createRecord({
-              timestamp: updatedMs,
-              provider: "zed",
-              model: thread.model?.model || "unknown",
-              project: resolveProject(row.folder_paths, row.folder_paths_order),
-              sourceFile: dbPath,
-              threadKey: row.id,
-              inputTokens: delta.inputTokens,
-              outputTokens: delta.outputTokens,
-              cacheReadTokens: delta.cacheReadTokens,
-              cacheWriteTokens: delta.cacheWriteTokens,
-            })
-          );
+          });
         }
       } finally {
         db.close();
       }
     }
-    if (changed.value) writeBaselines(baselines, homeDir);
-    return records;
+
+    if (observations.length === 0) return [];
+    return updateBaselines(homeDir, (baselines, changed) => {
+      const records: TokenRecord[] = [];
+      for (const obs of observations) {
+        // cumulative_token_usage is the thread's running total "as of its
+        // latest save", so it belongs to updated_at (created_at is kept
+        // unchanged across every later save of a reused thread). Only the
+        // growth since that day began is that day's usage; emitting the
+        // whole total counted a long thread's history again every day it
+        // was touched. See cumulative-baselines.ts.
+        const delta = dayDelta(
+          baselines,
+          `zed:${obs.dbPath}#${obs.threadId}`,
+          localDateKey(obs.updatedMs),
+          obs.current,
+          obs.createdOn,
+          changed
+        );
+        if (!delta) continue;
+
+        records.push(
+          createRecord({
+            timestamp: obs.updatedMs,
+            provider: "zed",
+            model: obs.model,
+            project: obs.project,
+            sourceFile: obs.dbPath,
+            threadKey: obs.threadId,
+            inputTokens: delta.inputTokens,
+            outputTokens: delta.outputTokens,
+            cacheReadTokens: delta.cacheReadTokens,
+            cacheWriteTokens: delta.cacheWriteTokens,
+          })
+        );
+      }
+      return records;
+    });
   }
 }

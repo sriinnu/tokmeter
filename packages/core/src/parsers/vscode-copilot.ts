@@ -178,14 +178,18 @@ export class VSCodeCopilotParser implements SessionParser {
 
       for (const file of sessionFiles) {
         records.push(
-          ...(await cachedSessionRecords(file, async () => {
-            const session = file.endsWith(".jsonl")
-              ? await readMutationLog(file)
-              : await readJsonFile<ChatSessionFile>(file);
-            if (!Array.isArray(session?.requests)) return [];
-            const project = await resolveWorkspaceProject(dirname(file));
-            return requestsToRecords(session.requests, project, file);
-          }))
+          ...(await cachedSessionRecords(
+            file,
+            async () => {
+              const session = file.endsWith(".jsonl")
+                ? await readMutationLog(file)
+                : await readJsonFile<ChatSessionFile>(file);
+              if (!Array.isArray(session?.requests)) return [];
+              const project = await resolveWorkspaceProject(dirname(file));
+              return requestsToRecords(session.requests, project, file);
+            },
+            homeDir
+          ))
         );
       }
 
@@ -196,10 +200,14 @@ export class VSCodeCopilotParser implements SessionParser {
 
       for (const file of emptyWindowFiles) {
         records.push(
-          ...(await cachedSessionRecords(file, async () => {
-            const session = await readMutationLog(file);
-            return requestsToRecords(session?.requests, "vscode-copilot", file);
-          }))
+          ...(await cachedSessionRecords(
+            file,
+            async () => {
+              const session = await readMutationLog(file);
+              return requestsToRecords(session?.requests, "vscode-copilot", file);
+            },
+            homeDir
+          ))
         );
       }
     }
@@ -214,9 +222,10 @@ export class VSCodeCopilotParser implements SessionParser {
  */
 async function cachedSessionRecords(
   file: string,
-  parse: () => Promise<TokenRecord[]>
+  parse: () => Promise<TokenRecord[]>,
+  homeDir: string
 ): Promise<TokenRecord[]> {
-  const cached = await getCachedRecords(file);
+  const cached = await getCachedRecords(file, homeDir);
   if (cached.hit) return cached.records;
   let before: { mtimeMs: number; sizeBytes: number } | undefined;
   try {
@@ -224,7 +233,7 @@ async function cachedSessionRecords(
     before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
   } catch {}
   const records = await parse();
-  if (before) await setCachedRecords(file, records, before);
+  if (before) await setCachedRecords(file, records, before, homeDir);
   return records;
 }
 

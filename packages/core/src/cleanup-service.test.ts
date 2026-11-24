@@ -71,11 +71,12 @@ function claudeLine(id: string, ts: number, out: number, cwd = "/tmp/demo"): str
 }
 
 function writeHermeticPricing(
+  home: string,
   overrides: Record<string, { inputPerMillion: number; outputPerMillion: number }>,
   mtimeMs: number
 ): void {
-  const koshaDir = join(scratchHome, ".kosha");
-  const tokmeterDir = join(scratchHome, ".tokmeter");
+  const koshaDir = join(home, ".kosha");
+  const tokmeterDir = join(home, ".tokmeter");
   mkdirSync(koshaDir, { recursive: true });
   mkdirSync(tokmeterDir, { recursive: true });
   const regPath = join(koshaDir, "registry.json");
@@ -124,14 +125,14 @@ describe("CleanupService.restore — relay + historical immutability", () => {
   it("surfaces restored historical files on next scan even when relay already reaches yesterday and preserves frozen rates", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-29T12:00:00"));
+    const home = mkdtempSync(join(tmpdir(), "tokmeter-restore-e2e-"));
+    tempDirs.push(home);
+    clearRecordCache(home);
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
       at("2026-10-29T11:00:00")
     );
-
-    const home = mkdtempSync(join(tmpdir(), "tokmeter-restore-e2e-"));
-    tempDirs.push(home);
-    clearRecordCache();
 
     // Two projects on 2026-10-27 plus an active day on 2026-10-28 (yesterday).
     writeClaudeSession(
@@ -170,6 +171,7 @@ describe("CleanupService.restore — relay + historical immutability", () => {
 
     // Now change rates: restored records on 2026-10-27 must keep the day's stored 100/M rate.
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 500 } },
       at("2026-10-29T12:05:00")
     );
@@ -199,14 +201,14 @@ describe("CleanupService.restore — relay + historical immutability", () => {
   it("preserves scan-cache frozen costs on snapshot + restore without wiping per-record costs", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-29T12:00:00"));
+    const home = mkdtempSync(join(tmpdir(), "tokmeter-snap-restore-"));
+    tempDirs.push(home);
+    clearRecordCache(home);
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
       at("2026-10-29T11:00:00")
     );
-
-    const home = mkdtempSync(join(tmpdir(), "tokmeter-snap-restore-"));
-    tempDirs.push(home);
-    clearRecordCache();
 
     const file = writeClaudeSession(
       home,
@@ -227,6 +229,7 @@ describe("CleanupService.restore — relay + historical immutability", () => {
     rmSync(file);
     store.deleteDayFile(home, "2026-10-27");
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 900 } },
       at("2026-10-29T12:10:00")
     );
@@ -344,14 +347,14 @@ describe("CleanupService.execute — journal, relay, and metadata accounting", (
   it("subtracts deleted records at the sealed day's stored price cards even if scan-cache misses and rates rose later", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(at("2026-10-29T12:00:00"));
+    const home = mkdtempSync(join(tmpdir(), "tokmeter-clean-pricecard-"));
+    tempDirs.push(home);
+    clearRecordCache(home);
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 100 } },
       at("2026-10-29T11:00:00")
     );
-
-    const home = mkdtempSync(join(tmpdir(), "tokmeter-clean-pricecard-"));
-    tempDirs.push(home);
-    clearRecordCache();
 
     // Sealed day 2026-10-27: projA (100 out -> $0.0101) + projB (200 out -> $0.0201) = $0.0302.
     writeClaudeSession(
@@ -374,8 +377,9 @@ describe("CleanupService.execute — journal, relay, and metadata accounting", (
     expect(store.readDayFile(home, "2026-10-27")?.cost).toBeCloseTo(0.0302, 6);
 
     // Simulate cache eviction + rate spike to 500/M (projA would re-price to $0.0501 > $0.0302!).
-    clearRecordCache();
+    clearRecordCache(home);
     writeHermeticPricing(
+      home,
       { "claude-x": { inputPerMillion: 10, outputPerMillion: 500 } },
       at("2026-10-29T12:05:00")
     );

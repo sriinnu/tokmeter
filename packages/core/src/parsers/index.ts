@@ -30,35 +30,46 @@ import { SyntheticParser } from "./synthetic.js";
 import { VSCodeCopilotParser } from "./vscode-copilot.js";
 import { ZedParser } from "./zed.js";
 
-/** All available parsers. */
-export const ALL_PARSERS: SessionParser[] = [
-  new ClaudeCodeParser(),
-  new OpenCodeParser(),
-  new CodexParser(),
-  new CodexDesktopParser(),
-  new GeminiParser(),
-  new CursorParser(),
-  new AmpParser(),
-  new DroidParser(),
-  new OpenClawParser(),
-  new PiParser(),
-  new KimiParser(),
-  new QwenParser(),
-  new RooCodeParser(),
-  new KiloParser(),
-  new KiloCliParser(),
-  new MuxParser(),
-  new VSCodeCopilotParser(),
-  new AntigravityParser(),
-  new ZedParser(),
-  new MuseParser(),
-  new ClineParser(),
-  new AugmentParser(),
-  new CopilotCliParser(),
-  new DeepSeekHarnessParser(),
-  new CustomSourceParser(),
-  new SyntheticParser(),
-];
+function buildParsers(): SessionParser[] {
+  return [
+    new ClaudeCodeParser(),
+    new OpenCodeParser(),
+    new CodexParser(),
+    new CodexDesktopParser(),
+    new GeminiParser(),
+    new CursorParser(),
+    new AmpParser(),
+    new DroidParser(),
+    new OpenClawParser(),
+    new PiParser(),
+    new KimiParser(),
+    new QwenParser(),
+    new RooCodeParser(),
+    new KiloParser(),
+    new KiloCliParser(),
+    new MuxParser(),
+    new VSCodeCopilotParser(),
+    new AntigravityParser(),
+    new ZedParser(),
+    new MuseParser(),
+    new ClineParser(),
+    new AugmentParser(),
+    new CopilotCliParser(),
+    new DeepSeekHarnessParser(),
+    new CustomSourceParser(),
+    new SyntheticParser(),
+  ];
+}
+
+/** Shared static parser instances for metadata queries (`sessionRoots`, `ALL_PROVIDER_IDS`). */
+export const ALL_PARSERS: SessionParser[] = buildParsers();
+
+/** Construct fresh stateful parser instances scoped to a single TokmeterCore instance. */
+export function createParsers(ids?: ProviderId[]): SessionParser[] {
+  const fresh = buildParsers();
+  if (!ids || ids.length === 0) return fresh;
+  return fresh.filter((p) => ids.includes(p.providerId));
+}
 
 /** Get a parser by provider ID. */
 export function getParser(id: ProviderId): SessionParser | undefined {

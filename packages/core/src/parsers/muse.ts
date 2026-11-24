@@ -102,7 +102,7 @@ export class MuseParser implements SessionParser {
     }
 
     for (const file of files) {
-      const cached = await getCachedRecords(file);
+      const cached = await getCachedRecords(file, homeDir);
       let records: TokenRecord[];
       if (cached.hit) {
         records = cached.records;
@@ -113,7 +113,7 @@ export class MuseParser implements SessionParser {
           before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
         } catch {}
         records = await this.parseFile(file);
-        if (before) await setCachedRecords(file, records, before);
+        if (before) await setCachedRecords(file, records, before, homeDir);
       }
       if (records.length > 0) await onFile(records);
     }

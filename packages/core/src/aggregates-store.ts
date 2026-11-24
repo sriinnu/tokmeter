@@ -55,7 +55,7 @@ import {
 import { localDateKey } from "./date-utils.js";
 import type { DayPrice, DayPrices } from "./day-prices.js";
 import type { PriceCard } from "./pricing.js";
-import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
+import { ensurePrivateDirectory, ensurePrivateFile, withFileLockSync } from "./private-files.js";
 import type { TokenRecord } from "./types.js";
 
 const STORE_DIR_NAME = ".cache/tokmeter/aggregates";
@@ -565,17 +565,19 @@ export function sealRolledOverDay(
   prices?: DayPrices
 ): DailyAggregate | null {
   if (prev.date >= todayKey || prev.isEmpty()) return null;
-  if (dayFileMtime(homeDir, prev.date) !== null) return null;
-  const sealed = prev.seal();
-  // The cards the day was priced with (the caller passes none when it can't
-  // vouch for them); only models the day actually used.
-  if (prices) {
-    const used: DayPrices = {};
-    for (const m of Object.keys(sealed.models)) if (prices[m]) used[m] = prices[m];
-    if (Object.keys(used).length > 0) sealed.prices = used;
-  }
-  writeDayFile(homeDir, sealed);
-  return sealed;
+  return withFileLockSync(join(ensureStoreDir(homeDir), `.${prev.date}.seal.lock`), () => {
+    if (dayFileMtime(homeDir, prev.date) !== null) return null;
+    const sealed = prev.seal();
+    // The cards the day was priced with (the caller passes none when it can't
+    // vouch for them); only models the day actually used.
+    if (prices) {
+      const used: DayPrices = {};
+      for (const m of Object.keys(sealed.models)) if (prices[m]) used[m] = prices[m];
+      if (Object.keys(used).length > 0) sealed.prices = used;
+    }
+    writeDayFile(homeDir, sealed);
+    return sealed;
+  });
 }
 
 // ─── DailyAccumulator — the in-memory "today" runner ───────────────────────

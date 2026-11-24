@@ -54,7 +54,7 @@ import { join, resolve, sep } from "node:path";
 import { isValidRecord, recordFingerprint } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import { sanitizeDataLabel } from "./display-safety.js";
-import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
+import { ensurePrivateDirectory, ensurePrivateFile, withFileLockSync } from "./private-files.js";
 import type { ProviderId, TokenRecord } from "./types.js";
 
 const JOURNAL_DIR_NAME = ".cache/tokmeter/today";
@@ -222,37 +222,39 @@ export function pruneJournalPaths(homeDir: string, deletedPaths: string[]): void
     const m = JOURNAL_FILE_PATTERN.exec(name);
     if (!m) continue;
     const date = m[1]!;
-    const loaded = readJournal(homeDir, date);
-    if (!loaded) continue;
+    withFileLockSync(`${journalPath(homeDir, date)}.lock`, () => {
+      const loaded = readJournal(homeDir, date);
+      if (!loaded) return;
 
-    let changed = false;
-    const carried: Record<string, TokenRecord[]> = {};
-    for (const [unit, records] of Object.entries(loaded.carried)) {
-      if (unitMatchesDeleted(unit, records, deleted)) {
-        changed = true;
-      } else {
-        carried[unit] = records;
-      }
-    }
-    let seen: Record<string, TokenRecord[]> | undefined;
-    if (loaded.seen) {
-      seen = {};
-      for (const [unit, records] of Object.entries(loaded.seen)) {
+      let changed = false;
+      const carried: Record<string, TokenRecord[]> = {};
+      for (const [unit, records] of Object.entries(loaded.carried)) {
         if (unitMatchesDeleted(unit, records, deleted)) {
           changed = true;
         } else {
-          seen[unit] = records;
+          carried[unit] = records;
         }
       }
-    }
-    if (changed) {
-      writeJournalFile(homeDir, date, {
-        version: 1,
-        date,
-        carried,
-        ...(seen ? { seen } : {}),
-      });
-    }
+      let seen: Record<string, TokenRecord[]> | undefined;
+      if (loaded.seen) {
+        seen = {};
+        for (const [unit, records] of Object.entries(loaded.seen)) {
+          if (unitMatchesDeleted(unit, records, deleted)) {
+            changed = true;
+          } else {
+            seen[unit] = records;
+          }
+        }
+      }
+      if (changed) {
+        writeJournalFile(homeDir, date, {
+          version: 1,
+          date,
+          carried,
+          ...(seen ? { seen } : {}),
+        });
+      }
+    });
   }
 }
 
@@ -560,29 +562,32 @@ export class TodayJournal {
    * process carried it and then saw it come back.
    */
   private persist(saveSeen: boolean, now: number, returned: string[] = []): void {
-    if (!this.date) return;
-    const onDisk = readJournal(this.homeDir, this.date);
-    const carried = toMap(onDisk?.carried);
-    // Another process's carried unit that's live here stays: withCarried
-    // drops it as already counted, and this process may simply be behind.
-    for (const unit of returned) carried.delete(unit);
-    for (const [unit, records] of this.carried) carried.set(unit, records);
-    this.carried = carried;
-    const body: JournalFile = {
-      version: 1,
-      date: this.date,
-      carried: Object.fromEntries(carried),
-      seen: saveSeen ? Object.fromEntries(this.lastSeen) : onDisk?.seen,
-    };
-    const recordCount = [...Object.values(body.carried), ...Object.values(body.seen ?? {})].reduce(
-      (sum, records) => sum + records.length,
-      0
-    );
-    if (recordCount > MAX_JOURNAL_RECORDS) {
-      throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_RECORDS} valid records`);
-    }
-    writeJournalFile(this.homeDir, this.date, body);
-    if (saveSeen) this.seenSavedAt = now;
+    const date = this.date;
+    if (!date) return;
+    withFileLockSync(`${journalPath(this.homeDir, date)}.lock`, () => {
+      const onDisk = readJournal(this.homeDir, date);
+      const carried = toMap(onDisk?.carried);
+      // Another process's carried unit that's live here stays: withCarried
+      // drops it as already counted, and this process may simply be behind.
+      for (const unit of returned) carried.delete(unit);
+      for (const [unit, records] of this.carried) carried.set(unit, records);
+      this.carried = carried;
+      const body: JournalFile = {
+        version: 1,
+        date,
+        carried: Object.fromEntries(carried),
+        seen: saveSeen ? Object.fromEntries(this.lastSeen) : onDisk?.seen,
+      };
+      const recordCount = [
+        ...Object.values(body.carried),
+        ...Object.values(body.seen ?? {}),
+      ].reduce((sum, records) => sum + records.length, 0);
+      if (recordCount > MAX_JOURNAL_RECORDS) {
+        throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_RECORDS} valid records`);
+      }
+      writeJournalFile(this.homeDir, date, body);
+      if (saveSeen) this.seenSavedAt = now;
+    });
   }
 
   private prune(today: string): void {

@@ -9,6 +9,7 @@ import {
   mkdirSync,
   openSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -70,5 +71,74 @@ export function writePrivateFile(path: string, contents: string | Buffer): void 
   } catch (error) {
     unlinkSync(tmp);
     throw error;
+  }
+}
+
+const LOCK_SLEEP_BUF = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms: number): void {
+  Atomics.wait(LOCK_SLEEP_BUF, 0, 0, ms);
+}
+
+/**
+ * Cross-process mutex using an exclusive (`O_CREAT | O_EXCL | O_NOFOLLOW`)
+ * lock file. Breaks stale locks older than `staleMs` so a crashed writer
+ * cannot wedge later operations.
+ */
+export function withFileLockSync<T>(
+  lockPath: string,
+  fn: () => T,
+  options: { timeoutMs?: number; staleMs?: number } = {}
+): T {
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const staleMs = options.staleMs ?? 10_000;
+  ensurePrivateDirectory(dirname(lockPath));
+  const deadline = Date.now() + timeoutMs;
+  const payload = `${process.pid}:${Date.now()}\n`;
+
+  for (;;) {
+    try {
+      const fd = openSync(
+        lockPath,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+        0o600
+      );
+      try {
+        writeFileSync(fd, payload, "utf8");
+      } finally {
+        closeSync(fd);
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const st = statSync(lockPath);
+        if (Date.now() - st.mtimeMs >= staleMs) {
+          try {
+            unlinkSync(lockPath);
+          } catch {
+            /* another contender removed or replaced the lock */
+          }
+          continue;
+        }
+      } catch {
+        /* lock vanished between EEXIST and stat — retry */
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out acquiring file lock: ${lockPath}`);
+      }
+      sleepSync(15);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* best effort */
+    }
   }
 }

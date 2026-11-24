@@ -80,8 +80,9 @@ export async function enrichCosts(
    * when rebuilding sealed days, which keep the prices they sealed at.
    */
   cardFor?: (r: TokenRecord) => PriceCard | undefined
-): Promise<void> {
+): Promise<number> {
   const warnedModels = new Set<string>();
+  let enriched = 0;
   const costPromises = records.map(async (r) => {
     // An explicit tool-reported $0 is still a fact. Do not replace it with
     // an API-rate estimate or relabel it as missing pricing.
@@ -92,15 +93,23 @@ export async function enrichCosts(
       // from token counts we don't trust the tier split of. Leave cost at 0
       // without touching the unpricedTracker, which exists for the DIFFERENT
       // problem of "kosha doesn't have this model yet."
-      if (r.usage) r.usage.cost = "not_exposed";
+      if (r.usage && r.usage.cost !== "not_exposed") {
+        r.usage.cost = "not_exposed";
+        enriched++;
+      }
       return;
     }
     const card = cardFor?.(r);
     if (card) {
+      const prevCost = r.cost;
+      const prevUsageCost = r.usage?.cost;
       priceWithCard(r, card);
+      if (r.cost !== prevCost || r.usage?.cost !== prevUsageCost) enriched++;
       return;
     }
     try {
+      const prevCost = r.cost;
+      const prevUsageCost = r.usage?.cost;
       r.cost = await pricing.calculateCost(
         r.model,
         r.inputTokens,
@@ -125,6 +134,7 @@ export async function enrichCosts(
       if (r.usage) {
         r.usage.cost = pricingUnavailable ? "not_exposed" : "calculated";
       }
+      if (r.cost !== prevCost || r.usage?.cost !== prevUsageCost) enriched++;
       // Silent $0: pricing returned null, calculateCost returned 0, but the
       // record has real token usage. Track so the UI can surface it instead
       // of letting it disappear into the totals. Skip the track when the
@@ -137,7 +147,10 @@ export async function enrichCosts(
         unpricedTracker.records += 1;
       }
     } catch (error) {
-      if (r.usage) r.usage.cost = "not_exposed";
+      if (r.usage && r.usage.cost !== "not_exposed") {
+        r.usage.cost = "not_exposed";
+        enriched++;
+      }
       if (!warnedModels.has(r.model)) {
         warnedModels.add(r.model);
         warnings.push({
@@ -152,6 +165,7 @@ export async function enrichCosts(
     }
   });
   await Promise.all(costPromises);
+  return enriched;
 }
 
 function hasBillableTokens(r: TokenRecord): boolean {

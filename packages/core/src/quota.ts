@@ -28,12 +28,17 @@
  * which is what the recent pace is measured from.
  */
 
-import { appendFileSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { localDateKey } from "./date-utils.js";
 import { codexHomeDir } from "./parsers/codex.js";
-import { ensurePrivateDirectory, ensurePrivateFile } from "./private-files.js";
+import {
+  ensurePrivateDirectory,
+  ensurePrivateFile,
+  withFileLockSync,
+  writePrivateFile,
+} from "./private-files.js";
 
 export type QuotaAgent = "codex" | "claude-code" | "grok-bot";
 
@@ -464,33 +469,42 @@ export function readQuotaStore(homeDir: string, agent: QuotaAgent): QuotaSample[
  * every render. Lines are appended whole, so concurrent writers interleave
  * lines, never bytes.
  */
-export function recordQuotaSamples(homeDir: string, samples: QuotaSample[]): void {
+export function recordQuotaSamples(
+  homeDir: string,
+  samples: QuotaSample[],
+  options?: { compactThresholdBytes?: number }
+): void {
+  const compactThreshold = options?.compactThresholdBytes ?? STORE_COMPACT_BYTES;
   const byAgent = new Map<QuotaAgent, QuotaSample[]>();
   for (const s of samples) byAgent.set(s.agent, [...(byAgent.get(s.agent) ?? []), s]);
   for (const [agent, fresh] of byAgent) {
     const file = storeFile(homeDir, agent);
-    const known = readQuotaStore(homeDir, agent);
-    const add: QuotaSample[] = [];
-    for (const s of [...fresh].sort((a, b) => a.at - b.at)) {
-      const best = [...known, ...add]
-        .filter((k) => sameWindow(k, s))
-        .reduce((m, k) => Math.max(m, k.usedPct), Number.NEGATIVE_INFINITY);
-      if (s.usedPct > best) add.push(s);
-    }
-    if (add.length === 0) continue;
     try {
-      ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
-      ensurePrivateDirectory(quotaDir(homeDir));
-      ensurePrivateFile(file);
-      appendFileSync(file, add.map((s) => `${JSON.stringify(s)}\n`).join(""), { mode: 0o600 });
-      if (statSync(file).size > STORE_COMPACT_BYTES) {
-        const keep = readQuotaStore(homeDir, agent).filter(
-          (s) => s.at >= Date.now() - STORE_KEEP_MS
-        );
-        const tmp = `${file}.${process.pid}.tmp`;
-        writeFileSync(tmp, keep.map((s) => `${JSON.stringify(s)}\n`).join(""), { mode: 0o600 });
-        renameSync(tmp, file);
-      }
+      withFileLockSync(
+        `${file}.lock`,
+        () => {
+          const known = readQuotaStore(homeDir, agent);
+          const add: QuotaSample[] = [];
+          for (const s of [...fresh].sort((a, b) => a.at - b.at)) {
+            const best = [...known, ...add]
+              .filter((k) => sameWindow(k, s))
+              .reduce((m, k) => Math.max(m, k.usedPct), Number.NEGATIVE_INFINITY);
+            if (s.usedPct > best) add.push(s);
+          }
+          if (add.length === 0) return;
+          ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+          ensurePrivateDirectory(quotaDir(homeDir));
+          ensurePrivateFile(file);
+          appendFileSync(file, add.map((s) => `${JSON.stringify(s)}\n`).join(""), { mode: 0o600 });
+          if (statSync(file).size > compactThreshold) {
+            const keep = readQuotaStore(homeDir, agent).filter(
+              (s) => s.at >= Date.now() - STORE_KEEP_MS
+            );
+            writePrivateFile(file, keep.map((s) => `${JSON.stringify(s)}\n`).join(""));
+          }
+        },
+        { timeoutMs: 1_000, staleMs: 10_000 }
+      );
     } catch {
       /* quota is advisory; a full disk must not break a statusline render */
     }

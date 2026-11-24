@@ -7,7 +7,7 @@
 import { stat } from "node:fs/promises";
 import { localDateKey } from "../date-utils.js";
 import type { SessionParser, TokenRecord } from "../types.js";
-import { dayDelta, readBaselines, writeBaselines } from "./cumulative-baselines.js";
+import { type Buckets, dayDelta, updateBaselines } from "./cumulative-baselines.js";
 import { createRecord, expandHome, findFiles, readJsonFile } from "./utils.js";
 
 interface MuxSessionUsage {
@@ -35,9 +35,14 @@ export class MuxParser implements SessionParser {
   async scan(homeDir: string): Promise<TokenRecord[]> {
     const [sessionsDir] = this.sessionRoots(homeDir);
     const files = await findFiles(sessionsDir, (f) => f === "session-usage.json", 2);
-    const records: TokenRecord[] = [];
-    const baselines = readBaselines(homeDir);
-    const changed = { value: false };
+    const observations: Array<{
+      file: string;
+      ts: number;
+      createdOn?: string;
+      modelKey: string;
+      model: string;
+      tokens: Buckets;
+    }> = [];
 
     for (const file of files) {
       const usage = await readJsonFile<MuxSessionUsage>(file);
@@ -61,38 +66,52 @@ export class MuxParser implements SessionParser {
       for (const [modelKey, tokens] of Object.entries(usage.byModel)) {
         // Model names use "provider:model" format -- strip provider prefix
         const model = modelKey.includes(":") ? modelKey.split(":").slice(1).join(":") : modelKey;
-        // Only the growth since the day began is that day's usage; the whole
-        // running total counted the session's history again every day it
-        // was touched. See cumulative-baselines.ts.
-        const delta = dayDelta(
-          baselines,
-          `mux:${file}#${modelKey}`,
-          localDateKey(ts),
-          {
+        observations.push({
+          file,
+          ts,
+          createdOn,
+          modelKey,
+          model,
+          tokens: {
             inputTokens: tokens.input ?? 0,
             outputTokens: tokens.output ?? 0,
             cacheReadTokens: tokens.cached ?? 0,
             cacheWriteTokens: tokens.cacheCreate ?? 0,
             reasoningTokens: tokens.reasoning ?? 0,
           },
-          createdOn,
+        });
+      }
+    }
+
+    if (observations.length === 0) return [];
+    return updateBaselines(homeDir, (baselines, changed) => {
+      const records: TokenRecord[] = [];
+      for (const obs of observations) {
+        // Only the growth since the day began is that day's usage; the whole
+        // running total counted the session's history again every day it
+        // was touched. See cumulative-baselines.ts.
+        const delta = dayDelta(
+          baselines,
+          `mux:${obs.file}#${obs.modelKey}`,
+          localDateKey(obs.ts),
+          obs.tokens,
+          obs.createdOn,
           changed
         );
         if (!delta) continue;
 
         records.push(
           createRecord({
-            timestamp: ts,
+            timestamp: obs.ts,
             provider: "mux",
-            model,
+            model: obs.model,
             project: "mux",
-            sourceFile: file,
+            sourceFile: obs.file,
             ...delta,
           })
         );
       }
-    }
-    if (changed.value) writeBaselines(baselines, homeDir);
-    return records;
+      return records;
+    });
   }
 }
