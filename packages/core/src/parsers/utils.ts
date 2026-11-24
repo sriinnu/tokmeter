@@ -1233,8 +1233,8 @@ export function fallbackRecordTime(sourceFile: string | undefined): number {
   if (known !== undefined) return known;
   let t: number;
   try {
-    const s = statSync(sourceFile);
-    t = Math.floor(s.birthtimeMs > 0 ? s.birthtimeMs : s.mtimeMs);
+    const s = statSync(sourceFile, { bigint: true });
+    t = Number((s.birthtimeNs > 0n ? s.birthtimeNs : s.mtimeNs) / 1_000_000n);
   } catch {
     // Unreadable (or a relative path, which would be a parser bug): the clock
     // is all there is. Not remembered, so a file readable on the next scan

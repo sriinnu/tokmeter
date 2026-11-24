@@ -36,6 +36,7 @@ import datetime as dt
 import json
 import math
 import os
+import subprocess
 import sys
 from collections import defaultdict
 
@@ -50,6 +51,29 @@ BUCKETS = ("input", "cached", "output", "reasoning")
 
 
 # ── reading ──────────────────────────────────────────────────────────────────
+
+
+def file_birth_ms(path: str) -> int:
+    st = os.stat(path)
+    b_ns = getattr(st, "st_birthtime_ns", 0)
+    if b_ns:
+        return int(b_ns) // 1_000_000
+    if sys.platform.startswith("linux"):
+        try:
+            out = subprocess.check_output(["stat", "-c", "%w", path], text=True).strip()
+            if out and out != "-":
+                date_part, time_part, tz_part = out.split()[:3]
+                sec_part, frac_part = (time_part.split(".", 1) + ["0"])[:2]
+                ms = int(frac_part.ljust(9, "0")[:3])
+                tz_iso = f"{tz_part[:3]}:{tz_part[3:]}" if len(tz_part) == 5 else tz_part
+                parsed = dt.datetime.fromisoformat(f"{date_part}T{sec_part}{tz_iso}")
+                return int(parsed.timestamp()) * 1000 + ms
+        except Exception:
+            pass
+    b = getattr(st, "st_birthtime", 0)
+    if b:
+        return int(b * 1000)
+    return st.st_mtime_ns // 1_000_000
 
 
 def read_text(path):
@@ -368,8 +392,7 @@ def fold_file(path, skips):
         ts = parse_ts(evt.get("timestamp"))
         if ts is None:
             skips["no_timestamp"] += 1
-            st = os.stat(path)
-            ts = int((getattr(st, "st_birthtime", 0) or st.st_mtime) * 1000)
+            ts = file_birth_ms(path)
         row = {
             "file": path,
             "ts": ts,
