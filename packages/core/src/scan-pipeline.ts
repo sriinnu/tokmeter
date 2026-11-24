@@ -10,10 +10,11 @@
  */
 
 import { isBeforeToday, startOfLocalDay } from "./date-utils.js";
+import { CUSTOM_ELIGIBLE } from "./parsers/custom-source.js";
 import { getParsers } from "./parsers/index.js";
 import { saveRecordCacheToDisk, settleInferredTimes } from "./parsers/utils.js";
 import type { PricingService } from "./pricing.js";
-import { enrichCosts, toErrorMessage } from "./pricing-enrichment.js";
+import { enrichCosts, toErrorMessage, type UnpricedTracker } from "./pricing-enrichment.js";
 import type { ProviderId, ScanFaultDetail, ScanMeta, ScanWarning, TokenRecord } from "./types.js";
 
 export interface ScanContext {
@@ -89,7 +90,8 @@ export async function scanRawRecords(
   providers: ProviderId[] | undefined,
   warningScope: "history" | "today",
   warnings: ScanWarning[],
-  modifiedSinceMs?: number
+  modifiedSinceMs?: number,
+  unpricedTracker?: UnpricedTracker
 ): Promise<TokenRecord[]> {
   if (!ctx.skipPricing) {
     try {
@@ -102,7 +104,10 @@ export async function scanRawRecords(
     }
   }
 
-  const parsers = getParsers(providers);
+  const parserIds = providers?.length
+    ? [...new Set(providers.map((p): ProviderId => (CUSTOM_ELIGIBLE.has(p) ? "custom" : p)))]
+    : undefined;
+  const parsers = getParsers(parserIds);
   const results = await Promise.all(
     parsers.map(async (parser) => {
       try {
@@ -143,7 +148,9 @@ export async function scanRawRecords(
     })
   );
 
-  const records = results.flat();
+  const requested = providers?.length ? new Set(providers) : null;
+  const flat = results.flat();
+  const records = requested ? flat.filter((r) => requested.has(r.provider)) : flat;
 
   if (records.length > 0 && !ctx.skipPricing) {
     // Today-scope enrichment is gated to records actually dated today.
@@ -163,7 +170,7 @@ export async function scanRawRecords(
     const referenceTimestamp = Date.now();
     const recordsToPrice = selectRecordsToPrice(records, warningScope, referenceTimestamp);
     if (recordsToPrice.length > 0) {
-      await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings);
+      await enrichCosts(recordsToPrice, ctx.pricing, warningScope, warnings, unpricedTracker);
     }
   }
 
@@ -209,9 +216,17 @@ export async function scanTodayRecordsWithStragglers(
    * tick that crosses midnight passes an earlier one so files last written
    * between the previous tick and midnight are read before the day seals.
    */
-  modifiedSinceMs: number = startOfLocalDay(referenceTimestamp)
+  modifiedSinceMs: number = startOfLocalDay(referenceTimestamp),
+  unpricedTracker?: UnpricedTracker
 ): Promise<{ today: TokenRecord[]; stragglers: TokenRecord[] }> {
-  const rawRecords = await scanRawRecords(ctx, providers, "today", warnings, modifiedSinceMs);
+  const rawRecords = await scanRawRecords(
+    ctx,
+    providers,
+    "today",
+    warnings,
+    modifiedSinceMs,
+    unpricedTracker
+  );
   const today: TokenRecord[] = [];
   const stragglers: TokenRecord[] = [];
   for (const record of rawRecords) {

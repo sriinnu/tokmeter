@@ -47,19 +47,6 @@ export interface RelayState {
 }
 
 /**
- * Provider ids served by the single CustomSourceParser (providerId "custom").
- * A surgical backfill of one of these must scan that parser, not a parser whose
- * id equals the target (none exists). Mirrors CUSTOM_ELIGIBLE in
- * parsers/custom-source.ts.
- */
-const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
-  "ribhu",
-  "chitragupta",
-  "grok",
-  "custom",
-]);
-
-/**
  * Give a day its price cards before it's written: `kept` for models that
  * already had one, today's for the rest. Fail-soft — a pricing fault must not
  * stop a day from sealing; it seals without cards and gets implied ones if
@@ -548,13 +535,10 @@ export async function backfillProviderIntoRelay(
   const todayKey = localDateKey(referenceTimestamp);
   const floorKey = localDateKey(floorMs);
 
-  // Custom-eligible ids (ribhu/chitragupta/grok/custom) are all emitted by the single
-  // CustomSourceParser, whose providerId is "custom". Scanning [providerId]
-  // for one of those would match no parser; scan the custom parser instead and
-  // let the per-record `r.provider === providerId` filter below pick the target.
-  const scanProviderId: ProviderId = CUSTOM_ELIGIBLE.has(providerId) ? "custom" : providerId;
+  // scanRawRecords maps custom-eligible ids (ribhu/chitragupta/grok/custom) to
+  // CustomSourceParser and filters back to the requested providerId.
   const warnBefore = warnings.length;
-  const raw = await scanRawRecords(ctx, [scanProviderId], "history", warnings, floorMs);
+  const raw = await scanRawRecords(ctx, [providerId], "history", warnings, floorMs);
   const backfillWarnings = warnings.slice(warnBefore);
 
   // Keep only this provider's records that fall in the sealed window: on/after

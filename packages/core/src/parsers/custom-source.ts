@@ -57,7 +57,7 @@ import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "
 import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
 
 /** Provider ids a custom source is allowed to claim. */
-const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
+export const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
   "ribhu",
   "chitragupta",
   "grok",
@@ -227,8 +227,12 @@ export class CustomSourceParser implements SessionParser {
         cacheWriteTokens: cacheWrite,
         reasoningTokens: reasoning,
       });
-      if (typeof line.cost === "number" && line.cost > 0) rec.cost = line.cost;
-      else if (isLocallyServed(line.provider, rec.model) && rec.usage) rec.usage.cost = "direct";
+      if (typeof line.cost === "number" && Number.isFinite(line.cost) && line.cost > 0) {
+        rec.cost = line.cost;
+        if (rec.usage) rec.usage.cost = "direct";
+      } else if (isLocallyServed(line.provider, rec.model) && rec.usage) {
+        rec.usage.cost = "direct";
+      }
       records.push(rec);
     }
 

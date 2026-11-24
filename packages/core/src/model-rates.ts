@@ -12,7 +12,7 @@
  *   price is ever invented.
  */
 
-import type { PriceFlag, PricingService, PricingSource } from "./pricing.js";
+import { type PriceFlag, type PricingService, type PricingSource, ratesAt } from "./pricing.js";
 import type { ModelSummary, ProviderId } from "./types.js";
 
 export interface Rate {
@@ -71,7 +71,8 @@ const none: Rate = { perMillion: null, derived: false };
 export async function computeModelRates(
   pricing: PricingService,
   models: ModelSummary[],
-  scope: "today" | "all"
+  scope: "today" | "all",
+  now: number = Date.now()
 ): Promise<ModelRatesResponse> {
   const cards: ModelRateCard[] = [];
   for (const m of models) {
@@ -111,37 +112,39 @@ export async function computeModelRates(
       continue;
     }
 
+    const active = ratesAt(p, now);
+
     // Mirrors PricingService.calculateCost branch for branch.
     const cacheRead: Rate =
-      p.cacheReadPerMillion !== undefined
-        ? exact(p.cacheReadPerMillion)
-        : { perMillion: p.inputPerMillion * 0.1, derived: true, basis: "10% of input" };
+      active.cacheReadPerMillion !== undefined
+        ? exact(active.cacheReadPerMillion)
+        : { perMillion: active.inputPerMillion * 0.1, derived: true, basis: "10% of input" };
 
-    const charged5m = !!p.cacheWritePerMillion;
-    const cacheWrite: Rate = charged5m ? exact(p.cacheWritePerMillion as number) : none;
+    const charged5m = !!active.cacheWritePerMillion;
+    const cacheWrite: Rate = charged5m ? exact(active.cacheWritePerMillion as number) : none;
 
     let cacheWrite1h: Rate;
-    if (p.cacheWrite1hPerMillion) {
-      cacheWrite1h = exact(p.cacheWrite1hPerMillion);
-    } else if (!p.cacheWritePerMillion) {
+    if (active.cacheWrite1hPerMillion) {
+      cacheWrite1h = exact(active.cacheWrite1hPerMillion);
+    } else if (!active.cacheWritePerMillion) {
       // calculateCost only bills writes when a 5m or 1h rate exists.
       cacheWrite1h = none;
     } else if (/claude/i.test(m.model)) {
-      cacheWrite1h = { perMillion: p.inputPerMillion * 2, derived: true, basis: "2× input" };
+      cacheWrite1h = { perMillion: active.inputPerMillion * 2, derived: true, basis: "2× input" };
     } else {
       cacheWrite1h = {
-        perMillion: p.cacheWritePerMillion,
+        perMillion: active.cacheWritePerMillion,
         derived: true,
         basis: "same as 5m write",
       };
     }
 
     const reasoning: Rate =
-      p.reasoningOutputPerMillion !== undefined
-        ? exact(p.reasoningOutputPerMillion)
-        : p.reasoningInputPerMillion !== undefined
-          ? exact(p.reasoningInputPerMillion)
-          : { perMillion: p.outputPerMillion, derived: true, basis: "output rate" };
+      active.reasoningOutputPerMillion !== undefined
+        ? exact(active.reasoningOutputPerMillion)
+        : active.reasoningInputPerMillion !== undefined
+          ? exact(active.reasoningInputPerMillion)
+          : { perMillion: active.outputPerMillion, derived: true, basis: "output rate" };
 
     const priceFlags = pricing.getPriceFlags(m.model, p);
     cards.push({
@@ -150,8 +153,8 @@ export async function computeModelRates(
       source,
       ...(priceFlags.length > 0 ? { priceFlags } : {}),
       rates: {
-        input: exact(p.inputPerMillion),
-        output: exact(p.outputPerMillion),
+        input: exact(active.inputPerMillion),
+        output: exact(active.outputPerMillion),
         cacheRead,
         cacheWrite,
         cacheWrite1h,

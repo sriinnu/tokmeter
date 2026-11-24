@@ -2757,44 +2757,10 @@ export function createServer(): McpServer {
   // 18. model_advisor — Cheaper model suggestions
   // ────────────────────────────────────────────
 
-  /** Known pricing table (per million tokens). */
-  const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-    opus: { input: 15, output: 75 },
-    sonnet: { input: 3, output: 15 },
-    haiku: { input: 0.8, output: 4 },
-    "gpt-5": { input: 10, output: 30 },
-    "gpt-4o": { input: 2.5, output: 10 },
-    "gpt-4o-mini": { input: 0.15, output: 0.6 },
-  };
-
-  /** Match a model name to a pricing tier key. */
-  function matchPricingTier(model: string): string | null {
-    const lower = model.toLowerCase();
-    if (lower.includes("opus")) return "opus";
-    if (lower.includes("sonnet")) return "sonnet";
-    if (lower.includes("haiku")) return "haiku";
-    if (lower.includes("gpt-5")) return "gpt-5";
-    if (lower.includes("gpt-4o-mini")) return "gpt-4o-mini";
-    if (lower.includes("gpt-4o")) return "gpt-4o";
-    return null;
-  }
-
-  /** Get the cheaper alternative for a model tier. */
-  function cheaperAlternative(tier: string): string | null {
-    const downgrades: Record<string, string> = {
-      opus: "sonnet",
-      sonnet: "haiku",
-      "gpt-5": "gpt-4o",
-      "gpt-4o": "gpt-4o-mini",
-    };
-    return downgrades[tier] ?? null;
-  }
-
   server.tool(
     "tokmeter_model_advisor",
-    "Compare what you actually spent vs what cheaper models would have cost. " +
-      "Shows current spending by model and estimates savings if you downgraded expensive models " +
-      "(e.g., Opus → Sonnet, GPT-5 → GPT-4o). Includes a reference pricing table.",
+    "Show observed spending by model, live kosha per-million-token rates, and neutral " +
+      "workload cost projections across your priced models for the selected period and project.",
     {
       period: z
         .enum(["today", "week", "month"])
@@ -2839,92 +2805,93 @@ export function createServer(): McpServer {
       lines.push(formatTable(currentHeaders, currentRows, [false, true, true, true, true]));
       lines.push("");
 
-      // Calculate what-if scenarios
-      let totalActual = 0;
-      let totalAlternative = 0;
-      const scenarios: {
-        model: string;
-        actual: number;
-        alternative: number;
-        altTier: string;
-      }[] = [];
+      const { core } = await getCore();
+      const rateResp = await core.getModelRatesFor(
+        models,
+        params.period === "today" ? "today" : "all"
+      );
+      const fmtRate = (n: number | null) => (n === null ? "—" : `$${n.toFixed(2)}`);
 
+      lines.push("", "  Live Kosha Rates ($/MTok)", separator(), "");
+      const rateHeaders = ["Model", "Input", "Output", "Cache Read", "Effective", "Source"];
+      const rateRows = rateResp.models
+        .slice(0, 15)
+        .map((card) => [
+          card.model,
+          fmtRate(card.rates.input.perMillion),
+          fmtRate(card.rates.output.perMillion),
+          fmtRate(card.rates.cacheRead.perMillion),
+          fmtRate(card.effectivePerMillion),
+          card.source.matchedId
+            ? `${card.source.tier} (${card.source.matchedId})`
+            : card.source.tier,
+        ]);
+      lines.push(formatTable(rateHeaders, rateRows, [false, true, true, true, true, false]));
+
+      let totalActual = 0;
+      let sumInput = 0;
+      let sumOutput = 0;
+      let sumCacheRead = 0;
+      let sumCacheWrite = 0;
+      let sumReasoning = 0;
       for (const m of models) {
         totalActual += m.cost;
-        const tier = matchPricingTier(m.model);
-        if (!tier) continue;
-
-        const altTier = cheaperAlternative(tier);
-        if (!altTier) continue;
-
-        const altPricing = MODEL_PRICING[altTier];
-        if (!altPricing) continue;
-
-        // Re-estimate cost with cheaper model pricing
-        const altCost =
-          (m.inputTokens / 1_000_000) * altPricing.input +
-          (m.outputTokens / 1_000_000) * altPricing.output;
-
-        totalAlternative += altCost;
-        scenarios.push({
-          model: m.model,
-          actual: m.cost,
-          alternative: altCost,
-          altTier,
-        });
+        sumInput += m.inputTokens;
+        sumOutput += m.outputTokens;
+        sumCacheRead += m.cacheReadTokens;
+        sumCacheWrite += m.cacheWriteTokens;
+        sumReasoning += m.reasoningTokens;
       }
 
-      // Models without a cheaper alternative still count toward the total
-      const unmatched = models.filter((m) => {
-        const tier = matchPricingTier(m.model);
-        return !tier || !cheaperAlternative(tier);
-      });
-      const unmatchedCost = unmatched.reduce((s, m) => s + m.cost, 0);
-      totalAlternative += unmatchedCost;
+      const pricedCards = rateResp.models.filter(
+        (c) => c.rates.input.perMillion !== null && c.rates.output.perMillion !== null
+      );
+      const projections = await Promise.all(
+        pricedCards.map(async (card) => ({
+          model: card.model,
+          projected: await core.calculateModelCost(
+            card.model,
+            sumInput,
+            sumOutput,
+            sumCacheRead,
+            sumCacheWrite,
+            sumReasoning,
+            0
+          ),
+        }))
+      );
+      projections.sort((a, b) => a.projected - b.projected);
 
-      if (scenarios.length > 0) {
-        lines.push("", "  💡 What If You Downgraded?", separator(), "");
-
-        const whatIfHeaders = ["Model", "Current", "If Downgraded", "Alt Model", "Savings"];
-        const whatIfRows = scenarios.map((s) => [
-          s.model,
-          fmtCost(s.actual),
-          fmtCost(s.alternative),
-          s.altTier,
-          fmtCost(s.actual - s.alternative),
-        ]);
-        lines.push(formatTable(whatIfHeaders, whatIfRows, [false, true, true, false, true]));
-
-        const totalSavings = totalActual - totalAlternative;
-        const savingsPct = totalActual > 0 ? (totalSavings / totalActual) * 100 : 0;
-
+      if (projections.length > 0) {
+        lines.push(
+          "",
+          "  Workload Projection (same token mix across priced observed models)",
+          separator(),
+          ""
+        );
+        const projHeaders = ["Model", "Projected Total", "Delta vs Actual", "Ratio"];
+        const projRows = projections.slice(0, 15).map((p) => {
+          const delta = p.projected - totalActual;
+          const deltaStr = delta >= 0 ? `+${fmtCost(delta)}` : `-${fmtCost(Math.abs(delta))}`;
+          const ratioStr = totalActual > 0 ? `${(p.projected / totalActual).toFixed(2)}x` : "—";
+          return [p.model, fmtCost(p.projected), deltaStr, ratioStr];
+        });
+        lines.push(formatTable(projHeaders, projRows, [false, true, true, true]));
         lines.push(
           "",
           separator(),
-          `  📊 Total Current Spend:     ${fmtCost(totalActual)}`,
-          `  📉 Estimated w/ Downgrades: ${fmtCost(totalAlternative)}`,
-          `  💰 Potential Savings:       ${fmtCost(totalSavings)} (${fmtPct(savingsPct)})`,
+          `  Actual Total Spend: ${fmtCost(totalActual)}`,
+          "  Note: Assumes identical token counts at each model's live kosha card (no quality comparison).",
           ""
         );
       } else {
         lines.push(
           "",
-          "  ℹ️  No downgrade scenarios available for your current models.",
-          `  📊 Total Spend: ${fmtCost(totalActual)}`,
+          "  No observed models in this scope have live kosha pricing cards.",
+          `  Actual Total Spend: ${fmtCost(totalActual)}`,
           ""
         );
       }
-
-      // Reference pricing table
-      lines.push("", "  📋 Reference Pricing (per million tokens)", separator(), "");
-      const pricingHeaders = ["Model", "Input $/MTok", "Output $/MTok"];
-      const pricingRows = Object.entries(MODEL_PRICING).map(([name, p]) => [
-        name,
-        `$${p.input.toFixed(2)}`,
-        `$${p.output.toFixed(2)}`,
-      ]);
-      lines.push(formatTable(pricingHeaders, pricingRows, [false, true, true]));
-      lines.push("");
 
       return {
         content: [{ type: "text", text: lines.join("\n") + viewFooter(view) }],
@@ -3119,23 +3086,34 @@ export function createServer(): McpServer {
         });
       }
 
-      // ── Tip 2: Expensive model overuse ──
-      const expensiveModels = models.filter((m) => {
-        const tier = matchPricingTier(m.model);
-        return tier === "opus" || tier === "gpt-5";
-      });
-      const expensiveSpend = expensiveModels.reduce((s, m) => s + m.cost, 0);
-      const expensivePct = totalCost > 0 ? (expensiveSpend / totalCost) * 100 : 0;
+      // ── Tip 2: Higher effective-rate concentration ──
+      const rated = models
+        .filter((m) => m.totalTokens > 0 && m.cost > 0)
+        .map((m) => ({
+          model: m.model,
+          cost: m.cost,
+          ratePerMTok: (m.cost / m.totalTokens) * 1_000_000,
+        }))
+        .sort((a, b) => b.ratePerMTok - a.ratePerMTok);
+      if (rated.length > 1) {
+        const highest = rated[0];
+        const lowest = rated[rated.length - 1];
+        const highModels = rated.filter((m) => m.ratePerMTok >= lowest.ratePerMTok * 2);
+        const highSpend = highModels.reduce((s, m) => s + m.cost, 0);
+        const highPct = totalCost > 0 ? (highSpend / totalCost) * 100 : 0;
 
-      if (expensivePct > 50) {
-        // Estimate savings by downgrading: Opus is 5x Sonnet, so ~80% savings on that portion
-        const potentialSavings = expensiveSpend * 0.8;
-        tips.push({
-          category: "model_selection",
-          severity: expensivePct > 80 ? "critical" : "warning",
-          tip: `${fmtPct(expensivePct)} of your spend is on premium models (Opus/GPT-5). Consider using Sonnet or GPT-4o for routine tasks like code review, refactoring, and simple questions. Reserve Opus for complex architecture and reasoning tasks.`,
-          estimatedSavings: potentialSavings,
-        });
+        if (highPct > 50 && highest.ratePerMTok > lowest.ratePerMTok) {
+          const potentialSavings = Math.max(
+            0,
+            highSpend * (1 - lowest.ratePerMTok / highest.ratePerMTok)
+          );
+          tips.push({
+            category: "model_selection",
+            severity: highPct > 80 ? "critical" : "warning",
+            tip: `${fmtPct(highPct)} of spend went to higher-rate models (top: ${highest.model} at $${highest.ratePerMTok.toFixed(2)}/MTok vs ${lowest.model} at $${lowest.ratePerMTok.toFixed(2)}/MTok).`,
+            estimatedSavings: potentialSavings,
+          });
+        }
       }
 
       // ── Tip 3: Large input tokens (conversation bloat) ──

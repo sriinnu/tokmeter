@@ -81,6 +81,7 @@ export async function enrichCosts(
    */
   cardFor?: (r: TokenRecord) => PriceCard | undefined
 ): Promise<void> {
+  const warnedModels = new Set<string>();
   const costPromises = records.map(async (r) => {
     // An explicit tool-reported $0 is still a fact. Do not replace it with
     // an API-rate estimate or relabel it as missing pricing.
@@ -110,17 +111,11 @@ export async function enrichCosts(
         r.cacheWrite1hTokens ?? 0,
         r.timestamp
       );
-      const hasBillableTokens =
-        r.inputTokens +
-          r.outputTokens +
-          r.cacheReadTokens +
-          r.cacheWriteTokens +
-          r.reasoningTokens >
-        0;
+      const billable = hasBillableTokens(r);
       // A free model's $0 is its price, so it is neither hidden nor unpriced.
       const pricingUnavailable =
         r.cost === 0 &&
-        hasBillableTokens &&
+        billable &&
         !pricing.hasUserOverride(r.model) &&
         !pricing.isPricedFree(r.model);
       // An opaque model's $0 is "price hidden", not a price: mark it so the
@@ -143,10 +138,13 @@ export async function enrichCosts(
       }
     } catch (error) {
       if (r.usage) r.usage.cost = "not_exposed";
-      warnings.push({
-        scope: warningScope,
-        message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${toErrorMessage(error)}).`,
-      });
+      if (!warnedModels.has(r.model)) {
+        warnedModels.add(r.model);
+        warnings.push({
+          scope: warningScope,
+          message: `Pricing lookup failed for ${r.model} — leaving cost at $0 (${toErrorMessage(error)}).`,
+        });
+      }
       if (unpricedTracker && !isOpaqueModel(r.model)) {
         unpricedTracker.models.add(r.model);
         unpricedTracker.records += 1;
@@ -154,6 +152,36 @@ export async function enrichCosts(
     }
   });
   await Promise.all(costPromises);
+}
+
+function hasBillableTokens(r: TokenRecord): boolean {
+  return (
+    r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens + r.reasoningTokens > 0
+  );
+}
+
+/** Collect unpriced today records whose missing price was not hidden/skipped/free. */
+export function collectUnpricedRecords(
+  records: TokenRecord[],
+  pricing: PricingService
+): UnpricedTracker {
+  const tracker: UnpricedTracker = { models: new Set<string>(), records: 0 };
+  for (const r of records) {
+    if (
+      r.cost === 0 &&
+      r.costEligible !== false &&
+      r.usage?.cost !== "direct" &&
+      r.usage?.cost !== "skipped" &&
+      hasBillableTokens(r) &&
+      !pricing.hasUserOverride(r.model) &&
+      !pricing.isPricedFree(r.model) &&
+      !isOpaqueModel(r.model)
+    ) {
+      tracker.models.add(r.model);
+      tracker.records += 1;
+    }
+  }
+  return tracker;
 }
 
 export function markPricingSkipped(records: TokenRecord[]): void {

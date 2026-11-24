@@ -49,7 +49,13 @@ import {
 } from "./parsers/utils.js";
 import { hasPendingRestores, takePendingRestores } from "./pending-restore.js";
 import { maybeBackgroundRefresh, PricingService, todayPricingStale } from "./pricing.js";
-import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
+import {
+  collectUnpricedRecords,
+  enrichCosts,
+  markPricingSkipped,
+  resetCalculatedCosts,
+  type UnpricedTracker,
+} from "./pricing-enrichment.js";
 import {
   backfillProviderIntoRelay,
   rebuildRecentWindow,
@@ -349,12 +355,14 @@ export class TokmeterCore {
 
     await this.consumePendingRestores(now, todayWarnings);
 
+    const unpricedTracker: UnpricedTracker = { models: new Set<string>(), records: 0 };
     const scanned = await scanTodayRecordsWithStragglers(
       this.ctx(),
       undefined,
       now,
       todayWarnings,
-      this.stragglerFloor(now)
+      this.stragglerFloor(now),
+      this.skipPricing ? undefined : unpricedTracker
     );
     const stragglers = scanned.stragglers;
     // Grow-only: a file archived or deleted today keeps its records until the seal.
@@ -364,12 +372,16 @@ export class TokmeterCore {
       markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
       resetCalculatedCosts(today);
-      await enrichCosts(today, this.pricing, "today", todayWarnings);
+      await enrichCosts(today, this.pricing, "today", todayWarnings, unpricedTracker);
       const mtime = this.pricing.getRegistryMtime();
       if (mtime > 0) setCachedKoshaMtime(mtime);
       setCachedOverridesMtime(this.pricing.getOverridesMtime());
       saveRecordCacheToDisk();
     }
+
+    const todayUnpriced: UnpricedTracker = this.skipPricing
+      ? { models: new Set<string>(), records: 0 }
+      : collectUnpricedRecords(today, this.pricing);
 
     const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
@@ -408,9 +420,12 @@ export class TokmeterCore {
         ...this.scanMeta.warnings.filter((w) => w.scope !== "today" && w.scope !== "provider"),
         ...todayWarnings,
       ],
+      unpricedModels: [...todayUnpriced.models].sort(),
+      unpricedRecords: todayUnpriced.records,
     };
 
     await this.capturePricedCards();
+    writeKoshaWishlist(this.homeDir, todayUnpriced, today);
     // No saveSummaryCache here: that's an offline fallback, not per-tick —
     // serializing recentRecords every 12s would spike RSS by hundreds of MB.
     return this.recentRecords;
@@ -1028,8 +1043,45 @@ export class TokmeterCore {
    */
   async getModelRates(scope: "today" | "all" = "today"): Promise<ModelRatesResponse> {
     const models = scope === "all" ? this.getModelCosts() : this.getModelCosts({ today: true });
+    return this.getModelRatesFor(models, scope);
+  }
+
+  /**
+   * Rate cards for an explicit model list (used by scoped views like MCP advisor).
+   */
+  async getModelRatesFor(
+    models: ModelSummary[],
+    scope: "today" | "all" = "all",
+    now: number = Date.now()
+  ): Promise<ModelRatesResponse> {
     if (!this.skipPricing) await this.pricing.init();
-    return computeModelRates(this.pricing, models, scope);
+    return computeModelRates(this.pricing, models, scope, now);
+  }
+
+  /**
+   * Calculate USD cost for a synthetic token breakdown via core's PricingService.
+   */
+  async calculateModelCost(
+    modelId: string,
+    inputTokens: number,
+    outputTokens: number,
+    cacheReadTokens = 0,
+    cacheWriteTokens = 0,
+    reasoningTokens = 0,
+    cacheWrite1hTokens = 0,
+    timestampMs?: number
+  ): Promise<number> {
+    if (!this.skipPricing) await this.pricing.init();
+    return this.pricing.calculateCost(
+      modelId,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      reasoningTokens,
+      cacheWrite1hTokens,
+      timestampMs
+    );
   }
 
   async getCrossToolComparison(): Promise<CrossToolComparison> {
