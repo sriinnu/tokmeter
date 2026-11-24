@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type CustomSource, DEFAULT_CONFIG, saveConfig } from "../config-service.js";
+import { PricingService } from "../pricing.js";
+import { enrichCosts, resetCalculatedCosts } from "../pricing-enrichment.js";
 import { CustomSourceParser } from "./custom-source.js";
 
 let tmpDir: string;
@@ -227,5 +229,30 @@ describe("CustomSourceParser", () => {
     // Local Ollama is a known $0; DeepSeek's null cost is left for pricing.
     expect(records[0].usage?.cost).toBe("direct");
     expect(records[1].usage?.cost).not.toBe("direct");
+  });
+
+  it("marks positive line.cost as direct and preserves it across re-enrichment", async () => {
+    const dir = seedLines(".custom-cost/usage", "direct.jsonl", [
+      {
+        ts: 1_790_000_000_000,
+        id: "direct-1",
+        model: "claude-opus-4-6",
+        input_tokens: 100,
+        output_tokens: 50,
+        cost: 0.42,
+      },
+    ]);
+    registerSource({ path: dir, format: "tokmeter-usage-jsonl", provider: "custom" });
+    const records = await new CustomSourceParser().scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0].cost).toBe(0.42);
+    expect(records[0].usage?.cost).toBe("direct");
+
+    const pricing = new PricingService();
+    pricing.seedPricing("claude-opus-4-6", { inputPerMillion: 99, outputPerMillion: 99 });
+    resetCalculatedCosts(records);
+    await enrichCosts(records, pricing, "today", []);
+    expect(records[0].cost).toBe(0.42);
+    expect(records[0].usage?.cost).toBe("direct");
   });
 });

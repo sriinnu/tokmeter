@@ -11,6 +11,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PricingService } from "../pricing.js";
+import { enrichCosts, resetCalculatedCosts } from "../pricing-enrichment.js";
 import { ClineParser } from "./cline.js";
 
 let tmpDir: string;
@@ -70,5 +72,27 @@ describe("ClineParser", () => {
 
     // Stable, distinct dedup ids derived from session + ordinal.
     expect(records[0].apiCallId).not.toBe(records[1].apiCallId);
+  });
+
+  it("marks positive chunk.cost as direct so repricing preserves it", async () => {
+    seedSession("1790185442767_direct.jsonl", [
+      usageLine(1_790_188_156_626, {
+        inputTokens: 429,
+        outputTokens: 83,
+        cacheReadTokens: 6874,
+        cacheWriteTokens: 0,
+        cost: 0.0021,
+      }),
+    ]);
+
+    const records = await new ClineParser().scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0].cost).toBeCloseTo(0.0021);
+    expect(records[0].usage?.cost).toBe("direct");
+
+    resetCalculatedCosts(records);
+    await enrichCosts(records, new PricingService(), "today", []);
+    expect(records[0].cost).toBeCloseTo(0.0021);
+    expect(records[0].usage?.cost).toBe("direct");
   });
 });

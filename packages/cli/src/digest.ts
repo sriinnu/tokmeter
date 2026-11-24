@@ -74,22 +74,9 @@ function colorGrade(grade: string): string {
   }
 }
 
-/** Does this model have cheaper alternatives available? */
-function isExpensiveModel(model: string): boolean {
-  const lower = model.toLowerCase();
-  return lower.includes("opus") || lower.includes("gpt-4o") || lower.includes("gpt-4-");
-}
-
-/** Is this model in the cheaper tier? */
-function isCheapModel(model: string): boolean {
-  const lower = model.toLowerCase();
-  return (
-    lower.includes("sonnet") ||
-    lower.includes("haiku") ||
-    lower.includes("gpt-4o-mini") ||
-    lower.includes("flash") ||
-    lower.includes("gemini-2.0")
-  );
+/** Effective blended rate in USD per million tokens, or 0 when unpriced/empty. */
+function effectiveRatePerMTok(m: { tokens: number; cost: number }): number {
+  return m.tokens > 0 && m.cost > 0 ? (m.cost / m.tokens) * 1_000_000 : 0;
 }
 
 // ---- Date range logic ----
@@ -298,15 +285,23 @@ function renderDigest(
   // Cache hit rate (40% weight)
   const cacheScore = Math.min((cacheHitRate / 90) * 100, 100);
 
-  // Model selection efficiency (35% weight) — penalize heavy premium usage
-  const expensiveCost = modelEntries
-    .filter((m) => isExpensiveModel(m.model))
-    .reduce((s, m) => s + m.cost, 0);
-  const cheapCost = modelEntries
-    .filter((m) => isCheapModel(m.model))
-    .reduce((s, m) => s + m.cost, 0);
-  const expensiveRatio = totalCost > 0 ? expensiveCost / totalCost : 0;
-  const modelScore = Math.max(0, Math.min(100, (1 - expensiveRatio) * 100));
+  // Rate spread / cost concentration across observed models (35% weight)
+  const ratedModels = modelEntries
+    .map((m) => ({ ...m, ratePerMTok: effectiveRatePerMTok(m) }))
+    .filter((m) => m.ratePerMTok > 0)
+    .sort((a, b) => b.ratePerMTok - a.ratePerMTok);
+  const minEffectiveRate =
+    ratedModels.length > 1 ? Math.min(...ratedModels.map((m) => m.ratePerMTok)) : 0;
+  const highRateCost =
+    ratedModels.length > 1
+      ? ratedModels
+          .filter((m) => m.ratePerMTok >= minEffectiveRate * 2)
+          .reduce((s, m) => s + m.cost, 0)
+      : ratedModels.length === 1 && ratedModels[0].ratePerMTok > 5
+        ? ratedModels[0].cost
+        : 0;
+  const highRateRatio = totalCost > 0 ? highRateCost / totalCost : 0;
+  const modelScore = Math.max(0, Math.min(100, (1 - highRateRatio) * 100));
 
   // Conversation discipline (25% weight) — ideal: 5-30 records/day
   const recordsPerDay = currentRecords.length / days;
@@ -338,13 +333,15 @@ function renderDigest(
 
   const tips: string[] = [];
 
-  if (expensiveCost > 0 && cheapCost > 0) {
+  if (ratedModels.length > 1 && highRateCost > 0) {
+    const highest = ratedModels[0];
+    const lowest = ratedModels[ratedModels.length - 1];
     tips.push(
-      `Your usage has a ${chalk.yellow(formatCost(expensiveCost))} cost total on premium models (Opus/GPT-4). Consider using Sonnet/Haiku/Flash for routine tasks.`
+      `${chalk.bold(highest.model)} averaged ${chalk.yellow(`$${highest.ratePerMTok.toFixed(2)}/MTok`)} (${formatCost(highRateCost)} on higher-rate models) vs ${lowest.model} at $${lowest.ratePerMTok.toFixed(2)}/MTok.`
     );
-  } else if (expensiveCost > 0 && cheapCost === 0) {
+  } else if (ratedModels.length === 1 && highRateCost > 0) {
     tips.push(
-      `All ${chalk.yellow(formatCost(expensiveCost))} went to premium models. Cheaper models can handle many coding tasks at a fraction of the cost.`
+      `100% of priced spend (${chalk.yellow(formatCost(highRateCost))}) used ${ratedModels[0].model} at an effective $${ratedModels[0].ratePerMTok.toFixed(2)}/MTok.`
     );
   }
 

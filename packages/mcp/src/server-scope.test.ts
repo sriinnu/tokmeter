@@ -409,4 +409,12 @@ describe("dates render local", () => {
     const text = await call("tokmeter_projects", { project: "beta" });
     expect(text).toContain(`Range: ${D20} → ${D3}`);
   });
+
+  it("tokmeter_model_advisor reports live kosha rates without hardcoded legacy price tables", async () => {
+    const text = await call("tokmeter_model_advisor", { project: "alpha" });
+    expect(text).toContain("Live Kosha Rates ($/MTok)");
+    expect(text).not.toContain("What If You Downgraded?");
+    expect(text).not.toContain("Reference Pricing (per million tokens)");
+    expect(text).not.toContain("$75.00");
+  });
 });

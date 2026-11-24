@@ -215,4 +215,63 @@ describe("computeModelRates", () => {
       1_000_000;
     expect(rebuilt).toBeCloseTo(before, 12);
   });
+
+  it("reports off-peak scheduled rates when `now` is outside peak windows and preserves base priceFlags", async () => {
+    const pricing = new PricingService();
+    mkdirSync(join(home, ".kosha"), { recursive: true });
+    writeFileSync(
+      join(home, ".kosha", "registry.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        models: [
+          {
+            providerId: "deepseek",
+            canonicalProviderId: "deepseek",
+            modelId: "timed-model",
+            pricing: { inputPerMillion: 2, outputPerMillion: 6 },
+            rawCapabilities: ["pricing_sources_disagree"],
+          },
+        ],
+      })
+    );
+    withFakeKosha(
+      pricing,
+      {
+        "timed-model": {
+          originPricing: {
+            inputPerMillion: 2,
+            outputPerMillion: 6,
+            cacheReadPerMillion: 0.2,
+            schedule: {
+              source: "offpeak",
+              peakWindows: [{ days: [1], startHourUtc: 8, endHourUtc: 18 }],
+              offPeak: {
+                inputPerMillion: 0.5,
+                outputPerMillion: 1.5,
+                cacheReadPerMillion: 0.05,
+              },
+            },
+          },
+        },
+      },
+      []
+    );
+
+    const peakTime = Date.UTC(2026, 10, 23, 12, 0, 0); // Monday 12:00 UTC -> peak
+    const offPeakTime = Date.UTC(2026, 10, 23, 22, 0, 0); // Monday 22:00 UTC -> off-peak
+
+    const peakCard = (await computeModelRates(pricing, [summary("timed-model")], "today", peakTime))
+      .models[0];
+    expect(peakCard.rates.input.perMillion).toBe(2);
+    expect(peakCard.rates.output.perMillion).toBe(6);
+    expect(peakCard.priceFlags).toEqual(["disputed"]);
+
+    const offPeakCard = (
+      await computeModelRates(pricing, [summary("timed-model")], "today", offPeakTime)
+    ).models[0];
+    expect(offPeakCard.rates.input.perMillion).toBe(0.5);
+    expect(offPeakCard.rates.output.perMillion).toBe(1.5);
+    expect(offPeakCard.rates.cacheRead.perMillion).toBe(0.05);
+    expect(offPeakCard.priceFlags).toEqual(["disputed"]);
+  });
 });

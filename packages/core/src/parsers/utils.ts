@@ -168,7 +168,10 @@ const CACHE_FILE = join(CACHE_DIR, "scan-cache.json");
 //      which carry no usage, so every Antigravity call counted 0.
 // 31 — project names: a Claude Code worktree (`<repo>/.claude/worktrees/<n>`)
 //      names as its repo, fixed at parse time; v30 caches hold `agent-a67d…`.
-const CACHE_VERSION = 31;
+// 32 — direct-cost provenance: `cline` and `custom-source` record
+//      `usage.cost = "direct"` when carrying a positive tool-reported cost so
+//      repricing never resets those records to $0.
+const CACHE_VERSION = 32;
 
 function loadRecordCache(): Map<string, RecordCacheEntry> {
   if (recordCache) return recordCache;

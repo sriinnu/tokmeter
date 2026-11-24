@@ -101,9 +101,12 @@ export class ClineParser implements SessionParser {
         cacheReadTokens: chunk.cacheReadTokens ?? 0,
         cacheWriteTokens: chunk.cacheWriteTokens ?? 0,
       });
-      // Keep Cline's own cost as a floor; pricing-enrichment overrides it when
-      // it can resolve the model (here it cannot, so this survives).
-      if (typeof chunk.cost === "number" && chunk.cost > 0) rec.cost = chunk.cost;
+      // Cline logs its own API cost, and the model ID isn't recorded here ("unknown").
+      // Mark provenance "direct" so repricing never zeroes it on resetCalculatedCosts.
+      if (typeof chunk.cost === "number" && Number.isFinite(chunk.cost) && chunk.cost > 0) {
+        rec.cost = chunk.cost;
+        if (rec.usage) rec.usage.cost = "direct";
+      }
       records.push(rec);
       ordinal++;
     }

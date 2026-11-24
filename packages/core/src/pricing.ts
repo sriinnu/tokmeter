@@ -507,14 +507,16 @@ export class PricingService {
 
     const { model: baseModel, servedBy } = splitServedBy(modelId);
     if (servedBy) {
-      // An override for the exact route wins, then the serving provider's own
-      // kosha entry; failing both, price it as the bare model, as before.
+      // An override for the exact route wins (explicit rates or `{ as }` alias),
+      // then the serving provider's own kosha entry; failing all, price as the bare model.
       const routeOverride = this.userOverrides.get(modelId);
       if (routeOverride) {
         this.cache.set(modelId, routeOverride);
         this.sources.set(modelId, { tier: "override" });
         return routeOverride;
       }
+      const routePriceAs = this.userPriceAs.get(modelId);
+      if (routePriceAs) return this.resolvePriceAs(modelId, routePriceAs);
       const route = this.lookupServedBy(baseModel, servedBy);
       if (route) {
         this.cache.set(modelId, route.pricing);
@@ -535,16 +537,7 @@ export class PricingService {
       return userOverride;
     }
     const priceAs = this.userPriceAs.get(modelId);
-    if (priceAs) {
-      // One hop: the target resolves as itself, never through its own `as`.
-      const target = this.userPriceAs.has(priceAs) ? null : await this.getPricing(priceAs);
-      this.cache.set(modelId, target);
-      this.sources.set(
-        modelId,
-        target ? { tier: "override", matchedId: priceAs } : { tier: "unpriced" }
-      );
-      return target;
-    }
+    if (priceAs) return this.resolvePriceAs(modelId, priceAs);
 
     // A "-free"/":free" id is priced by an override, its own $0 row on a route
     // (lookupServedBy), or a saved-catalog row with that exact id. kosha's
@@ -552,8 +545,19 @@ export class PricingService {
     // paid model and bill a free call at its rate; unpriced is the honest
     // answer instead.
     const freeTagged = FREE_TAG_RE.test(modelId);
+    if (freeTagged) {
+      const freeRow = this.lookupBareFree(modelId);
+      this.cache.set(modelId, freeRow?.pricing ?? null);
+      this.sources.set(
+        modelId,
+        freeRow
+          ? { tier: freeRow.tier, ...(freeRow.matchedId ? { matchedId: freeRow.matchedId } : {}) }
+          : { tier: "unpriced" }
+      );
+      return freeRow?.pricing ?? null;
+    }
 
-    if (this.registry && !freeTagged) {
+    if (this.registry) {
       // Tier 2: kosha canonical lookup
       try {
         const card = this.registry.model(modelId) as
@@ -715,12 +719,10 @@ export class PricingService {
     // id: the loose forms below drop a ":free" tag, and would otherwise bill
     // "kimi-k2-6:free" at the same provider's paid "kimi-k2-6" row.
     if (FREE_TAG_RE.test(model)) {
-      const free = [...registryRows, ...(this.loadCatalogOnly() ?? [])].find(
-        (e) =>
-          e.providerId?.toLowerCase() === provider &&
-          e.modelId?.toLowerCase() === model.toLowerCase() &&
-          e.pricing?.inputPerMillion === 0 &&
-          e.pricing?.outputPerMillion === 0
+      const free = this.findExactFreeEntry(
+        [...registryRows, ...(this.loadCatalogOnly() ?? [])],
+        model,
+        provider
       );
       if (free) {
         return {
@@ -733,6 +735,45 @@ export class PricingService {
     const fromRegistry = this.matchRoute(registryRows, model, provider);
     if (fromRegistry) return fromRegistry;
     return this.matchRoute(this.loadCatalogOnly() ?? [], model, provider);
+  }
+
+  private async resolvePriceAs(modelId: string, priceAs: string): Promise<FullPricing | null> {
+    // One hop: the target resolves as itself, never through its own `as`.
+    const target = this.userPriceAs.has(priceAs) ? null : await this.getPricing(priceAs);
+    this.cache.set(modelId, target);
+    this.sources.set(
+      modelId,
+      target ? { tier: "override", matchedId: priceAs } : { tier: "unpriced" }
+    );
+    return target;
+  }
+
+  private findExactFreeEntry<
+    T extends { modelId?: string; pricing?: ModelPricing; providerId?: string },
+  >(entries: T[], model: string, provider?: string): T | undefined {
+    const targetModel = model.toLowerCase();
+    return entries.find(
+      (e) =>
+        (provider === undefined || e.providerId?.toLowerCase() === provider) &&
+        e.modelId?.toLowerCase() === targetModel &&
+        e.pricing?.inputPerMillion === 0 &&
+        e.pricing?.outputPerMillion === 0
+    );
+  }
+
+  private lookupBareFree(
+    modelId: string
+  ): { pricing: FullPricing; tier: PricingSourceTier; matchedId?: string } | null {
+    // Only registry.json answers bare model names; catalog-only.json requires @provider.
+    const freeInManifest = this.findExactFreeEntry(this.loadRegistryManifest() ?? [], modelId);
+    if (freeInManifest) {
+      return {
+        pricing: { inputPerMillion: 0, outputPerMillion: 0 },
+        tier: "manifest",
+        matchedId: freeInManifest.modelId,
+      };
+    }
+    return null;
   }
 
   private matchRoute(
@@ -985,6 +1026,7 @@ export class PricingService {
       .replace(DATE_SUFFIX_RE, "")
       .replace(/-latest$/, "")
       .replace(/\./g, "-");
+    const qBase = normalized.split("/").pop() ?? normalized;
 
     interface KoshaModel {
       id: string;
@@ -994,6 +1036,13 @@ export class PricingService {
     }
     const all: KoshaModel[] = this.registry.models();
 
+    const baseOf = (id: string) => id.toLowerCase().replace(/\./g, "-").split("/").pop() ?? "";
+    const isPrefixMatchEligible = qBase.length >= 4 && /[-0-9]/.test(qBase);
+    const hasDirectOrigin = (m: KoshaModel) =>
+      !!m.originPricing &&
+      (m.originPricing.inputPerMillion ?? 0) > 0 &&
+      (m.originPricing.outputPerMillion ?? 0) > 0;
+
     const best = all
       .filter((m) => {
         // Two-sided check: if EITHER side has usable pricing, the row is
@@ -1002,16 +1051,18 @@ export class PricingService {
         if (!pickUsablePricing(m)) return false;
         const lower = m.id.toLowerCase();
         if (lower.includes(":free") || lower.includes(":exacto")) return false;
-        const mNorm = lower.replace(/\./g, "-");
-        return mNorm.includes(normalized) || mNorm.split("/").pop()?.includes(normalized) === true;
+        const mBase = baseOf(lower);
+        if (mBase === qBase) return true;
+        return isPrefixMatchEligible && mBase.startsWith(`${qBase}-`);
       })
       .sort((a, b) => {
-        const aBase = a.id.toLowerCase().replace(/\./g, "-").split("/").pop() ?? "";
-        const bBase = b.id.toLowerCase().replace(/\./g, "-").split("/").pop() ?? "";
-        const score = (base: string) =>
-          base === normalized ? 2 : base.startsWith(normalized) ? 1 : 0;
+        const aBase = baseOf(a.id);
+        const bBase = baseOf(b.id);
+        const score = (base: string) => (base === qBase ? 2 : 1);
         const diff = score(bBase) - score(aBase);
         if (diff !== 0) return diff;
+        const originDiff = (hasDirectOrigin(b) ? 1 : 0) - (hasDirectOrigin(a) ? 1 : 0);
+        if (originDiff !== 0) return originDiff;
         return aBase.length - bBase.length;
       })[0];
 
@@ -1026,21 +1077,77 @@ export class PricingService {
    */
   private roundPricing(p: FullPricing): FullPricing | null {
     const r = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
-    // Guard: if any field is NaN or Infinity, bail — this model is unpriced.
-    const allValues = [
-      p.inputPerMillion,
-      p.outputPerMillion,
+    const isValidRate = (v: unknown): v is number =>
+      typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+    // Guard: if any required or defined rate field is non-finite or negative, bail.
+    if (!isValidRate(p.inputPerMillion) || !isValidRate(p.outputPerMillion)) return null;
+    const optionalTop = [
       p.cacheReadPerMillion,
       p.cacheWritePerMillion,
       p.cacheWrite1hPerMillion,
       p.reasoningInputPerMillion,
       p.reasoningOutputPerMillion,
     ];
-    for (const v of allValues) {
-      if (v !== undefined && (!Number.isFinite(v) || v < 0)) return null;
+    for (const v of optionalTop) {
+      if (v !== undefined && !isValidRate(v)) return null;
     }
+
+    let schedule: FullPricing["schedule"];
+    if (p.schedule !== undefined) {
+      if (
+        !p.schedule ||
+        typeof p.schedule !== "object" ||
+        !Array.isArray(p.schedule.peakWindows) ||
+        !p.schedule.offPeak ||
+        typeof p.schedule.offPeak !== "object"
+      ) {
+        return null;
+      }
+      const peakWindows = [];
+      for (const w of p.schedule.peakWindows) {
+        if (
+          !w ||
+          typeof w !== "object" ||
+          !Array.isArray(w.days) ||
+          !w.days.every((d) => typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 6) ||
+          typeof w.startHourUtc !== "number" ||
+          !Number.isFinite(w.startHourUtc) ||
+          typeof w.endHourUtc !== "number" ||
+          !Number.isFinite(w.endHourUtc)
+        ) {
+          return null;
+        }
+        peakWindows.push({
+          days: [...w.days],
+          startHourUtc: w.startHourUtc,
+          endHourUtc: w.endHourUtc,
+        });
+      }
+      const op = p.schedule.offPeak as Record<string, unknown>;
+      if (
+        !isValidRate(op.inputPerMillion) ||
+        !isValidRate(op.outputPerMillion) ||
+        (op.cacheReadPerMillion !== undefined && !isValidRate(op.cacheReadPerMillion))
+      ) {
+        return null;
+      }
+      const offPeak: NonNullable<FullPricing["schedule"]>["offPeak"] = {
+        inputPerMillion: r(op.inputPerMillion),
+        outputPerMillion: r(op.outputPerMillion),
+        ...(op.cacheReadPerMillion !== undefined
+          ? { cacheReadPerMillion: r(op.cacheReadPerMillion) }
+          : {}),
+      };
+      schedule = {
+        ...(p.schedule.source !== undefined ? { source: p.schedule.source } : { source: "" }),
+        peakWindows,
+        offPeak,
+      };
+    }
+
     return {
-      ...(p.schedule ? { schedule: p.schedule } : {}),
+      ...(schedule ? { schedule } : {}),
       inputPerMillion: r(p.inputPerMillion),
       outputPerMillion: r(p.outputPerMillion),
       ...(p.cacheReadPerMillion !== undefined

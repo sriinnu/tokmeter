@@ -115,7 +115,7 @@ Opinionated recommendations derived from your own usage.
 
 ### tokmeter_model_advisor
 
-Compare what you actually spent vs what cheaper models would have cost. Shows current spending by model and estimates savings if you downgraded expensive models (e.g., Opus → Sonnet, GPT-5 → GPT-4o). Includes a reference pricing table.
+Show observed spending by model, live kosha per-million-token rates, and neutral workload cost projections across your priced models for the selected period and project.
 
 ### tokmeter_cost_optimization_tips
 

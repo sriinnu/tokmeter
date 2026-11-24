@@ -176,4 +176,23 @@ describe("resetCalculatedCosts", () => {
     expect(direct.cost).toBe(2.25);
     expect(noUsage.cost).toBe(0);
   });
+
+  it("emits at most one pricing-failure warning per model while tracking all affected records", async () => {
+    const pricing = new PricingService();
+    pricing.calculateCost = async () => {
+      throw new Error("boom");
+    };
+    const warnings: ScanWarning[] = [];
+    const tracker: UnpricedTracker = { models: new Set(), records: 0 };
+    const r1 = makeRecord({ model: "broken-model" });
+    const r2 = makeRecord({ model: "broken-model" });
+    await enrichCosts([r1, r2], pricing, "today", warnings, tracker);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("broken-model");
+    expect(r1.usage?.cost).toBe("not_exposed");
+    expect(r2.usage?.cost).toBe("not_exposed");
+    expect(tracker.models.has("broken-model")).toBe(true);
+    expect(tracker.records).toBe(2);
+  });
 });
