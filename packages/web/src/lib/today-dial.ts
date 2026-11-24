@@ -66,12 +66,9 @@ export interface TypicalDay {
   days: number;
 }
 
-const tokensOf = (r: RawRecord) =>
-  (r.inputTokens ?? 0) +
-  (r.outputTokens ?? 0) +
-  (r.cacheReadTokens ?? 0) +
-  (r.cacheWriteTokens ?? 0) +
-  (r.reasoningTokens ?? 0);
+import { sumTokenBuckets } from "./format.js";
+
+const tokensOf = sumTokenBuckets;
 
 export function buildTodayDial(
   records: Array<Record<string, unknown>>,

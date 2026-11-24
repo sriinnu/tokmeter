@@ -78,14 +78,17 @@ export function createSummaryQuery(options: ScanOptions, aliases: AliasMap, now 
     !options.project ||
     projectNameIncludes(project, options.project) ||
     projectNameIncludes(resolveProjectName(project, aliases), options.project);
+  const skippedLegacyDays: string[] = [];
   return {
     narrowed: Boolean(since || until || providers || options.project),
     narrowedBuckets: Boolean(providers || options.project),
+    skippedLegacyDays,
     matchesRecord: (record: TokenRecord) =>
       matchesDay(localDateKey(record.timestamp)) &&
       matchesProject(record.project) &&
       (!providers || providers.has(record.provider)),
     selectDays(days: DailyAggregate[]): Map<string, DailyAggregate> {
+      skippedLegacyDays.length = 0;
       const selected = new Map<string, DailyAggregate>();
       for (const day of days) {
         if (!matchesDay(day.date)) continue;
@@ -104,7 +107,14 @@ export function createSummaryQuery(options: ScanOptions, aliases: AliasMap, now 
         };
         for (const [name, project] of Object.entries(day.projects)) {
           if (!matchesProject(name)) continue;
-          const buckets = Object.entries(project.modelBuckets).filter(
+          const rawBuckets = Object.entries(project.modelBuckets);
+          if (rawBuckets.length === 0 && project.recordCount > 0) {
+            if (skippedLegacyDays[skippedLegacyDays.length - 1] !== day.date) {
+              skippedLegacyDays.push(day.date);
+            }
+            continue;
+          }
+          const buckets = rawBuckets.filter(
             ([, bucket]) => !providers || providers.has(bucket.provider)
           );
           if (!buckets.length) continue;

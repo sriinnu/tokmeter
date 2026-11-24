@@ -258,12 +258,20 @@ function dayToEntry(day: DailyAggregate): DailyEntry {
   };
 }
 
+function projectMatchesQuery(rawName: string, query: string, aliases: AliasMap): boolean {
+  return (
+    projectNameIncludes(rawName, query) ||
+    projectNameIncludes(resolveProjectName(rawName, aliases), query)
+  );
+}
+
 export function computeDailyBreakdownFromState(
   aggregates: Map<string, DailyAggregate>,
   todayAccumulator: DailyAccumulator | null,
-  opts?: { since?: string; until?: string; project?: string; providers?: ProviderId[] }
+  opts?: { since?: string; until?: string; project?: string; providers?: ProviderId[] },
+  aliases: AliasMap = {}
 ): DailyEntry[] {
-  const projectMatch = opts?.project?.toLowerCase();
+  const projectMatch = opts?.project;
   const filter = makeFilter(opts?.providers);
   const out: DailyEntry[] = [];
   for (const day of iterateAllDays(aggregates, todayAccumulator)) {
@@ -278,7 +286,7 @@ export function computeDailyBreakdownFromState(
       records: 0,
     };
     for (const [name, bucket] of Object.entries(day.projects)) {
-      if (projectMatch && !projectNameIncludes(name, projectMatch)) continue;
+      if (projectMatch && !projectMatchesQuery(name, projectMatch, aliases)) continue;
       if (!filter) {
         addTokens(sum, bucket);
         sum.cost += bucket.cost;
@@ -372,7 +380,8 @@ export function computeModelCostsFromState(
     today?: boolean;
     project?: string;
     providers?: ProviderId[];
-  }
+  },
+  aliases: AliasMap = {}
 ): ModelSummary[] {
   const todayKey = todayAccumulator?.date;
   const filter = makeFilter(opts?.providers);
@@ -386,7 +395,7 @@ export function computeModelCostsFromState(
     for (const day of iterateAllDays(aggregates, todayAccumulator)) {
       if (!dayInWindow(day, opts, todayKey)) continue;
       for (const project of Object.values(day.projects)) {
-        if (query && !projectNameIncludes(project.project, query)) continue;
+        if (query && !projectMatchesQuery(project.project, query, aliases)) continue;
         for (const mb of Object.values(project.modelBuckets)) {
           if (filter && !filter.has(mb.provider)) continue;
           grandTotalCost += mb.cost;
@@ -577,8 +586,8 @@ function projectAccumToSummary(
     providers,
     dailyBreakdown,
     activeDays: dailyBreakdown.length,
-    firstUsed: Number.isFinite(acc.firstUsed) ? acc.firstUsed : Number.POSITIVE_INFINITY,
-    lastUsed: Number.isFinite(acc.lastUsed) ? acc.lastUsed : Number.NEGATIVE_INFINITY,
+    firstUsed: Number.isFinite(acc.firstUsed) ? acc.firstUsed : 0,
+    lastUsed: Number.isFinite(acc.lastUsed) ? acc.lastUsed : 0,
   };
 }
 

@@ -197,11 +197,11 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   define: {
     __TOKMETER_VERSION__: JSON.stringify(packageVersion),
   },
-  publicDir: process.env.TOKMETER_APP_BUILD === "1" ? false : "public",
+  publicDir: command === "build" && process.env.TOKMETER_DEMO_BUILD !== "1" ? false : "public",
   plugins: [react(), tailwindcss(), tokmeterSummaryDevPlugin(), appNoticesPlugin()],
   build: {
     // The overview chunk (React + Recharts) is ~750 kB and three.js is a
@@ -209,9 +209,16 @@ export default defineConfig({
     chunkSizeWarningLimit: 800,
   },
   resolve: {
-    alias: {
-      "@sriinnu/tokmeter-core": resolve(__dirname, "../core/src/index.ts"),
-    },
+    alias: [
+      {
+        find: "@sriinnu/tokmeter-core/project-name",
+        replacement: resolve(__dirname, "../core/src/project-name.ts"),
+      },
+      {
+        find: "@sriinnu/tokmeter-core",
+        replacement: resolve(__dirname, "../core/src/index.ts"),
+      },
+    ],
   },
   server: {
     port: 3000,
@@ -222,4 +229,4 @@ export default defineConfig({
     host: "127.0.0.1",
     open: process.env.CI ? false : `/?session=${devCapability}`,
   },
-});
+}));

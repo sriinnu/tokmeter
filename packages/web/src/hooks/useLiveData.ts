@@ -52,7 +52,19 @@ export function useLiveData(): LiveData {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
 
+    const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+
+    function cancelPending() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      controller?.abort();
+      controller = undefined;
+    }
+
     async function poll() {
+      if (stopped || isHidden()) return;
       controller = new AbortController();
       try {
         const response = await fetch("/api/live", {
@@ -65,24 +77,41 @@ export function useLiveData(): LiveData {
         if (!data.aggregated || !Array.isArray(data.aggregated.byModel)) {
           throw new Error("Invalid live data");
         }
-        if (stopped) return;
+        if (stopped || isHidden()) return;
         setAggregated(data.aggregated);
         setLastUpdate(Date.now());
         setStatus("connected");
         retryMs = POLL_INTERVAL_MS;
       } catch {
-        if (stopped) return;
+        if (stopped || isHidden()) return;
         setStatus("disconnected");
         retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
       }
-      if (!stopped) timer = setTimeout(poll, retryMs);
+      if (!stopped && !isHidden()) {
+        timer = setTimeout(poll, retryMs);
+      }
     }
 
-    void poll();
+    const onVisibilityChange = () => {
+      if (isHidden()) {
+        cancelPending();
+      } else if (!stopped) {
+        cancelPending();
+        retryMs = POLL_INTERVAL_MS;
+        void poll();
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    if (!isHidden()) void poll();
     return () => {
       stopped = true;
-      if (timer) clearTimeout(timer);
-      controller?.abort();
+      cancelPending();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
     };
   }, []);
 

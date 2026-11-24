@@ -5,6 +5,7 @@ import type {
 } from "../hooks/useTokmeterData.js";
 import { dateRange } from "./dates.js";
 import { type DayState, getDayState } from "./day-state.js";
+import { sumTokenBuckets } from "./format.js";
 
 export interface DailyPoint {
   date: string;
@@ -153,14 +154,7 @@ export function buildDayHourMatrix(
     if (typeof r.timestamp !== "number") continue;
     const row = index.get(toDateKey(r.timestamp));
     if (row === undefined) continue;
-    const value =
-      metric === "cost"
-        ? (r.cost ?? 0)
-        : (r.inputTokens ?? 0) +
-          (r.outputTokens ?? 0) +
-          (r.cacheReadTokens ?? 0) +
-          (r.cacheWriteTokens ?? 0) +
-          (r.reasoningTokens ?? 0);
+    const value = metric === "cost" ? (r.cost ?? 0) : sumTokenBuckets(r);
     values[row][new Date(r.timestamp).getHours()] += value;
     total += value;
   }

@@ -1,7 +1,7 @@
+import { projectNameIncludes, projectNamesMatch } from "@sriinnu/tokmeter-core/project-name";
 import { ArrowLeft } from "lucide-react";
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
-import { projectNameIncludes, projectNamesMatch } from "../../../../core/src/project-name.js";
 import { BarList } from "../../charts/BarList.js";
 import { DataGate } from "../../components/DataGate.js";
 import { EstimateNote } from "../../components/EstimateNote.js";

@@ -9,8 +9,10 @@
   ],
   "scripts": {
     "ensure-summary": "bun run scripts/ensure-summary.ts",
+    "typecheck": "tsc --noEmit",
     "dev": "bun run ensure-summary && vite",
-    "build": "bun run ensure-summary && vite build",
+    "build": "tsc --noEmit && vite build",
+    "build:demo": "TOKMETER_DEMO_BUILD=1 bun run ensure-summary && TOKMETER_DEMO_BUILD=1 vite build",
     "preview": "bun run ensure-summary && vite preview"
   },
   "dependencies": {

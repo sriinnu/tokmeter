@@ -173,4 +173,67 @@ describe("aggregate summary queries", () => {
   ])("rejects unsupported bounds %j", (options) => {
     expect(() => fixtureCore().getSummary(options)).toThrow();
   });
+
+  test("resolves project aliases in getDailyBreakdown and getModelCosts", () => {
+    const core = fixtureCore();
+    expect(core.getDailyBreakdown({ project: "renamed" })).toEqual(
+      core.getDailyBreakdown({ project: "app" })
+    );
+    expect(core.getModelCosts({ project: "renamed" })).toEqual(
+      core.getModelCosts({ project: "app" })
+    );
+    expect(core.getDailyBreakdown({ project: "renamed" }).length).toBeGreaterThan(0);
+    expect(core.getModelCosts({ project: "renamed" }).length).toBeGreaterThan(0);
+  });
+
+  test("returns finite 0 bounds when matching project days lack timestamps", () => {
+    const core = fixtureCore(false);
+    const days = core.getDailyAggregates().map((day) => ({
+      ...day,
+      projects: Object.fromEntries(
+        Object.entries(day.projects).map(([name, proj]) => [
+          name,
+          name === "app" ? { ...proj, firstUsed: 0, lastUsed: 0 } : proj,
+        ])
+      ),
+    }));
+    Object.assign(core, {
+      aggregates: new Map(days.map((day) => [day.date, day])),
+    });
+    const summary = core.getProjectSummary("renamed");
+    expect(summary).toBeDefined();
+    expect(summary?.firstUsed).toBe(0);
+    expect(summary?.lastUsed).toBe(0);
+    expect(Number.isFinite(summary?.firstUsed)).toBe(true);
+    expect(Number.isFinite(summary?.lastUsed)).toBe(true);
+    expect(fixtureCore(false).getProjectSummary("nonexistent")).toBeUndefined();
+  });
+
+  test("surfaces a history warning when filtered queries skip legacy sealed days", () => {
+    const core = fixtureCore();
+    const days = core.getDailyAggregates().map((day) => ({
+      ...day,
+      projects: Object.fromEntries(
+        Object.entries(day.projects).map(([name, proj]) => [
+          name,
+          name === "app"
+            ? {
+                ...proj,
+                recordCount: Math.max(proj.recordCount, 2),
+                modelBuckets: Object.create(null),
+              }
+            : proj,
+        ])
+      ),
+    }));
+    Object.assign(core, {
+      aggregates: new Map(days.map((day) => [day.date, day])),
+    });
+    const summary = core.getSummary({ project: "app" });
+    expect(
+      summary.meta.warnings.some(
+        (warning) => warning.scope === "history" && /legacy sealed day/.test(warning.message)
+      )
+    ).toBe(true);
+  });
 });

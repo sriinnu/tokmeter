@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   loadSummaryCache,
+  localDateKey,
   saveSummaryCache,
   TokmeterCore,
   type TokmeterSummary,
@@ -25,12 +26,6 @@ const publicDataPath = join(publicDir, "data.json");
 
 const DAEMON_SUMMARY_URL = "http://127.0.0.1:9877/api/summary";
 const DAEMON_FETCH_TIMEOUT_MS = 3_000;
-
-/** Local calendar date key, matching core's localDateKey convention. */
-function localDateKey(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 /**
  * Ensures the web package always has a fallback `public/data.json` summary.

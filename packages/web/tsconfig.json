@@ -3,8 +3,14 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
+    "noEmit": true,
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@sriinnu/tokmeter-core": ["../core/dist/index.d.ts"],
+      "@sriinnu/tokmeter-core/project-name": ["../core/dist/project-name.d.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/server/**/*.test.ts"]
 }

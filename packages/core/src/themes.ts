@@ -8,9 +8,7 @@
  * Colors are hex strings. Surfaces convert them to their native format.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { configFilePath, loadConfig } from "./config-service.js";
 
 // ─── Theme Interface ────────────────────────────────────────────────────
 
@@ -273,41 +271,18 @@ export function listThemes(): Pick<Theme, "id" | "name" | "description" | "varia
 
 // ─── User Config ────────────────────────────────────────────────────────
 
-/** Tokmeter user config shape (subset — only what we need). */
-interface UserConfig {
-  theme?: string;
-  /** Enable Nerd Font glyphs in statusline (requires a patched font). Default: false. */
-  nerdFont?: boolean;
-}
-
-const CONFIG_PATH = join(homedir(), ".config", "tokmeter", "config.json");
-
-/** Load the user's preferred theme from ~/.config/tokmeter/config.json. */
-export function loadUserTheme(): Theme {
-  try {
-    if (!existsSync(CONFIG_PATH)) return defaultTheme;
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
-    const config = JSON.parse(raw) as UserConfig;
-    return getTheme(config.theme);
-  } catch {
-    return defaultTheme;
-  }
+/** Load the user's preferred theme from `~/.tokmeter/config.json` (with legacy fallback). */
+export function loadUserTheme(home?: string): Theme {
+  return getTheme(loadConfig(home).theme);
 }
 
 /** Check if the user opted into Nerd Font glyphs via config or env. */
-export function isNerdFontEnabled(): boolean {
+export function isNerdFontEnabled(home?: string): boolean {
   if (process.env.NERD_FONT === "1" || process.env.NERD_FONTS === "1") return true;
-  try {
-    if (!existsSync(CONFIG_PATH)) return false;
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
-    const config = JSON.parse(raw) as UserConfig;
-    return config.nerdFont === true;
-  } catch {
-    return false;
-  }
+  return loadConfig(home).nerdFont === true;
 }
 
-/** Get the config file path (for display in CLI help). */
-export function getConfigPath(): string {
-  return CONFIG_PATH;
+/** Get the canonical config file path (for display in CLI help). */
+export function getConfigPath(home?: string): string {
+  return configFilePath(home);
 }
