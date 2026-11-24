@@ -566,3 +566,234 @@ export function shouldKeepSealedDay(
   }
   return false;
 }
+
+function addBucketTotals(
+  target: TokenBuckets & { cost: number; totalTokens: number; recordCount: number },
+  src: TokenBuckets & { cost: number; recordCount: number },
+  sign: 1 | -1
+): void {
+  const clamp = (n: number) => Math.max(n, 0);
+  target.inputTokens = clamp(target.inputTokens + sign * src.inputTokens);
+  target.outputTokens = clamp(target.outputTokens + sign * src.outputTokens);
+  target.cacheReadTokens = clamp(target.cacheReadTokens + sign * src.cacheReadTokens);
+  target.cacheWriteTokens = clamp(target.cacheWriteTokens + sign * src.cacheWriteTokens);
+  target.reasoningTokens = clamp(target.reasoningTokens + sign * src.reasoningTokens);
+  const w1h = Math.min(
+    target.cacheWriteTokens,
+    clamp((target.cacheWrite1hTokens ?? 0) + sign * (src.cacheWrite1hTokens ?? 0))
+  );
+  if (w1h > 0) target.cacheWrite1hTokens = w1h;
+  else delete target.cacheWrite1hTokens;
+
+  const rawCost = target.cost + sign * src.cost;
+  target.cost = rawCost <= 0 || Math.abs(rawCost) < 1e-12 ? 0 : rawCost;
+  target.recordCount = clamp(target.recordCount + sign * src.recordCount);
+  target.totalTokens = tokensTotal(target);
+}
+
+function cloneDay(src: DailyAggregate): DailyAggregate {
+  const models = nullMap<ModelDayBucket>();
+  for (const [k, m] of Object.entries(src.models)) {
+    models[k] = { ...m, providers: [...m.providers] };
+  }
+  const projects = nullMap<ProjectDayBucket>();
+  for (const [k, p] of Object.entries(src.projects)) {
+    const modelBuckets = nullMap<ProjectModelDayBucket>();
+    for (const [mk, mb] of Object.entries(p.modelBuckets)) modelBuckets[mk] = { ...mb };
+    projects[k] = { ...p, models: [...p.models], modelBuckets };
+  }
+  const providers = nullMap<ProviderDayBucket>();
+  for (const [k, pr] of Object.entries(src.providers)) providers[k] = { ...pr };
+
+  return {
+    ...src,
+    models,
+    projects,
+    providers,
+    ...(src.costByHour ? { costByHour: [...src.costByHour] } : {}),
+    ...(src.prices ? { prices: structuredClone(src.prices) } : {}),
+  };
+}
+
+function isEmptyBucket(b: { recordCount: number; totalTokens: number; cost: number }): boolean {
+  return b.recordCount <= 0 || (b.totalTokens <= 0 && b.cost <= 0);
+}
+
+/**
+ * Subtract deleted records' rolled-up delta from a sealed day aggregate.
+ * Returns null when no records remain on that day so the caller removes the
+ * day file instead of leaving a zeroed day behind. Preserves null-prototype maps
+ * and all validateable aggregate invariants.
+ */
+export function subtractDailyAggregate(
+  base: DailyAggregate,
+  delta: DailyAggregate
+): DailyAggregate | null {
+  const out = cloneDay(base);
+  addBucketTotals(out, delta, -1);
+  if (isEmptyBucket(out)) return null;
+
+  if (out.costByHour && delta.costByHour) {
+    for (let h = 0; h < 24; h++) {
+      const v = (out.costByHour[h] ?? 0) - (delta.costByHour[h] ?? 0);
+      out.costByHour[h] = v <= 0 || v < 1e-12 ? 0 : v;
+    }
+  }
+
+  for (const [k, dp] of Object.entries(delta.providers)) {
+    const target = out.providers[k];
+    if (!target) continue;
+    addBucketTotals(target, dp, -1);
+    if (isEmptyBucket(target)) delete out.providers[k];
+  }
+
+  // Track which providers actually remain per model using remaining project
+  // cross-cut buckets so model.providers stays exact.
+  for (const [k, dproj] of Object.entries(delta.projects)) {
+    const target = out.projects[k];
+    if (!target) continue;
+    addBucketTotals(target, dproj, -1);
+    for (const [mk, dmb] of Object.entries(dproj.modelBuckets)) {
+      const mb = target.modelBuckets[mk];
+      if (!mb) continue;
+      addBucketTotals(mb, dmb, -1);
+      if (isEmptyBucket(mb)) delete target.modelBuckets[mk];
+    }
+    if (isEmptyBucket(target)) {
+      delete out.projects[k];
+    } else {
+      const bucketModels = [...new Set(Object.values(target.modelBuckets).map((mb) => mb.model))];
+      if (bucketModels.length > 0) target.models = bucketModels;
+    }
+  }
+
+  const providersByModel = new Map<string, Set<ProviderId>>();
+  for (const proj of Object.values(out.projects)) {
+    for (const mb of Object.values(proj.modelBuckets)) {
+      let set = providersByModel.get(mb.model);
+      if (!set) {
+        set = new Set();
+        providersByModel.set(mb.model, set);
+      }
+      set.add(mb.provider);
+    }
+  }
+
+  for (const [k, dm] of Object.entries(delta.models)) {
+    const target = out.models[k];
+    if (!target) continue;
+    addBucketTotals(target, dm, -1);
+    if (isEmptyBucket(target)) {
+      delete out.models[k];
+      if (out.prices) delete out.prices[k];
+    } else {
+      const active = providersByModel.get(k);
+      if (active && active.size > 0) {
+        target.providers = [...active];
+      } else {
+        target.providers = target.providers.filter((pr) => Boolean(out.providers[pr]));
+      }
+    }
+  }
+
+  // Legacy days without project modelBuckets fall back to remaining day models
+  // only after deleted models have been removed from `out.models`.
+  for (const proj of Object.values(out.projects)) {
+    if (Object.keys(proj.modelBuckets).length === 0) {
+      proj.models = proj.models.filter((m) => Boolean(out.models[m]));
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Merge newly added records' rolled-up aggregate into an existing day without
+ * discarding any aged-out provider or model buckets that `base` already held.
+ */
+export function mergeDailyAggregate(
+  base: DailyAggregate,
+  addition: DailyAggregate
+): DailyAggregate {
+  const out = cloneDay(base);
+  addBucketTotals(out, addition, 1);
+  if (addition.firstUsed > 0 && (out.firstUsed === 0 || addition.firstUsed < out.firstUsed)) {
+    out.firstUsed = addition.firstUsed;
+  }
+  if (addition.lastUsed > out.lastUsed) {
+    out.lastUsed = addition.lastUsed;
+  }
+
+  if (addition.costByHour) {
+    if (!out.costByHour) out.costByHour = emptyCostByHour();
+    for (let h = 0; h < 24; h++) {
+      out.costByHour[h] = (out.costByHour[h] ?? 0) + (addition.costByHour[h] ?? 0);
+    }
+  }
+
+  for (const [k, addM] of Object.entries(addition.models)) {
+    const existing = out.models[k];
+    if (!existing) {
+      out.models[k] = { ...addM, providers: [...addM.providers] };
+    } else {
+      addBucketTotals(existing, addM, 1);
+      for (const p of addM.providers) {
+        if (!existing.providers.includes(p)) existing.providers.push(p);
+      }
+    }
+  }
+
+  for (const [k, addProj] of Object.entries(addition.projects)) {
+    const existing = out.projects[k];
+    if (!existing) {
+      const modelBuckets = nullMap<ProjectModelDayBucket>();
+      for (const [mk, mb] of Object.entries(addProj.modelBuckets)) modelBuckets[mk] = { ...mb };
+      out.projects[k] = { ...addProj, models: [...addProj.models], modelBuckets };
+    } else {
+      addBucketTotals(existing, addProj, 1);
+      if (
+        addProj.firstUsed > 0 &&
+        (existing.firstUsed === 0 || addProj.firstUsed < existing.firstUsed)
+      ) {
+        existing.firstUsed = addProj.firstUsed;
+      }
+      if (addProj.lastUsed > existing.lastUsed) existing.lastUsed = addProj.lastUsed;
+      for (const m of addProj.models) {
+        if (!existing.models.includes(m)) existing.models.push(m);
+      }
+      for (const [mk, addMb] of Object.entries(addProj.modelBuckets)) {
+        const existingMb = existing.modelBuckets[mk];
+        if (!existingMb) existing.modelBuckets[mk] = { ...addMb };
+        else addBucketTotals(existingMb, addMb, 1);
+      }
+    }
+  }
+
+  for (const [k, addPr] of Object.entries(addition.providers)) {
+    const existing = out.providers[k];
+    if (!existing) {
+      out.providers[k] = { ...addPr };
+    } else {
+      addBucketTotals(existing, addPr, 1);
+      if (
+        addPr.firstUsed > 0 &&
+        (existing.firstUsed === 0 || addPr.firstUsed < existing.firstUsed)
+      ) {
+        existing.firstUsed = addPr.firstUsed;
+      }
+      if (addPr.lastUsed > existing.lastUsed) existing.lastUsed = addPr.lastUsed;
+    }
+  }
+
+  if (addition.prices) {
+    out.prices = { ...(out.prices ?? {}), ...structuredClone(addition.prices) };
+    // Existing cards win so original sealed rates stay immutable.
+    if (base.prices) {
+      for (const [m, card] of Object.entries(base.prices)) {
+        out.prices[m] = structuredClone(card);
+      }
+    }
+  }
+
+  return out;
+}

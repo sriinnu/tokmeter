@@ -27,6 +27,7 @@ import {
   assertArchiveLimits,
   assertNoSymlinkParents,
   isWithin,
+  parseTarVerboseEntry,
   restoreAllowedRoots,
 } from "./restore-guard.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
@@ -610,5 +611,37 @@ describe("CleanupService.execute — empty filter guard", () => {
     expect(EMPTY_FILTER_MESSAGE).toMatch(/project/);
     expect(EMPTY_FILTER_MESSAGE).toMatch(/providers/);
     expect(EMPTY_FILTER_MESSAGE).toMatch(/since\/until/);
+  });
+});
+
+describe("parseTarVerboseEntry", () => {
+  it("parses bsdtar rows when owner and group names contain spaces", () => {
+    const name = "Users/john/session 2026-01-01 report.jsonl";
+    const row = `-rw-------  1 john doe  Domain Users     42198 Jan  5  2026 ${name}`;
+    expect(parseTarVerboseEntry(row, name)).toEqual({ type: "-", sizeBytes: 42198 });
+  });
+
+  it("parses GNU tar ISO timestamp rows when owner/group contains spaces and filename has numbers", () => {
+    const name = "home/jane/123 456 session.jsonl";
+    const row = `-rw-r--r-- jane doe/Domain Users     9012 2026-01-05 14:22 ${name}`;
+    expect(parseTarVerboseEntry(row, name)).toEqual({ type: "-", sizeBytes: 9012 });
+  });
+
+  it("handles directories with optional trailing slash, symlinks, and device nodes", () => {
+    expect(
+      parseTarVerboseEntry(
+        "drwx------  2 john doe  Domain Users         0 Jan  5 12:30 Users/john/dir",
+        "Users/john/dir/"
+      )
+    ).toEqual({ type: "d", sizeBytes: 0 });
+    expect(
+      parseTarVerboseEntry(
+        "lrwxr-xr-x  0 john doe  Domain Users         0 Jan  5  2026 link.jsonl -> /etc/passwd",
+        "link.jsonl"
+      )
+    ).toEqual({ type: "l", sizeBytes: 0 });
+    expect(
+      parseTarVerboseEntry("crw-rw-rw-  0 root  wheel   3,   2 Jan  5 00:00 devnull", "devnull")
+    ).toEqual({ type: "c", sizeBytes: 0 });
   });
 });

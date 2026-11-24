@@ -37,6 +37,7 @@
  * the first snapshot was ever saved.
  */
 
+import { randomBytes } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -49,7 +50,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { isValidRecord, recordFingerprint } from "./aggregates.js";
 import { localDateKey } from "./date-utils.js";
 import { sanitizeDataLabel } from "./display-safety.js";
@@ -146,6 +147,114 @@ function unitOf(r: TokenRecord): string | null {
 }
 
 const sharedFileOf = (r: TokenRecord) => `${r.provider}|${r.sourceFile}`;
+
+function pathMatchesDeleted(candidate: string | undefined, deleted: readonly string[]): boolean {
+  if (!candidate) return false;
+  const resolved = resolve(candidate);
+  return deleted.some((d) => resolved === d || resolved.startsWith(`${d}${sep}`));
+}
+
+function unitMatchesDeleted(
+  unit: string,
+  records: readonly TokenRecord[],
+  deleted: readonly string[]
+): boolean {
+  if (records.some((r) => pathMatchesDeleted(r.sourceFile, deleted))) return true;
+  const pipeIdx = unit.indexOf("|");
+  const afterPipe = pipeIdx >= 0 ? unit.slice(pipeIdx + 1) : unit;
+  if (pathMatchesDeleted(afterPipe, deleted)) return true;
+  const goneIdx = afterPipe.indexOf(GONE);
+  if (goneIdx >= 0 && pathMatchesDeleted(afterPipe.slice(0, goneIdx), deleted)) return true;
+  const hashIdx = afterPipe.indexOf("#");
+  if (hashIdx >= 0 && pathMatchesDeleted(afterPipe.slice(0, hashIdx), deleted)) return true;
+  return false;
+}
+
+function writeJournalFile(homeDir: string, date: string, body: JournalFile): void {
+  const serialized = JSON.stringify(body);
+  if (Buffer.byteLength(serialized) > MAX_JOURNAL_BYTES) {
+    throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_BYTES} bytes`);
+  }
+  let tmp: string | null = null;
+  try {
+    const dir = journalDir(homeDir);
+    ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+    ensurePrivateDirectory(dir);
+    const path = journalPath(homeDir, date);
+    tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    const fd = openSync(tmp, "w", 0o600);
+    try {
+      writeFileSync(fd, serialized, { encoding: "utf-8" });
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+    tmp = null;
+  } catch (error) {
+    if (tmp) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best effort */
+      }
+    }
+    throw new JournalIntegrityError(
+      `Unable to persist authoritative today journal: ${error instanceof Error ? error.message : error}`
+    );
+  }
+}
+
+/**
+ * Remove units/records belonging to explicitly deleted paths from persisted
+ * today journals so CleanupService.execute() is not silently undone by carry.
+ */
+export function pruneJournalPaths(homeDir: string, deletedPaths: string[]): void {
+  if (deletedPaths.length === 0) return;
+  const deleted = deletedPaths.map((p) => resolve(p));
+  let names: string[];
+  try {
+    names = readdirSync(journalDir(homeDir));
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const m = JOURNAL_FILE_PATTERN.exec(name);
+    if (!m) continue;
+    const date = m[1]!;
+    const loaded = readJournal(homeDir, date);
+    if (!loaded) continue;
+
+    let changed = false;
+    const carried: Record<string, TokenRecord[]> = {};
+    for (const [unit, records] of Object.entries(loaded.carried)) {
+      if (unitMatchesDeleted(unit, records, deleted)) {
+        changed = true;
+      } else {
+        carried[unit] = records;
+      }
+    }
+    let seen: Record<string, TokenRecord[]> | undefined;
+    if (loaded.seen) {
+      seen = {};
+      for (const [unit, records] of Object.entries(loaded.seen)) {
+        if (unitMatchesDeleted(unit, records, deleted)) {
+          changed = true;
+        } else {
+          seen[unit] = records;
+        }
+      }
+    }
+    if (changed) {
+      writeJournalFile(homeDir, date, {
+        version: 1,
+        date,
+        carried,
+        ...(seen ? { seen } : {}),
+      });
+    }
+  }
+}
 
 function readJournal(homeDir: string, date: string): JournalFile | null {
   const path = journalPath(homeDir, date);
@@ -406,6 +515,24 @@ export class TodayJournal {
     return [...this.carried.keys()];
   }
 
+  /** Drop carried and last-seen units for explicitly deleted files or dirs. */
+  prunePaths(deletedPaths: string[]): void {
+    if (deletedPaths.length === 0) return;
+    const deleted = deletedPaths.map((p) => resolve(p));
+    for (const [unit, records] of this.carried) {
+      if (unitMatchesDeleted(unit, records, deleted)) this.carried.delete(unit);
+    }
+    for (const [unit, records] of this.lastSeen) {
+      if (unitMatchesDeleted(unit, records, deleted)) this.lastSeen.delete(unit);
+    }
+    if (this.restoredSeen) {
+      for (const [unit, records] of this.restoredSeen) {
+        if (unitMatchesDeleted(unit, records, deleted)) this.restoredSeen.delete(unit);
+      }
+    }
+    pruneJournalPaths(this.homeDir, deletedPaths);
+  }
+
   private *carriedRecords(): Generator<TokenRecord> {
     for (const records of this.carried.values()) {
       for (const r of records) if (localDateKey(r.timestamp) === this.date) yield r;
@@ -454,39 +581,8 @@ export class TodayJournal {
     if (recordCount > MAX_JOURNAL_RECORDS) {
       throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_RECORDS} valid records`);
     }
-    const serialized = JSON.stringify(body);
-    if (Buffer.byteLength(serialized) > MAX_JOURNAL_BYTES) {
-      throw new JournalLimitError(`Today journal exceeds ${MAX_JOURNAL_BYTES} bytes`);
-    }
-    let tmp: string | null = null;
-    try {
-      const dir = journalDir(this.homeDir);
-      ensurePrivateDirectory(join(this.homeDir, ".cache", "tokmeter"));
-      ensurePrivateDirectory(dir);
-      const path = journalPath(this.homeDir, this.date);
-      tmp = `${path}.${process.pid}.tmp`;
-      const fd = openSync(tmp, "w", 0o600);
-      try {
-        writeFileSync(fd, serialized, { encoding: "utf-8" });
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-      renameSync(tmp, path);
-      tmp = null;
-      if (saveSeen) this.seenSavedAt = now;
-    } catch (error) {
-      if (tmp) {
-        try {
-          unlinkSync(tmp);
-        } catch {
-          /* best effort */
-        }
-      }
-      throw new JournalIntegrityError(
-        `Unable to persist authoritative today journal: ${error instanceof Error ? error.message : error}`
-      );
-    }
+    writeJournalFile(this.homeDir, this.date, body);
+    if (saveSeen) this.seenSavedAt = now;
   }
 
   private prune(today: string): void {

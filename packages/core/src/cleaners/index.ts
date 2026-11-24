@@ -8,15 +8,16 @@ import type { ProviderId, SessionCleaner } from "../types.js";
 import { ClaudeCodeCleaner } from "./claude-code.js";
 import { OpenclawCleaner } from "./openclaw.js";
 import { createSimpleFileCleaners } from "./simple-file-cleaner.js";
-import { createSqliteCleaners } from "./sqlite-cleaner.js";
 import { createTaskDirCleaners } from "./task-dir-cleaner.js";
 
-/** All available cleaners, one per provider (except synthetic which has no files). */
+/**
+ * All available cleaners, one per provider (except synthetic and SQLite-backed
+ * providers, which remain omitted until scoped row-id cleanup is supported).
+ */
 export const ALL_CLEANERS: SessionCleaner[] = [
   new ClaudeCodeCleaner(),
   ...createSimpleFileCleaners(),
   ...createTaskDirCleaners(),
-  ...createSqliteCleaners(),
   new OpenclawCleaner(),
 ];
 

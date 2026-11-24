@@ -20,7 +20,6 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
-  rmdirSync,
   rmSync,
   statfsSync,
   statSync,
@@ -28,7 +27,9 @@ import {
   utimesSync,
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { aggregateRecordsByDay, subtractDailyAggregate } from "./aggregates.js";
+import { deleteDayFile, readDayFile, writeDayFile } from "./aggregates-store.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases, saveAliases } from "./alias-service.js";
 import { getCleaners } from "./cleaners/index.js";
@@ -45,9 +46,11 @@ import {
   type UserConfig,
 } from "./config-service.js";
 import { localDateKey } from "./date-utils.js";
+import { priceWithCard } from "./day-prices.js";
 import { sanitizeDataLabel } from "./display-safety.js";
 import { invalidateHistorySnapshot } from "./history-snapshot.js";
 import { invalidateRecordCache } from "./parsers/utils.js";
+import { prunePendingRestorePaths, recordPendingRestore } from "./pending-restore.js";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import { projectMatchKey } from "./project-name.js";
 import {
@@ -63,6 +66,7 @@ import {
   UnsafeArchiveError,
 } from "./restore-guard.js";
 import { invalidateSummaryCache } from "./summary-cache.js";
+import { pruneJournalPaths } from "./today-journal.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
 import type {
   BackupInfo,
@@ -226,6 +230,7 @@ export function cleanupPreviewDigest(preview: CleanupPreview): string {
 export class CleanupService {
   private core: TokmeterCore;
   private homeDir: string;
+  private previewRecords = new WeakMap<CleanupPreview, TokenRecord[]>();
 
   constructor(core: TokmeterCore, homeDir?: string) {
     this.core = core;
@@ -332,7 +337,7 @@ export class CleanupService {
     const totalBytes = allTargets.reduce((s, t) => s + t.sizeBytes, 0);
     const sourceFileCount = new Set(deletableRecords.map((r) => r.sourceFile).filter(Boolean)).size;
 
-    return {
+    const result: CleanupPreview = {
       recordCount: matchedRecords.length,
       sourceFileCount,
       targets: allTargets,
@@ -342,6 +347,8 @@ export class CleanupService {
       partialFileWarnings,
       ...(unremovable.size > 0 ? { unremovable: [...unremovable.values()] } : {}),
     };
+    this.previewRecords.set(result, allRecords);
+    return result;
   }
 
   /**
@@ -393,7 +400,13 @@ export class CleanupService {
     let backupPath: string | undefined;
     if (backup) {
       const projectNames = preview.byProject.map((p) => p.project);
-      const path = await this.createBackup(preview.targets, filter, backupDir, projectNames);
+      const path = await this.createBackup(
+        preview.targets,
+        filter,
+        backupDir,
+        projectNames,
+        preview.recordCount
+      );
       if (!path) {
         return {
           deletedCount: 0,
@@ -427,11 +440,69 @@ export class CleanupService {
       allErrors.push(...result.errors);
     }
 
-    // Invalidate scan cache for deleted files
+    // Invalidate scan cache, today journals, pending restores, and sealed past days
+    // for targets that actually deleted cleanly.
+    const failedTargets = new Set(allErrors.map((e) => resolve(e.target)));
     const deletedPaths = preview.targets
-      .filter((t) => t.type === "file" || t.type === "directory")
+      .filter(
+        (t) => (t.type === "file" || t.type === "directory") && !failedTargets.has(resolve(t.path))
+      )
       .map((t) => t.path);
     invalidateRecordCache(deletedPaths);
+    pruneJournalPaths(this.homeDir, deletedPaths);
+    prunePendingRestorePaths(this.homeDir, deletedPaths);
+
+    const scannedRecords = this.previewRecords.get(preview) ?? [];
+    const resolvedDeleted = deletedPaths.map((p) => resolve(p));
+    const matchesDeleted = (sourceFile: string | undefined) => {
+      if (!sourceFile) return false;
+      const rs = resolve(sourceFile);
+      return resolvedDeleted.some((d) => rs === d || rs.startsWith(`${d}${sep}`));
+    };
+    const deletedRecords = scannedRecords.filter((r) => matchesDeleted(r.sourceFile));
+    const todayKey = localDateKey(Date.now());
+    const pastByDate = new Map<string, TokenRecord[]>();
+    for (const r of deletedRecords) {
+      const date = localDateKey(r.timestamp);
+      if (date >= todayKey) continue;
+      const list = pastByDate.get(date);
+      if (list) list.push(r);
+      else pastByDate.set(date, [r]);
+    }
+    const affectedPastDates: string[] = [];
+    for (const [date, records] of pastByDate) {
+      let existing = null;
+      try {
+        existing = readDayFile(this.homeDir, date);
+      } catch {
+        continue; // never touch a quarantined day file
+      }
+      if (!existing) continue;
+      const pricedForDay = existing.prices
+        ? records.map((r) => {
+            if (r.usage?.cost === "direct") return r;
+            const card = existing.prices?.[r.model]?.card;
+            if (!card) return r;
+            const copy = { ...r, ...(r.usage ? { usage: { ...r.usage } } : {}) };
+            priceWithCard(copy, card);
+            return copy;
+          })
+        : records;
+      const [delta] = aggregateRecordsByDay(pricedForDay);
+      if (!delta) continue;
+      const updated = subtractDailyAggregate(existing, delta);
+      if (updated === null) deleteDayFile(this.homeDir, date);
+      else writeDayFile(this.homeDir, updated);
+      affectedPastDates.push(date);
+    }
+
+    const coreHooks = this.core as unknown as {
+      pruneAfterCleanup?: (paths: string[], dates: string[]) => void;
+    };
+    if (typeof coreHooks?.pruneAfterCleanup === "function") {
+      coreHooks.pruneAfterCleanup(deletedPaths, affectedPastDates);
+    }
+
     invalidateHistorySnapshot(this.homeDir);
     invalidateSummaryCache(this.homeDir);
 
@@ -465,7 +536,8 @@ export class CleanupService {
       preview.targets,
       filter,
       options.backupDir,
-      projectNames
+      projectNames,
+      preview.recordCount
     );
     return {
       archivePath,
@@ -585,6 +657,8 @@ export class CleanupService {
       // destination is allowlisted. Nothing touches the real tree until every
       // file has passed — a bad archive restores nothing at all.
       const sandbox = mkdtempSync(join(tmpdir(), "tokmeter-restore-"));
+      let restoredPaths: string[] = [];
+      let existedBefore: string[] = [];
       try {
         chmodSync(sandbox, 0o700);
         execFileSync("tar", ["-xzf", archivePath, "-C", sandbox], {
@@ -674,6 +748,9 @@ export class CleanupService {
           return { src: p.src, dest };
         });
 
+        existedBefore = finalPlan.filter((p) => existsSync(p.dest)).map((p) => resolve(p.dest));
+        restoredPaths = finalPlan.map((p) => resolve(p.dest));
+
         // Pass 2: copy into place, keeping the archived mode bits (minus any
         // setuid/setgid/sticky) and mtime the way `tar -x` used to — mtime
         // drives incremental scans, so a restored old file must not look new.
@@ -750,14 +827,10 @@ export class CleanupService {
       };
       saveConfig(mergedConfig, currentHome);
 
-      // Invalidate the history snapshot + summary so the next scan rebuilds
-      // them with the restored files included. We deliberately do NOT clear
-      // the scan-cache: it still contains the original per-record `cost`
-      // values from before cleanup, frozen at the rates of the day each
-      // record was first priced. Wiping it would force the rebuild path to
-      // re-price restored historical records with current kosha rates,
-      // violating the historical immutability rule (same bug class that
-      // caused the $21K → $15K drop on `tokmeter update`).
+      // Queue the restored paths so the next TokmeterCore scan reconciles their
+      // days into ~/.cache/tokmeter/aggregates/*.json using existing price cards
+      // and frozen scan-cache entries without wiping per-record frozen costs.
+      recordPendingRestore(this.homeDir, { restoredPaths, existedBefore });
       invalidateHistorySnapshot(this.homeDir);
       invalidateSummaryCache(this.homeDir);
 
@@ -919,7 +992,8 @@ export class CleanupService {
     targets: CleanupTarget[],
     filter: CleanupFilter,
     backupDir?: string,
-    projectNames: string[] = []
+    projectNames: string[] = [],
+    recordCount?: number
   ): Promise<string> {
     const dir = backupDir || this.backupDir();
     if (!backupDir) ensurePrivateDirectory(dirname(dir));
@@ -929,29 +1003,12 @@ export class CleanupService {
     const id = `${timestamp}-${randomUUID()}`;
     const archivePath = join(dir, `${id}.tar.gz`);
 
-    // Collect file paths to archive
+    // Collect file paths to archive (SQLite row targets are omitted until
+    // scoped row-id cleanup is supported).
     const filePaths = targets
       .filter((t) => t.type === "file" || t.type === "directory")
       .map((t) => t.path)
       .filter((p) => existsSync(p));
-
-    // Export SQLite rows to JSON dump files so they're included in the backup
-    const sqliteTargets = targets.filter((t) => t.type === "sqlite-rows");
-    const sqlDumpDir = join(dir, `${id}-sql-dumps`);
-    const sqlDumpFiles: string[] = [];
-
-    if (sqliteTargets.length > 0) {
-      const { SqliteCleaner } = await import("./cleaners/sqlite-cleaner.js");
-      const cleaners = getCleaners([...new Set(sqliteTargets.map((t) => t.provider))]);
-
-      for (const cleaner of cleaners) {
-        if (!(cleaner instanceof SqliteCleaner)) continue;
-        for (const t of sqliteTargets.filter((st) => st.provider === cleaner.providerId)) {
-          const dumpFile = await cleaner.exportRows(t, sqlDumpDir);
-          if (dumpFile) sqlDumpFiles.push(dumpFile);
-        }
-      }
-    }
 
     // Include the user's alias + config files in every backup so cross-machine
     // restore preserves project renames, merges, tags, hide flags, and all the
@@ -961,7 +1018,6 @@ export class CleanupService {
     const configPath = configFilePath(this.homeDir);
     const allPaths = [
       ...filePaths,
-      ...sqlDumpFiles,
       ...(existsSync(aliasPath) ? [aliasPath] : []),
       ...(existsSync(configPath) ? [configPath] : []),
     ];
@@ -1006,16 +1062,6 @@ export class CleanupService {
         }
         return "";
       }
-
-      // Clean up temp SQL dump files (they're now in the archive)
-      for (const f of sqlDumpFiles) {
-        try {
-          rmSync(f);
-        } catch {}
-      }
-      try {
-        rmdirSync(sqlDumpDir);
-      } catch {}
     } else {
       // Nothing to back up
       return "";
@@ -1037,10 +1083,9 @@ export class CleanupService {
       createdAt: new Date().toISOString(),
       sizeBytes: existsSync(archivePath) ? statSync(archivePath).size : 0,
       filter,
-      recordCount: targets.reduce(
-        (s, t) => s + (t.sqlDetail?.rowCount || (t.type === "file" ? 1 : 0)),
-        0
-      ),
+      recordCount:
+        recordCount ??
+        targets.reduce((s, t) => s + (t.sqlDetail?.rowCount || (t.type === "file" ? 1 : 0)), 0),
       providers: [...new Set(targets.map((t) => t.provider))],
       projects: projectNames,
       sourceHomeDir: this.homeDir,

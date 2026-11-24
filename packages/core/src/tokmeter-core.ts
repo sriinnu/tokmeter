@@ -5,7 +5,9 @@
  * Consumable by CLI, TUI, web app, macOS bar, and external projects.
  */
 
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolve, sep } from "node:path";
 import {
   computeAllProjectsFromState,
   computeDailyBreakdownFromState,
@@ -16,12 +18,13 @@ import {
   computeStatsFromRecords,
   computeStatsFromState,
 } from "./aggregate-consumers.js";
-import { aggregateRecordsByDay, type DailyAggregate } from "./aggregates.js";
+import { aggregateRecordsByDay, type DailyAggregate, mergeDailyAggregate } from "./aggregates.js";
 import {
   DailyAccumulator,
   dayFileMtime,
   readDayFile,
   sealRolledOverDay,
+  writeDayFile,
 } from "./aggregates-store.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
 import { type AliasMap, loadAliases } from "./alias-service.js";
@@ -33,7 +36,7 @@ import {
 } from "./coverage-check.js";
 import { type CrossToolComparison, computeCrossToolComparison } from "./cross-tool.js";
 import { isBeforeToday, localDateKey, startOfLocalDay, yesterdayDateKey } from "./date-utils.js";
-import { type DayPrices, priceCardsFor } from "./day-prices.js";
+import { attachDayPrices, type DayPrices, priceCardsFor } from "./day-prices.js";
 import { writeKoshaWishlist } from "./kosha-wishlist.js";
 import { computeModelRates, type ModelRatesResponse } from "./model-rates.js";
 import { getParsers } from "./parsers/index.js";
@@ -44,6 +47,7 @@ import {
   setCachedKoshaMtime,
   setCachedOverridesMtime,
 } from "./parsers/utils.js";
+import { hasPendingRestores, takePendingRestores } from "./pending-restore.js";
 import { maybeBackgroundRefresh, PricingService, todayPricingStale } from "./pricing.js";
 import { enrichCosts, markPricingSkipped, resetCalculatedCosts } from "./pricing-enrichment.js";
 import {
@@ -188,6 +192,7 @@ export class TokmeterCore {
 
     let historySource: ScanMeta["historySource"] = "snapshot";
     if (!isTodayOnlyScan) {
+      await this.consumePendingRestores(referenceTimestamp, historyWarnings);
       const relay = await refreshFromRelay(
         this.ctx(),
         referenceTimestamp,
@@ -255,12 +260,13 @@ export class TokmeterCore {
       koshaChanged
     );
     this.recentRecords = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
-    this.refreshTodayAccumulator(
+    await this.refreshTodayAccumulator(
       stateToday,
       referenceTimestamp,
       scannedToday.stragglers,
       sealPrices,
-      (date) => !options?.providers?.length && !warningsBlockDay(todayWarnings, date)
+      (date) => !options?.providers?.length && !warningsBlockDay(todayWarnings, date),
+      todayWarnings
     );
     todayWarnings.push(...this.heldSealWarnings());
     if (!options?.providers?.length) this.lastTickStartedAt = referenceTimestamp;
@@ -341,6 +347,8 @@ export class TokmeterCore {
       );
     }
 
+    await this.consumePendingRestores(now, todayWarnings);
+
     const scanned = await scanTodayRecordsWithStragglers(
       this.ctx(),
       undefined,
@@ -369,12 +377,13 @@ export class TokmeterCore {
     // Only a fault that can hide a past day's records may hold its seal; any
     // other fault (a broken file not written since before that day, or whose
     // unread tail is newer) used to stall the rollover indefinitely.
-    const sealed = this.refreshTodayAccumulator(
+    const sealed = await this.refreshTodayAccumulator(
       today,
       now,
       stragglers,
       sealPrices,
-      (date) => !warningsBlockDay(todayWarnings, date)
+      (date) => !warningsBlockDay(todayWarnings, date),
+      todayWarnings
     );
     todayWarnings.push(...this.heldSealWarnings());
     this.lastTickStartedAt = now;
@@ -494,13 +503,14 @@ export class TokmeterCore {
   }
 
   /** Returns the days this call sealed to disk. */
-  private refreshTodayAccumulator(
+  private async refreshTodayAccumulator(
     todayRecords: TokenRecord[],
     referenceTimestamp: number,
     stragglers: TokenRecord[] = [],
     sealPrices: DayPrices | undefined,
-    canSeal: (date: string) => boolean
-  ): string[] {
+    canSeal: (date: string) => boolean,
+    warnings: ScanWarning[] = []
+  ): Promise<string[]> {
     const todayKey = localDateKey(referenceTimestamp);
 
     // Seal-on-rollover. If the daemon ran across midnight, the outgoing
@@ -549,9 +559,47 @@ export class TokmeterCore {
       // record collapses (no double-count) while a genuinely late record is
       // still captured (no loss). Falls back to the accumulator's own totals
       // if no records for the day are in memory.
-      const records = [...this.recentRecords, ...stragglers].filter(
-        (r) => localDateKey(r.timestamp) === date
-      );
+      //
+      // Late stragglers arrive unpriced because selectRecordsToPrice() freezes
+      // before-today records on today scans. Shallow-clone and price them using
+      // the outgoing day's held price cards first (then current pricing for any
+      // brand-new model) while keeping recentRecords first so already-priced
+      // pre-midnight records retain their frozen costs.
+      const recentForDate = this.recentRecords.filter((r) => localDateKey(r.timestamp) === date);
+      const stragglersForDate = stragglers
+        .filter((r) => localDateKey(r.timestamp) === date)
+        .map((r) => ({ ...r, ...(r.usage ? { usage: { ...r.usage } } : {}) }));
+      if (stragglersForDate.length > 0) {
+        if (this.skipPricing) {
+          markPricingSkipped(stragglersForDate);
+        } else {
+          await enrichCosts(
+            stragglersForDate,
+            this.pricing,
+            "today",
+            warnings,
+            undefined,
+            (r) => held.prices?.[r.model]?.card
+          );
+          if (held.prices) {
+            const missingModels = new Set<string>();
+            for (const r of stragglersForDate) {
+              if (r.cost > 0 && r.usage?.cost === "calculated" && !held.prices[r.model]) {
+                missingModels.add(r.model);
+              }
+            }
+            if (missingModels.size > 0) {
+              try {
+                const extra = await priceCardsFor(missingModels, this.pricing);
+                held.prices = { ...held.prices, ...extra };
+              } catch {
+                /* keep existing held cards; straggler cost is already calculated */
+              }
+            }
+          }
+        }
+      }
+      const records = [...recentForDate, ...stragglersForDate];
       const derived = aggregateRecordsByDay(records).find((d) => d.date === date);
       const ran = held.acc.toAggregate();
       const day = new DailyAccumulator(date);
@@ -598,6 +646,187 @@ export class TokmeterCore {
     return [...this.aggregates.values()].sort((a, b) =>
       a.date < b.date ? -1 : a.date > b.date ? 1 : 0
     );
+  }
+
+  /**
+   * Drop cleaned session files/dirs from in-memory today state and refresh
+   * any shrunk or deleted historical relay days from disk.
+   */
+  pruneAfterCleanup(deletedPaths: string[], affectedPastDates: string[] = []): void {
+    this.todayJournal.prunePaths(deletedPaths);
+    if (deletedPaths.length > 0) {
+      const deleted = deletedPaths.map((p) => resolve(p));
+      const isDeleted = (sourceFile: string | undefined) => {
+        if (!sourceFile) return false;
+        const rs = resolve(sourceFile);
+        return deleted.some((d) => rs === d || rs.startsWith(`${d}${sep}`));
+      };
+      this.recentRecords = this.recentRecords.filter((r) => !isDeleted(r.sourceFile));
+      this.todayAccumulator = null;
+    }
+    for (const date of affectedPastDates) {
+      try {
+        const onDisk = readDayFile(this.homeDir, date);
+        if (onDisk) this.aggregates.set(date, onDisk);
+        else this.aggregates.delete(date);
+      } catch {
+        this.aggregates.delete(date);
+      }
+    }
+  }
+
+  private async consumePendingRestores(
+    referenceTimestamp: number,
+    warnings: ScanWarning[]
+  ): Promise<void> {
+    if (!hasPendingRestores(this.homeDir)) return;
+    const batches = takePendingRestores(this.homeDir);
+    if (batches.length === 0) return;
+
+    const addVariants = (set: Set<string>, p: string) => {
+      const resolved = resolve(p);
+      set.add(resolved);
+      if (existsSync(resolved)) {
+        try {
+          set.add(realpathSync(resolved));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    const restoredSet = new Set<string>();
+    const createdByRestore = new Set<string>();
+    const preExisting = new Set<string>();
+
+    for (const batch of batches) {
+      const batchExisted = new Set<string>();
+      for (const ep of batch.existedBefore) addVariants(batchExisted, ep);
+      for (const rp of batch.restoredPaths) {
+        addVariants(restoredSet, rp);
+        const variants = [resolve(rp)];
+        if (existsSync(variants[0]!)) {
+          try {
+            variants.push(realpathSync(variants[0]!));
+          } catch {
+            /* ignore */
+          }
+        }
+        const wasPreExisting = variants.some((v) => batchExisted.has(v));
+        const alreadyCreated = variants.some((v) => createdByRestore.has(v));
+        if (!alreadyCreated) {
+          for (const v of variants) {
+            if (wasPreExisting) preExisting.add(v);
+            else createdByRestore.add(v);
+          }
+        }
+      }
+    }
+
+    const matchesSet = (sourceFile: string | undefined, set: ReadonlySet<string>) => {
+      if (!sourceFile) return false;
+      if (set.has(resolve(sourceFile))) return true;
+      if (existsSync(sourceFile)) {
+        try {
+          return set.has(realpathSync(sourceFile));
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    };
+
+    // Scan with skipPricing: true so cached scan-cache costs & direct tool costs
+    // stay intact without repricing existing history at today's rates.
+    const allRaw = await scanRawRecords(
+      { homeDir: this.homeDir, pricing: this.pricing, skipPricing: true },
+      undefined,
+      "history",
+      warnings
+    );
+
+    const todayKey = localDateKey(referenceTimestamp);
+    const affectedDates = new Set<string>();
+    let touchedToday = false;
+    for (const r of allRaw) {
+      if (!matchesSet(r.sourceFile, restoredSet)) continue;
+      const date = localDateKey(r.timestamp);
+      if (date < todayKey) affectedDates.add(date);
+      else touchedToday = true;
+    }
+    if (touchedToday) this.todayAccumulator = null;
+    if (affectedDates.size === 0) return;
+
+    if (!this.skipPricing) {
+      try {
+        await this.pricing.init();
+      } catch {
+        /* enrichCosts warns cleanly below if pricing is unavailable */
+      }
+    }
+
+    for (const date of [...affectedDates].sort()) {
+      let existing: DailyAggregate | null = null;
+      try {
+        existing = readDayFile(this.homeDir, date);
+      } catch {
+        continue; // never overwrite a quarantined day file
+      }
+
+      const diskForDate = allRaw
+        .filter((r) => localDateKey(r.timestamp) === date)
+        .map((r) => ({ ...r, ...(r.usage ? { usage: { ...r.usage } } : {}) }));
+
+      if (!this.skipPricing && diskForDate.length > 0) {
+        await enrichCosts(
+          diskForDate,
+          this.pricing,
+          "history",
+          warnings,
+          undefined,
+          (r) => existing?.prices?.[r.model]?.card
+        );
+      } else if (this.skipPricing) {
+        markPricingSkipped(diskForDate);
+      }
+
+      const [fromDisk] = aggregateRecordsByDay(diskForDate);
+      if (!fromDisk) continue;
+
+      const hasAgedOutProvider =
+        existing !== null &&
+        Object.keys(existing.providers).some((provider) => !fromDisk.providers[provider]);
+
+      if (!hasAgedOutProvider) {
+        if (!this.skipPricing) {
+          try {
+            await attachDayPrices(fromDisk, this.pricing, existing?.prices);
+          } catch {
+            if (existing?.prices) fromDisk.prices = existing.prices;
+          }
+        }
+        writeDayFile(this.homeDir, fromDisk);
+        this.aggregates.set(date, fromDisk);
+      } else if (existing) {
+        const newlyAdded = diskForDate.filter(
+          (r) =>
+            matchesSet(r.sourceFile, restoredSet) &&
+            (matchesSet(r.sourceFile, createdByRestore) || !matchesSet(r.sourceFile, preExisting))
+        );
+        const [deltaNew] = aggregateRecordsByDay(newlyAdded);
+        if (!deltaNew) continue;
+        if (!this.skipPricing) {
+          try {
+            await attachDayPrices(deltaNew, this.pricing, existing.prices);
+          } catch {
+            /* best effort */
+          }
+        }
+        const merged = mergeDailyAggregate(existing, deltaNew);
+        writeDayFile(this.homeDir, merged);
+        this.aggregates.set(date, merged);
+      }
+    }
   }
 
   /**
