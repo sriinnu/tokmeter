@@ -49,15 +49,68 @@ export class UnsafeArchiveError extends Error {
   }
 }
 
+const TAR_DATE_RE =
+  "(?:\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}(?::\\d{2})?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{1,2}\\s+(?:\\d{2}:\\d{2}(?::\\d{2})?|\\d{4})|\\d{1,2}\\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+(?:\\d{2}:\\d{2}(?::\\d{2})?|\\d{4}))";
+const META_SIZE_BEFORE_DATE_RE = new RegExp(`\\s(\\d+)\\s+${TAR_DATE_RE}$`);
+const FALLBACK_SIZE_BEFORE_DATE_RE = new RegExp(`\\s(\\d+)\\s+${TAR_DATE_RE}\\s`);
+
+function stripVerboseMemberSuffix(row: string, name: string): string | null {
+  if (row.endsWith(name)) {
+    return row.slice(0, row.length - name.length).trimEnd();
+  }
+  if (row.endsWith(`${name}/`)) {
+    return row.slice(0, row.length - name.length - 1).trimEnd();
+  }
+  for (const sep of [` ${name} -> `, ` ${name} link to `]) {
+    const idx = row.lastIndexOf(sep);
+    if (idx >= 0) return row.slice(0, idx).trimEnd();
+  }
+  return null;
+}
+
+/**
+ * Parse the entry type and uncompressed byte size from a `tar -tv` output row.
+ * Anchors on the byte size immediately preceding the date/time column so
+ * whitespace in owner/group names (e.g. `Domain Users` or `john doe`) and
+ * spaces/numbers inside filenames never misalign field indexes.
+ */
+export function parseTarVerboseEntry(
+  row: string,
+  name: string
+): { type: string; sizeBytes: number } {
+  const type = row.charAt(0);
+  if (type === "c" || type === "b") {
+    return { type, sizeBytes: 0 };
+  }
+  const meta = stripVerboseMemberSuffix(row, name);
+  const match =
+    (meta !== null ? META_SIZE_BEFORE_DATE_RE.exec(meta) : null) ??
+    FALLBACK_SIZE_BEFORE_DATE_RE.exec(row);
+  if (match) {
+    const sizeBytes = Number(match[1]);
+    if (Number.isSafeInteger(sizeBytes) && sizeBytes >= 0) {
+      return { type, sizeBytes };
+    }
+  }
+  if (type !== "-" && type !== "d") {
+    return { type, sizeBytes: 0 };
+  }
+  throw new UnsafeArchiveError(`Cannot determine archive entry size for "${name}"`);
+}
+
 /**
  * Read member names and types from a .tar.gz. Works on bsdtar (macOS) and GNU
- * tar: names come from `tar -tzf` (unambiguous, one per line), types from the
- * first column of `tar -tvzf`. Both list in archive order, so they pair by
- * line; a count mismatch (e.g. a name containing a newline) is refused rather
+ * tar: names come from `tar -tzf` (unambiguous, one per line), types and sizes
+ * from `tar -tvzf` under `LC_ALL=C`. Both list in archive order, so they pair
+ * by line; a count mismatch (e.g. a name containing a newline) is refused rather
  * than guessed at.
  */
 export function listArchiveEntries(archivePath: string): ArchiveEntry[] {
-  const options = { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 };
+  const options = {
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: "C" },
+  };
   const names = splitLines(execFileSync("tar", ["-tzf", archivePath], options));
   const verbose = splitLines(execFileSync("tar", ["-tvzf", archivePath], options));
   if (names.length !== verbose.length) {
@@ -66,16 +119,8 @@ export function listArchiveEntries(archivePath: string): ArchiveEntry[] {
     );
   }
   return names.map((name, i) => {
-    const row = verbose[i];
-    const fields = row.trim().split(/\s+/);
-    // bsdtar: mode, links, user, group, size, date...;
-    // GNU tar: mode, user/group, size, date...
-    const sizeField = /^\d+$/.test(fields[1] ?? "") ? fields[4] : fields[2];
-    const sizeBytes = Number(sizeField);
-    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
-      throw new UnsafeArchiveError(`Cannot determine archive entry size for "${name}"`);
-    }
-    return { name, type: row.charAt(0), sizeBytes };
+    const { type, sizeBytes } = parseTarVerboseEntry(verbose[i]!, name);
+    return { name, type, sizeBytes };
   });
 }
 
