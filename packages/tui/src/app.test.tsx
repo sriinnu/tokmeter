@@ -169,7 +169,7 @@ describe("TokmeterApp Ink TUI", () => {
         autoRefreshMs: 0,
         onExit,
       }),
-      { stdout: streams.stdout, stdin: streams.stdin, patchConsole: false }
+      { stdout: streams.stdout, stdin: streams.stdin, patchConsole: false, debug: true }
     );
 
     try {
