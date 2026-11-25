@@ -416,7 +416,8 @@ describe("cursor-hook installer", () => {
     });
     const r =
       process.platform === "win32"
-        ? spawnSync("cmd.exe", ["/d", "/s", "/c", command], {
+        ? spawnSync(command, {
+            shell: true,
             input: JSON.stringify(completed),
             encoding: "utf8",
           })

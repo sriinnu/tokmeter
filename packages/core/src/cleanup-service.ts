@@ -167,7 +167,13 @@ function readBackupInfo(
 }
 
 function syncBackupFile(path: string): void {
-  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  // Windows FlushFileBuffers requires write access on the handle (`O_RDWR`);
+  // opening with `O_RDONLY` fails `fsyncSync` with `EPERM`. POSIX `open()`
+  // accepts `O_RDONLY` for both files and directories.
+  const flags =
+    (process.platform === "win32" ? fsConstants.O_RDWR : fsConstants.O_RDONLY) |
+    (fsConstants.O_NOFOLLOW ?? 0);
+  const fd = openSync(path, flags);
   try {
     fsyncSync(fd);
   } finally {
