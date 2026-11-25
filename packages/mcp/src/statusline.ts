@@ -22,19 +22,31 @@ import {
   claudeCodeQuota,
   ensurePrivateDirectory,
   getKoshaRegistryMtime,
+  getQuota,
+  loadConfig,
   localDateKey,
+  type QuotaWindow,
+  readDaemonAuthHeader,
   recordQuotaSamples,
+  resolveDaemonHttpBase,
+  STATUSLINE_DENSITIES,
+  STATUSLINE_STYLES,
+  type StatuslineDensity,
+  type StatuslineStyle,
   writePrivateFile,
 } from "@sriinnu/tokmeter";
 import type { TokenUsage } from "./daemon/protocol.js";
 import type { SessionPush } from "./daemon/push.js";
+import type { StatuslineContextResponse } from "./daemon/server.js";
 import { C, FALLBACK_STATUSLINE } from "./formatter.js";
 import {
   type CacheView,
+  type PrReviewState,
   type RateWindowView,
   type RouteView,
   renderStatusline,
   type SpendLimitView,
+  type StatuslineFormat,
   type StatusView,
 } from "./statusline-view.js";
 
@@ -586,8 +598,97 @@ const DAEMON_SPAWN_THROTTLE_MS = 60_000;
 /** Older than this, daemon numbers render dimmed with their age. */
 const TODAY_STALE_MS = 30_000;
 
-type TodayRead =
-  | { state: "fresh" | "stale"; totals: TodayTotals; ageMs: number }
+/** Interactive / multi-CLI flags accepted by `tokmeter-mcp statusline`. */
+export interface StatuslineCliOptions {
+  ambient: boolean;
+  agent?: string;
+  cwd?: string;
+  style?: StatuslineStyle;
+  density?: StatuslineDensity;
+  theme?: string;
+  format?: StatuslineFormat;
+  cols?: number;
+  watch: boolean;
+  watchMs: number;
+  noColor: boolean;
+}
+
+const VALID_FORMATS = new Set<string>(["ansi", "tmux", "plain", "title"]);
+const VALID_PR_STATES = new Set<string>(["approved", "pending", "changes_requested", "draft"]);
+
+export function parseStatuslineArgs(argv: string[]): StatuslineCliOptions {
+  const out: StatuslineCliOptions = {
+    ambient: false,
+    watch: false,
+    watchMs: 2000,
+    noColor: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--ambient") {
+      out.ambient = true;
+    } else if (a === "--no-color") {
+      out.noColor = true;
+    } else if (a === "--watch") {
+      out.watch = true;
+      out.ambient = true;
+      const next = argv[i + 1];
+      if (next && /^\d+$/.test(next)) {
+        out.watchMs = Math.max(500, Number.parseInt(next, 10));
+        i++;
+      }
+    } else if (a.startsWith("--watch=")) {
+      out.watch = true;
+      out.ambient = true;
+      const n = Number.parseInt(a.slice(8), 10);
+      if (Number.isFinite(n) && n > 0) out.watchMs = Math.max(500, n);
+    } else if (a === "--agent" && argv[i + 1]) {
+      out.agent = argv[++i];
+    } else if (a.startsWith("--agent=")) {
+      out.agent = a.slice(8);
+    } else if (a === "--cwd" && argv[i + 1]) {
+      out.cwd = argv[++i];
+    } else if (a.startsWith("--cwd=")) {
+      out.cwd = a.slice(6);
+    } else if (a === "--style" && argv[i + 1]) {
+      const val = argv[++i];
+      if (STATUSLINE_STYLES.includes(val as StatuslineStyle)) out.style = val as StatuslineStyle;
+    } else if (a.startsWith("--style=")) {
+      const val = a.slice(8);
+      if (STATUSLINE_STYLES.includes(val as StatuslineStyle)) out.style = val as StatuslineStyle;
+    } else if (a === "--density" && argv[i + 1]) {
+      const val = argv[++i];
+      if (STATUSLINE_DENSITIES.includes(val as StatuslineDensity)) {
+        out.density = val as StatuslineDensity;
+      }
+    } else if (a.startsWith("--density=")) {
+      const val = a.slice(10);
+      if (STATUSLINE_DENSITIES.includes(val as StatuslineDensity)) {
+        out.density = val as StatuslineDensity;
+      }
+    } else if (a === "--theme" && argv[i + 1]) {
+      out.theme = argv[++i];
+    } else if (a.startsWith("--theme=")) {
+      out.theme = a.slice(8);
+    } else if (a === "--format" && argv[i + 1]) {
+      const val = argv[++i];
+      if (VALID_FORMATS.has(val)) out.format = val as StatuslineFormat;
+    } else if (a.startsWith("--format=")) {
+      const val = a.slice(9);
+      if (VALID_FORMATS.has(val)) out.format = val as StatuslineFormat;
+    } else if (a === "--cols" && argv[i + 1]) {
+      const n = Number.parseInt(argv[++i], 10);
+      if (Number.isFinite(n) && n > 0) out.cols = n;
+    } else if (a.startsWith("--cols=")) {
+      const n = Number.parseInt(a.slice(7), 10);
+      if (Number.isFinite(n) && n > 0) out.cols = n;
+    }
+  }
+  return out;
+}
+
+type ContextRead =
+  | { state: "fresh" | "stale"; ctx: StatuslineContextResponse; ageMs: number }
   | { state: "down" };
 
 export function readLastGoodToday(path: string): { totals: TodayTotals; ts: number } | null {
@@ -606,71 +707,8 @@ export function isConnectionRefused(err: unknown): boolean {
   return cause?.code === "ECONNREFUSED";
 }
 
-async function getTodayTotalsCached(): Promise<TodayRead> {
-  const cachePath = cacheFile("today.json");
-  const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}`;
-  const now = Date.now();
-  const cached = readCache<TodayTotals>(cachePath, 20_000, contentKey);
-  if (cached) {
-    const ageMs = Math.max(0, now - (cached.computedAt ?? now));
-    return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", totals: cached, ageMs };
-  }
-
-  const { DAEMON_HOST, DAEMON_PORT, daemonAuthHeader } = await import("./daemon/protocol.js");
-  const HTTP_PORT = DAEMON_PORT + 1;
-  const url = `http://${DAEMON_HOST}:${HTTP_PORT}/api/today`;
-  const authorization = daemonAuthHeader();
-
-  let refused = false;
-  try {
-    // Bound the fetch hard — a busy daemon must never hold the hot path open.
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), DAEMON_FETCH_MS);
-    let totals: TodayTotals | null = null;
-    try {
-      const res = authorization
-        ? await fetch(url, { signal: ctrl.signal, headers: { Authorization: authorization } })
-        : null;
-      if (res?.ok) {
-        totals = (await res.json()) as TodayTotals;
-      }
-    } finally {
-      clearTimeout(t);
-    }
-
-    if (totals) {
-      writeCache(cachePath, totals, contentKey);
-      const ageMs = Math.max(0, now - (totals.computedAt ?? now));
-      return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", totals, ageMs };
-    }
-  } catch (err) {
-    refused = isConnectionRefused(err);
-  }
-
-  if (refused) await startDaemonThrottled();
-
-  const lastGood = cachePath ? readLastGoodToday(cachePath) : null;
-  if (lastGood)
-    return { state: "stale", totals: lastGood.totals, ageMs: Math.max(0, now - lastGood.ts) };
-  return { state: "down" };
-}
-
-/**
- * Fire-and-forget start of the daemon (detached, heap-capped), at most once per
- * DAEMON_SPAWN_THROTTLE_MS across every statusline process. The singleton guard
- * in the daemon still prevents duplicates if two ticks race past the throttle.
- *
- * Heap cap: the daemon performs the one-time full-history scan, which on a
- * real power-user corpus peaks well past 2GB. We must give it room to warm
- * (a 768MB cap OOM-kills it before it finishes). The statusline's OWN 768MB
- * intent doesn't apply here — this child IS the daemon. Default 6144MB,
- * tunable via TOKMETER_DAEMON_HEAP_MB to match the daemon's own constant.
- */
 async function startDaemonThrottled(): Promise<void> {
   const marker = cacheFile("daemon-spawn.at");
-  // No safe place for the throttle marker → don't spawn at all; an
-  // unthrottled spawn every ~200ms tick would be far worse than waiting for
-  // the next real `daemon start`.
   if (!marker) return;
   try {
     if (Date.now() - statSync(marker).mtimeMs < DAEMON_SPAWN_THROTTLE_MS) return;
@@ -696,7 +734,6 @@ async function startDaemonThrottled(): Promise<void> {
   } catch {}
 }
 
-/** A ledger key as a comparison key: case and punctuation only, no path rules. */
 function ledgerKey(name: string): string {
   return name
     .toLowerCase()
@@ -704,17 +741,6 @@ function ledgerKey(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/**
- * Today's total for the project this session belongs to.
- *
- * Ledger keys are already canonical names, so they are only normalized, never
- * put through the path rules again (that turned `ribhu/eval` into `eval`).
- * The folder is named both ways a parser names it: from its path (Codex and
- * most others) and from Claude Code's slug of it (`/` and `.` become `-`),
- * which names `harness-docs` as `docs` and `clipforge/PAKT` as
- * `clipforge-PAKT`. Keys that name one project (cased differently by two
- * agents) are summed, not first-wins.
- */
 export function findProjectTotal(totals: TodayTotals, projectDir: string): ProjectTotal | null {
   if (!projectDir) return null;
   const slug = projectDir.replace(/[^A-Za-z0-9]/g, "-");
@@ -732,16 +758,332 @@ export function findProjectTotal(totals: TodayTotals, projectDir: string): Proje
   return hit;
 }
 
-const _PR_STATE_GLYPH: Record<string, (s: string) => string> = {
-  approved: (s) => C.accent(`${s} ✓`),
-  changes_requested: (s) => C.danger(`${s} ✗`),
-  draft: (s) => C.dim(`${s} ◌`),
-  pending: (s) => C.warn(`${s} ○`),
-};
+function emptyContextFromToday(totals: TodayTotals): StatuslineContextResponse {
+  return {
+    today: { ...totals, computedAt: totals.computedAt ?? Date.now() },
+    repo: null,
+    liveSessions: { count: 0, others: [], active: [] },
+    paceMultiple: null,
+    subagentToday: { cost: 0, share: 0, records: 0 },
+    dailyCostThreshold: null,
+    unpricedModelsCount: 0,
+    quotas: [],
+    computedAt: totals.computedAt ?? Date.now(),
+  };
+}
+
+function readLastGoodContext(
+  ctxPath: string | null,
+  todayPath: string | null
+): { ctx: StatuslineContextResponse; ts: number } | null {
+  if (ctxPath) {
+    try {
+      const wrapper = JSON.parse(
+        readFileSync(ctxPath, "utf-8")
+      ) as CacheWrapper<StatuslineContextResponse>;
+      if (wrapper.data?.today?.day === todayKey()) {
+        return { ctx: wrapper.data, ts: wrapper.data.computedAt ?? wrapper.ts };
+      }
+    } catch {}
+  }
+  if (todayPath) {
+    const legacy = readLastGoodToday(todayPath);
+    if (legacy) return { ctx: emptyContextFromToday(legacy.totals), ts: legacy.ts };
+  }
+  return null;
+}
+
+async function getStatuslineContextCached(
+  projectDir = "",
+  agent?: string,
+  skipCache = false
+): Promise<ContextRead> {
+  const scopeHash = createHash("sha1")
+    .update(`${projectDir}|${agent ?? ""}`)
+    .digest("hex")
+    .slice(0, 10);
+  const ctxCachePath = cacheFile(`ctx-world-${scopeHash}.json`);
+  const todayCachePath = cacheFile("today.json");
+  const contentKey = `${todayKey()}|${getKoshaRegistryMtime()}|${scopeHash}`;
+  const now = Date.now();
+  if (!skipCache) {
+    const cached = readCache<StatuslineContextResponse>(ctxCachePath, 20_000, contentKey);
+    if (cached) {
+      const ageMs = Math.max(0, now - (cached.computedAt ?? now));
+      return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", ctx: cached, ageMs };
+    }
+  }
+
+  const baseUrl = resolveDaemonHttpBase();
+  const qs = new URLSearchParams();
+  if (projectDir) qs.set("project", projectDir);
+  if (agent) qs.set("agent", agent);
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  const authorization = readDaemonAuthHeader();
+
+  let refused = false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), DAEMON_FETCH_MS);
+    let ctx: StatuslineContextResponse | null = null;
+    try {
+      if (authorization) {
+        const res = await fetch(`${baseUrl}/api/statusline-context${query}`, {
+          signal: ctrl.signal,
+          headers: { Authorization: authorization },
+        });
+        if (res.ok) {
+          ctx = (await res.json()) as StatuslineContextResponse;
+        } else if (res.status === 404) {
+          // Graceful fallback to older daemons serving /api/today only.
+          const legacyRes = await fetch(`${baseUrl}/api/today`, {
+            signal: ctrl.signal,
+            headers: { Authorization: authorization },
+          });
+          if (legacyRes.ok) {
+            ctx = emptyContextFromToday((await legacyRes.json()) as TodayTotals);
+          }
+        }
+      }
+    } finally {
+      clearTimeout(t);
+    }
+
+    if (ctx) {
+      writeCache(ctxCachePath, ctx, contentKey);
+      writeCache(todayCachePath, ctx.today, `${todayKey()}|${getKoshaRegistryMtime()}`);
+      const ageMs = Math.max(0, now - (ctx.computedAt ?? now));
+      return { state: ageMs > TODAY_STALE_MS ? "stale" : "fresh", ctx, ageMs };
+    }
+  } catch (err) {
+    refused = isConnectionRefused(err);
+  }
+
+  if (refused) await startDaemonThrottled();
+
+  const lastGood = readLastGoodContext(ctxCachePath, todayCachePath);
+  if (lastGood) {
+    return { state: "stale", ctx: lastGood.ctx, ageMs: Math.max(0, now - lastGood.ts) };
+  }
+  return { state: "down" };
+}
+
+function cleanModelName(raw: string): string {
+  let name = raw;
+  if (name.startsWith("claude-")) name = name.slice(7).replace(/-\d{8}$/, "");
+  return name.replace(/\s*\[1m\]$/i, " ∞");
+}
+
+function toRateWindowView(w: QuotaWindow | undefined): RateWindowView | undefined {
+  if (!w || w.windowMinutes <= 0) return undefined;
+  return {
+    pct: w.usedPct,
+    spanSec: w.windowMinutes * 60,
+    ...(w.resetsAt > 0 ? { resetsAt: w.resetsAt } : {}),
+  };
+}
+
+/**
+ * Build a `StatusView` without stdin for Codex, Gemini, tmux, Zellij, Starship,
+ * or `--watch` splits. Combines daemon live sessions, today's totals, git state,
+ * and plan quota windows while preserving honest `?` / `~` markers.
+ */
+export async function buildAmbientStatusView(
+  opts: StatuslineCliOptions,
+  deps?: {
+    homeDir?: string;
+    now?: number;
+    context?: ContextRead;
+  }
+): Promise<StatusView> {
+  const now = deps?.now ?? Date.now();
+  const homeDir = deps?.homeDir ?? homedir();
+  const cwd = opts.cwd ?? process.cwd();
+  const folder = cwd.split(/[/\\]/).filter(Boolean).pop() ?? "";
+  const shownProject = canonicalizeProjectName(cwd, folder) || folder || "tokmeter";
+  const git = cwd ? getGitInfo(cwd) : null;
+
+  const ctxRead = deps?.context ?? (await getStatuslineContextCached(cwd, opts.agent, opts.watch));
+  const ctxData = ctxRead.state !== "down" ? ctxRead.ctx : null;
+  let quotas: QuotaWindow[] = ctxData?.quotas ?? [];
+  if (quotas.length === 0) {
+    try {
+      quotas = await getQuota(homeDir, now);
+    } catch {}
+  }
+
+  const sessions = ctxData?.liveSessions.active ?? [];
+  const targetSession =
+    (opts.agent ? sessions.find((s) => s.provider === opts.agent) : undefined) ?? sessions[0];
+
+  const primaryAgent = opts.agent ?? targetSession?.provider;
+  const agentQuotas = primaryAgent ? quotas.filter((q) => q.agent === primaryAgent) : quotas;
+  const fiveWin =
+    agentQuotas.find((q) => q.window === "5h") ?? quotas.find((q) => q.window === "5h");
+  const sevenWin =
+    agentQuotas.find((q) => q.window === "7d") ?? quotas.find((q) => q.window === "7d");
+
+  const view: StatusView = {
+    now,
+    project: shownProject,
+    model: targetSession
+      ? cleanModelName(targetSession.model)
+      : opts.agent
+        ? opts.agent
+        : "ambient",
+    ctx:
+      targetSession?.contextFillPct !== undefined
+        ? { pct: targetSession.contextFillPct, estimated: true }
+        : { pct: null },
+    ...(targetSession ? { cost: { usd: targetSession.cost } } : {}),
+    ...(toRateWindowView(fiveWin) ? { five: toRateWindowView(fiveWin) } : {}),
+    ...(toRateWindowView(sevenWin) ? { seven: toRateWindowView(sevenWin) } : {}),
+    today:
+      ctxRead.state === "down"
+        ? { state: "down" }
+        : ctxData && ctxData.today.cost > 0
+          ? {
+              state: ctxRead.state,
+              usd: ctxData.today.cost,
+              ageMs: ctxRead.ageMs,
+              paceMultiple: ctxData.paceMultiple,
+            }
+          : { state: "none" },
+    ...(git ? { git: { branch: git.branch, dirty: git.dirty } } : {}),
+  };
+
+  if (ctxRead.state !== "down" && ctxData) {
+    const repoMatch =
+      ctxData.repo ??
+      (() => {
+        const proj = findProjectTotal(ctxData.today, cwd);
+        return proj ? { name: shownProject, ...proj } : null;
+      })();
+    if (repoMatch && repoMatch.cost > 0 && repoMatch.cost < ctxData.today.cost - 0.005) {
+      view.repo = { usd: repoMatch.cost, stale: ctxRead.state === "stale" };
+    }
+    if (ctxData.liveSessions.count > 1) {
+      view.liveSessions = {
+        count: ctxData.liveSessions.count,
+        others: ctxData.liveSessions.others,
+      };
+    }
+    if (ctxData.subagentToday.cost > 0) {
+      view.subagentToday = {
+        cost: ctxData.subagentToday.cost,
+        share: ctxData.subagentToday.share,
+        records: ctxData.subagentToday.records,
+      };
+    }
+    if (ctxData.dailyCostThreshold !== null && ctxData.today.cost >= ctxData.dailyCostThreshold) {
+      view.budget = {
+        dailyThresholdUsd: ctxData.dailyCostThreshold,
+        todayUsd: ctxData.today.cost,
+      };
+    }
+    if (ctxData.unpricedModelsCount > 0) {
+      view.unpricedModelsCount = ctxData.unpricedModelsCount;
+    }
+    if (quotas.length > 0) {
+      view.quotas = quotas.map((q) => ({
+        agent: q.agent,
+        label: q.window,
+        pct: q.usedPct,
+        resetsAt: q.resetsAt,
+      }));
+    }
+  } else if (quotas.length > 0) {
+    view.quotas = quotas.map((q) => ({
+      agent: q.agent,
+      label: q.window,
+      pct: q.usedPct,
+      resetsAt: q.resetsAt,
+    }));
+  }
+
+  return view;
+}
+
+function resolveRenderOpts(cliOpts: StatuslineCliOptions): {
+  cols: number;
+  color: boolean;
+  ascii: boolean;
+  style: StatuslineStyle;
+  density: StatuslineDensity;
+  theme: string;
+  format: StatuslineFormat;
+  show: ReturnType<typeof loadConfig>["statusline"]["show"];
+} {
+  let slConfig: ReturnType<typeof loadConfig>["statusline"] | null = null;
+  let rootTheme = "default";
+  try {
+    const cfg = loadConfig();
+    slConfig = cfg.statusline;
+    rootTheme = cfg.theme;
+  } catch {}
+  return {
+    cols: cliOpts.cols ?? terminalColumns(),
+    color: cliOpts.noColor ? false : colorEnabled(),
+    ascii: isDumbTerminal(),
+    style: cliOpts.style ?? slConfig?.style ?? "rams",
+    density: cliOpts.density ?? slConfig?.density ?? "balanced",
+    theme: cliOpts.theme ?? slConfig?.theme ?? rootTheme ?? "default",
+    format: cliOpts.format ?? "ansi",
+    show: slConfig?.show ?? {
+      git: true,
+      pr: true,
+      cache: true,
+      windows: true,
+      today: true,
+      repo: true,
+      pace: true,
+      liveSessions: true,
+      subagents: true,
+      linesDelta: true,
+    },
+  };
+}
 
 // ─── Main ───────────────────────────────────────────────────────────────
 
-export async function runStatusline(): Promise<void> {
+export async function runStatusline(argv: string[] = process.argv.slice(3)): Promise<void> {
+  const cliOpts = parseStatuslineArgs(argv);
+  const renderOpts = resolveRenderOpts(cliOpts);
+
+  if (cliOpts.watch) {
+    const renderTick = async () => {
+      try {
+        const view = await buildAmbientStatusView(cliOpts);
+        const out = renderStatusline(view, {
+          ...renderOpts,
+          cols: cliOpts.cols ?? terminalColumns(),
+        });
+        if (renderOpts.format === "title") {
+          process.stdout.write(out);
+        } else if (process.stdout.isTTY) {
+          process.stdout.write(`\x1b[2J\x1b[H${out}\n`);
+        } else {
+          process.stdout.write(`${out}\n`);
+        }
+      } catch {
+        process.stdout.write(`${FALLBACK_STATUSLINE}\n`);
+      }
+    };
+    await renderTick();
+    await new Promise<void>((resolveLoop) => {
+      const timer = setInterval(() => {
+        void renderTick();
+      }, cliOpts.watchMs);
+      const stop = () => {
+        clearInterval(timer);
+        resolveLoop();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
+  }
+
   // Hard watchdog: no matter what hangs below (a stuck daemon fetch, stdin that
   // never closes, a slow import), this process MUST NOT linger and squat RAM.
   // After 4s, exit unconditionally. unref() so it doesn't itself keep the loop
@@ -751,12 +1093,24 @@ export async function runStatusline(): Promise<void> {
   let pendingPush: SessionPush | null = null;
 
   try {
+    if (cliOpts.ambient) {
+      const view = await buildAmbientStatusView(cliOpts);
+      process.stdout.write(renderStatusline(view, renderOpts));
+      return;
+    }
+
     let input: StatuslineInput;
 
     try {
       const raw = await readStdin();
       input = JSON.parse(raw) as StatuslineInput;
     } catch {
+      // If non-ANSI format requested on empty stdin (e.g. tmux/title/plain), fall back to ambient
+      if (cliOpts.format && cliOpts.format !== "ansi") {
+        const view = await buildAmbientStatusView(cliOpts);
+        process.stdout.write(renderStatusline(view, renderOpts));
+        return;
+      }
       // Animated waiting state
       const f = frame();
       const dots = ".".repeat(f % 4);
@@ -773,19 +1127,25 @@ export async function runStatusline(): Promise<void> {
     // In a worktree the folder is a throwaway name (`agent-a50b…`); show the
     // repo's name, as the ledger counts it, and say it's a worktree.
     const startDir = input.workspace?.project_dir || projectDir;
+    const explicitWorktreeName = input.worktree?.name || input.workspace?.git_worktree;
     const inWorktree =
-      Boolean(input.workspace?.git_worktree) || /[/\\]\.claude[/\\]worktrees[/\\]/.test(startDir);
+      Boolean(explicitWorktreeName) || /[/\\]\.claude[/\\]worktrees[/\\]/.test(startDir);
     const shownProject = inWorktree ? canonicalizeProjectName(startDir, projectName) : projectName;
+    const worktreeTag: boolean | string | undefined =
+      typeof explicitWorktreeName === "string" && explicitWorktreeName.trim().length > 0
+        ? explicitWorktreeName.trim()
+        : inWorktree
+          ? true
+          : undefined;
     const git = projectDir ? getGitInfo(projectDir) : null;
     const modelId = input.model?.id ?? input.model?.display_name;
     const sessionCost = input.cost?.total_cost_usd ?? 0;
     const durationMs = input.cost?.total_duration_ms ?? 0;
+    const activeMs = input.cost?.total_api_duration_ms ?? input.cost?.total_duration_ms;
     const cw = input.context_window;
     const usage = cw?.current_usage ?? null;
     const ctxUsed = cw?.total_input_tokens ?? 0;
     const ctxMax = cw?.context_window_size ?? 0;
-    // Claude Code pre-computes the fill against its effective window; trust it
-    // over our own ratio when present (their number is what triggers compaction).
     const usedPct = cw?.used_percentage;
     const ctxPct = finite(usedPct)
       ? usedPct
@@ -793,8 +1153,6 @@ export async function runStatusline(): Promise<void> {
         ? (ctxUsed / ctxMax) * 100
         : null;
 
-    // Last API call's usage — the payload carries no session-cumulative token
-    // counts, so this is the honest live signal we can give the daemon.
     const tokens: TokenUsage = {
       inputTokens: usage?.input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
@@ -802,20 +1160,20 @@ export async function runStatusline(): Promise<void> {
       cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
     };
 
-    // Start today's read now so its daemon round trip overlaps the session
-    // sync below instead of queueing behind it (worst case 300ms, not 500ms).
-    // Handled at creation: it's awaited only after another await, and an
-    // unhandled rejection in between would kill the process.
-    const todayPromise = getTodayTotalsCached().catch((): TodayRead => ({ state: "down" }));
+    const agentName =
+      typeof input.agent === "string"
+        ? input.agent
+        : typeof input.agent?.name === "string"
+          ? input.agent.name
+          : "claude-code";
+
+    const contextPromise = getStatuslineContextCached(startDir, agentName).catch(
+      (): ContextRead => ({ state: "down" })
+    );
 
     // ── Daemon push: built now, sent only after the line is on stdout ──
-    // Without a real session id there is nothing to keep live; a synthetic
-    // per-render id would only mint a junk session every tick.
     const sessionId = input.session_id ?? `session-${now}`;
     if (input.session_id) {
-      // Push the fill the line shows: Claude Code's used_percentage (what
-      // triggers compaction) against its window, else the raw token ratio.
-      // Only when both a fill and a window size exist — never a guessed fill.
       const fillUsed =
         finite(ctxMax) && ctxMax > 0 && finite(usedPct)
           ? Math.round((usedPct / 100) * ctxMax)
@@ -824,11 +1182,9 @@ export async function runStatusline(): Promise<void> {
             : 0;
       pendingPush = {
         session: {
-          provider: "claude-code",
+          provider: agentName,
           sessionId: input.session_id,
           model: modelId ?? "unknown",
-          // The ledger's name for it, so /api/live and today agree (a
-          // worktree session is its repo, not `agent-a50b…`).
           project: canonicalizeProjectName(input.workspace?.project_dir || projectDir, projectName),
           cwd: projectDir,
           ...(input.transcript_path ? { transcriptPath: input.transcript_path } : {}),
@@ -842,30 +1198,52 @@ export async function runStatusline(): Promise<void> {
       };
     }
 
-    // Claude Code hands its plan windows to this command and writes them
-    // nowhere else; keep them so /api/quota and the bar can show them.
     try {
       recordQuotaSamples(homedir(), claudeCodeQuota(input.rate_limits, now));
     } catch {}
 
     // ── Render ──
-    const todayRead = await todayPromise;
+    const ctxRead = await contextPromise;
+    const ctxData = ctxRead.state !== "down" ? ctxRead.ctx : null;
     const cache = cacheFromInput(input.prompt_cache);
     const spend = spendFromInput(input.rate_limits?.spend_limit);
+    const reviewState =
+      input.pr?.review_state && VALID_PR_STATES.has(input.pr.review_state)
+        ? (input.pr.review_state as PrReviewState)
+        : undefined;
+    const linesAdded = input.cost?.total_lines_added;
+    const linesRemoved = input.cost?.total_lines_removed;
+    const hasLinesDelta =
+      (finite(linesAdded) && linesAdded > 0) || (finite(linesRemoved) && linesRemoved > 0);
+    const hasLastTokens =
+      tokens.inputTokens > 0 ||
+      tokens.outputTokens > 0 ||
+      tokens.cacheReadTokens > 0 ||
+      tokens.cacheWriteTokens > 0;
+
     const view: StatusView = {
       now,
       project: shownProject,
-      ...(inWorktree ? { worktree: true } : {}),
+      ...(worktreeTag !== undefined ? { worktree: worktreeTag } : {}),
       model: modelLabel(input.model),
       ...(input.effort?.level ? { effort: shortEffort(input.effort.level) } : {}),
+      ...(input.fast_mode === true ? { fastMode: true } : {}),
       ...(routeFromInput(input) ? { route: routeFromInput(input) } : {}),
       ctx: {
         pct: ctxPct,
         ...(ctxMax > 0 ? { windowTokens: ctxMax } : {}),
         turnsLeft: ctxPct === null ? null : trackContextTurns(sessionId, ctxPct),
+        ...(input.exceeds_200k_tokens === true ? { exceeds200k: true } : {}),
       },
       ...(cache ? { cache } : {}),
-      ...(input.cost ? { cost: { usd: input.cost.total_cost_usd ?? null } } : {}),
+      ...(input.cost
+        ? {
+            cost: {
+              usd: input.cost.total_cost_usd ?? null,
+              ...(finite(activeMs) && activeMs > 0 ? { activeMs } : {}),
+            },
+          }
+        : {}),
       ...(rateWindow(input.rate_limits?.five_hour, 5 * 3600)
         ? { five: rateWindow(input.rate_limits?.five_hour, 5 * 3600) }
         : {}),
@@ -874,43 +1252,91 @@ export async function runStatusline(): Promise<void> {
         : {}),
       ...(spend ? { spend } : {}),
       today:
-        todayRead.state === "down"
+        ctxRead.state === "down"
           ? { state: "down" }
-          : todayRead.totals.cost > 0
-            ? { state: todayRead.state, usd: todayRead.totals.cost, ageMs: todayRead.ageMs }
+          : ctxData && ctxData.today.cost > 0
+            ? {
+                state: ctxRead.state,
+                usd: ctxData.today.cost,
+                ageMs: ctxRead.ageMs,
+                paceMultiple: ctxData.paceMultiple,
+              }
             : { state: "none" },
       ...(git ? { git: { branch: git.branch, dirty: git.dirty } } : {}),
       ...(Number.isSafeInteger(input.pr?.number) && (input.pr?.number ?? 0) > 0
-        ? { pr: { number: input.pr?.number as number } }
+        ? {
+            pr: {
+              number: input.pr?.number as number,
+              ...(reviewState ? { reviewState } : {}),
+            },
+          }
+        : {}),
+      ...(hasLinesDelta
+        ? {
+            linesDelta: {
+              added: finite(linesAdded) ? linesAdded : 0,
+              removed: finite(linesRemoved) ? linesRemoved : 0,
+            },
+          }
+        : {}),
+      ...(hasLastTokens
+        ? {
+            tokensLast: {
+              in: tokens.inputTokens,
+              out: tokens.outputTokens,
+              cacheRead: tokens.cacheReadTokens,
+              cacheWrite: tokens.cacheWriteTokens,
+            },
+          }
         : {}),
     };
-    if (todayRead.state !== "down") {
-      // The ledger names a session by the folder it started in, not where it cd'd to.
-      const proj = findProjectTotal(todayRead.totals, input.workspace?.project_dir || projectDir);
-      if (proj && proj.cost > 0 && proj.cost < todayRead.totals.cost - 0.005) {
-        view.repo = { usd: proj.cost, stale: todayRead.state === "stale" };
+    if (ctxRead.state !== "down" && ctxData) {
+      const proj = findProjectTotal(ctxData.today, input.workspace?.project_dir || projectDir);
+      if (proj && proj.cost > 0 && proj.cost < ctxData.today.cost - 0.005) {
+        view.repo = { usd: proj.cost, stale: ctxRead.state === "stale" };
+      }
+      if (ctxData.liveSessions.count > 1) {
+        view.liveSessions = {
+          count: ctxData.liveSessions.count,
+          others: ctxData.liveSessions.others,
+        };
+      }
+      if (ctxData.subagentToday.cost > 0) {
+        view.subagentToday = {
+          cost: ctxData.subagentToday.cost,
+          share: ctxData.subagentToday.share,
+          records: ctxData.subagentToday.records,
+        };
+      }
+      if (ctxData.dailyCostThreshold !== null && ctxData.today.cost >= ctxData.dailyCostThreshold) {
+        view.budget = {
+          dailyThresholdUsd: ctxData.dailyCostThreshold,
+          todayUsd: ctxData.today.cost,
+        };
+      }
+      if (ctxData.unpricedModelsCount > 0) {
+        view.unpricedModelsCount = ctxData.unpricedModelsCount;
+      }
+      if (ctxData.quotas.length > 0) {
+        view.quotas = ctxData.quotas.map((q) => ({
+          agent: q.agent,
+          label: q.window,
+          pct: q.usedPct,
+          resetsAt: q.resetsAt,
+        }));
       }
     }
-    process.stdout.write(
-      renderStatusline(view, {
-        cols: terminalColumns(),
-        color: colorEnabled(),
-        ascii: isDumbTerminal(),
-      })
-    );
+    process.stdout.write(renderStatusline(view, renderOpts));
   } catch {
-    // Nuclear fallback — if ANYTHING above threw, still produce output
     try {
       process.stdout.write(FALLBACK_STATUSLINE);
     } catch {}
   } finally {
-    // ALWAYS exit promptly once output is written. A backgrounded daemon
-    // fire-and-forget spawn or a lingering socket handle could otherwise keep
-    // the event loop alive and leave an orphan squatting RAM — the exact
-    // failure mode that stacked into a kernel panic. Flush, push, then exit.
-    await afterOutput(pendingPush);
-    clearTimeout(watchdog);
-    process.exit(0);
+    if (!cliOpts.watch) {
+      await afterOutput(pendingPush);
+      clearTimeout(watchdog);
+      process.exit(0);
+    }
   }
 }
 

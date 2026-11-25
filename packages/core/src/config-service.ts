@@ -42,8 +42,37 @@ export const BUILT_IN_THEME_IDS = [
   "catppuccin",
   "dracula",
   "solarized-dark",
+  "light",
+  "solarized-light",
   "high-contrast",
 ] as const;
+
+export const STATUSLINE_STYLES = ["rams", "deck", "pill", "meter", "ledger"] as const;
+export type StatuslineStyle = (typeof STATUSLINE_STYLES)[number];
+
+export const STATUSLINE_DENSITIES = ["compact", "balanced", "telemetry"] as const;
+export type StatuslineDensity = (typeof STATUSLINE_DENSITIES)[number];
+
+export interface StatuslineShowConfig {
+  git: boolean;
+  pr: boolean;
+  cache: boolean;
+  windows: boolean;
+  today: boolean;
+  repo: boolean;
+  pace: boolean;
+  liveSessions: boolean;
+  subagents: boolean;
+  linesDelta: boolean;
+}
+
+export interface StatuslineConfig {
+  style: StatuslineStyle;
+  density: StatuslineDensity;
+  theme: string | null;
+  nerdFont: boolean | null;
+  show: StatuslineShowConfig;
+}
 
 /** Formats a custom source's files can be written in. */
 export type CustomSourceFormat = "tokmeter-usage-jsonl";
@@ -124,6 +153,8 @@ export interface UserConfig {
     /** USD/day that triggers an alert. `null` disables alerting. */
     dailyCostThreshold: number | null;
   };
+  /** Statusline appearance, density, and section toggles. */
+  statusline: StatuslineConfig;
   /**
    * Extra search roots per provider, keyed by ProviderId (e.g. "cursor",
    * "antigravity"). Most parsers already probe several likely locations on
@@ -170,6 +201,24 @@ export const DEFAULT_CONFIG: UserConfig = {
   daemon: { scanIntervalSeconds: 60, antigravityLivePolling: false, cursorHook: true },
   cli: { defaultRange: "all", defaultSort: "cost" },
   alerts: { dailyCostThreshold: null },
+  statusline: {
+    style: "rams",
+    density: "balanced",
+    theme: null,
+    nerdFont: null,
+    show: {
+      git: true,
+      pr: true,
+      cache: true,
+      windows: true,
+      today: true,
+      repo: true,
+      pace: true,
+      liveSessions: true,
+      subagents: true,
+      linesDelta: true,
+    },
+  },
   providerPaths: {},
   customSources: [],
   modifiedBy: "tokmeter",
@@ -311,6 +360,7 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
           ? raw.alerts.dailyCostThreshold
           : d.alerts.dailyCostThreshold,
     },
+    statusline: normalizeStatuslineConfig(raw.statusline),
     providerPaths: normalizeProviderPaths(raw.providerPaths),
     customSources: normalizeCustomSources(raw.customSources),
     modifiedBy: raw.modifiedBy === "user" ? "user" : "tokmeter",
@@ -323,6 +373,41 @@ function normalizeConfig(raw: Partial<UserConfig>): UserConfig {
  * provider id or a non-string path shouldn't fall back to defaults for
  * every other knob in the file.
  */
+function normalizeStatuslineConfig(raw: unknown): StatuslineConfig {
+  const d = DEFAULT_CONFIG.statusline;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { ...d, show: { ...d.show } };
+  }
+  const r = raw as Partial<StatuslineConfig>;
+  const rawTheme = typeof r.theme === "string" ? r.theme.trim() : "";
+  const rawShow =
+    typeof r.show === "object" && r.show !== null && !Array.isArray(r.show)
+      ? (r.show as Partial<StatuslineShowConfig>)
+      : {};
+  return {
+    style: STATUSLINE_STYLES.includes(r.style as StatuslineStyle)
+      ? (r.style as StatuslineStyle)
+      : d.style,
+    density: STATUSLINE_DENSITIES.includes(r.density as StatuslineDensity)
+      ? (r.density as StatuslineDensity)
+      : d.density,
+    theme: rawTheme.length > 0 ? rawTheme : null,
+    nerdFont: typeof r.nerdFont === "boolean" ? r.nerdFont : null,
+    show: {
+      git: rawShow.git !== false,
+      pr: rawShow.pr !== false,
+      cache: rawShow.cache !== false,
+      windows: rawShow.windows !== false,
+      today: rawShow.today !== false,
+      repo: rawShow.repo !== false,
+      pace: rawShow.pace !== false,
+      liveSessions: rawShow.liveSessions !== false,
+      subagents: rawShow.subagents !== false,
+      linesDelta: rawShow.linesDelta !== false,
+    },
+  };
+}
+
 function normalizeProviderPaths(raw: unknown): Record<string, string[]> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
   const out: Record<string, string[]> = {};
@@ -388,7 +473,7 @@ function isDefaultSort(value: unknown): value is DefaultSort {
  */
 export interface ConfigFieldMeta {
   path: string;
-  type: "int" | "enum" | "number-or-null" | "bool";
+  type: "int" | "enum" | "enum-or-null" | "number-or-null" | "bool" | "bool-or-null";
   enumValues?: readonly string[];
   min?: number;
   max?: number;
@@ -406,6 +491,79 @@ export const CONFIG_FIELDS: readonly ConfigFieldMeta[] = [
     path: "nerdFont",
     type: "bool",
     description: "Enable Nerd Font glyphs in statusline/TUI (requires a patched font).",
+  },
+  {
+    path: "statusline.style",
+    type: "enum",
+    enumValues: STATUSLINE_STYLES,
+    description: "Statusline visual skin (rams | deck | pill | meter | ledger).",
+  },
+  {
+    path: "statusline.density",
+    type: "enum",
+    enumValues: STATUSLINE_DENSITIES,
+    description: "Statusline line budget (compact | balanced | telemetry).",
+  },
+  {
+    path: "statusline.theme",
+    type: "enum-or-null",
+    enumValues: BUILT_IN_THEME_IDS,
+    description: 'Statusline theme override ("null" / "inherit" uses top-level theme).',
+  },
+  {
+    path: "statusline.nerdFont",
+    type: "bool-or-null",
+    description: 'Statusline Nerd Font override ("null" / "inherit" uses top-level nerdFont).',
+  },
+  {
+    path: "statusline.show.git",
+    type: "bool",
+    description: "Show git branch and dirty marker on the statusline.",
+  },
+  {
+    path: "statusline.show.pr",
+    type: "bool",
+    description: "Show open pull request badge and review state on the statusline.",
+  },
+  {
+    path: "statusline.show.cache",
+    type: "bool",
+    description: "Show prompt cache warmth/hit share/TTL segment on the statusline.",
+  },
+  {
+    path: "statusline.show.windows",
+    type: "bool",
+    description: "Show plan rate windows (5h / 7d) and gateway spend limit on line 2.",
+  },
+  {
+    path: "statusline.show.today",
+    type: "bool",
+    description: "Show cross-agent today spend segment on line 2.",
+  },
+  {
+    path: "statusline.show.repo",
+    type: "bool",
+    description: "Show current repository share of today's spend on line 2.",
+  },
+  {
+    path: "statusline.show.pace",
+    type: "bool",
+    description: "Show intraday spend pace multiple (e.g. 1.2x) next to today's spend.",
+  },
+  {
+    path: "statusline.show.liveSessions",
+    type: "bool",
+    description: "Show concurrent live session count across coding agents.",
+  },
+  {
+    path: "statusline.show.subagents",
+    type: "bool",
+    description: "Show subagent spend share when notable.",
+  },
+  {
+    path: "statusline.show.linesDelta",
+    type: "bool",
+    description: "Show session lines added/removed in telemetry density.",
   },
   {
     path: "bar.refreshSeconds",
@@ -517,6 +675,15 @@ function coerceValue(field: ConfigFieldMeta, rawValue: string): unknown {
       }
       return v;
     }
+    case "enum-or-null": {
+      if (v === "null" || v === "inherit" || v === "") return null;
+      if (!field.enumValues?.includes(v)) {
+        throw new Error(
+          `${field.path}: must be one of ${field.enumValues?.join(" | ")} or "null" (got "${rawValue}")`
+        );
+      }
+      return v;
+    }
     case "number-or-null": {
       if (v === "null" || v === "off" || v === "") return null;
       const n = Number(v);
@@ -532,6 +699,12 @@ function coerceValue(field: ConfigFieldMeta, rawValue: string): unknown {
       if (v === "true" || v === "on" || v === "1") return true;
       if (v === "false" || v === "off" || v === "0") return false;
       throw new Error(`${field.path}: expected true/false (or on/off), got "${rawValue}"`);
+    }
+    case "bool-or-null": {
+      if (v === "null" || v === "inherit" || v === "") return null;
+      if (v === "true" || v === "on" || v === "1") return true;
+      if (v === "false" || v === "off" || v === "0") return false;
+      throw new Error(`${field.path}: expected true/false (or on/off/"null"), got "${rawValue}"`);
     }
   }
 }

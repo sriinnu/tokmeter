@@ -2,8 +2,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configFilePath, loadConfig, setConfigValue } from "./config-service.js";
-import { getConfigPath, isNerdFontEnabled, loadUserTheme } from "./themes.js";
+import {
+  BUILT_IN_THEME_IDS,
+  configFilePath,
+  loadConfig,
+  STATUSLINE_DENSITIES,
+  STATUSLINE_STYLES,
+  setConfigValue,
+} from "./config-service.js";
+import {
+  getConfigPath,
+  isNerdFontEnabled,
+  loadUserTheme,
+  resolveStatuslinePalette,
+} from "./themes.js";
 
 let tmpDir: string;
 
@@ -146,5 +158,104 @@ describe("unified theme & nerdFont config", () => {
     expect(next.theme).toBe("high-contrast");
     expect(() => setConfigValue(next, "theme", "nonexistent-theme")).toThrow();
     expect(setConfigValue(next, "nerdFont", "on").nerdFont).toBe(true);
+  });
+});
+
+describe("statusline config & palette resolution", () => {
+  it("provides clean statusline defaults when absent", () => {
+    writeConfig({ version: 1 });
+    const sl = loadConfig(tmpDir).statusline;
+    expect(sl.style).toBe("rams");
+    expect(sl.density).toBe("balanced");
+    expect(sl.theme).toBeNull();
+    expect(sl.nerdFont).toBeNull();
+    expect(sl.show).toEqual({
+      git: true,
+      pr: true,
+      cache: true,
+      windows: true,
+      today: true,
+      repo: true,
+      pace: true,
+      liveSessions: true,
+      subagents: true,
+      linesDelta: true,
+    });
+  });
+
+  it("normalizes invalid statusline fields back to defaults without losing valid siblings", () => {
+    writeConfig({
+      version: 1,
+      statusline: {
+        style: "neon-garbage",
+        density: "telemetry",
+        theme: "  light  ",
+        nerdFont: "yes",
+        show: { git: false, linesDelta: "nope", pr: false },
+      },
+    });
+    const sl = loadConfig(tmpDir).statusline;
+    expect(sl.style).toBe("rams");
+    expect(sl.density).toBe("telemetry");
+    expect(sl.theme).toBe("light");
+    expect(sl.nerdFont).toBeNull();
+    expect(sl.show.git).toBe(false);
+    expect(sl.show.pr).toBe(false);
+    expect(sl.show.linesDelta).toBe(true);
+  });
+
+  it("validates statusline keys via setConfigValue including null/inherit", () => {
+    let cfg = loadConfig(tmpDir);
+    for (const style of STATUSLINE_STYLES) {
+      cfg = setConfigValue(cfg, "statusline.style", style);
+      expect(cfg.statusline.style).toBe(style);
+    }
+    for (const density of STATUSLINE_DENSITIES) {
+      cfg = setConfigValue(cfg, "statusline.density", density);
+      expect(cfg.statusline.density).toBe(density);
+    }
+    expect(() => setConfigValue(cfg, "statusline.style", "invalid")).toThrow();
+    expect(() => setConfigValue(cfg, "statusline.density", "huge")).toThrow();
+
+    cfg = setConfigValue(cfg, "statusline.theme", "light");
+    expect(cfg.statusline.theme).toBe("light");
+    cfg = setConfigValue(cfg, "statusline.theme", "inherit");
+    expect(cfg.statusline.theme).toBeNull();
+    cfg = setConfigValue(cfg, "statusline.theme", "solarized-light");
+    cfg = setConfigValue(cfg, "statusline.theme", "null");
+    expect(cfg.statusline.theme).toBeNull();
+    expect(() => setConfigValue(cfg, "statusline.theme", "not-a-theme")).toThrow();
+
+    cfg = setConfigValue(cfg, "statusline.nerdFont", "true");
+    expect(cfg.statusline.nerdFont).toBe(true);
+    cfg = setConfigValue(cfg, "statusline.nerdFont", "inherit");
+    expect(cfg.statusline.nerdFont).toBeNull();
+    expect(() => setConfigValue(cfg, "statusline.nerdFont", "maybe")).toThrow();
+
+    cfg = setConfigValue(cfg, "statusline.show.git", "off");
+    expect(cfg.statusline.show.git).toBe(false);
+  });
+
+  it("resolves distinct dark, light, solarized-light, and high-contrast palettes", () => {
+    expect(BUILT_IN_THEME_IDS).toContain("light");
+    expect(BUILT_IN_THEME_IDS).toContain("solarized-light");
+
+    const def = resolveStatuslinePalette("default");
+    expect(def.variant).toBe("dark");
+    expect(def.ok).toBe("#4ade80");
+    expect(def.bad).toBe("#f87171");
+
+    const light = resolveStatuslinePalette("light");
+    expect(light.variant).toBe("light");
+    expect(light.plain).toBe("#1f2328");
+    expect(light.alertBadBg).toBe("#fee2e2");
+
+    const solLight = resolveStatuslinePalette("solarized-light");
+    expect(solLight.variant).toBe("light");
+
+    const hc = resolveStatuslinePalette("high-contrast");
+    expect(hc.variant).toBe("dark");
+    expect(hc.ok).toBe("#00ddff");
+    expect(hc.bad).toBe("#ff7b00"); // orange, CVD-safe instead of red
   });
 });

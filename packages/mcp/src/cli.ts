@@ -6,7 +6,8 @@
  *   tokmeter-mcp                        Start live TUI dashboard (default)
  *   tokmeter-mcp live                   Start live TUI dashboard
  *   tokmeter-mcp serve|mcp              Start MCP server (stdio transport)
- *   tokmeter-mcp statusline|status      Statusline mode (stdin → stdout)
+ *   tokmeter-mcp statusline|status      Statusline mode (stdin or --ambient/--watch)
+ *   tokmeter-mcp slash <cmd>            Zero-token 66-col card (cockpit|why|quota|live|routes|digest|statusline|doctor)
  *   tokmeter-mcp daemon start           Start cross-provider aggregation daemon
  *   tokmeter-mcp daemon stop            Stop the daemon
  *   tokmeter-mcp daemon status          Check daemon status
@@ -15,6 +16,9 @@
  *   tokmeter-mcp daemon uninstall-agent Remove the launchd agent
  *   tokmeter-mcp install-statusline     Install statusline hook for ALL editors
  *   tokmeter-mcp install-mcp            Install MCP server for ALL editors
+ *   tokmeter-mcp install-plugin         Install /tokmeter slash command + statusline snippets
+ *   tokmeter-mcp uninstall-plugin       Remove /tokmeter slash command files
+ *   tokmeter-mcp snippets               Print tmux / Zellij / Starship / terminal title snippets
  *   tokmeter-mcp install-all|restore    Restore everything — statusline + MCP
  *   tokmeter-mcp uninstall-statusline   Remove statusline hook from all editors
  *   tokmeter-mcp uninstall-mcp          Remove MCP server from all editors
@@ -104,7 +108,7 @@ switch (command) {
   case "status": {
     try {
       const { runStatusline } = await import("./statusline.js");
-      await runStatusline();
+      await runStatusline(process.argv.slice(3));
       // runStatusline() exits in its own finally once output drains; this is a
       // belt-and-suspenders exit for the rare path where it returns without
       // exiting (e.g. a future refactor). The statusline must NEVER linger.
@@ -115,6 +119,33 @@ switch (command) {
       } catch {}
       process.exit(0);
     }
+    break;
+  }
+
+  case "slash": {
+    const { runSlashCommand } = await import("./slash.js");
+    await runSlashCommand(process.argv[3], process.argv.slice(4));
+    break;
+  }
+
+  case "install-plugin":
+  case "plugin-install": {
+    const { installPlugin } = await import("./installer.js");
+    const targetEditors = process.argv.slice(3);
+    installPlugin({ editors: targetEditors.length > 0 ? targetEditors : undefined });
+    break;
+  }
+
+  case "uninstall-plugin":
+  case "plugin-uninstall": {
+    const { uninstallPlugin } = await import("./installer.js");
+    uninstallPlugin();
+    break;
+  }
+
+  case "snippets": {
+    const { formatStatuslineSnippets } = await import("./installer.js");
+    console.log(formatStatuslineSnippets());
     break;
   }
 
@@ -222,8 +253,9 @@ ${b("USAGE")}
 ${b("COMMANDS")}
   ${a("live")}              Start the live TUI dashboard ${d("(default)")}
   ${a("serve, mcp")}        Start MCP server via stdio transport
-  ${a("statusline")}        Claude Code statusline hook mode
+  ${a("statusline")}        Claude Code / multi-CLI statusline (--ambient --watch --style)
   ${a("status")}            Alias for statusline
+  ${a("slash <cmd>")}       Render a 66-col /tokmeter card (cockpit|why|quota|live|routes|digest|statusline|doctor)
   ${a("daemon start")}      Start cross-provider aggregation daemon
   ${a("daemon stop")}       Stop the daemon
   ${a("daemon status")}     Check daemon status
@@ -232,6 +264,9 @@ ${b("COMMANDS")}
   ${a("daemon uninstall-agent")} Remove the launchd agent
   ${a("install-statusline")} Install statusline hook for ALL editors
   ${a("install-mcp")}       Install MCP server for ALL editors
+  ${a("install-plugin")}    Install /tokmeter slash command + multi-CLI snippets
+  ${a("uninstall-plugin")}  Remove /tokmeter slash command files
+  ${a("snippets")}          Print tmux / Zellij / Starship / title snippets
   ${a("install-all")}       Restore everything — statusline + MCP
   ${a("uninstall-statusline")} Remove statusline hook from all editors
   ${a("uninstall-mcp")}     Remove MCP server from all editors
