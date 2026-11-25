@@ -231,3 +231,9 @@ The failure modes this design exists to prevent, all observed in the wild:
 3. A full-history rescan holding the whole corpus in memory, stacked on other
    memory hogs, OOM-rebooting the box. Fix: windowed + streamed + guarded rescan
    (§5).
+
+---
+
+## Related ADRs
+
+- [ADR 0001: Desktop Dashboard Strategy, Wire Contracts & React Isolation](./adr/0001-desktop-dashboard-strategy.md) — Canonical role split between `packages/web` and `packages/macos-bar`, shared core wire types, cross-language daemon contract checks, and React 18/19 workspace boundaries.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LiveData } from "../hooks/useLiveData.js";
-import type { TokmeterData } from "../hooks/useTokmeterData.js";
+import type { TokmeterData, TokmeterRecord } from "../hooks/useTokmeterData.js";
 import { buildDashboardInsights } from "../pages/dashboard/buildDashboardInsights.js";
 import { localDateKey } from "./dates.js";
 import { buildTodayDial, buildTypicalDay, OTHER_KEY } from "./today-dial.js";
@@ -8,7 +8,7 @@ import { buildTodayDial, buildTypicalDay, OTHER_KEY } from "./today-dial.js";
 const now = new Date();
 const at = (dayOffset: number, hour: number, minute = 10) =>
   new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, hour, minute).getTime();
-const rec = (ts: number, model: string, cost: number, input = 100) => ({
+const rec = (ts: number, model: string, cost: number, input = 100): TokmeterRecord => ({
   timestamp: ts,
   model,
   provider: "p",
@@ -33,8 +33,8 @@ const todayRecords = [
 ];
 const todayKey = localDateKey(now);
 
-function insightsFor(records: Array<Record<string, unknown>>) {
-  const data = {
+function insightsFor(records: TokmeterRecord[]) {
+  const data: TokmeterData = {
     records,
     projects: [],
     models: [],
@@ -63,7 +63,7 @@ function insightsFor(records: Array<Record<string, unknown>>) {
       lastScanAt: 0,
       warnings: [],
     },
-  } as unknown as TokmeterData;
+  };
   const live: LiveData = { status: "disconnected", aggregated: null, lastUpdate: null };
   return buildDashboardInsights(data, live);
 }

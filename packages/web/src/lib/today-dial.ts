@@ -5,21 +5,12 @@
  * matches the Bars and Table views exactly.
  */
 
+import type { TokmeterRecord } from "../hooks/useTokmeterData.js";
+import { sumTokenBuckets } from "./format.js";
+
 export const DIAL_TOP_MODELS = 4;
 export const MIN_TYPICAL_DAYS = 3;
 export const OTHER_KEY = "other";
-
-interface RawRecord {
-  timestamp?: number;
-  model?: string;
-  provider?: string;
-  cost?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
-}
 
 export interface DialSeries {
   key: string;
@@ -66,24 +57,22 @@ export interface TypicalDay {
   days: number;
 }
 
-import { sumTokenBuckets } from "./format.js";
-
 const tokensOf = sumTokenBuckets;
 
 export function buildTodayDial(
-  records: Array<Record<string, unknown>>,
+  records: readonly TokmeterRecord[],
   todayKey: string,
   toDateKey: (ts: number) => string
 ): TodayDial {
-  const today = (records as RawRecord[]).filter(
+  const today = records.filter(
     (r) => typeof r.timestamp === "number" && toDateKey(r.timestamp) === todayKey
   );
   const measure: "cost" | "tokens" =
     today.every((r) => (r.cost ?? 0) === 0) && today.some((r) => tokensOf(r) > 0)
       ? "tokens"
       : "cost";
-  const measureOf = (r: RawRecord) => (measure === "cost" ? (r.cost ?? 0) : tokensOf(r));
-  const modelKey = (r: RawRecord) => `${r.provider ?? ""}::${r.model ?? ""}`;
+  const measureOf = (r: TokmeterRecord) => (measure === "cost" ? (r.cost ?? 0) : tokensOf(r));
+  const modelKey = (r: TokmeterRecord) => `${r.provider ?? ""}::${r.model ?? ""}`;
 
   const totals = new Map<
     string,
@@ -172,13 +161,13 @@ export function buildTodayDial(
  * than MIN_TYPICAL_DAYS days is not a typical day, so it returns null.
  */
 export function buildTypicalDay(
-  records: Array<Record<string, unknown>>,
+  records: readonly TokmeterRecord[],
   todayKey: string,
   toDateKey: (ts: number) => string,
   measure: "cost" | "tokens"
 ): TypicalDay | null {
   const byDay = new Map<string, number[]>();
-  for (const raw of records as RawRecord[]) {
+  for (const raw of records) {
     if (typeof raw.timestamp !== "number") continue;
     const day = toDateKey(raw.timestamp);
     if (day >= todayKey) continue;

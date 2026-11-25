@@ -322,6 +322,7 @@ describe("buildDashboardInsights", () => {
     data.records = [
       {
         timestamp: at(9),
+        project: "alpha",
         model: "m-a",
         provider: "p",
         inputTokens: 10,
@@ -333,6 +334,7 @@ describe("buildDashboardInsights", () => {
       },
       {
         timestamp: at(9),
+        project: "alpha",
         model: "m-b",
         provider: "p",
         inputTokens: 50,
@@ -363,6 +365,7 @@ describe("buildDashboardInsights", () => {
     data.records = [
       {
         timestamp: ts,
+        project: "alpha",
         model: "m-undef",
         provider: "p",
         inputTokens: 100,
@@ -374,11 +377,15 @@ describe("buildDashboardInsights", () => {
       },
       {
         timestamp: ts + 1,
+        project: "alpha",
         model: "m-undef",
         provider: "p",
         inputTokens: 40,
         outputTokens: 10,
-        cost: undefined,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        cost: undefined as unknown as number,
       },
     ];
 
