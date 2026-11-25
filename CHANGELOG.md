@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-11-25
+
+### Added
+
+- **Statusline v2 skins & modes**: customizable statusline layouts, skins, and
+  concise/expanded modes alongside a zero-token `/tokmeter` Claude Code slash
+  plugin (`#307`).
+- **Consolidated daemon snapshot API**: `/api/bar-snapshot` collapses the macOS
+  menu bar's Phase-2 refresh from 13 separate requests into one round-trip while
+  reporting partial section errors cleanly (`#308`).
+- **Cross-language API contract & architecture ADR**: shared TS/Swift daemon API
+  contract tests (`contracts/daemon-api-contract.json`) and desktop dashboard
+  strategy ADR (`docs/adr/0001-desktop-dashboard-strategy.md`) (`#309`).
+- **Independent Claude Code oracle**: Python fixture oracle validating Claude
+  Code parser token buckets independently of tokmeter (`#304`).
+- **Glama MCP listing badge** in `README.md` (`#305`).
+
+### Changed
+
+- **Warm daemon read routing**: CLI, MCP tools, and TUI route read queries
+  through the warm daemon's `/api/scoped-view` and scoped HTTP endpoints instead
+  of rescanning disk on every invocation, with clean offline fallback (`#306`).
+- **Consolidated Ink TUI**: unified TUI rendering and daemon-backed updates
+  (`#306`).
+- **Shared core wire types in web dashboard**: `packages/web` imports core
+  summary/record types directly and eliminates raw `unknown` casts (`#309`).
+- **Modularized core, CLI, MCP, and daemon codebases**: split
+  `parsers/utils.ts`, `cli.ts`, `mcp/server.ts`, and `daemon/server.ts` into
+  focused single-responsibility modules, replaced daemon CLI `Atomics.wait`
+  busy-waits with async polling, and expanded CLI, TUI, and Web test suites
+  (`#310`, `#311`).
+- **Universal macOS menu bar bundle**: builds arm64 + x86_64 universal binaries
+  with an explicit Node 22 runtime probe (`#308`).
+- **Gating Windows CI**: resolved SQLite, `tar`, path-separator, home-env, and
+  NTFS directory issues across the test suite and removed `continue-on-error`
+  from Windows CI (`#310`).
+
+### Fixed
+
+- **Midnight rollover & cleanup/restore accounting**: prices late pre-midnight
+  stragglers at the outgoing day's stored price cards and synchronizes
+  cleanup/restore operations with sealed relay days and today's journal
+  (`#298`).
+- **Pricing provenance & zero/free rate handling**: hardened model rate
+  resolution, `servedBy` overrides, and free vs. unpriced reporting (`#299`).
+- **Security, secret guard & packaging hygiene**: strengthened secret scanning,
+  dist cleanliness, auth header/path validation, and restore guards (`#300`).
+- **Per-home cache & writer isolation**: scoped scan/summary caches and pricing
+  state to `homeDir` with cross-process file locks for concurrent writers
+  (`#303`).
+- **Parser accuracy & fault isolation**: improved incremental filtering and
+  per-provider fault isolation so one failing parser never hides healthy
+  providers (`#304`).
+- **Web dashboard polling & unified config store**: aligned summary queries,
+  hardened Vite build/polling, and unified config persistence (`#302`).
+
 ## [1.24.0] - 2026-11-20
 
 ### Added
