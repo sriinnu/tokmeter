@@ -71,8 +71,8 @@ describe("createRecord", () => {
   it("marks a record with no time as inferred and dates it by the file's creation", async () => {
     const file = join(home, "s.jsonl");
     writeFileSync(file, "{}\n");
-    const before = Date.now();
     await tick();
+    const afterTick = Date.now();
     const r = utils.createRecord({
       timestamp: undefined,
       provider: "pi",
@@ -81,7 +81,7 @@ describe("createRecord", () => {
     });
     expect(r.timestampInferred).toBe(true);
     expect(r.timestamp).toBe(createdAt(file));
-    expect(r.timestamp).toBeLessThan(before + 1);
+    expect(r.timestamp).toBeLessThan(afterTick);
   });
 
   it("treats an unparseable date (NaN) like a missing one", () => {

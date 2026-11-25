@@ -7,18 +7,29 @@
 //
 // Only the paragraph right under each `### tokmeter_x` heading is replaced.
 // Notes added after it are left alone.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const serverPath = join(root, "packages/mcp/src/server.ts");
+const toolsDir = join(root, "packages/mcp/src/tools");
 const docPath = join(root, "docs/mcp-tools.md");
+
+function readToolSources() {
+  const toolFiles = readdirSync(toolsDir)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+    .sort()
+    .map((name) => join(toolsDir, name));
+  return [serverPath, ...toolFiles].map((file) => readFileSync(file, "utf8")).join("\n");
+}
 
 /** Plain constants a description can interpolate, like `const X = 14;`. */
 function readConstants(source) {
   const constants = {};
-  for (const match of source.matchAll(/^const ([A-Z][A-Z0-9_]*) = (\d[\d_]*|"[^"]*");$/gm)) {
+  for (const match of source.matchAll(
+    /^(?:export\s+)?const ([A-Z][A-Z0-9_]*) = (\d[\d_]*|"[^"]*");$/gm
+  )) {
     constants[match[1]] = JSON.parse(match[2].replaceAll("_", ""));
   }
   return constants;
@@ -49,7 +60,7 @@ function toolDescriptions(source) {
   return tools;
 }
 
-const source = readFileSync(serverPath, "utf8");
+const source = readToolSources();
 const tools = toolDescriptions(source);
 const before = readFileSync(docPath, "utf8");
 const seen = new Set();
