@@ -1,0 +1,606 @@
+{
+  "ready": {
+    "ready": true,
+    "warming": false,
+    "apiVersion": 1
+  },
+  "quick": {
+    "ready": true,
+    "stats": {
+      "totalTokens": 12000,
+      "totalCost": 3.25,
+      "inputTokens": 3000,
+      "outputTokens": 900,
+      "cacheReadTokens": 7500,
+      "cacheWriteTokens": 400,
+      "reasoningTokens": 200,
+      "totalRecords": 14,
+      "projects": 2,
+      "models": 2,
+      "providers": 2,
+      "activeDays": 8,
+      "longestStreak": 8,
+      "firstUsed": 1763300000000,
+      "lastUsed": 1764003600000
+    },
+    "liveContextFillPct": 42.5,
+    "blockElapsedPct": 60.0
+  },
+  "daily": [
+    {
+      "date": "2026-11-24",
+      "totalTokens": 12000,
+      "inputTokens": 3000,
+      "outputTokens": 900,
+      "cacheReadTokens": 7500,
+      "cacheWriteTokens": 400,
+      "reasoningTokens": 200,
+      "cost": 3.25,
+      "records": 14
+    }
+  ],
+  "models": [
+    {
+      "model": "claude-sonnet-4-5",
+      "provider": "claude-code",
+      "inputTokens": 3000,
+      "outputTokens": 900,
+      "cacheReadTokens": 7500,
+      "cacheWriteTokens": 400,
+      "reasoningTokens": 200,
+      "totalTokens": 12000,
+      "cost": 3.25,
+      "percentageOfTotal": 100
+    }
+  ],
+  "sessions": [
+    {
+      "project": "alpha-app",
+      "totalTokens": 12000,
+      "totalCost": 3.25,
+      "inputTokens": 3000,
+      "outputTokens": 900,
+      "cacheReadTokens": 7500,
+      "cacheWriteTokens": 400,
+      "reasoningTokens": 200,
+      "activeDays": 8,
+      "firstUsed": 1763300000000,
+      "lastUsed": 1764003600000,
+      "providers": [
+        {
+          "provider": "claude-code",
+          "totalTokens": 12000,
+          "cost": 3.25,
+          "models": ["claude-sonnet-4-5"],
+          "percentageOfTotal": 100
+        }
+      ],
+      "models": [
+        {
+          "model": "claude-sonnet-4-5",
+          "provider": "claude-code",
+          "inputTokens": 3000,
+          "outputTokens": 900,
+          "cacheReadTokens": 7500,
+          "cacheWriteTokens": 400,
+          "reasoningTokens": 200,
+          "totalTokens": 12000,
+          "cost": 3.25,
+          "percentageOfTotal": 100
+        }
+      ],
+      "dailyBreakdown": [
+        {
+          "date": "2026-11-24",
+          "totalTokens": 12000,
+          "inputTokens": 3000,
+          "outputTokens": 900,
+          "cacheReadTokens": 7500,
+          "cacheWriteTokens": 400,
+          "reasoningTokens": 200,
+          "cost": 3.25,
+          "records": 14
+        }
+      ]
+    }
+  ],
+  "projectDetail": {
+    "project": "alpha-app",
+    "totalTokens": 12000,
+    "totalCost": 3.25,
+    "inputTokens": 3000,
+    "outputTokens": 900,
+    "cacheReadTokens": 7500,
+    "cacheWriteTokens": 400,
+    "reasoningTokens": 200,
+    "activeDays": 8,
+    "firstUsed": 1763300000000,
+    "lastUsed": 1764003600000,
+    "models": [
+      {
+        "model": "claude-sonnet-4-5",
+        "provider": "claude-code",
+        "inputTokens": 3000,
+        "outputTokens": 900,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "reasoningTokens": 200,
+        "totalTokens": 12000,
+        "cost": 3.25,
+        "percentageOfTotal": 100
+      }
+    ],
+    "providers": [
+      {
+        "provider": "claude-code",
+        "totalTokens": 12000,
+        "cost": 3.25,
+        "models": ["claude-sonnet-4-5"],
+        "percentageOfTotal": 100
+      }
+    ],
+    "dailyBreakdown": [
+      {
+        "date": "2026-11-24",
+        "totalTokens": 12000,
+        "inputTokens": 3000,
+        "outputTokens": 900,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "reasoningTokens": 200,
+        "cost": 3.25,
+        "records": 14
+      }
+    ]
+  },
+  "pricingStatus": {
+    "registryMtime": 1764000000000
+  },
+  "cronStatus": {
+    "installed": false,
+    "lastRunMtime": 1764000000000,
+    "lastRunOk": true,
+    "lastRunTail": "Kosha registry refreshed"
+  },
+  "health": {
+    "ready": true,
+    "unpricedModels": [],
+    "unpricedModelsTotal": 0,
+    "unpricedModelsTruncated": false,
+    "unpricedRecords": 0,
+    "warnings": [],
+    "lastScanAt": 1764003600000
+  },
+  "anomalies": {
+    "anomalies": [
+      {
+        "ts": 1764000000000,
+        "key": "anthropic/claude-sonnet-4-5",
+        "field": "input",
+        "side": "up",
+        "previous": 3.0,
+        "current": 4.5,
+        "deltaPct": 50.0
+      }
+    ],
+    "total": 1,
+    "cappedAt": 50
+  },
+  "statbarSignals": {
+    "costBasisToday": {
+      "estimatedCost": 2.3,
+      "reportedCost": 0,
+      "unclassifiedCost": 0,
+      "estimatedRecords": 4,
+      "reportedRecords": 0,
+      "unavailableRecords": 0
+    },
+    "modelCostBasisToday": {
+      "claude-code::claude-sonnet-4-5": {
+        "estimatedCost": 2.3,
+        "reportedCost": 0,
+        "unclassifiedCost": 0,
+        "estimatedRecords": 4,
+        "reportedRecords": 0,
+        "unavailableRecords": 0
+      }
+    },
+    "burnRate": {
+      "costPerHour": 2.3,
+      "tokensPerHour": 11500,
+      "windowMinutes": 60,
+      "recordsInWindow": 4
+    },
+    "cacheHitToday": {
+      "rate": 0.75,
+      "canonicalRate": 0.72,
+      "readShare": 0.75,
+      "missRate": 0.24,
+      "freshInputShare": 0.28,
+      "cacheWriteShare": 0.04,
+      "cacheReadTokens": 7500,
+      "cacheWriteTokens": 400,
+      "inputTokens": 2500,
+      "freshInputTokens": 2900,
+      "totalInputTokens": 10400
+    },
+    "contextPressure": {
+      "status": "low",
+      "dragShare": 0.15,
+      "dragTokens": 400,
+      "currentInputTokens": 2900,
+      "baselineInputTokens": 2500,
+      "turnCount": 4,
+      "sessionAgeMinutes": 12,
+      "source": "sourceFile",
+      "provider": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "project": "alpha-app",
+      "provenance": "estimated",
+      "reason": "Steady context growth"
+    },
+    "projectContextToday": [
+      {
+        "project": "alpha-app",
+        "cacheHitRate": 0.72,
+        "missRate": 0.24,
+        "freshInputShare": 0.28,
+        "cacheWriteShare": 0.04,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "inputTokens": 2500,
+        "freshInputTokens": 2900,
+        "totalInputTokens": 10400,
+        "contextStatus": "low",
+        "dragShare": 0.15,
+        "dragTokens": 400,
+        "turnCount": 4,
+        "lastUsed": 1764003600000
+      }
+    ],
+    "pace": {
+      "multiple": 1.15,
+      "typicalCostByNow": 2.0,
+      "actualCostByNow": 2.3,
+      "daysOfHistory": 8
+    },
+    "compactionToday": {
+      "cost": 0.1,
+      "tokens": 1000,
+      "share": 0.043,
+      "events": 1
+    },
+    "subagentToday": {
+      "cost": 0.25,
+      "records": 1,
+      "share": 0.108
+    },
+    "reasoningToday": {
+      "tokens": 200,
+      "outputTokens": 900,
+      "share": 0.222,
+      "records": 1
+    },
+    "toolCallsToday": {
+      "byTool": [
+        {
+          "tool": "Edit",
+          "cost": 0.8,
+          "share": 0.348,
+          "calls": 2
+        }
+      ],
+      "totalCost": 0.8,
+      "callCount": 2,
+      "turnsWithTools": 1
+    },
+    "billingWindow": {
+      "blockNumber": 1,
+      "blockStart": 1763992800000,
+      "blockEnd": 1764010800000,
+      "remainingSec": 7200,
+      "elapsedPct": 60.0,
+      "cost": 2.3,
+      "tokens": 11500,
+      "records": 4
+    },
+    "liveSession": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "project": "alpha-app",
+      "ageSeconds": 5,
+      "lastRecordCost": 0.45
+    },
+    "timeOfDay": {
+      "status": "ok",
+      "windowDays": 30,
+      "minDays": 7,
+      "daysCounted": 8,
+      "daysSkipped": 0,
+      "totalCost": 10.0,
+      "blocks": [
+        { "startHour": 0, "endHour": 3, "cost": 1.0, "share": 0.1 },
+        { "startHour": 3, "endHour": 6, "cost": 1.0, "share": 0.1 },
+        { "startHour": 6, "endHour": 9, "cost": 1.0, "share": 0.1 },
+        { "startHour": 9, "endHour": 12, "cost": 1.0, "share": 0.1 },
+        { "startHour": 12, "endHour": 15, "cost": 1.0, "share": 0.1 },
+        { "startHour": 15, "endHour": 18, "cost": 3.0, "share": 0.3 },
+        { "startHour": 18, "endHour": 21, "cost": 1.0, "share": 0.1 },
+        { "startHour": 21, "endHour": 24, "cost": 1.0, "share": 0.1 }
+      ],
+      "peak": { "startHour": 15, "endHour": 18, "cost": 3.0, "share": 0.3 }
+    }
+  },
+  "crossTool": {
+    "todayActualCost": 2.3,
+    "todayTokens": {
+      "input": 2500,
+      "output": 900,
+      "cacheRead": 7500,
+      "cacheWrite": 400,
+      "reasoning": 200
+    },
+    "projections": [
+      {
+        "model": "gpt-5",
+        "provider": "codex",
+        "projectedCost": 1.9
+      }
+    ]
+  },
+  "quota": {
+    "windows": [
+      {
+        "agent": "codex",
+        "window": "5h",
+        "windowMinutes": 300,
+        "usedPct": 35.0,
+        "windowStart": 1763992800,
+        "resetsAt": 1764010800,
+        "sampledAt": 1764003600000,
+        "plan": "pro",
+        "creditsBalance": null,
+        "avgPctPerHour": 7.0,
+        "recentPctPerHour": 8.5,
+        "hitsLimitAt": null,
+        "verdict": "resets-first"
+      }
+    ]
+  },
+  "rates": {
+    "scope": "all",
+    "registryMtime": 1764000000000,
+    "pricingUnavailable": false,
+    "models": [
+      {
+        "model": "claude-sonnet-4-5",
+        "provider": "claude-code",
+        "source": {
+          "tier": "seeded",
+          "matchedId": null
+        },
+        "priceFlags": [],
+        "rates": {
+          "input": { "perMillion": 3.0, "derived": false },
+          "output": { "perMillion": 15.0, "derived": false },
+          "cacheRead": { "perMillion": 0.3, "derived": false },
+          "cacheWrite": { "perMillion": 3.75, "derived": false },
+          "cacheWrite1h": { "perMillion": 6.0, "derived": true, "basis": "2x input" },
+          "reasoning": { "perMillion": null, "derived": false }
+        },
+        "usage": {
+          "inputTokens": 3000,
+          "outputTokens": 900,
+          "cacheReadTokens": 7500,
+          "cacheWriteTokens": 400,
+          "reasoningTokens": 200,
+          "totalTokens": 12000,
+          "cost": 3.25
+        },
+        "effectivePerMillion": 270.8333333333333
+      }
+    ]
+  },
+  "antigravityLive": {
+    "latestSnapshot": {
+      "timestamp": 1764003600000,
+      "availablePromptCredits": 450,
+      "availableFlowCredits": 1200,
+      "models": [
+        {
+          "label": "Gemini 2.5 Pro",
+          "resetTime": "2026-11-26T00:00:00Z",
+          "remainingFraction": 0.9
+        }
+      ]
+    },
+    "creditsUsedToday": {
+      "promptCreditsUsed": 50,
+      "flowCreditsUsed": 100,
+      "sinceSnapshotAt": 1763942400000
+    }
+  },
+  "barSnapshot": {
+    "daily": [
+      {
+        "date": "2026-11-24",
+        "totalTokens": 12000,
+        "inputTokens": 3000,
+        "outputTokens": 900,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "reasoningTokens": 200,
+        "cost": 3.25,
+        "records": 14
+      }
+    ],
+    "models": [
+      {
+        "model": "claude-sonnet-4-5",
+        "provider": "claude-code",
+        "inputTokens": 3000,
+        "outputTokens": 900,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "reasoningTokens": 200,
+        "totalTokens": 12000,
+        "cost": 3.25,
+        "percentageOfTotal": 100
+      }
+    ],
+    "todayModels": [
+      {
+        "model": "claude-sonnet-4-5",
+        "provider": "claude-code",
+        "inputTokens": 1000,
+        "outputTokens": 300,
+        "cacheReadTokens": 2500,
+        "cacheWriteTokens": 100,
+        "reasoningTokens": 100,
+        "totalTokens": 4000,
+        "cost": 1.1,
+        "percentageOfTotal": 100
+      }
+    ],
+    "sessions": [
+      {
+        "project": "alpha-app",
+        "totalTokens": 12000,
+        "totalCost": 3.25,
+        "activeDays": 8,
+        "lastUsed": 1764003600000,
+        "providers": [
+          {
+            "provider": "claude-code",
+            "totalTokens": 12000,
+            "cost": 3.25
+          }
+        ],
+        "models": [
+          {
+            "provider": "claude-code",
+            "model": "claude-sonnet-4-5",
+            "totalTokens": 12000,
+            "cost": 3.25
+          }
+        ]
+      }
+    ],
+    "todayProjects": [
+      {
+        "project": "alpha-app",
+        "totalTokens": 4000,
+        "totalCost": 1.1,
+        "activeDays": 1,
+        "lastUsed": 1764003600000,
+        "providers": [
+          {
+            "provider": "claude-code",
+            "totalTokens": 4000,
+            "cost": 1.1
+          }
+        ],
+        "models": [
+          {
+            "provider": "claude-code",
+            "model": "claude-sonnet-4-5",
+            "totalTokens": 4000,
+            "cost": 1.1
+          }
+        ]
+      }
+    ],
+    "pricingStatus": {
+      "registryMtime": 1764000000000
+    },
+    "cronStatus": {
+      "installed": false,
+      "lastRunMtime": 1764000000000,
+      "lastRunOk": true,
+      "lastRunTail": "Kosha registry refreshed"
+    },
+    "health": {
+      "ready": true,
+      "unpricedModels": [],
+      "unpricedRecords": 0
+    },
+    "anomalies": {
+      "anomalies": [],
+      "total": 0,
+      "cappedAt": 50
+    },
+    "statbarSignals": {
+      "burnRate": {
+        "costPerHour": 2.3,
+        "tokensPerHour": 11500,
+        "windowMinutes": 60,
+        "recordsInWindow": 4
+      },
+      "cacheHitToday": {
+        "rate": 0.75,
+        "canonicalRate": 0.72,
+        "readShare": 0.75,
+        "missRate": 0.24,
+        "freshInputShare": 0.28,
+        "cacheWriteShare": 0.04,
+        "cacheReadTokens": 7500,
+        "cacheWriteTokens": 400,
+        "inputTokens": 2500,
+        "freshInputTokens": 2900,
+        "totalInputTokens": 10400
+      },
+      "contextPressure": null,
+      "projectContextToday": [],
+      "pace": {
+        "multiple": null,
+        "typicalCostByNow": 0,
+        "actualCostByNow": 1.1,
+        "daysOfHistory": 0
+      },
+      "compactionToday": {
+        "cost": 0,
+        "tokens": 0,
+        "share": 0,
+        "events": 0
+      },
+      "subagentToday": {
+        "cost": 0,
+        "records": 0,
+        "share": 0
+      },
+      "reasoningToday": {
+        "tokens": 0,
+        "outputTokens": 300,
+        "share": 0,
+        "records": 0
+      },
+      "toolCallsToday": {
+        "byTool": [],
+        "totalCost": 0,
+        "callCount": 0,
+        "turnsWithTools": 0
+      },
+      "billingWindow": null,
+      "liveSession": null
+    },
+    "crossTool": {
+      "todayActualCost": 1.1,
+      "todayTokens": {
+        "input": 1000,
+        "output": 300,
+        "cacheRead": 2500,
+        "cacheWrite": 100,
+        "reasoning": 100
+      },
+      "projections": []
+    },
+    "quota": {
+      "windows": []
+    },
+    "antigravityLive": {
+      "latestSnapshot": null,
+      "creditsUsedToday": null
+    },
+    "partialErrors": []
+  }
+}

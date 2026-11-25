@@ -20,7 +20,7 @@ import {
 } from "../../components/ui/table.js";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group.js";
 import { useStoredState } from "../../hooks/useStoredState.js";
-import type { TokmeterTimeOfDay } from "../../hooks/useTokmeterData.js";
+import type { TokmeterRecord, TokmeterTimeOfDay } from "../../hooks/useTokmeterData.js";
 import { localDateKey } from "../../lib/dates.js";
 import {
   formatCompact,
@@ -48,7 +48,7 @@ export function TodayCard({
   timeOfDay,
 }: {
   insights: DashboardInsights;
-  records: Array<Record<string, unknown>>;
+  records: TokmeterRecord[];
   /** The daemon's 30-day cost share per 3-hour block; absent from older daemons. */
   timeOfDay?: TokmeterTimeOfDay;
 }) {

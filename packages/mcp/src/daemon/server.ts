@@ -2098,6 +2098,12 @@ export function createDaemonTestHttpServer(
       json(res, scoped.body);
       return;
     }
+    if (pathname === "/api/quick") {
+      const stats = core.getStats();
+      const blockElapsedPct = core.getStatbarSignals().billingWindow?.elapsedPct;
+      json(res, { ready: true, stats, blockElapsedPct });
+      return;
+    }
     if (pathname === "/api/summary") {
       res.setHeader(SUMMARY_SOURCE_HEADER, "live");
       json(res, core.getSummary());
@@ -2117,6 +2123,16 @@ export function createDaemonTestHttpServer(
     }
     if (pathname === "/api/projects") {
       json(res, core.getAllProjects());
+      return;
+    }
+    if (pathname === "/api/sessions") {
+      const today = new URL(url, "http://localhost").searchParams.get("today") === "true";
+      json(res, readSessionsPayload(core, today));
+      return;
+    }
+    if (pathname.startsWith("/api/projects/")) {
+      const name = decodeURIComponent(pathname.slice("/api/projects/".length));
+      json(res, core.getProjectSummary(name) ?? { error: "Not found" });
       return;
     }
     if (pathname === "/api/providers") {
@@ -2162,6 +2178,22 @@ export function createDaemonTestHttpServer(
     }
     if (pathname === "/api/health") {
       json(res, readHealthPayload(core));
+      return;
+    }
+    if (pathname === "/api/pricing-status") {
+      json(res, readPricingStatusPayload(opts?.homeDir ?? homedir()));
+      return;
+    }
+    if (pathname === "/api/anomalies") {
+      json(res, readAnomaliesPayload(opts?.homeDir ?? homedir()));
+      return;
+    }
+    if (pathname === "/api/cron-status") {
+      json(res, readCronStatusPayload(opts?.homeDir ?? homedir()));
+      return;
+    }
+    if (pathname === "/api/antigravity-live") {
+      json(res, await readAntigravityLivePayload());
       return;
     }
     if (pathname === "/api/bar-snapshot") {

@@ -6,119 +6,56 @@
  * refresh fails.
  */
 
+import type {
+  TokmeterStats as CoreTokmeterStats,
+  DailyEntry,
+  ModelSummary,
+  ProjectSummary,
+  ProviderId,
+  ProviderSummary,
+  ScanMeta,
+  ScanWarning,
+  TimeOfDayBlock,
+  TimeOfDayProfile,
+  TokenRecord,
+} from "@sriinnu/tokmeter-core";
 import { useEffect, useState } from "react";
 
 const SUMMARY_ENDPOINTS = ["/api/summary", "/data.json"] as const;
 const DEFAULT_REFRESH_MS = 15_000;
 const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
 
-export interface TokmeterStats {
-  totalTokens: number;
-  totalCost: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
-  totalRecords: number;
-  projects: number;
-  models: number;
-  providers: number;
-  activeDays: number;
-  longestStreak: number;
-  firstUsed: number;
-  lastUsed: number;
-}
-
-export interface TokmeterDailyEntry {
-  date: string;
-  totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
-  cost: number;
-  records: number;
-}
-
-export interface TokmeterModelSummary {
-  model: string;
-  provider: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  cost: number;
-  percentageOfTotal: number;
-}
-
-export interface TokmeterProviderSummary {
-  provider: string;
-  totalTokens: number;
-  cost: number;
-  models: string[];
-  percentageOfTotal: number;
-}
-
-export interface TokmeterProjectSummary {
-  project: string;
-  totalTokens: number;
-  totalCost: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
+/** Known core provider IDs plus custom/legacy strings from static exports. */
+export type WireProviderId = ProviderId | (string & {});
+export type TokmeterStats = CoreTokmeterStats;
+export type TokmeterDailyEntry = DailyEntry;
+export type TokmeterModelSummary = Omit<ModelSummary, "provider"> & {
+  provider: WireProviderId;
+};
+export type TokmeterProviderSummary = Omit<ProviderSummary, "provider"> & {
+  provider: WireProviderId;
+};
+export type TokmeterProjectSummary = Omit<ProjectSummary, "models" | "providers"> & {
   models: TokmeterModelSummary[];
   providers: TokmeterProviderSummary[];
-  dailyBreakdown: TokmeterDailyEntry[];
-  activeDays: number;
-  firstUsed: number;
-  lastUsed: number;
-}
-
-export interface TokmeterScanWarning {
-  scope: "history" | "today" | "provider" | "cache";
-  provider?: string;
-  message: string;
-}
-
-export interface TokmeterScanMeta {
-  stableThrough: string | null;
-  historySource: "snapshot" | "extended" | "rebuilt" | "none";
-  todayState: "live" | "degraded" | "snapshot-only";
-  lastScanAt: number;
+};
+export type TokmeterScanWarning = Omit<ScanWarning, "provider"> & {
+  provider?: WireProviderId;
+};
+export type TokmeterScanMeta = Omit<ScanMeta, "warnings" | "unpricedModels" | "unpricedRecords"> & {
   warnings: TokmeterScanWarning[];
-}
-
-/** One 3-hour local block of the daemon's time-of-day profile (share of COST). */
-export interface TokmeterTimeOfDayBlock {
-  startHour: number;
-  endHour: number;
-  cost: number;
-  share: number;
-}
-
-/**
- * Share of cost per 3-hour block over the last 30 sealed days, computed by the
- * daemon from the relay's hourly cost curves (core `computeTimeOfDayProfile`).
- */
-export interface TokmeterTimeOfDay {
-  status: "ok" | "insufficient";
-  windowDays: number;
-  minDays: number;
-  daysCounted: number;
-  daysSkipped: number;
-  totalCost: number;
-  blocks: TokmeterTimeOfDayBlock[];
-  peak: TokmeterTimeOfDayBlock | null;
-}
+  /** Absent from older daemons and stripped static exports. */
+  unpricedModels?: string[];
+  unpricedRecords?: number;
+};
+export type TokmeterTimeOfDayBlock = TimeOfDayBlock;
+export type TokmeterTimeOfDay = TimeOfDayProfile;
+export type TokmeterRecord = Omit<TokenRecord, "provider"> & {
+  provider: WireProviderId;
+};
 
 export interface TokmeterData {
-  records: Array<Record<string, unknown>>;
+  records: TokmeterRecord[];
   projects: TokmeterProjectSummary[];
   models: TokmeterModelSummary[];
   daily: TokmeterDailyEntry[];
@@ -420,6 +357,8 @@ function normalizeMeta(meta: Partial<TokmeterScanMeta> | undefined): TokmeterSca
           message: warning.message ?? "Unknown warning",
         }))
       : DEFAULT_META.warnings,
+    ...(Array.isArray(meta?.unpricedModels) ? { unpricedModels: meta.unpricedModels } : {}),
+    ...(typeof meta?.unpricedRecords === "number" ? { unpricedRecords: meta.unpricedRecords } : {}),
   };
 }
 

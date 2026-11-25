@@ -2,6 +2,7 @@ import type {
   TokmeterDailyEntry,
   TokmeterData,
   TokmeterProjectSummary,
+  TokmeterRecord,
 } from "../../hooks/useTokmeterData.js";
 import { localDateKey } from "../../lib/dates.js";
 import { sumTokenBuckets } from "../../lib/format.js";
@@ -210,7 +211,7 @@ export function buildDashboardInsights(data: TokmeterData, _liveData?: unknown):
  * raw records window.
  */
 function buildTodayInsight(
-  rawRecords: Array<Record<string, unknown>>,
+  rawRecords: readonly TokmeterRecord[],
   todayKey: string,
   todayEntry: TokmeterDailyEntry | null
 ): DashboardTodayInsight {
@@ -229,8 +230,7 @@ function buildTodayInsight(
   let cost = 0;
   let totalTokens = 0;
   let records = 0;
-  for (const raw of rawRecords) {
-    const r = raw as unknown as RawRecord;
+  for (const r of rawRecords) {
     if (localDateKey(r.timestamp) !== todayKey) continue;
     const hour = new Date(r.timestamp).getHours();
     const tokens = sumTokenBuckets(r);
@@ -349,20 +349,8 @@ function getAverageDailyCost(daily: TokmeterDailyEntry[]): number {
   return daily.reduce((sum, entry) => sum + entry.cost, 0) / daily.length;
 }
 
-interface RawRecord {
-  timestamp: number;
-  model: string;
-  provider: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
-  cost: number;
-}
-
 function buildTodayModels(
-  rawRecords: Array<Record<string, unknown>>,
+  rawRecords: readonly TokmeterRecord[],
   todayDate: string | null
 ): DashboardModelInsight[] {
   if (!todayDate) return [];
@@ -379,8 +367,7 @@ function buildTodayModels(
 
   const byKey = new Map<string, Acc>();
 
-  for (const raw of rawRecords) {
-    const r = raw as unknown as RawRecord;
+  for (const r of rawRecords) {
     if (localDateKey(r.timestamp) !== todayDate) continue;
 
     const key = `${r.provider}::${r.model}`;
