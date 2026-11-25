@@ -32,7 +32,7 @@
 
 import type { Dirent, Stats } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "./private-files.js";
 import type { ProviderId, SessionParser } from "./types.js";
 
@@ -93,14 +93,16 @@ const USAGE_RE =
  * ~/.config/<app> and ~/.local/share/<app>. Null for roots outside $HOME.
  */
 export function agentHome(root: string, homeDir: string): string | null {
-  if (!root.startsWith(homeDir + sep)) return null;
-  const rel = root.slice(homeDir.length + 1).split(sep);
+  const sepChar = homeDir.includes("\\") ? "\\" : "/";
+  const base = homeDir.replace(/[\\/]+$/, "");
+  if (!root.startsWith(base + sepChar)) return null;
+  const rel = root.slice(base.length + 1).split(/[\\/]+/);
   let depth = 1;
   if (rel[0] === "Library") depth = 3;
   else if (rel[0] === ".local" && rel[1] === "share") depth = 3;
   else if (rel[0] === ".config") depth = 2;
   if (rel.length < depth) return null;
-  return join(homeDir, ...rel.slice(0, depth));
+  return [base, ...rel.slice(0, depth)].join(sepChar);
 }
 
 /** Agent folders to walk, each with the providers that read from it. */
@@ -284,7 +286,8 @@ export function summarizeCoverage(report: CoverageReport, homeDir: string): stri
   if (report.unread.length === 0) return null;
   const byFolder = new Map<string, number>();
   for (const f of report.unread) {
-    const dir = f.path.slice(0, f.path.lastIndexOf(sep)).replace(homeDir, "~");
+    const slash = Math.max(f.path.lastIndexOf("/"), f.path.lastIndexOf("\\"));
+    const dir = (slash >= 0 ? f.path.slice(0, slash) : f.path).replace(homeDir, "~");
     byFolder.set(dir, (byFolder.get(dir) ?? 0) + 1);
   }
   const top = [...byFolder]

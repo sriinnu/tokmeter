@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, relative, resolve, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAliases } from "./alias-service.js";
@@ -28,6 +28,7 @@ import {
   assertNoSymlinkParents,
   isWithin,
   parseTarVerboseEntry,
+  resolveTarBinary,
   restoreAllowedRoots,
 } from "./restore-guard.js";
 import type { TokmeterCore } from "./tokmeter-core.js";
@@ -58,7 +59,8 @@ function octal(n: number, width: number): string {
   return `${n.toString(8).padStart(width - 1, "0")}\0`;
 }
 
-function splitName(name: string): { prefix: string; base: string } {
+function splitName(raw: string): { prefix: string; base: string } {
+  const name = raw.replaceAll("\\", "/");
   if (Buffer.byteLength(name) <= 100) return { prefix: "", base: name };
   for (let i = name.length - 1; i > 0; i--) {
     if (name[i] !== "/") continue;
@@ -101,7 +103,10 @@ function tarGz(entries: TarEntry[]): Buffer {
 }
 
 /** Archive member name for an absolute path, the way createBackup stores it. */
-const member = (abs: string) => abs.replace(/^\/+/, "");
+const member = (abs: string) =>
+  relative(parse(resolve(abs)).root, resolve(abs))
+    .split(sep)
+    .join("/");
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -160,7 +165,9 @@ describe("CleanupService.restore — archive safety", () => {
 
     expect(result.errors).toEqual([]);
     expect(readFileSync(transcript(), "utf-8")).toBe('{"ok":1}\n');
-    expect(statSync(transcript()).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(transcript()).mode & 0o777).toBe(0o600);
+    }
     expect(Math.round(statSync(transcript()).mtimeMs / 1000)).toBe(1_767_225_600);
     expect(readFileSync(join(home, ".zshrc"), "utf-8")).toBe("original zshrc\n");
   });
@@ -379,18 +386,21 @@ describe("backup durability and privacy", () => {
       sourceFile = secondFile;
       const second = await snapshots.snapshot({ providers: ["codex"] }, { backupDir });
 
+      const tarBin = resolveTarBinary();
       expect(first.archivePath).not.toBe(second.archivePath);
-      expect(execFileSync("tar", ["-tzf", first.archivePath], { encoding: "utf8" })).toContain(
+      expect(execFileSync(tarBin, ["-tzf", first.archivePath], { encoding: "utf8" })).toContain(
         "first.jsonl"
       );
-      expect(execFileSync("tar", ["-tzf", second.archivePath], { encoding: "utf8" })).toContain(
+      expect(execFileSync(tarBin, ["-tzf", second.archivePath], { encoding: "utf8" })).toContain(
         "second.jsonl"
       );
-      expect(statSync(backupDir).mode & 0o777).toBe(0o700);
-      expect(statSync(first.archivePath).mode & 0o777).toBe(0o600);
-      expect(statSync(first.archivePath.replace(/\.tar\.gz$/, ".meta.json")).mode & 0o777).toBe(
-        0o600
-      );
+      if (process.platform !== "win32") {
+        expect(statSync(backupDir).mode & 0o777).toBe(0o700);
+        expect(statSync(first.archivePath).mode & 0o777).toBe(0o600);
+        expect(statSync(first.archivePath.replace(/\.tar\.gz$/, ".meta.json")).mode & 0o777).toBe(
+          0o600
+        );
+      }
     } finally {
       vi.useRealTimers();
     }

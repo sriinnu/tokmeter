@@ -27,7 +27,7 @@ import {
   utimesSync,
 } from "node:fs";
 import { homedir, platform, tmpdir, userInfo } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { aggregateRecordsByDay, subtractDailyAggregate } from "./aggregates.js";
 import { deleteDayFile, readDayFile, writeDayFile } from "./aggregates-store.js";
 import { filterByDate, filterByProject, filterByProvider } from "./aggregator.js";
@@ -61,6 +61,7 @@ import {
   isAllowedRestorePath,
   isWithin,
   listArchiveEntries,
+  resolveTarBinary,
   restoreAllowedRoots,
   restoreSkippedRoots,
   UnsafeArchiveError,
@@ -166,7 +167,13 @@ function readBackupInfo(
 }
 
 function syncBackupFile(path: string): void {
-  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  // Windows FlushFileBuffers requires write access on the handle (`O_RDWR`);
+  // opening with `O_RDONLY` fails `fsyncSync` with `EPERM`. POSIX `open()`
+  // accepts `O_RDONLY` for both files and directories.
+  const flags =
+    (process.platform === "win32" ? fsConstants.O_RDWR : fsConstants.O_RDONLY) |
+    (fsConstants.O_NOFOLLOW ?? 0);
+  const fd = openSync(path, flags);
   try {
     fsyncSync(fd);
   } finally {
@@ -661,7 +668,7 @@ export class CleanupService {
       let existedBefore: string[] = [];
       try {
         chmodSync(sandbox, 0o700);
-        execFileSync("tar", ["-xzf", archivePath, "-C", sandbox], {
+        execFileSync(resolveTarBinary(), ["-xzf", archivePath, "-C", sandbox], {
           timeout: 60_000,
         });
         const sandboxFiles = collectExtractedFiles(sandbox);
@@ -672,13 +679,15 @@ export class CleanupService {
 
         if (sameHome || !sourceHome) {
           // Same machine (or can't infer): archive paths are absolute paths
-          // with the leading "/" stripped, restored verbatim.
-          destFor = (rel) => resolve("/", rel);
+          // relative to the machine's root, restored verbatim.
+          const targetRoot = parse(resolve(currentHome)).root;
+          destFor = (rel) => resolve(targetRoot, rel);
           for (const src of sandboxFiles) plan.push({ src, rel: relative(sandbox, src) });
         } else {
           // Cross-home: only the source home subtree is remapped into this
           // home; anything else in the archive is ignored.
-          const sourceHomeInSandbox = join(sandbox, sourceHome.replace(/^\/+/, ""));
+          const sourceHomeRel = sourceHome.replace(/^(?:[A-Za-z]:)?[\\/]+/, "");
+          const sourceHomeInSandbox = join(sandbox, sourceHomeRel);
           if (!existsSync(sourceHomeInSandbox)) {
             return {
               restoredCount: 0,
@@ -1028,7 +1037,8 @@ export class CleanupService {
       // tar recognizes and BSD tar doesn't have at all. Default behaviour on every
       // tar we care about (GNU, BSD, bsdtar on Windows) strips leading "/" already
       // unless -P is passed — so we just normalise the input to match.
-      const relPaths = allPaths.map((p) => p.replace(/^\/+/, ""));
+      const archiveRoot = parse(resolve(allPaths[0]!)).root;
+      const relPaths = allPaths.map((p) => relative(archiveRoot, resolve(p)).split(sep).join("/"));
       let reserved = false;
       try {
         // Reserve the archive exclusively. Even an ID collision must never
@@ -1043,8 +1053,8 @@ export class CleanupService {
         );
         reserved = true;
         closeSync(fd);
-        execFileSync("tar", ["czf", archivePath, ...relPaths], {
-          cwd: "/",
+        execFileSync(resolveTarBinary(), ["czf", archivePath, ...relPaths], {
+          cwd: archiveRoot,
           timeout: 120_000,
         });
         // A backup that restore would refuse is no backup at all. This also
@@ -1126,7 +1136,8 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
  * "/home/alice" and "/home/alice/" compare equal.
  */
 function normaliseHome(path: string): string {
-  return path.replace(/\/+$/, "");
+  const clean = resolve(path).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? clean.toLowerCase() : clean;
 }
 
 /**

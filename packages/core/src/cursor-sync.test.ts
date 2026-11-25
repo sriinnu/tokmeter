@@ -145,7 +145,9 @@ describe("syncCursorUsage", () => {
     expect(files.some((f) => f.endsWith(".tmp"))).toBe(false);
     const file = result.windows[0].file;
     expect(readFileSync(file, "utf-8")).toContain(ROW);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    }
     expect(readFileSync(file, "utf-8")).not.toContain(jwt);
   });
 

@@ -3,7 +3,6 @@
 // motivated it — Codex moving finished rollouts to ~/.codex/archived_sessions
 // and compressing idle ones to .jsonl.zst, outside the parser's declared root.
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +15,7 @@ import {
   writeCoverageReport,
 } from "./coverage-check.js";
 import { AntigravityParser } from "./parsers/antigravity.js";
+import { execSql } from "./test-sqlite.js";
 import type { ProviderId, SessionParser } from "./types.js";
 
 const DAY = "2026-10-19";
@@ -126,13 +126,14 @@ describe("findUnreadFiles", () => {
         const dir = join(home, ".gemini", "antigravity", "conversations");
         mkdirSync(dir, { recursive: true });
         const db = join(dir, `${name}.db`);
-        execFileSync("sqlite3", [db], {
-          input: [
+        execSql(
+          db,
+          [
             "CREATE TABLE steps (idx integer PRIMARY KEY, metadata blob);",
             "CREATE TABLE gen_metadata (idx integer PRIMARY KEY, data blob);",
             ...stepMs.map((ms, i) => `INSERT INTO steps VALUES (${i}, X'${stepRow(ms)}');`),
-          ].join("\n"),
-        });
+          ].join("\n")
+        );
         utimesSync(db, NOON, NOON);
         return db;
       };

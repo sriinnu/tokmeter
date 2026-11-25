@@ -26,7 +26,8 @@ describe("daemon contract — HTTP base stays in sync with protocol.ts", () => {
     const clientSrc = read("core/src/daemon-client.ts");
     expect(clientSrc).toContain(`DEFAULT_DAEMON_WS_PORT = ${DAEMON_PORT}`);
     expect(clientSrc).toContain("resolveDaemonWsPort(env) + 1");
-    expect(read("cli/src/cli.ts")).toContain("fetchDaemonJson");
+    expect(read("cli/src/daemon-bridge.ts")).toContain("fetchDaemonJson");
+    expect(read("cli/src/cli.ts")).toContain("tryServeFromDaemon");
   });
 
   test("macOS bar DaemonClient hardcodes the same HTTP base", () => {

@@ -266,7 +266,7 @@ describe("cursor-hook installer", () => {
     expect(hooks.hooks.preToolUse).toEqual(telemetry.hooks.preToolUse);
     expect(hooks.hooks.stop).toEqual([{ command: result.command, timeout: 5, loop_limit: null }]);
     expect(result.command).toBe(
-      `/usr/local/bin/node ${join(home, ".tokmeter", "hooks", "cursor-stop.mjs")}`
+      hookCommand("/usr/local/bin/node", join(home, ".tokmeter", "hooks", "cursor-stop.mjs"))
     );
     // Formatting kept: four-space indent and trailing newline.
     const raw = readFileSync(cursorHookPaths(home).hooksFile, "utf8");
@@ -316,7 +316,7 @@ describe("cursor-hook installer", () => {
     const stop = readHooks().hooks.stop;
     expect(stop.map((e: { command: string }) => e.command.split(" ")[0])).toEqual([
       "other-stop",
-      "/new/node",
+      shellQuote("/new/node"),
       "later-stop",
     ]);
   });
@@ -414,11 +414,21 @@ describe("cursor-hook installer", () => {
       home: spaced,
       nodePath: process.execPath,
     });
-    // The way Cursor runs it on macOS without the stdin gate.
-    const b64 = Buffer.from(JSON.stringify(completed)).toString("base64");
-    const r = spawnSync("/bin/sh", ["-c", `printf %s '${b64}' | base64 -d | ${command}`], {
-      encoding: "utf8",
-    });
+    const r =
+      process.platform === "win32"
+        ? spawnSync(command, {
+            shell: true,
+            input: JSON.stringify(completed),
+            encoding: "utf8",
+          })
+        : spawnSync(
+            "/bin/sh",
+            [
+              "-c",
+              `printf %s '${Buffer.from(JSON.stringify(completed)).toString("base64")}' | base64 -d | ${command}`,
+            ],
+            { encoding: "utf8" }
+          );
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe("{}");
     expect(journalLines(paths.journalDir)).toHaveLength(1);
@@ -429,7 +439,10 @@ describe("shellQuote", () => {
   it("leaves plain paths bare and single-quotes the rest", async () => {
     expect(shellQuote("/opt/homebrew/bin/node", "darwin")).toBe("/opt/homebrew/bin/node");
     expect(shellQuote("/a b/it's", "darwin")).toBe("'/a b/it'\\''s'");
-    expect(hookCommand("/n", "/a b")).toBe("/n '/a b'");
+    expect(hookCommand("/n", "/a b", "darwin")).toBe("/n '/a b'");
+    expect(shellQuote("C:\\Program Files\\nodejs\\node.exe", "win32")).toBe(
+      '"C:\\Program Files\\nodejs\\node.exe"'
+    );
   });
 });
 

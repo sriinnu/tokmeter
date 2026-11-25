@@ -108,8 +108,12 @@ export function shellQuote(arg: string, platform = process.platform): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-export function hookCommand(nodePath: string, scriptFile: string): string {
-  return `${shellQuote(nodePath)} ${shellQuote(scriptFile)}`;
+export function hookCommand(
+  nodePath: string,
+  scriptFile: string,
+  platform = process.platform
+): string {
+  return `${shellQuote(nodePath, platform)} ${shellQuote(scriptFile, platform)}`;
 }
 
 interface HookEntry {

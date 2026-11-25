@@ -34,6 +34,7 @@ const row = (providerId: string, modelId: string, mode: string, input: number, o
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "tokmeter-zero-rates-"));
   vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
   mkdirSync(join(home, ".kosha"), { recursive: true });
   writeFileSync(
     join(home, ".kosha", "registry.json"),

@@ -23,7 +23,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { aliasFilePath } from "./alias-service.js";
 import { claudeSessionSideDirs } from "./cleaners/claude-code.js";
@@ -105,14 +105,28 @@ export function parseTarVerboseEntry(
  * by line; a count mismatch (e.g. a name containing a newline) is refused rather
  * than guessed at.
  */
+/**
+ * Resolve the platform's bsdtar / GNU tar binary. On Windows, prefer the
+ * built-in System32 `tar.exe` (bsdtar) over MSYS/Git tar in PATH so Windows
+ * drive-letter paths (e.g. `C:\...`) are never interpreted as remote hosts.
+ */
+export function resolveTarBinary(): string {
+  if (process.platform === "win32") {
+    const sysTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    if (existsSync(sysTar)) return sysTar;
+  }
+  return "tar";
+}
+
 export function listArchiveEntries(archivePath: string): ArchiveEntry[] {
+  const tarBin = resolveTarBinary();
   const options = {
     timeout: 30_000,
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, LC_ALL: "C" },
   };
-  const names = splitLines(execFileSync("tar", ["-tzf", archivePath], options));
-  const verbose = splitLines(execFileSync("tar", ["-tvzf", archivePath], options));
+  const names = splitLines(execFileSync(tarBin, ["-tzf", archivePath], options));
+  const verbose = splitLines(execFileSync(tarBin, ["-tvzf", archivePath], options));
   if (names.length !== verbose.length) {
     throw new UnsafeArchiveError(
       "Archive listing is ambiguous (entry count mismatch) — refusing to extract"
@@ -127,7 +141,7 @@ export function listArchiveEntries(archivePath: string): ArchiveEntry[] {
 function splitLines(buf: Buffer): string[] {
   return buf
     .toString()
-    .split("\n")
+    .split(/\r?\n/)
     .filter((line) => line.length > 0);
 }
 
@@ -255,7 +269,7 @@ export function restoreAllowedRoots(homeDir: string, sqlDumpDir?: string): strin
   // ~/.claude/session-env would otherwise re-open it).
   return [...roots].filter(
     (r) =>
-      r !== resolve("/") &&
+      parse(r).root !== r &&
       !isWithin(home, r) &&
       !skipped.some((s) => isWithin(r, s) || isWithin(s, r))
   );

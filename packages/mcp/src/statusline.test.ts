@@ -92,12 +92,14 @@ describe("formatAge", () => {
 describe("statusline cache location", () => {
   test("uses $XDG_RUNTIME_DIR when set, else ~/.cache/tokmeter — never shared /tmp", () => {
     expect(statuslineCacheDir({ XDG_RUNTIME_DIR: "/run/user/1000" }, "/home/u")).toBe(
-      "/run/user/1000/tokmeter-statusline"
+      join("/run/user/1000", "tokmeter-statusline")
     );
-    expect(statuslineCacheDir({}, "/home/u")).toBe("/home/u/.cache/tokmeter/statusline");
+    expect(statuslineCacheDir({}, "/home/u")).toBe(
+      join("/home/u", ".cache", "tokmeter", "statusline")
+    );
     // A relative runtime dir is not trusted.
     expect(statuslineCacheDir({ XDG_RUNTIME_DIR: "run" }, "/home/u")).toBe(
-      "/home/u/.cache/tokmeter/statusline"
+      join("/home/u", ".cache", "tokmeter", "statusline")
     );
   });
 });

@@ -90,8 +90,15 @@ function writePrevious(previous: string, tail: Buffer): void {
 export function capLogFile(path: string, capBytes = LOG_CAP_BYTES): CapResult {
   let size: number;
   try {
-    size = statSync(path).size;
-  } catch {
+    const st = statSync(path);
+    if (st.isDirectory()) {
+      throw Object.assign(new Error(`EISDIR: illegal operation on a directory, stat '${path}'`), {
+        code: "EISDIR",
+      });
+    }
+    size = st.size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EISDIR") throw err;
     return { rotated: false };
   }
   if (size <= capBytes) return { rotated: false };

@@ -27,6 +27,7 @@ let fingerprint: (r: TokenRecord) => string;
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), "ts-fallback-test-"));
   vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
   vi.resetModules();
   utils = await import("./utils.js");
   fingerprint = (await import("../aggregates.js")).recordFingerprint;

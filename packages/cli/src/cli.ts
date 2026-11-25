@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * tokmeter — Token usage tracking CLI.
+ * tokmeter — Token usage tracking CLI entrypoint.
  */
 
-// Process-level error handlers
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled rejection:", reason);
   process.exit(1);
@@ -15,987 +14,27 @@ process.on("uncaughtException", (error) => {
 });
 
 import { homedir } from "node:os";
-import type {
-  ModelSummary,
-  ProjectSummary,
-  ProviderId,
-  ScanOptions,
-  TokmeterSummary,
-} from "@sriinnu/tokmeter";
-import { fetchDaemonJson, localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
+import { localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
-import { readOwnVersion } from "./cron.js";
+import { olderThanToIsoCutoff, parseArgs } from "./args.js";
+import { runPricingAudit } from "./commands/pricing-audit.js";
+import { runRoutes } from "./commands/routes.js";
 import { runCursorSyncCommand } from "./cursor-sync.js";
-import {
-  buildDaemonReadQuery,
-  DAEMON_READ_ENDPOINTS,
-  type DaemonReadArgs,
-  daemonReadEligible,
-} from "./daemon-read.js";
+import { tryServeFromDaemon } from "./daemon-bridge.js";
+import { printSummaryTables } from "./formatters.js";
 import { loadMcpModule } from "./mcp-bridge.js";
 
-// ---- Arg parser (lightweight, no deps) ----
+type InstallerModule = typeof import("@sriinnu/tokmeter-mcp/installer.js");
 
-interface CliArgs extends ScanOptions {
-  json: boolean;
-  light: boolean;
-  command?:
-    | "models"
-    | "daily"
-    | "projects"
-    | "pricing"
-    | "tui"
-    | "serve"
-    | "stats"
-    | "live"
-    | "statusline"
-    | "slash"
-    | "daemon"
-    | "install-statusline"
-    | "install-mcp"
-    | "install-plugin"
-    | "uninstall-plugin"
-    | "install-cron"
-    | "uninstall-statusline"
-    | "uninstall-mcp"
-    | "uninstall-cron"
-    | "cron-status"
-    | "editors"
-    | "digest"
-    | "cleanup"
-    | "restore"
-    | "snapshot"
-    | "alias"
-    | "config"
-    | "kosha-refresh"
-    | "kosha-update"
-    | "pricing-audit"
-    | "routes"
-    | "update"
-    | "refresh"
-    | "backfill"
-    | "coverage"
-    | "quota"
-    | "cursor-hook";
-  /** For `cursor-hook`: install | uninstall | status, and its own flags. */
-  cursorHookSub?: string;
-  cursorHookRest?: string[];
-  /** For `coverage`: the local day to check (YYYY-MM-DD); default yesterday. */
-  date?: string;
-  /** For `backfill`: how many recent sealed days to recompute into the relay. */
-  backfillDays?: number;
-  /** Alias sub-command and its positional arguments. */
-  aliasSub?: string;
-  aliasRest?: string[];
-  /** Config sub-command and its positional arguments. */
-  configSub?: string;
-  configRest?: string[];
-  pricingModel?: string;
-  daemonCmd?: string;
-  digestPeriod?: "today" | "week" | "month";
-  dryRun?: boolean;
-  backup?: boolean;
-  force?: boolean;
-  restoreId?: string;
-  restoreLatest?: boolean;
-  olderThan?: string;
-}
-
-/**
- * Parse an --older-than value (e.g. "30d", "2w", "1m") into a cutoff ISO timestamp.
- * Records with timestamp before the cutoff are "older than" the given window.
- * Returns undefined on bad input; caller should error out.
- */
-function olderThanToIsoCutoff(raw: string): string | undefined {
-  const m = raw.trim().match(/^(\d+)\s*([dwm])?$/i);
-  if (!m) return undefined;
-  const n = Number.parseInt(m[1], 10);
-  if (!Number.isFinite(n) || n <= 0) return undefined;
-  const unit = (m[2] || "d").toLowerCase();
-  const days = unit === "w" ? n * 7 : unit === "m" ? n * 30 : n;
-  const cutoffMs = Date.now() - days * 86_400_000;
-  return new Date(cutoffMs).toISOString();
-}
-
-function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { json: false, light: false };
-  const rest = argv.slice(2);
-
-  for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
-    switch (arg) {
-      case "--json":
-        args.json = true;
-        break;
-      case "--light":
-        args.light = true;
-        break;
-      case "--today":
-        args.today = true;
-        break;
-      case "--week":
-        args.week = true;
-        break;
-      case "--month":
-        args.month = true;
-        break;
-      case "--since":
-        args.since = rest[++i];
-        if (!args.since) {
-          console.error("Error: --since requires a date argument");
-          process.exit(1);
-        }
-        break;
-      case "--date":
-        args.date = rest[++i];
-        if (!args.date || !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
-          console.error("Error: --date requires a day as YYYY-MM-DD");
-          process.exit(1);
-        }
-        break;
-      case "--until":
-        args.until = rest[++i];
-        if (!args.until) {
-          console.error("Error: --until requires a date argument");
-          process.exit(1);
-        }
-        break;
-      case "--older-than": {
-        const raw = rest[++i];
-        if (!raw) {
-          console.error("Error: --older-than requires a value (e.g. 30d, 2w, 1m)");
-          process.exit(1);
-        }
-        args.olderThan = raw;
-        break;
-      }
-      case "--year":
-        if (!rest[i + 1] || Number.isNaN(Number(rest[i + 1]))) {
-          console.error("Error: --year requires a numeric argument");
-          process.exit(1);
-        }
-        args.year = Number(rest[++i]);
-        break;
-      case "--project":
-        args.project = rest[++i];
-        if (!args.project) {
-          console.error("Error: --project requires a name argument");
-          process.exit(1);
-        }
-        break;
-      case "--claude":
-        args.providers = [...(args.providers || []), "claude-code" as ProviderId];
-        break;
-      case "--opencode":
-        args.providers = [...(args.providers || []), "opencode" as ProviderId];
-        break;
-      case "--codex":
-        args.providers = [...(args.providers || []), "codex" as ProviderId];
-        break;
-      case "--gemini":
-        args.providers = [...(args.providers || []), "gemini" as ProviderId];
-        break;
-      case "--cursor":
-        args.providers = [...(args.providers || []), "cursor" as ProviderId];
-        break;
-      case "--amp":
-        args.providers = [...(args.providers || []), "amp" as ProviderId];
-        break;
-      case "--droid":
-        args.providers = [...(args.providers || []), "droid" as ProviderId];
-        break;
-      case "--openclaw":
-        args.providers = [...(args.providers || []), "openclaw" as ProviderId];
-        break;
-      case "--pi":
-        args.providers = [...(args.providers || []), "pi" as ProviderId];
-        break;
-      case "--kimi":
-        args.providers = [...(args.providers || []), "kimi" as ProviderId];
-        break;
-      case "--qwen":
-        args.providers = [...(args.providers || []), "qwen" as ProviderId];
-        break;
-      case "--roocode":
-        args.providers = [...(args.providers || []), "roo-code" as ProviderId];
-        break;
-      case "--kilocode":
-        args.providers = [...(args.providers || []), "kilo" as ProviderId];
-        break;
-      case "--kilo":
-        args.providers = [...(args.providers || []), "kilo-cli" as ProviderId];
-        break;
-      case "--mux":
-        args.providers = [...(args.providers || []), "mux" as ProviderId];
-        break;
-      case "--muse":
-        args.providers = [...(args.providers || []), "muse" as ProviderId];
-        break;
-      case "--cline":
-        args.providers = [...(args.providers || []), "cline" as ProviderId];
-        break;
-      case "--augment":
-        args.providers = [...(args.providers || []), "augment" as ProviderId];
-        break;
-      case "--copilot-cli":
-        args.providers = [...(args.providers || []), "copilot-cli" as ProviderId];
-        break;
-      case "--deepseek-harness":
-        args.providers = [...(args.providers || []), "deepseek-harness" as ProviderId];
-        break;
-      case "--ribhu":
-        args.providers = [...(args.providers || []), "ribhu" as ProviderId];
-        break;
-      case "--chitragupta":
-        args.providers = [...(args.providers || []), "chitragupta" as ProviderId];
-        break;
-      case "--grok":
-        args.providers = [...(args.providers || []), "grok" as ProviderId];
-        break;
-      case "--custom":
-        args.providers = [...(args.providers || []), "custom" as ProviderId];
-        break;
-      case "--synthetic":
-        args.providers = [...(args.providers || []), "synthetic" as ProviderId];
-        break;
-      case "--antigravity":
-        args.providers = [...(args.providers || []), "antigravity" as ProviderId];
-        break;
-      case "--zed":
-        args.providers = [...(args.providers || []), "zed" as ProviderId];
-        break;
-      case "--vscode-copilot":
-        args.providers = [...(args.providers || []), "vscode-copilot" as ProviderId];
-        break;
-      case "--codex-desktop":
-        args.providers = [...(args.providers || []), "codex-desktop" as ProviderId];
-        break;
-      case "--dry-run":
-        args.dryRun = true;
-        break;
-      case "--backup":
-        args.backup = true;
-        break;
-      case "--force":
-        args.force = true;
-        break;
-      case "--days": {
-        const n = Number(rest[++i]);
-        if (Number.isFinite(n)) args.backfillDays = Math.round(n);
-        break;
-      }
-      case "--latest":
-        args.restoreLatest = true;
-        break;
-      case "--id":
-        args.restoreId = rest[++i];
-        break;
-      case "--version":
-      case "-v":
-        console.log(readOwnVersion());
-        process.exit(0);
-        break;
-      case "--help":
-      case "-h":
-        console.log(`tokmeter — Token usage tracking for AI coding agents
-
-Usage: tokmeter [command] [options]
-       tokmeter --version
-
-Commands:
-  projects        Show per-project breakdown (default: overview)
-  models          Show per-model breakdown
-  daily           Show daily usage over time
-  stats           Show overall statistics
-  pricing         Show pricing for a model
-  update          Refresh the price catalogs now; today reprices on the next scan
-  routes          Today's tokens priced on every model you've used, cheapest first
-  pricing-audit   JSON: which of today's models resolved a price, and which moved
-  digest          Weekly cost digest with trends and tips
-                  (aliases: weekly, report)
-  backfill        Add a newly supported provider or custom source to
-                  sealed history. --days N (default 30). With a provider
-                  flag (e.g. --muse), adds only that provider's slice;
-                  without one, re-derives every provider (grow-only;
-                  --force allows shrinking, back up ~/.cache/tokmeter first)
-  coverage        Session files that changed on a day but fed no record:
-                  usage the parsers are missing. --date D (default
-                  yesterday). The daemon runs it after each day seals.
-  cursor sync     Opt-in: download your billed Cursor usage from
-                  cursor.com (--since D, --dry-run, --json)
-  quota           Plan windows per agent (Codex weekly, Claude Code 5h
-                  and 7d, Grok Bot weekly): used %, reset time, and whether the current
-                  pace runs out before the reset
-
-Live & Daemon:
-  live            Start live TUI dashboard (from tokmeter-mcp)
-  statusline      Statusline mode (--ambient, --agent, --watch, --style, --density, --theme, --format)
-  slash <cmd>     Render zero-token 66-col /tokmeter card (cockpit|why|quota|live|routes|digest|statusline|doctor)
-  daemon start    Start cross-provider aggregation daemon
-  daemon stop     Stop the daemon
-  daemon status   Check daemon status
-  daemon restart  Restart the daemon
-  daemon install-agent    Keep it running via launchd (macOS)
-  daemon uninstall-agent  Remove the launchd agent
-
-Cleanup:
-  cleanup         Delete session data by project/date/provider
-  restore         Restore from a cleanup backup
-  snapshot        Non-destructive backup (no deletion)
-  --dry-run       Preview what would be deleted (no deletion)
-  --backup        No-op: cleanup always writes a tar.gz backup first
-  --force         Skip confirmation prompt
-  --id ID         Restore specific backup by ID
-  --latest        Restore most recent backup
-
-Aliases (merge variants, tag, hide):
-  alias list                      Show current aliases
-  alias set     <raw> <display>   Rename one canonical project
-  alias merge   <display> <raws>  Merge several canonical projects into one
-  alias remove  <raw>             Delete a single alias entry
-  alias tag     add|remove|set <display> <tag>...
-  alias hide    <display>         Hide project from per-project tables
-  alias unhide  <display>
-  alias suggest                   Interactive: auto-detect candidates, keep/edit/reject each
-
-Config (knobs in ~/.tokmeter/config.json):
-  config list                     Show all knobs with current + default values
-  config get    <key>             Read one value
-  config set    <key> <value>     Update one value (validated + persisted)
-  config reset  [<key>]           Restore defaults (one key or all)
-  config path                     Print config file path
-
-Installer:
-  install-statusline   Install statusline hook for ALL editors
-  install-mcp          Install MCP server for ALL editors
-  install-plugin       Install /tokmeter slash command + multi-CLI snippets
-  uninstall-plugin     Remove /tokmeter slash command files
-  install-cron         Install daily price refresh (macOS launchd)
-  uninstall-statusline Remove statusline hook from all editors
-  uninstall-mcp        Remove MCP server from all editors
-  uninstall-cron       Remove the daily price refresh
-  cron-status          Show daily-cron install + last-run state
-  editors              List all supported editors
-  cursor-hook install  Record Cursor's per-turn token usage via a stop hook
-  cursor-hook uninstall  Remove only tokmeter's entry from ~/.cursor/hooks.json
-  cursor-hook status   Hook state, journal path, last turn, turns today
-                       (--home DIR to use another home, --node PATH, --json)
-
-Date Filters:
-  --today         Only today's usage
-  --week          Today and previous 6 local calendar days
-  --month         Current calendar month
-  --year N        Specific year
-  --since D       From local date (YYYY-MM-DD; inclusive)
-  --until D       Through local date (YYYY-MM-DD; inclusive)
-  --older-than N  Completed days before the cutoff date (e.g. 30d, 2w, 1m)
-
-Digest Options:
-  --period P      Period for digest: today, week (default), month
-  --project NAME  Filter digest by project
-
-Other Filters:
-  --project NAME  Filter by project name substring
-  --claude        Only Claude Code
-  --opencode      Only OpenCode
-  --codex         Only Codex CLI
-  --gemini        Only Gemini CLI
-  --cursor        Only Cursor
-  --amp           Only Amp
-  --droid         Only Droid
-  --openclaw      Only OpenClaw
-  --pi            Only Pi
-  --kimi          Only Kimi
-  --qwen          Only Qwen
-  --roocode       Only Roo Code
-  --kilocode      Only Kilo Code
-  --kilo          Only Kilo CLI
-  --mux           Only Mux
-  --muse          Only Muse
-  --cline         Only Cline
-  --augment       Only Augment
-  --copilot-cli   Only Copilot CLI
-  --deepseek-harness  Only DeepSeek Harness
-  --ribhu         Only Ribhu (custom source)
-  --chitragupta   Only Chitragupta (custom source)
-  --grok          Only Grok (custom source)
-  --custom        Only custom sources
-  --synthetic     Only Synthetic
-  --antigravity   Only Antigravity
-  --zed           Only Zed
-  --vscode-copilot  Only VS Code Copilot
-  --codex-desktop Only Codex Desktop
-
-Output:
-  --json          Output as JSON
-  --light         Lightweight mode (skip pricing)
-`);
-        process.exit(0);
-        break;
-      case "--period": {
-        const val = rest[++i];
-        if (val !== "today" && val !== "week" && val !== "month") {
-          console.error("Error: --period must be today, week, or month");
-          process.exit(1);
-        }
-        args.digestPeriod = val;
-        break;
-      }
-      case "models":
-      case "daily":
-      case "projects":
-      case "stats":
-      case "tui":
-      case "serve":
-      case "pricing":
-      case "live":
-      case "statusline":
-      case "slash":
-      case "daemon":
-      case "install-statusline":
-      case "install-mcp":
-      case "install-plugin":
-      case "uninstall-plugin":
-      case "install-cron":
-      case "uninstall-statusline":
-      case "uninstall-mcp":
-      case "uninstall-cron":
-      case "cron-status":
-      case "editors":
-      case "digest":
-      case "cleanup":
-      case "restore":
-      case "snapshot":
-      case "kosha-refresh":
-      case "kosha-update":
-      case "update":
-      case "refresh":
-      case "pricing-audit":
-      case "routes":
-        args.command = arg;
-        break;
-      case "coverage":
-        args.command = "coverage";
-        break;
-      case "quota":
-        args.command = "quota";
-        break;
-      case "backfill":
-        args.command = "backfill";
-        // Optional positional day count: `backfill 30`.
-        if (rest[i + 1] && !rest[i + 1].startsWith("-")) {
-          const n = Number(rest[++i]);
-          if (Number.isFinite(n)) args.backfillDays = Math.round(n);
-        }
-        break;
-      case "alias":
-        args.command = "alias";
-        // Consume the remaining tokens as sub-cmd + positional args.
-        // Everything left in rest[] (after this index) is alias-specific and
-        // should NOT be parsed as top-level flags.
-        args.aliasSub = rest[++i] ?? "list";
-        args.aliasRest = rest.slice(i + 1);
-        i = rest.length; // stop consuming — alias owns the rest
-        break;
-      case "cursor-hook":
-        args.command = "cursor-hook";
-        args.cursorHookSub = rest[++i] ?? "status";
-        args.cursorHookRest = rest.slice(i + 1);
-        i = rest.length; // cursor-hook owns the rest (--home, --node, --json)
-        break;
-      case "config":
-        args.command = "config";
-        args.configSub = rest[++i] ?? "list";
-        args.configRest = rest.slice(i + 1);
-        i = rest.length; // stop consuming — config owns the rest
-        break;
-      case "weekly":
-      case "report":
-        args.command = "digest";
-        break;
-      default:
-        // An unknown option used to be dropped silently, so a typo or a
-        // provider with no flag (`--antigravity` before 1.23.1) printed every
-        // provider's totals as if it were the filtered view.
-        if (arg.startsWith("-")) {
-          console.error(`Error: unknown option ${arg}. Run \`tokmeter --help\` for the list.`);
-          process.exit(2);
-        }
-        if (!args.pricingModel && args.command === "pricing") {
-          args.pricingModel = arg;
-        }
-        // Daemon subcommand
-        if (!arg.startsWith("-") && args.command === "daemon" && !args.daemonCmd) {
-          args.daemonCmd = arg;
-        }
-        break;
-    }
-  }
-  return args;
-}
-
-// ---- Formatters ----
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
-}
-
-function formatCost(n: number): string {
-  return `$${n.toFixed(2)}`;
-}
-
-// ---- Table renderers ----
-
-function renderProjectsTable(projects: ProjectSummary[]) {
-  const table = new Table({
-    head: ["Project", "Tokens", "Cost", "Models", "Providers", "Active Days"],
-    colWidths: [25, 12, 10, 8, 10, 12],
-  });
-
-  for (const p of projects) {
-    table.push([
-      p.project,
-      formatNumber(p.totalTokens),
-      formatCost(p.totalCost),
-      p.models.length.toString(),
-      p.providers.length.toString(),
-      p.activeDays.toString(),
-    ]);
-  }
-  console.log(table.toString());
-}
-
-function renderModelsTable(models: ModelSummary[]) {
-  const table = new Table({
-    head: ["Model", "Provider", "Tokens", "Input", "Output", "Cache R", "Cache W", "Cost", "%"],
-    colWidths: [24, 12, 10, 10, 10, 10, 10, 10, 6],
-  });
-
-  for (const m of models) {
-    table.push([
-      m.model,
-      m.provider,
-      formatNumber(m.totalTokens),
-      formatNumber(m.inputTokens),
-      formatNumber(m.outputTokens),
-      formatNumber(m.cacheReadTokens),
-      formatNumber(m.cacheWriteTokens),
-      formatCost(m.cost),
-      `${m.percentageOfTotal.toFixed(1)}%`,
-    ]);
-  }
-  console.log(table.toString());
-}
-
-function renderDailyTable(daily: ReturnType<TokmeterCore["getDailyBreakdown"]>) {
-  const table = new Table({
-    head: ["Date", "Tokens", "Input", "Output", "Cost", "Records"],
-    colWidths: [12, 12, 12, 12, 10, 8],
-  });
-
-  for (const d of daily) {
-    table.push([
-      d.date,
-      formatNumber(d.totalTokens),
-      formatNumber(d.inputTokens),
-      formatNumber(d.outputTokens),
-      formatCost(d.cost),
-      d.records.toString(),
-    ]);
-  }
-  console.log(table.toString());
-}
-
-function renderStats(stats: ReturnType<TokmeterCore["getStats"]>) {
-  const table = new Table({
-    head: ["Metric", "Value"],
-    colWidths: [20, 30],
-  });
-
-  table.push(
-    ["Total Tokens", formatNumber(stats.totalTokens)],
-    ["Cost total (not a bill)", formatCost(stats.totalCost)],
-    ["Input Tokens", formatNumber(stats.inputTokens)],
-    ["Output Tokens", formatNumber(stats.outputTokens)],
-    ["Cache Read", formatNumber(stats.cacheReadTokens)],
-    ["Cache Write", formatNumber(stats.cacheWriteTokens)],
-    ["Reasoning", formatNumber(stats.reasoningTokens)],
-    ["Projects", stats.projects.toString()],
-    ["Models Used", stats.models.toString()],
-    ["Providers", stats.providers.toString()],
-    ["Active Days", stats.activeDays.toString()],
-    ["Longest Streak", stats.longestStreak.toString()]
-  );
-  console.log(table.toString());
-}
-
-// ---- pricing-audit ----
-
-/**
- * Export the consumer-side audit of today's pricing resolution.
- *
- * Output shape (JSON only — this command is meant for piping into CI):
- * {
- *   ts: number,
- *   today: { date, totalCost, recordCount, modelCount },
- *   resolved: [{ model, cost, tokens }],
- *   unpriced: [{ model, hits, lastSeenAt }],   // unmet pricing
- *   anomalies: [{ key, field, side, previous, current, deltaPct, ts }],
- *   pricing: { fetchedAt, ageHours },
- * }
- */
-async function runPricingAudit(_options: { json: boolean }): Promise<void> {
-  const { TokmeterCore } = await import("@sriinnu/tokmeter");
-  const fs = await import("node:fs");
-  const path = await import("node:path");
-  const os = await import("node:os");
-
-  const core = new TokmeterCore();
-  await core.scan();
-  const meta = core.getScanMeta();
-  // Local-date key (YYYY-MM-DD in user's TZ). Don't use toISOString — it's
-  // UTC and silently shifts to yesterday for any positive UTC offset after
-  // local midnight, which would make the daily lookup miss today entirely.
-  const now = new Date();
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
-  // Today's resolved models with cost.
-  const todayModels = core.getModelCosts({ today: true }) ?? [];
-  const todayDaily = core.getDailyBreakdown({ since: todayKey, until: todayKey })[0] ?? null;
-  const resolved = todayModels.map((m) => ({
-    model: m.model,
-    cost: m.cost,
-    tokens: m.totalTokens,
-  }));
-
-  // Unpriced — read the wishlist tokmeter just wrote.
-  let unpriced: Array<{ id: string; hits: number; lastSeenAt: number }> = [];
-  try {
-    const wishPath = path.join(os.homedir(), ".tokmeter", "wishlist.json");
-    const wish = JSON.parse(fs.readFileSync(wishPath, "utf-8")) as {
-      models?: Array<{ id: string; hits: number; lastSeenAt: number }>;
-    };
-    unpriced = wish.models ?? [];
-  } catch {
-    /* no wishlist — empty */
-  }
-
-  // Anomalies — read kosha's diff log.
-  let anomalies: Array<Record<string, unknown>> = [];
-  try {
-    const anomPath = path.join(os.homedir(), ".kosha", "anomalies.json");
-    const a = JSON.parse(fs.readFileSync(anomPath, "utf-8")) as {
-      anomalies?: Array<Record<string, unknown>>;
-    };
-    const cutoff = Date.now() - 24 * 3600 * 1000;
-    anomalies = (a.anomalies ?? []).filter(
-      (x) => typeof x.ts === "number" && (x.ts as number) >= cutoff
-    );
-  } catch {
-    /* no anomalies file */
-  }
-
-  // Pricing freshness — kosha registry mtime.
-  let fetchedAt = 0;
-  try {
-    fetchedAt = fs.statSync(path.join(os.homedir(), ".kosha", "registry.json")).mtimeMs;
-  } catch {
-    /* missing registry — fetchedAt stays 0 */
-  }
-  const ageHours = fetchedAt > 0 ? (Date.now() - fetchedAt) / 3_600_000 : null;
-
-  const output = {
-    ts: Date.now(),
-    today: {
-      date: todayKey,
-      totalCost: todayDaily?.cost ?? 0,
-      recordCount: todayDaily?.records ?? 0,
-      modelCount: resolved.length,
-    },
-    resolved,
-    unpriced,
-    anomalies,
-    pricing: {
-      fetchedAt,
-      ageHours,
-      stale: ageHours !== null && ageHours > 24,
-    },
-    meta: {
-      lastScanAt: meta.lastScanAt,
-      todayState: meta.todayState,
-      warnings: meta.warnings.length,
-    },
-  };
-
-  console.log(JSON.stringify(output, null, 2));
-
-  // Exit non-zero when something needs attention — lets CI checks gate on
-  // this command without piping into jq.
-  if (unpriced.length > 0 || anomalies.length > 0 || output.pricing.stale) {
-    process.exit(2);
-  }
-}
-
-/**
- * `tokmeter routes` — cost surface explorer (MVP per docs/designs/routes.md).
- *
- * Layer 1 only: pure pricing translation. For the scope (today by default,
- * configurable via --project), sums the five token classes once, then asks
- * kosha to project the cost across every available model. Output sorted by
- * projected cost ascending. JSON mode for piping into CI / spreadsheets.
- *
- * Honesty constraints (from the design doc):
- *  - No "Recommended" / "Best value" badges. Sort is honest neutral.
- *  - Models with missing tier pricing get projected at the input rate, the
- *    cell is flagged so the user knows.
- *  - "Actual run" cost uses historical frozen pricing; alternatives use
- *    today's kosha. Both timestamps shown.
- */
-async function runRoutes(options: { json: boolean; project?: string }): Promise<void> {
-  const { TokmeterCore } = await import("@sriinnu/tokmeter");
-  const core = new TokmeterCore();
-  await core.scan({ today: true, project: options.project });
-  const records = core.getRecords();
-  const totals = {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    /** Subset of cacheWrite, not an extra bucket — see TokenBuckets. */
-    cacheWrite1h: 0,
-    reasoning: 0,
-  };
-  let actualCost = 0;
-  for (const r of records) {
-    totals.input += r.inputTokens;
-    totals.output += r.outputTokens;
-    totals.cacheRead += r.cacheReadTokens;
-    totals.cacheWrite += r.cacheWriteTokens;
-    totals.cacheWrite1h += r.cacheWrite1hTokens ?? 0;
-    totals.reasoning += r.reasoningTokens;
-    actualCost += r.cost;
-  }
-  if (records.length === 0) {
-    if (options.json) {
-      console.log(
-        JSON.stringify(
-          {
-            scope: { project: options.project, today: true },
-            totals,
-            actualCost: 0,
-            projections: [],
-          },
-          null,
-          2
-        )
-      );
-    } else {
-      console.log("No records in scope. Did you mean --project <name>?");
-    }
-    return;
-  }
-
-  // Project against every model in the user's lifetime lineup. The design
-  // doc calls for kosha live + non-deprecated chat models — for the MVP we
-  // use the same "models the user has actually used" lineup, which has the
-  // pragmatic benefit of guaranteed-existing kosha pricing.
-  const lifetime = core.getModelCosts();
-  const projectionsRaw = await Promise.all(
-    lifetime.map(async (m) => ({
-      model: m.model,
-      provider: m.provider,
-      projectedCost: await (
-        core as unknown as { pricing: { calculateCost(...args: unknown[]): Promise<number> } }
-      ).pricing.calculateCost(
-        m.model,
-        totals.input,
-        totals.output,
-        totals.cacheRead,
-        totals.cacheWrite,
-        totals.reasoning,
-        totals.cacheWrite1h
-      ),
-    }))
-  );
-  // Drop $0 projections — these are models with no kosha pricing (synthetic
-  // mocks, opaque provider labels like `codex-auto-review`, deprecated entries).
-  // Showing them at the top of "cheapest" implies a free alternative when we
-  // just don't know the price. Honest to omit rather than misrank.
-  const projections = projectionsRaw
-    .filter((p) => p.projectedCost > 0.0001)
-    .sort((a, b) => a.projectedCost - b.projectedCost);
-  const unpriced = projectionsRaw.filter((p) => p.projectedCost <= 0.0001).map((p) => p.model);
-
-  if (options.json) {
-    console.log(
-      JSON.stringify(
-        {
-          scope: { project: options.project, today: true },
-          totals,
-          actualCost,
-          projections,
-          generatedAt: new Date().toISOString(),
-        },
-        null,
-        2
-      )
-    );
-    return;
-  }
-
-  // Pretty table output.
-  console.log("");
-  console.log(
-    `tokmeter routes — projection for today${options.project ? ` (project: ${options.project})` : ""}`
-  );
-  console.log("");
-  console.log(
-    `Tokens: ${totals.input.toLocaleString()} input · ` +
-      `${totals.output.toLocaleString()} output · ` +
-      `${totals.cacheRead.toLocaleString()} cacheRead · ` +
-      `${totals.cacheWrite.toLocaleString()} cacheWrite · ` +
-      `${totals.reasoning.toLocaleString()} reasoning`
-  );
-  console.log(
-    `Recorded cost total (historical estimates and tool reports): $${actualCost.toFixed(2)}`
-  );
-  console.log("");
-  console.log("Projected cost on today's kosha (sorted, cheapest first):");
-  console.log("");
-  const pad = (s: string, n: number) => s.padEnd(n);
-  console.log(
-    `  ${pad("MODEL", 38)} ${pad("PROVIDER", 14)} ${pad("PROJECTED", 12)} ${"Δ vs ACTUAL"}`
-  );
-  console.log(`  ${"─".repeat(38)} ${"─".repeat(14)} ${"─".repeat(12)} ${"─".repeat(11)}`);
-  for (const p of projections) {
-    const delta = p.projectedCost - actualCost;
-    const deltaStr =
-      Math.abs(delta) < 0.005
-        ? "—"
-        : delta < 0
-          ? `−$${Math.abs(delta).toFixed(2)}`
-          : `+$${delta.toFixed(2)}`;
-    console.log(
-      `  ${pad(p.model.slice(0, 38), 38)} ${pad(p.provider, 14)} $${pad(p.projectedCost.toFixed(2), 11)} ${deltaStr}`
-    );
-  }
-  console.log("");
-  console.log(
-    "Note: alternatives use TODAY's kosha pricing; actual uses historical (frozen) pricing."
-  );
-  console.log(
-    "Layer 1 (pure pricing translation) — no cache-economics adjustment for cross-provider differences."
-  );
-  if (unpriced.length > 0) {
-    console.log("");
-    console.log(
-      `Unpriced models excluded (no kosha price; honest $? not free): ${unpriced.join(", ")}`
-    );
-  }
-}
-
-// ---- Daemon-read fast path ----
-
-function printSummaryTables(command: string, summary: TokmeterSummary): void {
-  if (summary.stats.totalRecords === 0) {
-    console.log("No token usage data found.");
-    console.log("\nMake sure you have session files from supported AI coding agents:");
-    console.log("  Claude Code: ~/.claude/projects/");
-    console.log("  OpenCode: ~/.local/share/opencode/");
-    console.log("  Codex CLI: ~/.codex/sessions/");
-    console.log("  Gemini CLI: ~/.gemini/tmp/");
-    console.log("  and more... Run `tokmeter --help` for all supported platforms.");
-    return;
-  }
-
-  switch (command) {
-    case "models":
-      renderModelsTable(summary.models);
-      break;
-    case "daily":
-      renderDailyTable(summary.daily);
-      break;
-    case "projects":
-      renderProjectsTable(summary.projects);
-      break;
-    case "stats":
-      renderStats(summary.stats);
-      break;
-    default: {
-      const stats = summary.stats;
-      renderProjectsTable(summary.projects);
-      console.log(
-        `\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`
-      );
-    }
-  }
-}
-
-function nudgeDaemonStart(): void {
-  try {
-    void import("node:child_process").then(({ spawn }) => {
-      const heapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";
-      spawn(process.execPath, [process.argv[1], "daemon", "start"], {
-        detached: true,
-        stdio: "ignore",
-        env: {
-          ...process.env,
-          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${heapMb}`.trim(),
-        },
-      }).unref();
-    });
-  } catch {}
-}
-
-/**
- * Fast path for read commands (both `--json` and formatted tables): read the
- * warm singleton daemon over HTTP instead of running a fresh corpus scan.
- * Honors `TOKMETER_DAEMON_PORT` and all CLI scope/filter flags. When the daemon
- * is down, nudges it up once (detached, heap-capped) and falls back cleanly.
- */
-async function tryServeFromDaemon(
-  command: string,
-  args: DaemonReadArgs & { json: boolean }
-): Promise<boolean> {
-  if (!daemonReadEligible(command, args)) return false;
-  const endpoint = args.json ? DAEMON_READ_ENDPOINTS[command] : "/api/summary";
-  const pathWithQuery = `${endpoint}${buildDaemonReadQuery(args)}`;
-
-  const res = await fetchDaemonJson<unknown>(pathWithQuery, {
-    probeTimeoutMs: 1500,
-    timeoutMs: 15_000,
-    warmingTimeoutMs: 90_000,
-    onDown: nudgeDaemonStart,
-  });
-
-  if (res.ok) {
-    if (args.json) {
-      console.log(JSON.stringify(res.data, null, 2));
-    } else {
-      printSummaryTables(command, res.data as TokmeterSummary);
-    }
-    return true;
-  }
-
-  if (res.reason === "http-error") {
-    process.stderr.write(
-      `tokmeter: daemon returned ${res.status} for ${endpoint}; falling back to local scan.\n`
-    );
-  } else if (res.reason === "timeout") {
-    process.stderr.write(
-      `tokmeter: daemon read timed out after ${res.timeoutMs}ms (${endpoint}); falling back to local scan.\n`
-    );
-  } else if (res.reason === "network-error") {
-    process.stderr.write(
-      `tokmeter: daemon read failed (${res.message}); falling back to local scan.\n`
-    );
-  }
-  return false;
-}
-
-// ---- Main ----
+const INSTALLER_COMMANDS: Record<string, (installer: InstallerModule) => void> = {
+  "install-statusline": (m) => m.installStatusline(),
+  "install-mcp": (m) => m.installMCP(),
+  "install-plugin": (m) => m.installPlugin(),
+  "uninstall-plugin": (m) => m.uninstallPlugin(),
+  "uninstall-statusline": (m) => m.uninstallStatusline(),
+  "uninstall-mcp": (m) => m.uninstallMCP(),
+  editors: (m) => m.listEditors(),
+};
 
 async function main() {
   // `tokmeter cursor sync`: opt-in, credentialed, handled on its own path so
@@ -1021,8 +60,6 @@ async function main() {
   }
   const args = parseArgs(process.argv);
 
-  // Translate --older-than Nx into an ISO --until cutoff. "Older than N days"
-  // means records with timestamp before (now - N days), i.e. until = that cutoff.
   if (args.olderThan) {
     const cutoff = olderThanToIsoCutoff(args.olderThan);
     if (!cutoff) {
@@ -1038,7 +75,6 @@ async function main() {
     args.until = cutoff;
   }
 
-  // Needs no scan: handle before TokmeterCore is built.
   if (args.command === "cursor-hook") {
     const { runCursorHook } = await import("./cursor-hook.js");
     process.exit(
@@ -1050,7 +86,6 @@ async function main() {
     );
   }
 
-  // Handle special commands first
   if (args.command === "tui") {
     const { startTui } = await import("@sriinnu/tokmeter/tui");
     await startTui();
@@ -1064,7 +99,6 @@ async function main() {
 
   const core = new TokmeterCore({ skipPricing: args.light });
 
-  // Delegate to tokmeter-mcp for live/statusline/daemon commands
   if (args.command === "live") {
     const { startLive } = await loadMcpModule(
       () => import("@sriinnu/tokmeter-mcp/live.js"),
@@ -1092,67 +126,13 @@ async function main() {
     return;
   }
 
-  // Installer commands
-  if (args.command === "install-statusline") {
-    const { installStatusline } = await loadMcpModule(
+  const runInstaller = args.command ? INSTALLER_COMMANDS[args.command] : undefined;
+  if (runInstaller) {
+    const installer = await loadMcpModule(
       () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "install-statusline"
+      args.command!
     );
-    installStatusline();
-    return;
-  }
-
-  if (args.command === "install-mcp") {
-    const { installMCP } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "install-mcp"
-    );
-    installMCP();
-    return;
-  }
-
-  if (args.command === "install-plugin") {
-    const { installPlugin } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "install-plugin"
-    );
-    installPlugin();
-    return;
-  }
-
-  if (args.command === "uninstall-plugin") {
-    const { uninstallPlugin } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "uninstall-plugin"
-    );
-    uninstallPlugin();
-    return;
-  }
-
-  if (args.command === "uninstall-statusline") {
-    const { uninstallStatusline } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "uninstall-statusline"
-    );
-    uninstallStatusline();
-    return;
-  }
-
-  if (args.command === "uninstall-mcp") {
-    const { uninstallMCP } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "uninstall-mcp"
-    );
-    uninstallMCP();
-    return;
-  }
-
-  if (args.command === "editors") {
-    const { listEditors } = await loadMcpModule(
-      () => import("@sriinnu/tokmeter-mcp/installer.js"),
-      "editors"
-    );
-    listEditors();
+    runInstaller(installer);
     return;
   }
 
@@ -1178,15 +158,6 @@ async function main() {
     args.command === "kosha-refresh" ||
     args.command === "kosha-update"
   ) {
-    // Force a fresh discovery pass against kosha's upstream providers. The
-    // next scan will see the bumped kosha mtime via getCachedKoshaMtime()
-    // and reset cost=0 on today's records only, so enrichCosts reprices
-    // today with new rates. Historical records keep their frozen costs in
-    // the scan-cache and are skipped by enrichCosts (cost > 0).
-    //
-    // DO NOT clear the scan-cache here — wiping cached frozen costs forces
-    // the snapshot rebuild path to re-price historical records with current
-    // kosha rates, which violates the historical immutability rule.
     try {
       const { refreshKoshaRegistry } = await import("@sriinnu/tokmeter");
       console.log("Refreshing kosha registry...");
@@ -1204,9 +175,9 @@ async function main() {
   if (args.command === "coverage") {
     const { yesterdayDateKey } = await import("@sriinnu/tokmeter");
     const date = args.date ?? yesterdayDateKey(Date.now());
-    const core = new TokmeterCore({ skipPricing: true });
+    const coverageCore = new TokmeterCore({ skipPricing: true });
     if (!args.json) console.error(`Checking ${date}: parsing files changed since then…`);
-    const report = await core.checkCoverage(date);
+    const report = await coverageCore.checkCoverage(date);
     if (args.json) {
       console.log(JSON.stringify(report, null, 2));
       return;
@@ -1292,18 +263,6 @@ async function main() {
   }
 
   if (args.command === "backfill") {
-    // Fold recent sealed days' raw into the relay so newly added parsers and
-    // freshly registered custom sources get their history picked up. Two modes:
-    //
-    //   tokmeter backfill --muse        → SURGICAL: add ONLY muse's slice to
-    //     each sealed day, never re-deriving (or shrinking) the other providers.
-    //     The safe tool when a day's other providers' raw has aged out.
-    //
-    //   tokmeter backfill               → FULL: re-derive every provider for the
-    //     window (grow-only; --force overrides, back up ~/.cache/tokmeter first).
-    //
-    // Either way today is untouched (the live scan owns it) and the reach is
-    // bounded by raw retention — a day whose raw has aged out can't be filled.
     const days = args.backfillDays && args.backfillDays > 0 ? args.backfillDays : 30;
     const selected = args.providers ?? [];
     try {
@@ -1330,18 +289,11 @@ async function main() {
   }
 
   if (args.command === "pricing-audit") {
-    // Export the consumer-side audit: which today-models resolved, which
-    // didn't, which moved >25%. JSON-only output, pipeable into CI checks
-    // / dashboards / Slack alerts. Makes the verification half of the
-    // kosha-as-source-of-truth pattern a first-class artifact.
     await runPricingAudit({ json: args.json !== false });
     return;
   }
 
   if (args.command === "routes") {
-    // Cost surface explorer: project today's tokens against every model
-    // the user has used. Layer 1 of docs/designs/routes.md — pure pricing
-    // translation, no cache-economics adjustment. JSON or pretty table.
     await runRoutes({
       json: args.json === true,
       project: args.project,
@@ -1363,10 +315,6 @@ async function main() {
       }
       process.exit(1);
     }
-    // Same lookup calculateCost bills with, so what this prints is what a
-    // record of this model costs. Three answers, kept apart: a price, a real
-    // $0 (a "-free" route or a $0 override), and no price at all, which
-    // bills as $0 but is a gap, not a fact.
     const { pricing: p, source } = await pricing.getPricingWithSource(modelId);
     const status = !p ? "unpriced" : pricing.isPricedFree(modelId) ? "free" : "priced";
     const from = source.matchedId ? `${source.tier}, as ${source.matchedId}` : source.tier;
@@ -1386,12 +334,6 @@ async function main() {
     if (status === "free") {
       console.log(`${modelId} is free: $0 in, $0 out (${from}).`);
     } else {
-      // Rates aren't money owed, so cents would hide them: $0.075 and $0.0084
-      // would print as $0.08 and $0.01. Under $1, show up to 3 significant
-      // digits (never fewer than 2 decimals); from $1, cents.
-      // Cents at $1 and up; below it, three significant digits (at least two
-      // decimals), so $0.0375 doesn't print as $0.04. Fixed notation, never
-      // "1e-7", and never $0.00 for a rate that isn't zero.
       const usd = (n: number) => {
         if (n === 0 || n >= 1) return `$${n.toFixed(2)}`;
         const decimals = Math.max(2, 2 - Math.floor(Math.log10(Math.abs(n))));
@@ -1411,7 +353,6 @@ async function main() {
     return;
   }
 
-  // Cleanup command — delegates to separate module
   if (args.command === "cleanup") {
     const { runCleanup } = await import("./cleanup.js");
     await runCleanup({
@@ -1432,29 +373,18 @@ async function main() {
     return;
   }
 
-  // Restore command
   if (args.command === "restore") {
     const { runRestore } = await import("./restore.js");
-    await runRestore({
-      id: args.restoreId,
-      latest: args.restoreLatest,
-      json: args.json,
-    });
+    await runRestore({ id: args.restoreId, latest: args.restoreLatest, json: args.json });
     return;
   }
 
-  // Alias command — manage project display names, tags, and hidden flags.
   if (args.command === "alias") {
     const { runAlias } = await import("./alias.js");
-    await runAlias({
-      sub: args.aliasSub ?? "list",
-      rest: args.aliasRest ?? [],
-      json: args.json,
-    });
+    await runAlias({ sub: args.aliasSub ?? "list", rest: args.aliasRest ?? [], json: args.json });
     return;
   }
 
-  // Config command — get/set user config knobs (refresh cadence, CLI defaults).
   if (args.command === "config") {
     const { runConfig } = await import("./config.js");
     await runConfig({
@@ -1465,7 +395,6 @@ async function main() {
     return;
   }
 
-  // Snapshot command — back up all (or filtered) session data without deleting.
   if (args.command === "snapshot") {
     const { runSnapshot } = await import("./snapshot.js");
     await runSnapshot({
@@ -1482,7 +411,6 @@ async function main() {
     return;
   }
 
-  // Digest command — delegates to separate module
   if (args.command === "digest") {
     const { runDigest } = await import("./digest.js");
     await runDigest({
@@ -1495,28 +423,19 @@ async function main() {
     return;
   }
 
-  // Reports can only select whole saved days. Cleanup/restore handling above
-  // keeps its existing precise timestamp cutoff.
   if (args.olderThan && args.until) {
     const cutoff = new Date(args.until);
     cutoff.setDate(cutoff.getDate() - 1);
     args.until = localDateKey(cutoff.getTime());
   }
 
-  // Daemon-read fast path: for both `--json` and table read commands, prefer
-  // the warm singleton daemon over a fresh full-corpus scan. Falls through to
-  // a local scan when the daemon is down, `--light`/`--rescan-history` is set,
-  // or a query filter cannot be served by the daemon.
   const reportCmd = args.command || "overview";
   if (await tryServeFromDaemon(reportCmd, args)) return;
 
-  // Refresh shared state, then filter saved daily aggregates. A raw-record
-  // return can be empty while sealed history still contains valid usage.
-  core.getSummary(args); // Validate report bounds before scanning.
+  core.getSummary(args);
   await core.scan({ today: args.today, rescanHistory: args.rescanHistory });
   const summary = core.getSummary(args);
 
-  // JSON output
   if (args.json) {
     switch (reportCmd) {
       case "models":
@@ -1537,7 +456,6 @@ async function main() {
     return;
   }
 
-  // Table output
   printSummaryTables(reportCmd, summary);
 }
 

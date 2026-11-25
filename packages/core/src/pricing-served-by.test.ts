@@ -12,6 +12,7 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "tokmeter-served-by-"));
   vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
   mkdirSync(join(home, ".kosha"), { recursive: true });
   const route = (providerId: string, modelId: string, input: number, output: number) => ({
     providerId,

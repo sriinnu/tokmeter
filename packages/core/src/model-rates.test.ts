@@ -12,6 +12,7 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "tokmeter-rates-"));
   vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
 });
 afterEach(() => {
   vi.unstubAllEnvs();

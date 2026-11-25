@@ -27,7 +27,7 @@ export function readProcessEvidence(pid: number): ProcessEvidence | null {
       const value = JSON.parse(
         execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
           encoding: "utf8",
-          timeout: 1500,
+          timeout: 5000,
           maxBuffer: 16_384,
           stdio: ["ignore", "pipe", "ignore"],
         })

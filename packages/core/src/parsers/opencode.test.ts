@@ -7,11 +7,11 @@
  * on this schema, so every DB-era message was silently dropped.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execSql } from "../test-sqlite.js";
 import { KiloCliParser } from "./kilo-cli.js";
 import { OpenCodeParser } from "./opencode.js";
 
@@ -42,7 +42,7 @@ function seedDb(
         `INSERT INTO message VALUES (${sq(m.id)}, ${sq(m.session)}, 1790000000000, 1790000000000, ${sq(typeof m.data === "string" ? m.data : JSON.stringify(m.data))});`
     ),
   ].join("\n");
-  execFileSync("sqlite3", [dbPath], { input: sql });
+  execSql(dbPath, sql);
 }
 
 const assistant = (id: string, extra: object = {}) => ({
@@ -139,8 +139,9 @@ describe("OpenCodeParser", () => {
       ["msg_new", "s2", "assistant", v2("msg_new", "gemini-4-carbon", "google")],
       ["msg_user", "s2", "user", { time: { created: 1790000001000 } }],
     ];
-    execFileSync("sqlite3", [dbPath], {
-      input: [
+    execSql(
+      dbPath,
+      [
         "CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, directory text NOT NULL);",
         "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);",
         "INSERT INTO session_v2 VALUES ('s2', 'p1', '/Users/me/code/delta');",
@@ -148,8 +149,8 @@ describe("OpenCodeParser", () => {
           ([id, session, type, data], i) =>
             `INSERT INTO session_message VALUES (${sq(id)}, ${sq(session)}, ${sq(type)}, ${i}, 1790000002000, 1790000002000, ${sq(JSON.stringify(data))});`
         ),
-      ].join("\n"),
-    });
+      ].join("\n")
+    );
 
     const records = await new OpenCodeParser().scan(home);
 
@@ -208,15 +209,16 @@ describe("KiloCliParser", () => {
   it("still reads the older flat `messages` schema", async () => {
     const dir = join(home, ".local/share/kilo");
     mkdirSync(dir, { recursive: true });
-    execFileSync("sqlite3", [join(dir, "kilo.db")], {
-      input: [
+    execSql(
+      join(dir, "kilo.db"),
+      [
         "CREATE TABLE sessions (id text, title text, path text, cwd text);",
         "CREATE TABLE messages (id text, role text, model_id text, provider_id text, input_tokens int, output_tokens int, reasoning_tokens int, cache_read int, cache_write int, created_at int, session_id text);",
         "INSERT INTO sessions VALUES ('s1', 't', '/Users/me/code/gamma', NULL);",
         "INSERT INTO messages VALUES ('m1', 'assistant', 'glm-4.7', 'zai', 10, 2, 0, 30, 0, 1790000000000, 's1');",
         "INSERT INTO messages VALUES ('m2', 'user', NULL, NULL, 0, 0, 0, 0, 0, 1790000000000, 's1');",
-      ].join("\n"),
-    });
+      ].join("\n")
+    );
 
     const records = await new KiloCliParser().scan(home);
 
