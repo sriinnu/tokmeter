@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type {
   CleanupService as CleanupServiceType,
@@ -177,10 +177,7 @@ describe("CleanupService.restore — relay + historical immutability", () => {
     );
     vi.setSystemTime(at("2026-10-29T12:06:00"));
 
-    const backupId = result
-      .backupPath!.split("/")
-      .at(-1)!
-      .replace(/\.tar\.gz$/, "");
+    const backupId = basename(result.backupPath!).replace(/\.tar\.gz$/, "");
     const restored = service.restore(backupId);
     expect(restored.errors).toEqual([]);
 
@@ -234,10 +231,7 @@ describe("CleanupService.restore — relay + historical immutability", () => {
       at("2026-10-29T12:10:00")
     );
 
-    const backupId = snap.archivePath
-      .split("/")
-      .at(-1)!
-      .replace(/\.tar\.gz$/, "");
+    const backupId = basename(snap.archivePath).replace(/\.tar\.gz$/, "");
     const restored = service.restore(backupId);
     expect(restored.errors).toEqual([]);
 
@@ -430,10 +424,7 @@ describe("CleanupService.listBackups — metadata validation", () => {
     vi.spyOn(service, "preview").mockResolvedValue(preview(source));
 
     const result = await service.snapshot({ project: "demo" });
-    const id = result.archivePath
-      .split("/")
-      .at(-1)
-      ?.replace(/\.tar\.gz$/, "");
+    const id = basename(result.archivePath).replace(/\.tar\.gz$/, "");
     expect(id).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f-]{27}$/);
     expect(service.listBackups().map((backup) => backup.id)).toContain(id);
 
