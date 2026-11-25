@@ -47,7 +47,9 @@ describe("capLogFile", () => {
     expect(kept.endsWith("line 00999\n")).toBe(true); // newest line survives
     expect(body.endsWith(kept)).toBe(true);
     expect(statSync(log).size).toBe(0);
-    expect(statSync(`${log}.1`).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(`${log}.1`).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("replaces an older .1 rather than appending to it", () => {
@@ -68,19 +70,22 @@ describe("capLogFile", () => {
   // The disk-full case: .1 can't be written. The log must still be emptied
   // (leaving it would retry and fail forever), and the loss must be reported.
   // A read-only directory stands in for a full disk: no new file can be made.
-  it("empties the log even when .1 can't be written, and says the tail was lost", () => {
-    const ro = join(dir, "ro");
-    mkdirSync(ro);
-    const log = join(ro, "daemon.err.log");
-    writeFileSync(log, lines(500));
-    chmodSync(ro, 0o500);
-    try {
-      expect(capLogFile(log, 100)).toMatchObject({ rotated: true, kept: false });
-      expect(statSync(log).size).toBe(0);
-    } finally {
-      chmodSync(ro, 0o700);
+  it.skipIf(process.platform === "win32")(
+    "empties the log even when .1 can't be written, and says the tail was lost",
+    () => {
+      const ro = join(dir, "ro");
+      mkdirSync(ro);
+      const log = join(ro, "daemon.err.log");
+      writeFileSync(log, lines(500));
+      chmodSync(ro, 0o500);
+      try {
+        expect(capLogFile(log, 100)).toMatchObject({ rotated: true, kept: false });
+        expect(statSync(log).size).toBe(0);
+      } finally {
+        chmodSync(ro, 0o700);
+      }
     }
-  });
+  );
 
   it("a missing log is not an error", () => {
     expect(capLogFile(join(dir, "nope.log"), 10)).toEqual({ rotated: false });

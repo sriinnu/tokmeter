@@ -14,7 +14,7 @@
  */
 
 import { closeSync, lstatSync, openSync, readSync } from "node:fs";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, parse, resolve } from "node:path";
 import { claudeSessionSideDirs } from "./cleaners/claude-code.js";
 import { ALL_PARSERS } from "./parsers/index.js";
 import { isWithin } from "./restore-guard.js";
@@ -98,6 +98,11 @@ export function assertSafeCleanupTargets(targets: CleanupTarget[], homeDir: stri
       );
     }
     const target = resolve(t.path);
+    if (parse(target).root === target) {
+      throw new UnsafeCleanupTargetError(
+        `Refusing cleanup: target "${t.path}" is a filesystem root; nothing was deleted`
+      );
+    }
     for (const p of protectedPaths) {
       if (!isWithin(p, target)) continue; // target is neither p nor an ancestor of it
       const same = target === p;

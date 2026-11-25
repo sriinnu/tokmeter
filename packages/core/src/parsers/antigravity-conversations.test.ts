@@ -7,12 +7,12 @@
  * (what macOS SQLite leaves). Ids, paths and text are made up.
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { localDateKey } from "../date-utils.js";
+import { execSql } from "../test-sqlite.js";
 import { AntigravityParser } from "./antigravity.js";
 
 let home: string;
@@ -143,7 +143,7 @@ function seedConversation(
     ...gens.map((g, i) => `INSERT INTO gen_metadata VALUES (${i}, ${hex(g)}, ${g.length});`),
     `INSERT INTO trajectory_metadata_blob VALUES ('main', ${hex(blob)});`,
   ].join("\n");
-  execFileSync("sqlite3", [dbPath], { input: sql });
+  execSql(dbPath, sql);
   // As Antigravity leaves a conversation once it's closed: no -shm, no -wal.
   rmSync(`${dbPath}-wal`, { force: true });
   rmSync(`${dbPath}-shm`, { force: true });
@@ -437,10 +437,11 @@ describe("Antigravity conversation databases", () => {
       "globalStorage"
     );
     mkdirSync(dir, { recursive: true });
-    execFileSync("sqlite3", [join(dir, "state.vscdb")], {
-      input: `CREATE TABLE ItemTable (key TEXT UNIQUE, value TEXT);
-INSERT INTO ItemTable VALUES ('antigravityUnifiedStateSync.trajectorySummaries', '${value}');`,
-    });
+    execSql(
+      join(dir, "state.vscdb"),
+      `CREATE TABLE ItemTable (key TEXT UNIQUE, value TEXT);
+INSERT INTO ItemTable VALUES ('antigravityUnifiedStateSync.trajectorySummaries', '${value}');`
+    );
     const records = await new AntigravityParser().scan(home);
     expect(records).toHaveLength(2);
     const summary = records.find((r) => r.inputTokens === 0);

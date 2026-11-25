@@ -1,13 +1,12 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { PROVIDER_FLAG_MAP, parseArgs } from "./args.js";
 
-// cli.ts runs main() on import, so this reads the source. It guards the bug
-// that shipped in 1.23.0: Antigravity had no filter flag, and the parser
-// dropped `--antigravity` silently, printing every provider's totals.
+// Guards the bug that shipped in 1.23.0: Antigravity had no filter flag, and
+// the parser dropped `--antigravity` silently, printing every provider's totals.
 const here = dirname(fileURLToPath(import.meta.url));
-const cli = readFileSync(join(here, "cli.ts"), "utf8");
 const types = readFileSync(join(here, "../../core/src/types.ts"), "utf8");
 
 function providerIds(): string[] {
@@ -20,12 +19,25 @@ describe("CLI provider flags", () => {
   it("every provider can be filtered from the CLI", () => {
     const ids = providerIds();
     expect(ids.length).toBeGreaterThan(20);
-    const mapped = new Set([...cli.matchAll(/"([a-z0-9-]+)" as ProviderId/g)].map((m) => m[1]));
-    expect(ids.filter((id) => !mapped.has(id))).toEqual([]);
+    const flagForProvider = new Map(Object.entries(PROVIDER_FLAG_MAP).map(([f, id]) => [id, f]));
+    expect(ids.filter((id) => !flagForProvider.has(id as never))).toEqual([]);
+    for (const id of ids) {
+      const flag = flagForProvider.get(id as never)!;
+      expect(parseArgs(["node", "tokmeter", flag]).providers).toEqual([id]);
+    }
   });
 
   it("an unknown option is an error, not a silent no-op", () => {
-    const fallthrough = cli.match(/default:\s*\n([\s\S]*?)\n\s*break;/);
-    expect(fallthrough?.[1]).toMatch(/arg\.startsWith\("-"\)[\s\S]*process\.exit\(2\)/);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+    try {
+      expect(() => parseArgs(["node", "tokmeter", "--no-such-provider"])).toThrow("EXIT:2");
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("unknown option"));
+    } finally {
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 });

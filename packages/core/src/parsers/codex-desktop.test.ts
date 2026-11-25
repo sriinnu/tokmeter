@@ -24,12 +24,12 @@
  *     that thread from ever being tracked.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { localDateKey } from "../date-utils.js";
+import { execSql } from "../test-sqlite.js";
 import { CodexParser } from "./codex.js";
 import { CodexDesktopParser, hasJsonlTokenCoverage } from "./codex-desktop.js";
 
@@ -65,23 +65,25 @@ function checkpointPath(): string {
 function seedStateDb(threads: ThreadFixture[]): void {
   mkdirSync(join(tmpDir, ".codex"), { recursive: true });
   const dbPath = stateDbPath();
-  execFileSync("sqlite3", [dbPath], {
-    input:
-      "CREATE TABLE threads (id TEXT PRIMARY KEY, tokens_used INTEGER NOT NULL DEFAULT 0, " +
-      "model TEXT, cwd TEXT, rollout_path TEXT, updated_at INTEGER NOT NULL);",
-  });
+  execSql(
+    dbPath,
+    "CREATE TABLE threads (id TEXT PRIMARY KEY, tokens_used INTEGER NOT NULL DEFAULT 0, " +
+      "model TEXT, cwd TEXT, rollout_path TEXT, updated_at INTEGER NOT NULL);"
+  );
   for (const t of threads) {
-    execFileSync("sqlite3", [dbPath], {
-      input: `INSERT INTO threads (id, tokens_used, model, cwd, rollout_path, updated_at) VALUES ('${t.id}', ${t.tokensUsed}, '${t.model}', '${t.cwd.replace(/'/g, "''")}', '${t.rolloutPath.replace(/'/g, "''")}', ${t.updatedAtSec});`,
-    });
+    execSql(
+      dbPath,
+      `INSERT INTO threads (id, tokens_used, model, cwd, rollout_path, updated_at) VALUES ('${t.id}', ${t.tokensUsed}, '${t.model}', '${t.cwd.replace(/'/g, "''")}', '${t.rolloutPath.replace(/'/g, "''")}', ${t.updatedAtSec});`
+    );
   }
 }
 
 function updateTokensUsed(threadId: string, tokensUsed: number): void {
   const nowSec = Math.floor(Date.now() / 1000);
-  execFileSync("sqlite3", [stateDbPath()], {
-    input: `UPDATE threads SET tokens_used = ${tokensUsed}, updated_at = ${nowSec} WHERE id = '${threadId}';`,
-  });
+  execSql(
+    stateDbPath(),
+    `UPDATE threads SET tokens_used = ${tokensUsed}, updated_at = ${nowSec} WHERE id = '${threadId}';`
+  );
 }
 
 const nowSec = () => Math.floor(Date.now() / 1000);

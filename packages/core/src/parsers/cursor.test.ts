@@ -17,11 +17,11 @@
  * doesn't get every request counted twice — pinned by the last test below.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execSql } from "../test-sqlite.js";
 import { CursorParser } from "./cursor.js";
 
 let tmpDir: string;
@@ -147,7 +147,7 @@ function seedLocalDb(
       })
     );
   }
-  execFileSync("sqlite3", [dbPath], { input: statements.join("\n") });
+  execSql(dbPath, statements.join("\n"));
 }
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 5, 1, 12, 0, seconds)).toISOString();

@@ -16,11 +16,11 @@
  * whichever fixture's header bytes don't happen to get stripped cleanly.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execSql } from "../test-sqlite.js";
 import { AntigravityParser } from "./antigravity.js";
 
 let tmpDir: string;
@@ -103,7 +103,7 @@ function seedDb(blob: string, appName = "Antigravity"): void {
     "CREATE TABLE ItemTable (key TEXT UNIQUE, value TEXT);",
     `INSERT INTO ItemTable (key, value) VALUES ('antigravityUnifiedStateSync.trajectorySummaries', '${blob}');`,
   ].join("\n");
-  execFileSync("sqlite3", [dbPath], { input: sql });
+  execSql(dbPath, sql);
 }
 
 describe("AntigravityParser", () => {

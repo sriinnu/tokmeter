@@ -93,14 +93,16 @@ const USAGE_RE =
  * ~/.config/<app> and ~/.local/share/<app>. Null for roots outside $HOME.
  */
 export function agentHome(root: string, homeDir: string): string | null {
-  if (!root.startsWith(homeDir + sep)) return null;
-  const rel = root.slice(homeDir.length + 1).split(sep);
+  const sepChar = homeDir.includes("\\") ? "\\" : "/";
+  const base = homeDir.replace(/[\\/]+$/, "");
+  if (!root.startsWith(base + sepChar)) return null;
+  const rel = root.slice(base.length + 1).split(/[\\/]+/);
   let depth = 1;
   if (rel[0] === "Library") depth = 3;
   else if (rel[0] === ".local" && rel[1] === "share") depth = 3;
   else if (rel[0] === ".config") depth = 2;
   if (rel.length < depth) return null;
-  return join(homeDir, ...rel.slice(0, depth));
+  return [base, ...rel.slice(0, depth)].join(sepChar);
 }
 
 /** Agent folders to walk, each with the providers that read from it. */

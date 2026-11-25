@@ -10,12 +10,12 @@
  * real JSON field names, and the real zstd framing.
  */
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execSql } from "../test-sqlite.js";
 import { ZedParser } from "./zed.js";
 
 let tmpDir: string;
@@ -58,11 +58,10 @@ function seedThreadsDb(threads: ThreadFixture[]): void {
   mkdirSync(dbDir, { recursive: true });
   const dbPath = join(dbDir, "threads.db");
 
-  execFileSync("sqlite3", [dbPath], {
-    input: [
-      "CREATE TABLE threads (id TEXT PRIMARY KEY, summary TEXT, updated_at TEXT, data_type TEXT, data BLOB, folder_paths TEXT, folder_paths_order TEXT, created_at TEXT);",
-    ].join("\n"),
-  });
+  execSql(
+    dbPath,
+    "CREATE TABLE threads (id TEXT PRIMARY KEY, summary TEXT, updated_at TEXT, data_type TEXT, data BLOB, folder_paths TEXT, folder_paths_order TEXT, created_at TEXT);"
+  );
 
   for (const t of threads) {
     const json = JSON.stringify({
@@ -79,12 +78,20 @@ function seedThreadsDb(threads: ThreadFixture[]): void {
     const dataBlobPath = join(dbDir, `${t.id}.blob`);
     writeFileSync(dataBlobPath, dataBuf);
 
-    const folderPathsSql = t.folderPaths ? `'${t.folderPaths.join("\n")}'` : "NULL";
-    const folderPathsOrderSql = t.folderPathsOrder ? `'${t.folderPathsOrder.join(",")}'` : "NULL";
-    const createdAtSql = t.createdAt ? `'${t.createdAt}'` : "NULL";
-    execFileSync("sqlite3", [dbPath], {
-      input: `INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths, folder_paths_order, created_at) VALUES ('${t.id}', '${t.summary.replace(/'/g, "''")}', '${t.updatedAt}', '${dataType}', readfile('${dataBlobPath}'), ${folderPathsSql}, ${folderPathsOrderSql}, ${createdAtSql});`,
-    });
+    execSql(
+      dbPath,
+      "INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths, folder_paths_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+      [
+        t.id,
+        t.summary,
+        t.updatedAt,
+        dataType,
+        new Uint8Array(readFileSync(dataBlobPath)),
+        t.folderPaths ? t.folderPaths.join("\n") : null,
+        t.folderPathsOrder ? t.folderPathsOrder.join(",") : null,
+        t.createdAt ?? null,
+      ]
+    );
   }
 }
 
