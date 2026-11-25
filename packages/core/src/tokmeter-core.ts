@@ -148,6 +148,11 @@ export class TokmeterCore {
     return this.homeDir;
   }
 
+  /** Return the rolling in-memory window of recent raw records (no copy). */
+  getRecentRecords(): TokenRecord[] {
+    return this.recentRecords;
+  }
+
   /** Force-flush any dirty in-memory record cache entries for this core to disk. */
   flushRecordCache(): void {
     saveRecordCacheToDisk(this.homeDir, { force: true });
