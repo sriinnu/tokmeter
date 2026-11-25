@@ -24,7 +24,14 @@
  */
 
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, lastPathSegment, readJsonlFile } from "./utils.js";
+import {
+  createRecord,
+  expandHome,
+  filterFilesByMtime,
+  findFiles,
+  lastPathSegment,
+  readJsonlFile,
+} from "./utils.js";
 
 interface ClineLine {
   ts?: number; // milliseconds
@@ -58,15 +65,31 @@ export class ClineParser implements SessionParser {
 
   async scanStreaming(
     homeDir: string,
-    _opts: ScanFilterOptions | undefined,
+    opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
+    let files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
 
     for (const file of files) {
-      const records = this.parseFile(await readJsonlFile<ClineLine>(file), file);
-      if (records.length > 0) await onFile(records);
+      try {
+        const lines = await readJsonlFile<ClineLine>(file, (err) =>
+          opts?.onWarning?.(
+            `cline: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+            { file }
+          )
+        );
+        const records = this.parseFile(lines, file);
+        if (records.length > 0) await onFile(records);
+      } catch (error) {
+        opts?.onWarning?.(
+          `cline: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
+      }
     }
   }
 

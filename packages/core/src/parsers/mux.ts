@@ -6,9 +6,9 @@
 
 import { stat } from "node:fs/promises";
 import { localDateKey } from "../date-utils.js";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import { type Buckets, dayDelta, updateBaselines } from "./cumulative-baselines.js";
-import { createRecord, expandHome, findFiles, readJsonFile } from "./utils.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonFile } from "./utils.js";
 
 interface MuxSessionUsage {
   timestamp?: string;
@@ -32,9 +32,12 @@ export class MuxParser implements SessionParser {
     return [expandHome("~/.mux/sessions", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f === "session-usage.json", 2);
+    let files = await findFiles(sessionsDir, (f) => f === "session-usage.json", 2);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const observations: Array<{
       file: string;
       ts: number;
@@ -45,41 +48,48 @@ export class MuxParser implements SessionParser {
     }> = [];
 
     for (const file of files) {
-      const usage = await readJsonFile<MuxSessionUsage>(file);
-      if (!usage?.byModel) continue;
-
-      // The file is rewritten with the session's running total, so its
-      // timestamp (or mtime) is "last touched", and its birth time is when
-      // the session started.
-      let ts = usage.timestamp ? new Date(usage.timestamp).getTime() : Number.NaN;
-      let createdOn: string | undefined;
       try {
-        const s = await stat(file);
-        if (!Number.isFinite(ts)) ts = s.mtimeMs;
-        if (s.birthtimeMs > 0) createdOn = localDateKey(s.birthtimeMs);
-      } catch (error) {
-        if (!Number.isFinite(ts)) throw error;
-        // A parsed usage timestamp is authoritative; birth time is optional.
-      }
-      if (!Number.isFinite(ts)) continue;
+        const usage = await readJsonFile<MuxSessionUsage>(file);
+        if (!usage?.byModel) continue;
 
-      for (const [modelKey, tokens] of Object.entries(usage.byModel)) {
-        // Model names use "provider:model" format -- strip provider prefix
-        const model = modelKey.includes(":") ? modelKey.split(":").slice(1).join(":") : modelKey;
-        observations.push({
-          file,
-          ts,
-          createdOn,
-          modelKey,
-          model,
-          tokens: {
-            inputTokens: tokens.input ?? 0,
-            outputTokens: tokens.output ?? 0,
-            cacheReadTokens: tokens.cached ?? 0,
-            cacheWriteTokens: tokens.cacheCreate ?? 0,
-            reasoningTokens: tokens.reasoning ?? 0,
-          },
-        });
+        // The file is rewritten with the session's running total, so its
+        // timestamp (or mtime) is "last touched", and its birth time is when
+        // the session started.
+        let ts = usage.timestamp ? new Date(usage.timestamp).getTime() : Number.NaN;
+        let createdOn: string | undefined;
+        try {
+          const s = await stat(file);
+          if (!Number.isFinite(ts)) ts = s.mtimeMs;
+          if (s.birthtimeMs > 0) createdOn = localDateKey(s.birthtimeMs);
+        } catch (error) {
+          if (!Number.isFinite(ts)) throw error;
+          // A parsed usage timestamp is authoritative; birth time is optional.
+        }
+        if (!Number.isFinite(ts)) continue;
+
+        for (const [modelKey, tokens] of Object.entries(usage.byModel)) {
+          // Model names use "provider:model" format -- strip provider prefix
+          const model = modelKey.includes(":") ? modelKey.split(":").slice(1).join(":") : modelKey;
+          observations.push({
+            file,
+            ts,
+            createdOn,
+            modelKey,
+            model,
+            tokens: {
+              inputTokens: tokens.input ?? 0,
+              outputTokens: tokens.output ?? 0,
+              cacheReadTokens: tokens.cached ?? 0,
+              cacheWriteTokens: tokens.cacheCreate ?? 0,
+              reasoningTokens: tokens.reasoning ?? 0,
+            },
+          });
+        }
+      } catch (error) {
+        opts?.onWarning?.(
+          `mux: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
       }
     }
 

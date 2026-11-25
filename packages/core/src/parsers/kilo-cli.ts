@@ -11,9 +11,9 @@
  * returns an empty array if neither driver is available.
  */
 
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import { readOpenCodeDb } from "./opencode-db.js";
-import { expandHome, fileExists, openReadonlySqlite } from "./utils.js";
+import { expandHome, fileExists, fileMtimeWithWal, openReadonlySqlite } from "./utils.js";
 
 export class KiloCliParser implements SessionParser {
   readonly providerId = "kilo-cli" as const;
@@ -27,16 +27,30 @@ export class KiloCliParser implements SessionParser {
     return this.sessionRoots(homeDir);
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [dbPath] = this.sessionRoots(homeDir);
 
     if (!(await fileExists(dbPath))) return [];
+    if (
+      opts?.modifiedSinceMs !== undefined &&
+      (await fileMtimeWithWal(dbPath)) < opts.modifiedSinceMs
+    ) {
+      return [];
+    }
 
-    const db = await openReadonlySqlite(dbPath);
     try {
-      return readOpenCodeDb(db, dbPath, "kilo-cli");
-    } finally {
-      db.close();
+      const db = await openReadonlySqlite(dbPath);
+      try {
+        return readOpenCodeDb(db, dbPath, "kilo-cli");
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      opts?.onWarning?.(
+        `kilo-cli: failed read of ${dbPath}: ${error instanceof Error ? error.message : error}`,
+        { file: dbPath }
+      );
+      return [];
     }
   }
 }

@@ -177,20 +177,31 @@ export class VSCodeCopilotParser implements SessionParser {
       );
 
       for (const file of sessionFiles) {
-        records.push(
-          ...(await cachedSessionRecords(
-            file,
-            async () => {
-              const session = file.endsWith(".jsonl")
-                ? await readMutationLog(file)
-                : await readJsonFile<ChatSessionFile>(file);
-              if (!Array.isArray(session?.requests)) return [];
-              const project = await resolveWorkspaceProject(dirname(file));
-              return requestsToRecords(session.requests, project, file);
-            },
-            homeDir
-          ))
-        );
+        try {
+          records.push(
+            ...(await cachedSessionRecords(
+              file,
+              async () => {
+                const session = file.endsWith(".jsonl")
+                  ? await readMutationLog(file)
+                  : await readJsonFile<ChatSessionFile>(file);
+                if (!Array.isArray(session?.requests)) return [];
+                const project = await resolveWorkspaceProject(dirname(file));
+                return requestsToRecords(session.requests, project, file);
+              },
+              homeDir
+            ))
+          );
+        } catch (error) {
+          if (opts?.onWarning) {
+            opts.onWarning(
+              `vscode-copilot scan failed for ${file}: ${error instanceof Error ? error.message : error}`,
+              { file }
+            );
+            continue;
+          }
+          throw error;
+        }
       }
 
       const emptyWindowDir = join(userDir, "globalStorage", "emptyWindowChatSessions");
@@ -199,16 +210,27 @@ export class VSCodeCopilotParser implements SessionParser {
       );
 
       for (const file of emptyWindowFiles) {
-        records.push(
-          ...(await cachedSessionRecords(
-            file,
-            async () => {
-              const session = await readMutationLog(file);
-              return requestsToRecords(session?.requests, "vscode-copilot", file);
-            },
-            homeDir
-          ))
-        );
+        try {
+          records.push(
+            ...(await cachedSessionRecords(
+              file,
+              async () => {
+                const session = await readMutationLog(file);
+                return requestsToRecords(session?.requests, "vscode-copilot", file);
+              },
+              homeDir
+            ))
+          );
+        } catch (error) {
+          if (opts?.onWarning) {
+            opts.onWarning(
+              `vscode-copilot scan failed for ${file}: ${error instanceof Error ? error.message : error}`,
+              { file }
+            );
+            continue;
+          }
+          throw error;
+        }
       }
     }
     return records;

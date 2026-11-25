@@ -4,8 +4,8 @@
  * Reads from ~/.local/share/amp/threads/
  */
 
-import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 interface AmpMessage {
   role?: string;
@@ -27,13 +27,21 @@ export class AmpParser implements SessionParser {
     return [expandHome("~/.local/share/amp/threads", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [threadsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(threadsDir, (f) => f.endsWith(".jsonl"), 2);
+    let files = await findFiles(threadsDir, (f) => f.endsWith(".jsonl"), 2);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const lines = await readJsonlFile<AmpMessage>(file);
+      const lines = await readJsonlFile<AmpMessage>(file, (err) =>
+        opts?.onWarning?.(
+          `amp: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+          { file }
+        )
+      );
       for (const msg of lines) {
         if (msg.role !== "assistant" || !msg.usage) continue;
 

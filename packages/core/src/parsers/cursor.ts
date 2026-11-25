@@ -19,8 +19,9 @@
  * set up doesn't get every request counted twice.
  */
 
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
@@ -30,9 +31,13 @@ import {
   readCursorHookCoverage,
   readCursorTurnJournal,
 } from "./cursor-turn-journal.js";
+import { parseCsv } from "./cursor-usage-csv.js";
 import {
   createRecord,
+  dbFileStateKey,
   expandHome,
+  fileMtimeWithWal,
+  filterFilesByMtime,
   findFiles,
   getConfiguredProviderPaths,
   openReadonlySqlite,
@@ -111,7 +116,7 @@ export class CursorParser implements SessionParser {
   // pattern that already caused a real memory-pressure incident in this
   // project (see docs/architecture.md). Cache per dbPath, keyed by mtime,
   // so an unchanged database is a stat() call, not a re-read.
-  private readonly localCache = new Map<string, LocalDbRead & { mtimeMs: number }>();
+  private readonly localCache = new Map<string, LocalDbRead & { stateKey: string }>();
 
   /** Paths this parser reads; restore validates archive paths against them. */
   sessionRoots(homeDir: string): string[] {
@@ -124,21 +129,26 @@ export class CursorParser implements SessionParser {
 
   /**
    * Sources, each owning its own stretch of time so a turn counts once:
-   *  - tokscale's CSV export, when present, replaces everything (as before);
-   *  - while the stop hook is installed (its coverage ledger), its turns are
-   *    the usage: real input, output and cache counts;
-   *  - outside those spans, the local database's per-request counts.
-   * The hook part runs only once its numbers are verified
-   * (`hookVerified`). Until then it is shadow mode: the journal and the
-   * ledger are not used at all, the database counts everything, and a
-   * notice says how many turns the hook recorded.
-   * The opt-in `tokmeter cursor sync` export isn't read here yet: it covers
-   * time after the fact, and a source that takes over a stretch later would
-   * make the daemon carry the records it replaced as deleted history.
+   *  - tokscale's CSV export owns dates up through its newest CSV record;
+   *  - newer dates fall through to Cursor's local SQLite / verified stop hook
+   *    so a stale legacy CSV never blinds later local sessions.
    */
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
-    const fromCsv = await this.scanCsvCache(homeDir);
-    if (fromCsv.length > 0) return fromCsv;
+    const fromCsv = await this.scanCsvCache(homeDir, opts);
+    const local = await this.scanLocal(homeDir, opts);
+    if (fromCsv.length === 0) return local;
+    let maxCsvDate = "";
+    for (const r of fromCsv) {
+      const d = localDateKey(r.timestamp);
+      if (d > maxCsvDate) maxCsvDate = d;
+    }
+    const newerLocal = maxCsvDate
+      ? local.filter((r) => localDateKey(r.timestamp) > maxCsvDate)
+      : local;
+    return [...fromCsv, ...newerLocal];
+  }
+
+  private async scanLocal(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     if (!this.hookVerified) {
       const local = await this.scanLocalDatabase(homeDir, opts);
       await reportShadowTurns(homeDir, opts);
@@ -171,20 +181,23 @@ export class CursorParser implements SessionParser {
     return [...kept, ...turns];
   }
 
-  private async scanCsvCache(homeDir: string): Promise<TokenRecord[]> {
+  private async scanCsvCache(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const cacheDir = cursorCsvCacheDir(homeDir);
-    const csvFiles = await findFiles(cacheDir, (f) => f.endsWith(".csv"), 1);
+    let csvFiles = await findFiles(cacheDir, (f) => f.endsWith(".csv"), 1);
+    if (opts?.modifiedSinceMs !== undefined) {
+      csvFiles = await filterFilesByMtime(csvFiles, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of csvFiles) {
       try {
         const raw = await readFile(file, "utf-8");
-        const lines = raw.trim().split("\n");
-        if (lines.length < 2) continue;
+        const rows = parseCsv(raw);
+        if (rows.length < 2) continue;
 
-        // Skip header, parse CSV rows
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(",");
+        // Skip header, parse CSV rows via RFC 4180 parseCsv
+        for (let i = 1; i < rows.length; i++) {
+          const cols = rows[i] ?? [];
           if (cols.length < 4) continue;
           const parsedCost = Number(cols[5]);
           const hasCost = cols[5] !== undefined && cols[5] !== "" && Number.isFinite(parsedCost);
@@ -204,8 +217,9 @@ export class CursorParser implements SessionParser {
           );
         }
       } catch (error) {
-        throw new Error(
-          `Unable to read Cursor CSV ${file}: ${error instanceof Error ? error.message : error}`
+        opts?.onWarning?.(
+          `Unable to read Cursor CSV ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
         );
       }
     }
@@ -220,18 +234,23 @@ export class CursorParser implements SessionParser {
     let requests = 0;
     let uncounted = 0;
     for (const dbPath of cursorStateDbPaths(homeDir)) {
-      let mtimeMs: number;
-      try {
-        mtimeMs = (await stat(dbPath)).mtimeMs;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
+      const mtimeMs = await fileMtimeWithWal(dbPath);
+      if (mtimeMs === 0) continue;
+      if (opts?.modifiedSinceMs !== undefined && mtimeMs < opts.modifiedSinceMs) continue;
 
+      const stateKey = await dbFileStateKey(dbPath);
       let read = this.localCache.get(dbPath);
-      if (!read || read.mtimeMs !== mtimeMs) {
-        read = { mtimeMs, ...(await this.readLocalDatabase(dbPath)) };
-        this.localCache.set(dbPath, read);
+      if (!read || read.stateKey !== stateKey) {
+        try {
+          read = { stateKey, ...(await this.readLocalDatabase(dbPath)) };
+          this.localCache.set(dbPath, read);
+        } catch (error) {
+          opts?.onWarning?.(
+            `cursor: failed read of ${dbPath}: ${error instanceof Error ? error.message : error}`,
+            { file: dbPath }
+          );
+          continue;
+        }
       }
       records.push(...cloneRecords(read.records));
       requests += read.requests;

@@ -4,11 +4,12 @@
  * Reads from ~/.qwen/projects/{PROJECT_PATH}/chats/{CHAT_ID}.jsonl
  */
 
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   createRecord,
   expandHome,
   extractProjectFromPath,
+  filterFilesByMtime,
   findFiles,
   readJsonlFile,
 } from "./utils.js";
@@ -34,14 +35,22 @@ export class QwenParser implements SessionParser {
     return [expandHome("~/.qwen/projects", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [projectsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 3);
+    let files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 3);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
       const project = extractProjectFromPath(file);
-      const lines = await readJsonlFile<QwenMessage>(file);
+      const lines = await readJsonlFile<QwenMessage>(file, (err) =>
+        opts?.onWarning?.(
+          `qwen: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+          { file }
+        )
+      );
 
       for (const msg of lines) {
         if (!msg.usageMetadata) continue;

@@ -9,6 +9,7 @@ import {
   type JsonlVisitResult,
   MAX_JSONL_RECORDS,
   type OversizedLine,
+  peekCachedRecords,
   setCachedRecords,
   visitJsonlLines,
 } from "./utils.js";
@@ -218,6 +219,18 @@ export function dedupAcrossFiles(records: TokenRecord[]): TokenRecord[] {
   return out;
 }
 
+const SUBAGENT_SEGMENT_RE = /[\\/]subagents[\\/]/;
+const SUBAGENT_PARENT_RE = /^(.*)[\\/]subagents[\\/][^\\/]+$/;
+
+export function isSubagentTranscriptPath(filePath: string): boolean {
+  return SUBAGENT_SEGMENT_RE.test(filePath);
+}
+
+function parentTranscriptFor(filePath: string): string {
+  const match = SUBAGENT_PARENT_RE.exec(filePath);
+  return match ? `${match[1]}.jsonl` : filePath;
+}
+
 export class ClaudeCodeParser implements SessionParser {
   readonly providerId = "claude-code" as const;
 
@@ -227,243 +240,238 @@ export class ClaudeCodeParser implements SessionParser {
   }
 
   async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+    const records: TokenRecord[] = [];
+    await this.scanStreaming(homeDir, opts, (batch) => {
+      records.push(...batch);
+    });
+    return dedupAcrossFiles(records);
+  }
+
+  async scanStreaming(
+    homeDir: string,
+    opts: ScanFilterOptions | undefined,
+    onFile: (records: TokenRecord[]) => void | Promise<void>
+  ): Promise<void> {
     const [projectsDir] = this.sessionRoots(homeDir);
     // Depth 5: main sessions live at `<slug>/<sessionId>.jsonl` (depth 2),
     // subagent runs at `<slug>/<sessionId>/subagents/agent-*.jsonl` (depth 4).
-    // Previous depth 3 silently missed every subagent file — those costs
-    // vanished from totals. Bumping picks them up + the parser tags them via
-    // `isSubagent` so the aggregator can break out "subagent share."
-    let files = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 5);
-    // Today-only scans skip files untouched since the watermark — a warm
-    // daemon refresh reads only today's active sessions, not the whole vault.
-    if (opts?.modifiedSinceMs !== undefined) {
-      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
-    }
-    const records: TokenRecord[] = [];
+    const allFiles = await findFiles(projectsDir, (f) => f.endsWith(".jsonl"), 5);
+    const allFilesSet = new Set(allFiles);
+    const files =
+      opts?.modifiedSinceMs !== undefined
+        ? await filterFilesByMtime(allFiles, opts.modifiedSinceMs)
+        : allFiles;
+    const includedSet = new Set(files);
 
+    // Group included files by their parent session transcript so each family's
+    // fork-subagent dedup happens incrementally during scanStreaming().
+    const families = new Map<string, string[]>();
     for (const file of files) {
-      const cacheResult = await getCachedRecords(file, homeDir);
-
-      // Exact cache hit — file unchanged, skip entirely
-      if (cacheResult.hit) {
-        records.push(...cacheResult.records);
-        continue;
-      }
-
-      const project = extractProjectFromPath(file);
-      const cwd = decodeClaudeSlugDir(file);
-      const isSubagent = file.includes("/subagents/");
-
-      const newRecords: TokenRecord[] = [];
-      // Dedup: one record per API response. Claude Code writes an assistant
-      // turn as one line per content block (thinking, text, each tool_use),
-      // every line carrying the same message.id, requestId and usage — a turn
-      // with 8 parallel tool calls is 8 lines for ONE charge. Keying on
-      // timestamp (each line has its own) counted such a turn 8×. Seed from
-      // the cached tail so a turn whose lines straddle two append scans is
-      // still folded into one record.
-      let lastUsageKey = cacheResult.cachedRecords.at(-1)?.apiCallId ?? "";
-      // Most recent assistant record, including cached tail records during
-      // append-only scans. A compact_boundary can arrive after we cached the
-      // assistant summarization call, so the boundary must be allowed to tag
-      // the cached tail record instead of only records parsed in this chunk.
-      //
-      // Important: if the cached tail is ALREADY tagged as compaction, leave
-      // it alone — re-tagging would overwrite its existing compaction
-      // telemetry with whichever boundary we see first in this chunk, which
-      // is the WRONG boundary (the one that fired AFTER an assistant turn we
-      // haven't parsed yet). The freshly-parsed assistant record will become
-      // the new lastAssistantRecord below and the right boundary will tag it.
-      const cachedTail = cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
-      let lastAssistantRecord: TokenRecord | null =
-        cachedTail && cachedTail.kind === "compaction" ? null : cachedTail;
-      const handle = (msg: ClaudeMessage): void => {
-        if (msg.type === "system" && msg.subtype === "compact_boundary") {
-          if (lastAssistantRecord) {
-            lastAssistantRecord.kind = "compaction";
-            lastAssistantRecord.compaction = compactionTelemetry(msg.compactMetadata);
-            // Don't re-tag if a second boundary follows without an assistant
-            // turn in between (defensive — shouldn't happen in practice).
-            lastAssistantRecord = null;
-          }
-          return;
-        }
-        if (msg.type !== "assistant" || !msg.message?.usage) return;
-
-        const usage = msg.message.usage;
-        // Tool names on this assistant turn. Multiple tool_use blocks in one
-        // message are common (parallel tool calls) — we keep them all and
-        // split cost evenly downstream in the aggregator. Skip nil/empty so
-        // we don't bloat records that were pure text answers.
-        const toolCalls: string[] = [];
-        for (const block of msg.message.content ?? []) {
-          if (block.type === "tool_use" && block.name) {
-            toolCalls.push(block.name);
-          }
-        }
-
-        // message.id alone identifies the API response (a retry gets a new
-        // id; the corpus has no id shared by two requestIds). Some lines omit
-        // requestId, so keying on the pair would split one call in two.
-        const apiCallId = msg.message.id || undefined;
-        // Older transcripts without ids fall back to timestamp + usage, which
-        // still folds the consecutive duplicate lines those versions wrote.
-        const usageKey =
-          apiCallId ??
-          (msg.timestamp
-            ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
-            : "");
-        // The 1h-TTL share is a subset of cache_creation_input_tokens. Claude
-        // Code has written 1h = 2050 beside a total of 0 (2026-09-16); keep
-        // the subset invariant here so no bucket downstream can exceed it.
-        const write1h = Math.min(
-          usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
-          usage.cache_creation_input_tokens ?? 0
-        );
-        if (usageKey && usageKey === lastUsageKey) {
-          // Same API response, later content block. Main transcripts repeat
-          // the identical usage on every line, but subagent transcripts write
-          // the first line from message_start with placeholder usage
-          // (output_tokens 2..17) and only the last line carries the real
-          // counts — keeping the first line lost ~95% of subagent output.
-          // Usage is cumulative for the response, so the max per bucket is
-          // the true value. A record whose usage grew must be re-priced.
-          if (lastAssistantRecord) {
-            const rec = lastAssistantRecord;
-            const grow = (cur: number, next: number) => (next > cur ? next : cur);
-            const before = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
-            rec.inputTokens = grow(rec.inputTokens, usage.input_tokens ?? 0);
-            rec.outputTokens = grow(rec.outputTokens, usage.output_tokens ?? 0);
-            rec.cacheReadTokens = grow(rec.cacheReadTokens, usage.cache_read_input_tokens ?? 0);
-            rec.cacheWriteTokens = grow(
-              rec.cacheWriteTokens,
-              usage.cache_creation_input_tokens ?? 0
-            );
-            if (write1h > (rec.cacheWrite1hTokens ?? 0)) rec.cacheWrite1hTokens = write1h;
-            const after = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
-            if (after !== before && rec.usage?.cost !== "direct") rec.cost = 0;
-            if (toolCalls.length > 0) {
-              rec.toolCalls = [...(rec.toolCalls ?? []), ...toolCalls];
-            }
-          }
-          return;
-        }
-        if (usageKey) lastUsageKey = usageKey;
-
-        const record = createRecord({
-          timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
-          provider: "claude-code",
-          model: msg.message.model || "unknown",
-          project,
-          cwd,
-          sourceFile: file,
-          inputTokens: usage.input_tokens ?? 0,
-          outputTokens: usage.output_tokens ?? 0,
-          cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-          cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-          ...(write1h > 0 ? { cacheWrite1hTokens: write1h } : {}),
-          cost: msg.costUSD ?? 0,
-          usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-          isSubagent: isSubagent ? true : undefined,
-          apiCallId,
-        });
-        newRecords.push(record);
-        lastAssistantRecord = record;
-      };
-
-      // Stream only the bytes past the cached offset, one line at a time:
-      // memory is one line, never the file, so a session of any size keeps
-      // counting (a whole-file 128 MiB refusal froze sessions past that size).
-      // Only lines that can carry usage or a compaction boundary are parsed.
-      let readFailed = false;
-      let malformedLines = 0;
-      let malformedUsageLines = 0;
-      let unrecoveredOversized = 0;
-      const onLine = (line: string) => {
-        if (!line.includes('"assistant"') && !line.includes("compact_boundary")) return;
-        let msg: ClaudeMessage;
-        try {
-          msg = JSON.parse(line) as ClaudeMessage;
-        } catch {
-          malformedLines++;
-          if (line.includes('"usage"')) malformedUsageLines++;
-          return;
-        }
-        handle(msg);
-      };
-      const onOversized = (line: OversizedLine) => {
-        const recovered = recoverOversizedAssistant(line);
-        if (recovered) handle(recovered);
-        else if (oversizedRole(line) === "assistant") unrecoveredOversized++;
-      };
-      let visit: JsonlVisitResult | null = null;
-      try {
-        visit = await visitJsonlLines(file, cacheResult.appendOffset, onLine, { onOversized });
-      } catch (error) {
-        readFailed = true;
-        opts?.onWarning?.(
-          `failed read of ${file}: ${error instanceof Error ? error.message : error}`,
-          { file, readThroughMs: lastTimestamp(cacheResult.cachedRecords) }
-        );
-      }
-      if (visit?.inFlightTail) {
-        // Not a failure (the cache resumes at the line's start), but the line
-        // may be a record from before midnight: the rollover must not seal
-        // the day without it. Everything unread is newer than what was read,
-        // so a seal of a day before the last record read is not held.
-        opts?.onWarning?.(`a line in ${file} is still being written`, {
-          file,
-          readThroughMs: lastTimestamp([...cacheResult.cachedRecords, ...newRecords]),
-        });
-      }
-      if (visit && visit.oversizedLines > 0) {
-        const lost = unrecoveredOversized;
-        const message = `skipped ${visit.oversizedLines} oversized line(s) in ${file}${lost > 0 ? ` (${lost} assistant line(s) without recoverable usage)` : ""}`;
-        // An assistant line we could not recover may hide usage: that is a
-        // real gap, reported like a read fault. Anything else (tool output,
-        // pasted files) carries no tokens — a notice, not a partial scan.
-        if (lost > 0) opts?.onWarning?.(message, { file });
-        else opts?.onNotice?.(message);
-      }
-      if (malformedUsageLines > 0) {
-        opts?.onWarning?.(
-          `skipped ${malformedLines} malformed line(s) in ${file}, ${malformedUsageLines} of them carrying usage`,
-          { file }
-        );
-      } else if (malformedLines > 0) {
-        opts?.onNotice?.(`skipped ${malformedLines} malformed line(s) in ${file}`);
-      }
-
-      // Merge cached records with newly parsed ones. Pass the stat hint that
-      // getCachedRecords already took so the cache entry's mtime/size reflect
-      // the bytes we actually parsed — a concurrent writer appending between
-      // parse and cache-set would otherwise cause the next exact-match check
-      // to skip the new bytes (silent token loss).
-      const allFileRecords = [...cacheResult.cachedRecords, ...newRecords];
-      const cacheWouldExceedLimit = allFileRecords.length > MAX_JSONL_RECORDS;
-      if (cacheWouldExceedLimit) {
-        readFailed = true;
-        opts?.onWarning?.(
-          `failed read of ${file}: cached record limit (${MAX_JSONL_RECORDS}) exceeded`,
-          { file }
-        );
-      }
-      // Never seal a read failure as an empty/partial successful cache entry.
-      // The previous good cache remains usable and the next scan retries.
-      if (!readFailed && visit) {
-        await setCachedRecords(
-          file,
-          allFileRecords,
-          {
-            mtimeMs: visit.snapshot.mtimeMs,
-            sizeBytes: visit.consumedThroughBytes,
-          },
-          homeDir
-        );
-      }
-      records.push(...(cacheWouldExceedLimit ? cacheResult.cachedRecords : allFileRecords));
+      const key = isSubagentTranscriptPath(file) ? parentTranscriptFor(file) : file;
+      const list = families.get(key);
+      if (list) list.push(file);
+      else families.set(key, [file]);
     }
-    return dedupAcrossFiles(records);
+
+    for (const [familyParent, familyFiles] of families) {
+      let parentIds: Set<string> | null = null;
+      if (!includedSet.has(familyParent) && allFilesSet.has(familyParent)) {
+        const parentRecords =
+          peekCachedRecords(familyParent, homeDir) ??
+          (await this.parseFile(familyParent, homeDir, opts));
+        parentIds = new Set(
+          parentRecords.map((r) => r.apiCallId).filter((id): id is string => Boolean(id))
+        );
+      }
+
+      const familyRecords: TokenRecord[] = [];
+      for (const file of familyFiles) {
+        const parsed = await this.parseFile(file, homeDir, opts);
+        if (parentIds && parentIds.size > 0 && isSubagentTranscriptPath(file)) {
+          for (const rec of parsed) {
+            if (!rec.apiCallId || !parentIds.has(rec.apiCallId)) familyRecords.push(rec);
+          }
+        } else {
+          familyRecords.push(...parsed);
+        }
+      }
+
+      const deduped = dedupAcrossFiles(familyRecords);
+      if (deduped.length > 0) await onFile(deduped);
+    }
+  }
+
+  private async parseFile(
+    file: string,
+    homeDir: string,
+    opts?: ScanFilterOptions
+  ): Promise<TokenRecord[]> {
+    const cacheResult = await getCachedRecords(file, homeDir);
+
+    // Exact cache hit — file unchanged, skip entirely
+    if (cacheResult.hit) {
+      return cacheResult.records;
+    }
+
+    const project = extractProjectFromPath(file);
+    const cwd = decodeClaudeSlugDir(file);
+    const isSubagent = isSubagentTranscriptPath(file);
+
+    const newRecords: TokenRecord[] = [];
+    // Dedup: one record per API response. Claude Code writes an assistant
+    // turn as one line per content block (thinking, text, each tool_use),
+    // every line carrying the same message.id, requestId and usage — a turn
+    // with 8 parallel tool calls is 8 lines for ONE charge. Keying on
+    // timestamp (each line has its own) counted such a turn 8×. Seed from
+    // the cached tail so a turn whose lines straddle two append scans is
+    // still folded into one record.
+    let lastUsageKey = cacheResult.cachedRecords.at(-1)?.apiCallId ?? "";
+    const cachedTail = cacheResult.cachedRecords[cacheResult.cachedRecords.length - 1] ?? null;
+    let lastAssistantRecord: TokenRecord | null =
+      cachedTail && cachedTail.kind === "compaction" ? null : cachedTail;
+    const handle = (msg: ClaudeMessage): void => {
+      if (msg.type === "system" && msg.subtype === "compact_boundary") {
+        if (lastAssistantRecord) {
+          lastAssistantRecord.kind = "compaction";
+          lastAssistantRecord.compaction = compactionTelemetry(msg.compactMetadata);
+          lastAssistantRecord = null;
+        }
+        return;
+      }
+      if (msg.type !== "assistant" || !msg.message?.usage) return;
+
+      const usage = msg.message.usage;
+      const toolCalls: string[] = [];
+      for (const block of msg.message.content ?? []) {
+        if (block.type === "tool_use" && block.name) {
+          toolCalls.push(block.name);
+        }
+      }
+
+      const apiCallId = msg.message.id || undefined;
+      const usageKey =
+        apiCallId ??
+        (msg.timestamp
+          ? `${msg.timestamp}:${usage.input_tokens ?? 0}:${usage.output_tokens ?? 0}:${usage.cache_read_input_tokens ?? 0}`
+          : "");
+      const write1h = Math.min(
+        usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+        usage.cache_creation_input_tokens ?? 0
+      );
+      if (usageKey && usageKey === lastUsageKey) {
+        if (lastAssistantRecord) {
+          const rec = lastAssistantRecord;
+          const grow = (cur: number, next: number) => (next > cur ? next : cur);
+          const before = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+          rec.inputTokens = grow(rec.inputTokens, usage.input_tokens ?? 0);
+          rec.outputTokens = grow(rec.outputTokens, usage.output_tokens ?? 0);
+          rec.cacheReadTokens = grow(rec.cacheReadTokens, usage.cache_read_input_tokens ?? 0);
+          rec.cacheWriteTokens = grow(rec.cacheWriteTokens, usage.cache_creation_input_tokens ?? 0);
+          if (write1h > (rec.cacheWrite1hTokens ?? 0)) rec.cacheWrite1hTokens = write1h;
+          const after = `${rec.inputTokens}|${rec.outputTokens}|${rec.cacheReadTokens}|${rec.cacheWriteTokens}|${rec.cacheWrite1hTokens ?? 0}`;
+          if (after !== before && rec.usage?.cost !== "direct") rec.cost = 0;
+          if (toolCalls.length > 0) {
+            rec.toolCalls = [...(rec.toolCalls ?? []), ...toolCalls];
+          }
+        }
+        return;
+      }
+      if (usageKey) lastUsageKey = usageKey;
+
+      const record = createRecord({
+        timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
+        provider: "claude-code",
+        model: msg.message.model || "unknown",
+        project,
+        cwd,
+        sourceFile: file,
+        inputTokens: usage.input_tokens ?? 0,
+        outputTokens: usage.output_tokens ?? 0,
+        cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+        ...(write1h > 0 ? { cacheWrite1hTokens: write1h } : {}),
+        cost: msg.costUSD ?? 0,
+        usage: typeof msg.costUSD === "number" ? { cost: "direct" } : { cost: "calculated" },
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        isSubagent: isSubagent ? true : undefined,
+        apiCallId,
+      });
+      newRecords.push(record);
+      lastAssistantRecord = record;
+    };
+
+    let readFailed = false;
+    let malformedLines = 0;
+    let malformedUsageLines = 0;
+    let unrecoveredOversized = 0;
+    const onLine = (line: string) => {
+      if (!line.includes('"assistant"') && !line.includes("compact_boundary")) return;
+      let msg: ClaudeMessage;
+      try {
+        msg = JSON.parse(line) as ClaudeMessage;
+      } catch {
+        malformedLines++;
+        if (line.includes('"usage"')) malformedUsageLines++;
+        return;
+      }
+      handle(msg);
+    };
+    const onOversized = (line: OversizedLine) => {
+      const recovered = recoverOversizedAssistant(line);
+      if (recovered) handle(recovered);
+      else if (oversizedRole(line) === "assistant") unrecoveredOversized++;
+    };
+    let visit: JsonlVisitResult | null = null;
+    try {
+      visit = await visitJsonlLines(file, cacheResult.appendOffset, onLine, { onOversized });
+    } catch (error) {
+      readFailed = true;
+      opts?.onWarning?.(
+        `failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+        { file, readThroughMs: lastTimestamp(cacheResult.cachedRecords) }
+      );
+    }
+    if (visit?.inFlightTail) {
+      opts?.onWarning?.(`a line in ${file} is still being written`, {
+        file,
+        readThroughMs: lastTimestamp([...cacheResult.cachedRecords, ...newRecords]),
+      });
+    }
+    if (visit && visit.oversizedLines > 0) {
+      const lost = unrecoveredOversized;
+      const message = `skipped ${visit.oversizedLines} oversized line(s) in ${file}${lost > 0 ? ` (${lost} assistant line(s) without recoverable usage)` : ""}`;
+      if (lost > 0) opts?.onWarning?.(message, { file });
+      else opts?.onNotice?.(message);
+    }
+    if (malformedUsageLines > 0) {
+      opts?.onWarning?.(
+        `skipped ${malformedLines} malformed line(s) in ${file}, ${malformedUsageLines} of them carrying usage`,
+        { file }
+      );
+    } else if (malformedLines > 0) {
+      opts?.onNotice?.(`skipped ${malformedLines} malformed line(s) in ${file}`);
+    }
+
+    const allFileRecords = [...cacheResult.cachedRecords, ...newRecords];
+    const cacheWouldExceedLimit = allFileRecords.length > MAX_JSONL_RECORDS;
+    if (cacheWouldExceedLimit) {
+      readFailed = true;
+      opts?.onWarning?.(
+        `failed read of ${file}: cached record limit (${MAX_JSONL_RECORDS}) exceeded`,
+        { file }
+      );
+    }
+    if (!readFailed && visit) {
+      await setCachedRecords(
+        file,
+        allFileRecords,
+        {
+          mtimeMs: visit.snapshot.mtimeMs,
+          sizeBytes: visit.consumedThroughBytes,
+        },
+        homeDir
+      );
+    }
+    return cacheWouldExceedLimit ? cacheResult.cachedRecords : allFileRecords;
   }
 }

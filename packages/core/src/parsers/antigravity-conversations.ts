@@ -69,11 +69,13 @@ export function listConversationDbs(homeDir: string): string[] {
 // sits at a level read here. Varints are read with multiplication: some are
 // 64-bit (an unset -1 in .9.2), which a 32-bit shift would misread.
 
-interface Field {
+export interface ProtoField {
   num: number;
   varint?: number;
   bytes?: Uint8Array;
 }
+
+type Field = ProtoField;
 
 function readVarint(buf: Uint8Array, offset: number): [number, number] {
   let result = 0;
@@ -88,8 +90,8 @@ function readVarint(buf: Uint8Array, offset: number): [number, number] {
   return [result, -1];
 }
 
-function fields(buf: Uint8Array | undefined): Field[] {
-  const out: Field[] = [];
+export function readProtoFields(buf: Uint8Array | undefined): ProtoField[] {
+  const out: ProtoField[] = [];
   if (!buf) return out;
   let i = 0;
   while (i < buf.length) {
@@ -117,6 +119,8 @@ function fields(buf: Uint8Array | undefined): Field[] {
   }
   return out;
 }
+
+const fields = readProtoFields;
 
 const one = (fs: Field[], n: number) => fs.find((f) => f.num === n);
 const all = (fs: Field[], n: number) => fs.filter((f) => f.num === n);
@@ -233,11 +237,13 @@ const walBytes = (s: FileState) => (s.wal === "-" ? 0 : Number(s.wal.split(":")[
  */
 async function openConversationDb(dbPath: string, liveWal: boolean): Promise<ReadonlySqlite> {
   if (!liveWal) {
+    let db: ReadonlySqlite | null = null;
     try {
-      const db = await openReadonlySqlite(immutableUri(dbPath));
+      db = await openReadonlySqlite(immutableUri(dbPath));
       db.get("SELECT 1 FROM gen_metadata LIMIT 1");
       return db;
     } catch {
+      db?.close();
       // A driver without URI filenames (better-sqlite3): plain open below.
     }
   }
@@ -300,18 +306,43 @@ async function decodeDb(dbPath: string): Promise<DecodedDb> {
   throw new Error("it changed while being read, twice");
 }
 
-// Decoded databases, keyed by size and mtime of the file and its -wal. The
-// model map and the coverage check read every conversation, not only the
-// ones a today scan opens.
+// Bounded LRU cache of decoded conversation DBs, keyed by size+mtime of the db
+// and its -wal sidecar. A persistent lightweight enumNamesCache avoids decoding
+// unchanged historical DBs simply to build the enum -> model map.
+const MAX_DECODED_CACHE_ENTRIES = 256;
 const decodedCache = new Map<string, { key: string; decoded: DecodedDb }>();
+const enumNamesCache = new Map<
+  string,
+  { key: string; ids: Map<string, string>; displays: Map<string, string> }
+>();
+
+function recordEnumMappings(dbPath: string, key: string, decoded: DecodedDb): void {
+  const ids = new Map<string, string>();
+  const displays = new Map<string, string>();
+  for (const g of decoded.gens) {
+    if (!g.modelEnum) continue;
+    if (isRealId(g.modelId) && !ids.has(g.modelEnum)) ids.set(g.modelEnum, g.modelId);
+    if (g.display && !displays.has(g.modelEnum)) displays.set(g.modelEnum, g.display);
+  }
+  enumNamesCache.set(dbPath, { key, ids, displays });
+}
 
 async function decodeCached(dbPath: string): Promise<DecodedDb> {
   const s = await fileState(dbPath);
   const key = `${s.db}|${s.wal}`;
   const hit = decodedCache.get(dbPath);
-  if (hit?.key === key) return hit.decoded;
+  if (hit?.key === key) {
+    decodedCache.delete(dbPath);
+    decodedCache.set(dbPath, hit);
+    return hit.decoded;
+  }
   const decoded = await decodeDb(dbPath);
+  recordEnumMappings(dbPath, key, decoded);
   decodedCache.set(dbPath, { key, decoded });
+  if (decodedCache.size > MAX_DECODED_CACHE_ENTRIES) {
+    const oldestKey = decodedCache.keys().next().value;
+    if (oldestKey !== undefined) decodedCache.delete(oldestKey);
+  }
   return decoded;
 }
 
@@ -343,17 +374,20 @@ interface ModelNames {
 async function modelNames(homeDir: string): Promise<ModelNames> {
   const names: ModelNames = { ids: new Map(), displays: new Map() };
   for (const dbPath of listConversationDbs(homeDir)) {
-    let decoded: DecodedDb;
+    let mapping = enumNamesCache.get(dbPath);
     try {
-      decoded = await decodeCached(dbPath);
+      const s = await fileState(dbPath);
+      const key = `${s.db}|${s.wal}`;
+      if (!mapping || mapping.key !== key) {
+        await decodeCached(dbPath);
+        mapping = enumNamesCache.get(dbPath);
+      }
     } catch {
       continue;
     }
-    for (const g of decoded.gens) {
-      if (!g.modelEnum) continue;
-      if (isRealId(g.modelId) && !names.ids.has(g.modelEnum)) names.ids.set(g.modelEnum, g.modelId);
-      if (g.display && !names.displays.has(g.modelEnum)) names.displays.set(g.modelEnum, g.display);
-    }
+    if (!mapping) continue;
+    for (const [k, v] of mapping.ids) if (!names.ids.has(k)) names.ids.set(k, v);
+    for (const [k, v] of mapping.displays) if (!names.displays.has(k)) names.displays.set(k, v);
   }
   return names;
 }
@@ -481,12 +515,18 @@ export async function scanConversations(
       decoded = await decodeCached(dbPath);
     } catch (error) {
       opts?.onWarning?.(
-        `antigravity: skipped ${dbPath}: ${error instanceof Error ? error.message : error}`
+        `antigravity: skipped ${dbPath}: ${error instanceof Error ? error.message : error}`,
+        { file: dbPath }
       );
       continue;
     }
-    names ??= await modelNames(homeDir);
-    const { records, undated } = recordsOf(dbPath, decoded, names);
+    const needsEnumNames = decoded.gens.some((g) => !isRealId(g.modelId));
+    if (needsEnumNames) names ??= await modelNames(homeDir);
+    const { records, undated } = recordsOf(
+      dbPath,
+      decoded,
+      names ?? { ids: new Map(), displays: new Map() }
+    );
     if (undated > 0) {
       opts?.onNotice?.(
         `antigravity: ${undated} call(s) in ${dbPath} have no time recorded and were not counted`

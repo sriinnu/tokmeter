@@ -6,10 +6,11 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   createRecord,
   expandHome,
+  filterFilesByMtime,
   findFiles,
   getConfiguredProviderPaths,
   vscodeFamilyUserDirs,
@@ -34,11 +35,14 @@ export class KiloParser implements SessionParser {
     ].map((userDir) => join(userDir, "globalStorage/kilocode.kilo-code/tasks"));
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
 
     for (const dir of this.sessionRoots(homeDir)) {
-      const jsonFiles = await findFiles(dir, (f) => f === "ui_messages.json", 3);
+      let jsonFiles = await findFiles(dir, (f) => f === "ui_messages.json", 3);
+      if (opts?.modifiedSinceMs !== undefined) {
+        jsonFiles = await filterFilesByMtime(jsonFiles, opts.modifiedSinceMs);
+      }
 
       for (const file of jsonFiles) {
         try {
@@ -84,8 +88,9 @@ export class KiloParser implements SessionParser {
             );
           }
         } catch (error) {
-          throw new Error(
-            `Unable to read Kilo session ${file}: ${error instanceof Error ? error.message : error}`
+          opts?.onWarning?.(
+            `Unable to read Kilo session ${file}: ${error instanceof Error ? error.message : error}`,
+            { file }
           );
         }
       }

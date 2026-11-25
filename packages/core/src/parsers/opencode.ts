@@ -10,13 +10,21 @@
  * Schema handling lives in opencode-db.ts (shared with Kilo CLI).
  */
 
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   type OpenCodeMessageData,
   openCodeMessageToRecord,
   readOpenCodeDb,
 } from "./opencode-db.js";
-import { expandHome, fileExists, findFiles, openReadonlySqlite, readJsonFile } from "./utils.js";
+import {
+  expandHome,
+  fileExists,
+  fileMtimeWithWal,
+  filterFilesByMtime,
+  findFiles,
+  openReadonlySqlite,
+  readJsonFile,
+} from "./utils.js";
 
 export class OpenCodeParser implements SessionParser {
   readonly providerId = "opencode" as const;
@@ -34,7 +42,7 @@ export class OpenCodeParser implements SessionParser {
     return [this.sessionRoots(homeDir)[0]];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [dbPath, storageDir] = this.sessionRoots(homeDir);
     const records: TokenRecord[] = [];
     const seen = new Set<string>();
@@ -47,20 +55,41 @@ export class OpenCodeParser implements SessionParser {
     };
 
     // bun:sqlite under Bun; node:sqlite, then better-sqlite3, under Node.
-    if (await fileExists(dbPath)) {
-      const db = await openReadonlySqlite(dbPath);
+    if (
+      (await fileExists(dbPath)) &&
+      (opts?.modifiedSinceMs === undefined ||
+        (await fileMtimeWithWal(dbPath)) >= opts.modifiedSinceMs)
+    ) {
       try {
-        for (const rec of readOpenCodeDb(db, dbPath, "opencode")) add(rec);
-      } finally {
-        db.close();
+        const db = await openReadonlySqlite(dbPath);
+        try {
+          for (const rec of readOpenCodeDb(db, dbPath, "opencode")) add(rec);
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        opts?.onWarning?.(
+          `opencode: failed read of ${dbPath}: ${error instanceof Error ? error.message : error}`,
+          { file: dbPath }
+        );
       }
     }
 
-    const jsonFiles = await findFiles(storageDir, (f) => f.endsWith(".json"), 3);
+    let jsonFiles = await findFiles(storageDir, (f) => f.endsWith(".json"), 3);
+    if (opts?.modifiedSinceMs !== undefined) {
+      jsonFiles = await filterFilesByMtime(jsonFiles, opts.modifiedSinceMs);
+    }
     for (const file of jsonFiles) {
-      const msg = await readJsonFile<OpenCodeMessageData>(file);
-      const rec = openCodeMessageToRecord(msg, "opencode", file, { legacyJson: true });
-      if (rec) add(rec);
+      try {
+        const msg = await readJsonFile<OpenCodeMessageData>(file);
+        const rec = openCodeMessageToRecord(msg, "opencode", file, { legacyJson: true });
+        if (rec) add(rec);
+      } catch (error) {
+        opts?.onWarning?.(
+          `opencode: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
+      }
     }
 
     return records;

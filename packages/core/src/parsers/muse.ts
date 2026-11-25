@@ -102,25 +102,37 @@ export class MuseParser implements SessionParser {
     }
 
     for (const file of files) {
-      const cached = await getCachedRecords(file, homeDir);
-      let records: TokenRecord[];
-      if (cached.hit) {
-        records = cached.records;
-      } else {
-        let before: { mtimeMs: number; sizeBytes: number } | undefined;
-        try {
-          const s = await stat(file);
-          before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
-        } catch {}
-        records = await this.parseFile(file);
-        if (before) await setCachedRecords(file, records, before, homeDir);
+      try {
+        const cached = await getCachedRecords(file, homeDir);
+        let records: TokenRecord[];
+        if (cached.hit) {
+          records = cached.records;
+        } else {
+          let before: { mtimeMs: number; sizeBytes: number } | undefined;
+          try {
+            const s = await stat(file);
+            before = { mtimeMs: s.mtimeMs, sizeBytes: s.size };
+          } catch {}
+          records = await this.parseFile(file, opts);
+          if (before) await setCachedRecords(file, records, before, homeDir);
+        }
+        if (records.length > 0) await onFile(records);
+      } catch (error) {
+        opts?.onWarning?.(
+          `muse: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
       }
-      if (records.length > 0) await onFile(records);
     }
   }
 
-  private async parseFile(file: string): Promise<TokenRecord[]> {
-    const lines = await readJsonlFile<MuseRecord>(file);
+  private async parseFile(file: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
+    const lines = await readJsonlFile<MuseRecord>(file, (err) =>
+      opts?.onWarning?.(
+        `muse: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+        { file }
+      )
+    );
     const records: TokenRecord[] = [];
     const seenIds = new Set<string>();
     let workspaceRoot: string | undefined;
