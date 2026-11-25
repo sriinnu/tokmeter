@@ -7,78 +7,37 @@
  */
 
 import {
-  chmodSync,
   closeSync,
   existsSync,
-  constants as fsConstants,
-  fstatSync,
   fsyncSync,
-  lstatSync,
-  mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
-  readSync,
   renameSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
-import {
-  createServer as createHttpServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import { homedir, setPriority } from "node:os";
-import { join } from "node:path";
-import type {
-  ProviderId,
-  QuotaWindow,
-  ScanOptions,
-  ScanWarning,
-  TokmeterCore,
-  TokmeterSummary,
-} from "@sriinnu/tokmeter";
-import {
-  ALL_PROVIDER_IDS,
-  ensureCursorHook,
-  loadConfig,
-  localDateKey,
-  nullMap,
-  peekCachedRecords,
-  pollAntigravityLiveStatus,
-  refreshKoshaRegistry,
-} from "@sriinnu/tokmeter";
+import type { IncomingMessage } from "node:http";
+import { setPriority } from "node:os";
+import { ensureCursorHook, loadConfig, pollAntigravityLiveStatus } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
 import {
-  computeScopedView,
-  type ScopeParams,
-  serializeScopedView,
-  unpricedOf,
-} from "../scoped-view.js";
+  closeHttpApi,
+  flushHttpCoreRecordCache,
+  getWarmHttpCoreEntry,
+  HTTP_PORT,
+  startHttpApi,
+  warmHttpCore,
+} from "./http-api.js";
 import {
-  API_HEADER,
-  apiVersionHeaders,
-  daemonChildEnv,
-  isDaemonChildEnv,
-  LEGACY_API_HEADER,
-} from "./compat-names.js";
-import {
-  captureDaemonIdentity,
-  inspectDaemon,
-  readProcessEvidence,
-  signalVerifiedDaemon,
-} from "./identity.js";
-import {
-  AGENT_LABEL,
-  agentPlistPath,
-  installAgent,
-  isAgentInstalled,
-  isAgentLoaded,
-  kickstartAgent,
-  uninstallAgent,
-} from "./launchd.js";
+  clearAuthToken,
+  getAuthToken,
+  initAuthToken,
+  isAllowedHttpHost,
+  isValidAuthHeader,
+  writeSecretFile,
+} from "./http-auth.js";
+import { captureDaemonIdentity, inspectDaemon, readProcessEvidence } from "./identity.js";
 import { capDaemonLogs, LOG_CAP_CHECK_MS } from "./log-cap.js";
-import { DAEMON_PORT_ENV, daemonPortOverride } from "./port.js";
 import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
 import {
   DAEMON_HOST,
@@ -92,31 +51,47 @@ import {
   LEGACY_DAEMON_PID_FILE,
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
-import { RefreshCoordinator } from "./refresh-coordinator.js";
-import { type Session, SessionManager } from "./session.js";
-import { computeSessionLedger } from "./session-ledger.js";
+import { SessionManager } from "./session.js";
+import { sessionLedgerForTranscript } from "./snapshots.js";
+
+export { runDaemonCLI, waitForDaemonExit } from "./cli-commands.js";
+export {
+  computeStatsFloor,
+  computeTodayFloor,
+  type StatsFloor,
+  type TodayTotals,
+  todayTotalsFrom,
+} from "./floors.js";
+export { createDaemonTestHttpServer } from "./http-api.js";
+export { isAllowedHttpHost, isValidAuthHeader } from "./http-auth.js";
+export {
+  executeScopedRoute,
+  parseDaemonScopeQuery,
+  type ScopedRouteResult,
+} from "./scoped-routes.js";
+export {
+  type BarSnapshotResponse,
+  buildBarSnapshot,
+  buildStatuslineContext,
+  type StatuslineContextResponse,
+} from "./snapshots.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
 
 let wss: WebSocketServer | null = null;
-let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let sessionManager: SessionManager | null = null;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let saveStateInterval: ReturnType<typeof setInterval> | null = null;
 let antigravityLivePollInterval: ReturnType<typeof setInterval> | null = null;
 let cursorHookInterval: ReturnType<typeof setInterval> | null = null;
 let logCapInterval: ReturnType<typeof setInterval> | null = null;
+let _ownsDaemonState = false;
 
 /** How often the daemon re-checks the Cursor hook (it also checks at start). */
 const CURSOR_HOOK_CHECK_MS = 24 * 60 * 60 * 1000;
+const HTTP_BIND_FAILURE_EXIT_DELAY_MS = 60_000;
 
-/**
- * Keep tokmeter's Cursor stop hook in place: Cursor 3.11+ keeps no token
- * counts on disk, so without it Cursor shows turns but no usage. Logs only
- * when something changed or failed; a user's uninstall is respected.
- */
 async function keepCursorHook(): Promise<void> {
-  // Daemon tests start the real server; they must never edit ~/.cursor.
   if (process.env.VITEST) return;
   const result = await ensureCursorHook({ enabled: loadConfig().daemon.cursorHook });
   if (result.action === "installed" || result.action === "refreshed") {
@@ -130,139 +105,18 @@ async function keepCursorHook(): Promise<void> {
     console.error(`Cursor hook check failed: ${result.message}`);
   }
 }
-const HTTP_PORT = DAEMON_PORT + 1;
 
 /**
  * Allow a WebSocket handshake only from a localhost origin or from a native
- * client that sends no Origin header (the bar app, CLI). A foreign website's
- * connect carries its own Origin and is rejected — the defense against any
- * visited page opening ws://127.0.0.1 to read spend or inject sessions.
+ * client that sends no Origin header (the bar app, CLI).
  */
 export function isAllowedWsOrigin(origin?: string): boolean {
-  if (!origin) return true; // native clients send no Origin header
+  if (!origin) return true;
   return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
 }
 
-/**
- * Validate the HTTP Host header against localhost. This is the DNS-rebinding
- * defense that CORS response headers cannot provide: after an attacker rebinds
- * evil.com → 127.0.0.1, the browser's request is same-origin so CORS never
- * applies, but the Host header still carries the original `evil.com` — reject
- * it. A missing Host (HTTP/1.0, some native clients) is allowed; browsers
- * always send one.
- */
-export function isAllowedHttpHost(host?: string): boolean {
-  if (!host) return true;
-  const hostname = host.replace(/:\d+$/, "").toLowerCase();
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "[::1]" ||
-    hostname === "::1"
-  );
-}
-
-/**
- * V8 old-space cap (MB) for the spawned daemon child — the guardrail against a
- * runaway scan ballooning the box back into kernel-panic territory.
- *
- * NOTE: this is deliberately MUCH higher than the statusline's 768MB cap. The
- * statusline never scans anymore (it reads the daemon), so 768 is plenty for
- * it. The daemon, by contrast, MUST perform the one-time full-history
- * `scan()` to load frozen history, and on a real power-user corpus that cold
- * scan peaks well past 2GB (measured ~4.5GB peak / ~3.9GB warm on the dev
- * corpus). A 768MB cap here OOM-kills the daemon before it can ever finish
- * warming, which would break the whole architecture (everything reads the
- * daemon). We cap high enough to clear the cold scan with headroom while still
- * bounding true runaway. Tune via TOKMETER_DAEMON_HEAP_MB if a corpus needs
- * more. The held working set is the cost of keeping all history warm — that's
- * the design — but it now lives in ONE singleton, not a stack of scanners.
- */
-const DAEMON_HEAP_CAP_MB = Number.parseInt(process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144", 10);
-
-// ─── Auth Token ────────────────────────────────────────────────────────
-// Generate a random bearer token on daemon start. Written to a file (mode 0600)
-// so only the owning user can read it. All HTTP POST requests must include it.
-import { randomBytes, timingSafeEqual } from "node:crypto";
-
-let _authToken: string | null = null;
-let _ownsDaemonState = false;
-
-/**
- * Write `data` to `path` with mode 0600 using `O_CREAT|O_EXCL|O_WRONLY`. The
- * EXCL flag closes the symlink-race / pre-created-file attack: if anything
- * already exists at `path`, the open fails (EEXIST) and we unlink + retry.
- * This is the local-multi-user TOCTOU defense — an attacker cannot pre-create
- * the token file with their own owner/perms and read what we write.
- */
-function writeSecretFile(path: string, data: string): void {
-  // Best-effort cleanup of any stale file at the path. If it's not ours,
-  // the unlink will fail and the open below will EEXIST → we surface.
-  try {
-    unlinkSync(path);
-  } catch {
-    /* file may not exist; that's fine — EXCL open will catch races */
-  }
-  const fd = openSync(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
-  try {
-    writeSync(fd, data);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function initAuthToken(): void {
-  _authToken = randomBytes(32).toString("hex");
-  // A pre-existing state directory may have been created under a permissive
-  // umask. Repair it before publishing the capability, and refuse symlinks or
-  // another user's directory rather than putting secrets in an unsafe root.
-  mkdirSync(DAEMON_STATE_DIR, { recursive: true, mode: 0o700 });
-  const state = lstatSync(DAEMON_STATE_DIR);
-  if (!state.isDirectory() || (process.getuid && state.uid !== process.getuid())) {
-    throw new Error("Daemon state directory is not an owner-controlled directory");
-  }
-  if (process.platform !== "win32") chmodSync(DAEMON_STATE_DIR, 0o700);
-  writeSecretFile(DAEMON_TOKEN_FILE, _authToken);
-  // Compat shim for bar v1.4.0 which still reads /tmp/drishti-daemon.token.
-  // /tmp is shared, so this is the TOCTOU-exposed copy — best-effort, never
-  // fatal. Future bar releases should switch to DAEMON_TOKEN_FILE and we drop
-  // this shim.
-  try {
-    writeSecretFile(LEGACY_DAEMON_TOKEN_FILE, _authToken);
-  } catch {
-    /* ignore — legacy clients just won't authenticate */
-  }
-}
-
-/**
- * Pure bearer-token check, split out from {@link checkAuth} so it's testable
- * without spinning up the real daemon. An uninitialized token must fail
- * closed, including during the short interval before startup publishes it.
- */
-export function isValidAuthHeader(header: string | undefined, token: string | null): boolean {
-  if (!token) return false;
-  const value = header ?? "";
-  const expected = `Bearer ${token}`;
-  // Constant-time compare so an attacker can't probe the token via timing.
-  // Compare UTF-8 byte lengths, not JS string lengths: a same-length Unicode
-  // header can encode to more bytes and make timingSafeEqual throw.
-  const supplied = Buffer.from(value);
-  const wanted = Buffer.from(expected);
-  if (supplied.length !== wanted.length) return false;
-  return timingSafeEqual(supplied, wanted);
-}
-
-function checkAuth(req: IncomingMessage): boolean {
-  return isValidAuthHeader(req.headers.authorization, _authToken);
-}
-
-// Client tracking: WebSocket -> most-recent { provider, sessionId } (used to
-// exclude the asking session from its own broadcast).
+// Client tracking: WebSocket -> most-recent { provider, sessionId }
 const clientSessions = new Map<WebSocket, { provider: string; sessionId: string }>();
-// EVERY session a socket has touched, so `close` can disconnect all of them.
-// Without this, a connection that reports >1 sessionId leaves all-but-the-last
-// stuck connected:true forever → never reaped by cleanupStale and counted in
-// the aggregate indefinitely (unbounded Map growth + permanent spend inflation).
 const clientTouched = new Map<WebSocket, Map<string, { provider: string; sessionId: string }>>();
 const MAX_WS_CLIENTS = 128;
 const MAX_SESSIONS_PER_CLIENT = 64;
@@ -286,6 +140,20 @@ function trackTouched(ws: WebSocket, provider: string, sessionId: string): void 
   set.set(touchedKey(provider, sessionId), { provider, sessionId });
 }
 
+function refuseStartup(err: Error & { code?: string }): void {
+  console.error(
+    err.code === "EADDRINUSE"
+      ? `HTTP API port ${DAEMON_HOST}:${HTTP_PORT} is already in use by another process. ` +
+          "Refusing to start: no auth token was written. Free the port " +
+          `(\`lsof -nP -iTCP:${HTTP_PORT} -sTCP:LISTEN\`) and start the daemon again.`
+      : `HTTP API could not bind ${DAEMON_HOST}:${HTTP_PORT} (${err.message}). ` +
+          "Refusing to start: no auth token was written."
+  );
+  stopDaemon();
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), HTTP_BIND_FAILURE_EXIT_DELAY_MS);
+}
+
 // ─── Main Server ────────────────────────────────────────────────────────
 
 export function startDaemon(): void {
@@ -294,49 +162,28 @@ export function startDaemon(): void {
     return;
   }
 
-  // launchd never rotates the daemon's stdout/stderr files (log-cap.ts).
-  // Check first, before anything that can fail: a daemon that dies during
-  // startup and is respawned every 10s appends a stack each time, and would
-  // never reach the interval below.
   capDaemonLogs(DAEMON_STATE_DIR);
 
-  // Lower the daemon's CPU priority so the macOS scheduler keeps interactive
-  // UI (Ghostty, Cursor, the menubar) responsive while we GC, refresh today,
-  // and aggregate. We are background data infrastructure; we MUST yield to
-  // the foreground. Without this, a 200 ms GC pause in a 1.5 GB heap stalls
-  // every other process briefly because macOS's compressor and scheduler
-  // share global pools — exactly what was murdering Ghostty.
-  //
-  // +10 = "nice", same as the standard background-daemon convention on Unix.
-  // setPriority is best-effort; macOS may clamp to its own range.
   try {
     setPriority(0, 10);
   } catch {
-    // Non-fatal — if the OS refuses, the daemon still works, just less polite.
+    // Non-fatal — OS may clamp priority range.
   }
 
-  // Binding the WebSocket port is the cross-process startup claim. A PID
-  // file alone cannot establish ownership and must never decide publication.
   sessionManager = new SessionManager();
 
   wss = new WebSocketServer({
     port: DAEMON_PORT,
     host: DAEMON_HOST,
-    // A legitimate session update is tiny. Bound parsing even for an
-    // authenticated but malfunctioning local client.
     maxPayload: 65_536,
-    // Require the per-user capability for both reads and writes. A loopback
-    // socket is reachable from another local account. Keep Host and Origin
-    // checks as separate browser DNS-rebinding/cross-origin defenses.
     verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) =>
       Boolean(req.headers.host) &&
       isAllowedHttpHost(req.headers.host) &&
       isAllowedWsOrigin(origin) &&
-      isValidAuthHeader(req.headers.authorization, _authToken),
+      isValidAuthHeader(req.headers.authorization, getAuthToken()),
   });
 
   wss.on("listening", () => {
-    // Only the process that bound the port may publish credentials or identity.
     const evidence = readProcessEvidence(process.pid);
     if (!evidence) {
       console.error("Cannot verify this daemon process; refusing to publish credentials");
@@ -344,18 +191,15 @@ export function startDaemon(): void {
       process.exitCode = 1;
       return;
     }
-    // Bind the HTTP API port too BEFORE minting or publishing the token.
-    // Clients send `Authorization: Bearer <token>` to HTTP_PORT; if another
-    // process held it, publishing a token would hand every client's
-    // credential to that process.
     startHttpApi({
+      getSessionManager: () => sessionManager,
       onListening: () => publishAndRun(evidence),
       onBindError: (err) => refuseStartup(err),
     });
   });
 
   const publishAndRun = (evidence: NonNullable<ReturnType<typeof readProcessEvidence>>) => {
-    if (!wss) return; // stopped while the HTTP bind was in flight
+    if (!wss) return;
     _ownsDaemonState = true;
     initAuthToken();
     writeSecretFile(
@@ -364,7 +208,6 @@ export function startDaemon(): void {
     );
     console.log(`【♾️】 Tokmeter daemon listening on ${DAEMON_URL}`);
 
-    // Write PID file (canonical + legacy /tmp shim for bar v1.4.0 compat).
     writeSecretFile(DAEMON_PID_FILE, String(process.pid));
     try {
       writeSecretFile(LEGACY_DAEMON_PID_FILE, String(process.pid));
@@ -372,7 +215,6 @@ export function startDaemon(): void {
       /* legacy path optional */
     }
 
-    // Start cleanup interval
     cleanupInterval = setInterval(() => {
       const cleaned = sessionManager?.cleanupStale() ?? 0;
       if (cleaned > 0) {
@@ -380,63 +222,28 @@ export function startDaemon(): void {
       }
     }, 30_000);
 
-    // Save state periodically
     saveStateInterval = setInterval(() => {
       saveState();
-      // macOS reaps /tmp files untouched for ~3 days. The legacy pid/token
-      // shims are written once at startup, so a daemon that stays up for days
-      // loses them to the reaper — after which the macOS bar (which reads
-      // /tmp/drishti-daemon.pid) reports "offline" despite a healthy daemon,
-      // and a restart can't recover because this live daemon still owns the
-      // canonical pidfile and the singleton guard bows out. Re-assert the
-      // shims whenever they go missing so the reaper can never outlast us.
       reassertLegacyShims();
     }, 10_000);
 
-    // Poll Antigravity's live credit status (if it's running) on the same
-    // cadence as the daemon's own advisory rescan interval. This is a
-    // best-effort background signal, not a hot-path read: only this
-    // interval ever touches the process/network — readers (CLI, API) only
-    // ever read the on-disk snapshot log pollAntigravityLiveStatus appends
-    // to. A failed/empty poll (Antigravity not running) is silent, not an
-    // error — most of the time nobody has it open.
-    //
-    // Off by default (daemon.antigravityLivePolling, config-service.ts) —
-    // it works by reading a CSRF token out of Antigravity's own process
-    // command line and calling an undocumented internal RPC with it. Real
-    // enough to automate indefinitely in the background that it needs an
-    // explicit, durable opt-in, not just something inferred from a chat.
     if (loadConfig().daemon.antigravityLivePolling) {
       const scanIntervalMs = Math.max(loadConfig().daemon.scanIntervalSeconds, 30) * 1000;
       antigravityLivePollInterval = setInterval(() => {
-        void pollAntigravityLiveStatus().catch(() => {
-          // best-effort signal — a failure here must never affect anything else
-        });
+        void pollAntigravityLiveStatus().catch(() => {});
       }, scanIntervalMs);
     }
 
-    // Cursor hook: once now, then daily (picks up a newer hook script after
-    // an upgrade, and notices a removal).
     void keepCursorHook().catch(() => {});
     cursorHookInterval = setInterval(() => {
       void keepCursorHook().catch(() => {});
     }, CURSOR_HOOK_CHECK_MS);
     cursorHookInterval.unref?.();
 
-    // Keep the launchd logs bounded while we run (first check: top of startDaemon).
     logCapInterval = setInterval(() => capDaemonLogs(DAEMON_STATE_DIR), LOG_CAP_CHECK_MS);
     logCapInterval.unref?.();
 
-    // Warm the HTTP core asynchronously so the first user request doesn't
-    // pay the full-disk-scan tax. We don't await — the WebSocket server is
-    // already up so other clients aren't blocked.
-    void getHttpCore()
-      .then(() => {
-        console.log("【♾️】 HTTP core warm — ready to serve");
-      })
-      .catch((err) => {
-        console.error("HTTP core warmup failed:", err);
-      });
+    warmHttpCore();
   };
 
   wss.on("connection", (ws) => {
@@ -454,7 +261,6 @@ export function startDaemon(): void {
     });
 
     ws.on("close", () => {
-      // Disconnect EVERY session this socket touched, not just the last one.
       const touched = clientTouched.get(ws);
       if (touched && sessionManager) {
         for (const { provider, sessionId } of touched.values()) {
@@ -473,16 +279,12 @@ export function startDaemon(): void {
 
   wss.on("error", (err: Error & { code?: string }) => {
     if (err.code === "EADDRINUSE") {
-      // Another daemon won the bind race (the PID-file check above has a
-      // small TOCTOU window). Exit cleanly rather than crash-looping — the
-      // other daemon is the live singleton and there's nothing for us to do.
       console.log(`daemon port ${DAEMON_PORT} already in use — startup skipped`);
       process.exit(0);
     }
     console.error("Server error:", err.message);
   });
 
-  // Load previous state
   loadState();
 }
 
@@ -540,8 +342,6 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         msg.tokens,
         msg.durationMs,
         msg.contextWindow,
-        // The whole SessionInfo, so a one-shot `update` (the statusline sends
-        // nothing else) registers with its real model/project/cwd.
         {
           model: msg.session.model,
           project: msg.session.project,
@@ -575,6 +375,7 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
 
 function broadcast(): void {
   if (!wss || !sessionManager) return;
+  const httpCore = getWarmHttpCoreEntry();
 
   for (const ws of wss.clients) {
     if (ws.readyState !== WebSocket.OPEN) continue;
@@ -585,13 +386,11 @@ function broadcast(): void {
     const session = sessionManager.get(clientSession.provider, clientSession.sessionId);
     if (!session) continue;
 
-    // Get aggregated stats excluding this session
     const aggregated = sessionManager.getAggregated({
       provider: clientSession.provider,
       sessionId: clientSession.sessionId,
     });
 
-    // Add this session's data to aggregated total
     const fullAggregated: typeof aggregated = {
       ...aggregated,
       totalCost: aggregated.totalCost + session.cost,
@@ -604,9 +403,10 @@ function broadcast(): void {
       sessions: aggregated.sessions + 1,
     };
 
-    // Ledger totals ride the same round-trip.
     const ledger =
-      session.transcriptPath && _httpCore ? sessionLedgerFor(session.transcriptPath) : null;
+      session.transcriptPath && httpCore
+        ? sessionLedgerForTranscript(session.transcriptPath, httpCore.core.getHomeDir?.())
+        : null;
 
     const msg: BroadcastMessage = {
       type: "broadcast",
@@ -622,55 +422,11 @@ function broadcast(): void {
   }
 }
 
-/**
- * Whole-session ledger for a transcript: main file plus nested subagent runs.
- *
- * Source is the parser's per-file record cache, which holds every record of
- * a file the daemon has parsed — so a session that started before midnight
- * keeps yesterday's turns, unlike the today-only recentRecords window. Falls
- * back to that window only when the file isn't cached yet. No parsing here:
- * a fresh tail is picked up by the daemon's own refresh cadence.
- */
-function sessionLedgerFor(transcriptPath: string) {
-  if (!_httpCore || !isTranscriptPath(transcriptPath)) return null;
-  const files = [transcriptPath];
-  const subagentDir = `${transcriptPath.slice(0, -".jsonl".length)}/subagents`;
-  try {
-    // Bounded: a real session has a handful of subagent runs; anything
-    // beyond this is not a transcript directory we want to walk per tick.
-    for (const f of readdirSync(subagentDir).slice(0, 256)) {
-      if (f.endsWith(".jsonl")) files.push(`${subagentDir}/${f}`);
-    }
-  } catch {}
-  const homeDir = _httpCore.core?.getHomeDir?.();
-  const records = files.flatMap((f) => peekCachedRecords(f, homeDir) ?? []);
-  // No fallback to the recentRecords window: every record there came through
-  // the same cache, so an uncached transcript is absent from it too.
-  return records.length > 0 ? computeSessionLedger(records, transcriptPath) : null;
-}
-
-/**
- * The WS transport and the HTTP GET are unauthenticated local endpoints and
- * transcriptPath is client-supplied — only ever touch the filesystem for a
- * `.jsonl` under a Claude Code projects dir (default or CLAUDE_CONFIG_DIR).
- */
-function isTranscriptPath(p: string): boolean {
-  if (typeof p !== "string" || !p.endsWith(".jsonl") || p.includes("/../") || p.includes("\0")) {
-    return false;
-  }
-  const roots = [join(homedir(), ".claude", "projects")];
-  if (process.env.CLAUDE_CONFIG_DIR) roots.push(join(process.env.CLAUDE_CONFIG_DIR, "projects"));
-  return roots.some((root) => p.startsWith(`${root}/`));
-}
-
-/// A healthy client drains a broadcast instantly, so anything past this in its
-/// send buffer means it has stalled — stop feeding it or the buffer grows
-/// unbounded until the daemon OOMs.
 const WS_MAX_BUFFERED_BYTES = 1_000_000;
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  if (ws.bufferedAmount > WS_MAX_BUFFERED_BYTES) return; // backpressure: drop for a stalled reader
+  if (ws.bufferedAmount > WS_MAX_BUFFERED_BYTES) return;
   ws.send(JSON.stringify(msg));
 }
 
@@ -682,14 +438,12 @@ function saveState(): void {
   const state = {
     sessions: sessionManager.getAll().map((s) => ({
       ...s,
-      connected: false, // Don't persist connected state
+      connected: false,
     })),
     savedAt: Date.now(),
   };
 
   try {
-    // Atomic write: a crash mid-write must never leave a truncated JSON that
-    // would throw on the next loadState. tmp(pid)+fsync+rename.
     const tmp = `${DAEMON_STATE_FILE}.${process.pid}.tmp`;
     const fd = openSync(tmp, "w", 0o600);
     try {
@@ -704,20 +458,18 @@ function saveState(): void {
   }
 }
 
-// Re-create the legacy /tmp pid/token shims if the OS reaper removed them.
-// Canonical state lives under $HOME (reaper-safe); only the /tmp copies the
-// macOS bar reads are at risk. Cheap existsSync gate — writes only on miss.
 function reassertLegacyShims(): void {
   try {
     if (!existsSync(LEGACY_DAEMON_PID_FILE)) {
       writeSecretFile(LEGACY_DAEMON_PID_FILE, String(process.pid));
     }
   } catch {
-    /* legacy path optional — canonical pidfile is the source of truth */
+    /* legacy path optional */
   }
   try {
-    if (_authToken && !existsSync(LEGACY_DAEMON_TOKEN_FILE)) {
-      writeSecretFile(LEGACY_DAEMON_TOKEN_FILE, _authToken);
+    const token = getAuthToken();
+    if (token && !existsSync(LEGACY_DAEMON_TOKEN_FILE)) {
+      writeSecretFile(LEGACY_DAEMON_TOKEN_FILE, token);
     }
   } catch {
     /* legacy clients just won't authenticate POSTs until next tick */
@@ -729,8 +481,6 @@ function loadState(): void {
 
   try {
     const data = JSON.parse(readFileSync(DAEMON_STATE_FILE, "utf-8"));
-    // Sessions will re-register on reconnect, so we just use this for
-    // historical context if needed
     console.log(`Loaded state from ${new Date(data.savedAt).toISOString()}`);
   } catch {
     // Ignore load errors
@@ -740,10 +490,9 @@ function loadState(): void {
 // ─── Daemon Management ──────────────────────────────────────────────────
 
 export function stopDaemon(): void {
-  // A losing startup process must not save over or unlink the winner's state.
   if (_ownsDaemonState) {
     saveState();
-    _httpCore?.core?.flushRecordCache?.();
+    flushHttpCoreRecordCache();
   }
 
   if (cleanupInterval) {
@@ -772,12 +521,8 @@ export function stopDaemon(): void {
     wss = null;
   }
 
-  if (httpServer) {
-    httpServer.close();
-    httpServer = null;
-  }
+  closeHttpApi();
 
-  // Remove only files belonging to this process, never a successor's state.
   const ownsPid =
     _ownsDaemonState &&
     (() => {
@@ -803,7 +548,7 @@ export function stopDaemon(): void {
     }
   }
 
-  _authToken = null;
+  clearAuthToken();
   _ownsDaemonState = false;
   sessionManager = null;
   console.log("Daemon stopped");
@@ -823,1831 +568,4 @@ export function getDaemonStatus(): {
   return owner.state === "verified"
     ? { running: true, pid: owner.identity.pid, port: DAEMON_PORT, identity: owner.state }
     : { running: false, port: DAEMON_PORT, identity: owner.state };
-}
-
-// ─── HTTP REST API ──────────────────────────────────────────────────────
-
-/**
- * The daemon holds ONE persistent TokmeterCore for its entire lifetime — the
- * single warm source of truth. Frozen history is scanned once; only TODAY is
- * refreshed incrementally (cheap, stat-pruned to today's active files) on a
- * sane cadence. This is the fix for the RAM blow-up: we no longer build a new
- * core and full-scan the whole corpus on a 5s TTL.
- *
- * `_httpCore` holds the singleton; `ts` is the last time TODAY was refreshed.
- */
-let _httpCore: { core: TokmeterCore; ts: number; lastScanDurationMs: number } | null = null;
-/**
- * How stale today's data may get before a warm `refreshToday()` runs. The full
- * frozen history is never re-read here — only today's ~2 active files.
- */
-const TODAY_REFRESH_TTL = 12_000;
-
-/** True once the first warmup scan has completed. */
-let _httpCoreReady = false;
-
-/**
- * API version sent on every response as `X-Tokmeter-API: tokmeter-api/N`, and
- * for bars that predate the rename also as `X-Drishti-API: drishti-api/N`
- * (see compat-names.ts).
- * Native clients (TokmeterBar.app) check the MAJOR version on every request
- * and surface a clear "incompatible daemon" error if they disagree.
- *
- * Bump this whenever the response shape of any GET endpoint changes in a
- * non-backward-compatible way (renamed field, removed field, type change).
- */
-const API_VERSION = 1;
-const SUMMARY_SOURCE_HEADER = "X-Tokmeter-Summary-Source";
-
-// Guards /api/rescan: the deep rebuild runs in the background, so concurrent
-// triggers (impatient double-click) must coalesce, not stack.
-let _rescanInFlight = false;
-
-// How many recent days a Deep Rescan re-derives from raw. Covers pace's 7-day
-// baseline plus slack, and any day a recent bug could have mis-sealed — while
-// staying far below the full-history parse that exhausts memory.
-const DEEP_RESCAN_WINDOW_DAYS = 30;
-
-const coreRefresh = new RefreshCoordinator<TokmeterCore>(async (full) => {
-  const startedAt = Date.now();
-  if (_httpCore) {
-    if (full) await _httpCore.core.scan();
-    else await _httpCore.core.refreshToday();
-    _httpCore.ts = Date.now();
-    _httpCore.lastScanDurationMs = Date.now() - startedAt;
-    return _httpCore.core;
-  }
-  const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
-  const core = new CoreCtor();
-  await core.scan();
-  _httpCore = { core, ts: Date.now(), lastScanDurationMs: Date.now() - startedAt };
-  _httpCoreReady = true;
-  return core;
-});
-
-async function ensureCoreFresh(forceFullRescan = false): Promise<TokmeterCore> {
-  if (
-    !forceFullRescan &&
-    !coreRefresh.busy &&
-    _httpCore &&
-    Date.now() - _httpCore.ts < TODAY_REFRESH_TTL
-  )
-    return _httpCore.core;
-  return coreRefresh.run(forceFullRescan);
-}
-
-async function getHttpCore(): Promise<TokmeterCore> {
-  return ensureCoreFresh(false);
-}
-
-/**
- * Stale-while-revalidate read for hot-path callers (the statusline). Once the
- * core is warm, answer from it immediately and let a stale one refresh after
- * the reply. `getHttpCore()` instead awaits that refresh, and a today refresh
- * runs every parser at once: measured 2.5–5s on a real corpus, while Claude
- * Code cancels a statusline that hasn't printed by its next ~300ms update.
- * Cold start still waits, since there is nothing to serve yet.
- */
-async function getHttpCoreNoWait(): Promise<TokmeterCore> {
-  if (!_httpCore) return getHttpCore();
-  return coreRefresh.serveStale(
-    _httpCore.core,
-    Date.now() - _httpCore.ts,
-    TODAY_REFRESH_TTL,
-    (err) => {
-      console.error("Background today refresh failed:", toErrorMessage(err));
-    }
-  );
-}
-
-/**
- * Force a full re-scan of the persistent core (history reloaded, today
- * repriced). Used after a pricing update. Routes through the single mediator
- * so concurrent calls and concurrent refreshes don't stack into back-to-back
- * full-corpus scans.
- */
-async function rescanHttpCore(): Promise<void> {
-  await ensureCoreFresh(true);
-}
-
-async function getHttpSummaryPayload(): Promise<{
-  summary: TokmeterSummary;
-  source: "live" | "cache";
-}> {
-  try {
-    const core = await getHttpCore();
-    return {
-      summary: core.getSummary(),
-      source: "live",
-    };
-  } catch (error) {
-    const { loadSummaryCache } = await import("@sriinnu/tokmeter");
-    const cached = loadSummaryCache(homedir());
-
-    if (cached.summary) {
-      return {
-        summary: appendSummaryWarnings(
-          cached.summary,
-          [
-            ...cached.warnings,
-            {
-              scope: "cache",
-              message: `Live summary refresh failed — serving persisted cache (${toErrorMessage(error)}).`,
-            },
-          ],
-          "snapshot-only"
-        ),
-        source: "cache",
-      };
-    }
-
-    throw error;
-  }
-}
-
-/**
- * The HTTP API port is held by another process (or unbindable): stop without
- * ever having written a token, pid or identity file, and exit non-zero so a
- * supervisor knows this was not a clean bow-out. The exit is delayed so that
- * launchd's KeepAlive (respawn on non-zero exit, ThrottleInterval 10s)
- * retries about once a minute — enough to recover when the port frees, not a
- * tight respawn loop. Nothing is bound or published while waiting.
- */
-const HTTP_BIND_FAILURE_EXIT_DELAY_MS = 60_000;
-
-function refuseStartup(err: Error & { code?: string }): void {
-  console.error(
-    err.code === "EADDRINUSE"
-      ? `HTTP API port ${DAEMON_HOST}:${HTTP_PORT} is already in use by another process. ` +
-          "Refusing to start: no auth token was written. Free the port " +
-          `(\`lsof -nP -iTCP:${HTTP_PORT} -sTCP:LISTEN\`) and start the daemon again.`
-      : `HTTP API could not bind ${DAEMON_HOST}:${HTTP_PORT} (${err.message}). ` +
-          "Refusing to start: no auth token was written."
-  );
-  stopDaemon();
-  process.exitCode = 1;
-  // Deliberately NOT unref'd: holding the (now port-less, token-less)
-  // process is what spaces out launchd's respawns.
-  setTimeout(() => process.exit(1), HTTP_BIND_FAILURE_EXIT_DELAY_MS);
-}
-
-function startHttpApi(handlers: {
-  onListening: () => void;
-  onBindError: (err: Error & { code?: string }) => void;
-}): void {
-  httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
-    // CORS controls which browser origins can read responses; bearer auth
-    // below controls whether the request is served at all.
-    const origin = req.headers.origin ?? "";
-    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
-    res.setHeader("Access-Control-Allow-Origin", isLocalhost ? origin : "http://localhost");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.setHeader(
-      "Access-Control-Expose-Headers",
-      `${API_HEADER}, ${LEGACY_API_HEADER}, ${SUMMARY_SOURCE_HEADER}`
-    );
-    res.setHeader("Content-Type", "application/json");
-    for (const [name, value] of apiVersionHeaders(API_VERSION)) res.setHeader(name, value);
-    // Hardening headers
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Cache-Control", "no-store");
-
-    // DNS-rebinding guard: reject any request whose Host is not localhost.
-    // Applies to GET reads too (they carry spend/history), which the CORS
-    // header alone does not protect once a rebound origin is same-origin.
-    if (!isAllowedHttpHost(req.headers.host)) {
-      res.writeHead(403);
-      res.end(JSON.stringify({ error: "Forbidden host" }));
-      return;
-    }
-
-    const url = req.url ?? "/";
-    // Path without query so endpoints that accept `?providers=` (used by the
-    // CLI's daemon-read fast path for `stats/daily/models --json --codex`) still
-    // route correctly. Endpoints without params can keep matching `url`.
-    const pathname = url.split("?")[0];
-
-    // The readiness bit reveals no usage and lets the bar distinguish a
-    // warming daemon from an offline one. Every other route, including reads,
-    // requires the per-user capability. Loopback is reachable by other local
-    // accounts and CORS cannot prevent those native clients from reading it.
-    if (!(req.method === "GET" && pathname === "/api/ready") && !checkAuth(req)) {
-      res.writeHead(401);
-      json(res, { error: "Unauthorized" });
-      return;
-    }
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    try {
-      // GET endpoints — all routing keys off `pathname` (i.e. URL minus query
-      // string) so a stray `?foo=bar` on a parameterless endpoint can never
-      // bypass the route into the 404 default. Endpoints that accept query
-      // params parse them off `url` explicitly.
-      if (req.method === "GET") {
-        // Fast endpoints — never trigger a fresh scan, just report state.
-        // /api/ready is a tiny health check the menubar uses to know whether
-        // it's worth firing the slow endpoints yet.
-        if (pathname === "/api/ready") {
-          json(res, {
-            ready: _httpCoreReady,
-            warming: coreRefresh.busy,
-            apiVersion: API_VERSION,
-          });
-          return;
-        }
-
-        // /api/quick returns just the stats from whatever cache is available.
-        // If the core has never been scanned, returns zeros + ready: false so
-        // the UI can render a skeleton instead of timing out.
-        if (pathname === "/api/quick") {
-          // Live context-window fill (worst session across all providers that
-          // report one) rides the fast endpoint so the menubar color can track
-          // it near-real-time. Undefined when no live session exposes it — the
-          // bar then colors by the universal cost/budget signal.
-          const liveContextFillPct = sessionManager?.getAggregated().maxContextFillPct;
-          if (_httpCore) {
-            const stats = applyStatsFloor(_httpCore.core.getStats());
-            // getStatbarSignals() is cheap here — it walks only the bounded
-            // in-memory recentRecords window, not the corpus — so the 5-hour
-            // billing-block % can ride this same fast endpoint, same as
-            // liveContextFillPct above. This is also what makes the ".block"
-            // menubar color source a live daemon round-trip instead of a
-            // static value: a failed/offline fetch clears it to undefined
-            // rather than showing a stale reading.
-            const blockElapsedPct = _httpCore.core.getStatbarSignals().billingWindow?.elapsedPct;
-            json(res, { ready: true, stats, liveContextFillPct, blockElapsedPct });
-          } else {
-            // Kick off the warmup but don't wait for it.
-            void getHttpCore().catch(() => {});
-            json(res, {
-              ready: false,
-              stats: {
-                totalCost: 0,
-                totalTokens: 0,
-                activeDays: 0,
-                projects: 0,
-                longestStreak: 0,
-              },
-              liveContextFillPct,
-            });
-          }
-          return;
-        }
-
-        // Slow endpoints — wait for the core to be ready.
-        if (pathname === "/api/summary") {
-          const parsed = parseDaemonScopeQuery(url);
-          if (parsed.error) {
-            res.writeHead(400);
-            json(res, { error: parsed.error });
-            return;
-          }
-          if (parsed.hasScope) {
-            const core = await getHttpCore();
-            const scoped = executeScopedRoute(
-              pathname,
-              url,
-              core,
-              _httpCore?.lastScanDurationMs ?? 0
-            );
-            if (scoped) {
-              if (scoped.headers) {
-                for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
-              }
-              if (scoped.status !== 200) res.writeHead(scoped.status);
-              json(res, scoped.body);
-              return;
-            }
-          }
-          const { summary, source } = await getHttpSummaryPayload();
-          res.setHeader(SUMMARY_SOURCE_HEADER, source);
-          json(res, summary);
-          return;
-        }
-
-        if (pathname === "/api/live") {
-          json(res, { aggregated: sessionManager?.getAggregated() ?? null });
-          return;
-        }
-
-        if (pathname === "/api/today") {
-          // Today's cross-provider totals, computed from the WARM core — no
-          // scan, and no wait on a refresh (see getHttpCoreNoWait). The
-          // statusline reads this on its hot path. The today-floor pins each
-          // field to its per-day high-water mark so codex fork-dedup swaps
-          // can't show today *decreasing* (user can't un-spend money).
-          // `computedAt` lets the caller show how old the numbers are.
-          const warm = await getHttpCoreNoWait();
-          json(res, {
-            ...applyTodayFloor(computeTodayTotals(warm)),
-            computedAt: _httpCore?.ts ?? Date.now(),
-          });
-          return;
-        }
-
-        if (pathname === "/api/statusline-context") {
-          const qi = url.indexOf("?");
-          const params = qi >= 0 ? new URLSearchParams(url.slice(qi + 1)) : new URLSearchParams();
-          const project = params.get("project")?.trim() || undefined;
-          const agent = params.get("agent")?.trim() || undefined;
-          const warm = await getHttpCoreNoWait();
-          const todayFloored = applyTodayFloor(computeTodayTotals(warm));
-          const computedAt = _httpCore?.ts ?? Date.now();
-          json(
-            res,
-            await buildStatuslineContext(warm, {
-              project,
-              agent,
-              sessions: sessionManager?.getLive() ?? [],
-              computedAt,
-              homeDir: warm.getHomeDir?.(),
-              todayFloored,
-            })
-          );
-          return;
-        }
-
-        const core = await getHttpCore();
-        const scoped = executeScopedRoute(pathname, url, core, _httpCore?.lastScanDurationMs ?? 0);
-        if (scoped) {
-          if (scoped.headers) {
-            for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
-          }
-          if (scoped.status !== 200) res.writeHead(scoped.status);
-          json(res, scoped.body);
-          return;
-        }
-
-        if (pathname === "/api/projects") {
-          json(res, core.getAllProjects());
-        } else if (pathname === "/api/sessions") {
-          const today = new URL(url, "http://localhost").searchParams.get("today") === "true";
-          json(res, readSessionsPayload(core, today));
-        } else if (pathname.startsWith("/api/projects/")) {
-          const name = decodeURIComponent(pathname.slice("/api/projects/".length));
-          json(res, core.getProjectSummary(name) ?? { error: "Not found" });
-        } else if (pathname === "/api/stats") {
-          json(res, applyStatsFloor(core.getStats()));
-        } else if (pathname === "/api/statbar-signals") {
-          json(res, core.getStatbarSignals());
-        } else if (pathname === "/api/session-ledger") {
-          const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
-          json(res, sessionLedgerFor(transcript) ?? { error: "Not found" });
-        } else if (pathname === "/api/models") {
-          json(res, core.getModelCosts());
-        } else if (pathname === "/api/health") {
-          json(res, readHealthPayload(core));
-        } else if (pathname === "/api/today-models") {
-          json(res, core.getModelCosts({ today: true }));
-        } else if (pathname === "/api/rates") {
-          const scope =
-            new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
-          json(res, await core.getModelRates(scope));
-        } else if (pathname === "/api/cross-tool") {
-          json(res, await core.getCrossToolComparison());
-        } else if (pathname === "/api/pricing-status") {
-          json(res, readPricingStatusPayload(homedir()));
-        } else if (pathname === "/api/anomalies") {
-          json(res, readAnomaliesPayload(homedir()));
-        } else if (pathname === "/api/coverage") {
-          const { readCoverageReports } = await import("@sriinnu/tokmeter");
-          json(res, { reports: await readCoverageReports(homedir(), 7) });
-        } else if (pathname === "/api/quota") {
-          const { getQuota } = await import("@sriinnu/tokmeter");
-          json(res, {
-            windows: await getQuota(homedir(), Date.now(), (msg) => console.warn(`[quota] ${msg}`)),
-          });
-        } else if (pathname === "/api/cron-status") {
-          json(res, readCronStatusPayload(homedir()));
-        } else if (pathname === "/api/daily") {
-          json(res, readDailyFloored(core, true));
-        } else if (pathname === "/api/providers") {
-          json(res, core.getProviderBreakdown());
-        } else if (pathname === "/api/antigravity-live") {
-          json(res, await readAntigravityLivePayload());
-        } else if (pathname === "/api/bar-snapshot") {
-          json(res, await buildBarSnapshot(core, { applyFloor: true, homeDir: homedir() }));
-        } else if (pathname === "/api/backups") {
-          const { CleanupService } = await import("@sriinnu/tokmeter");
-          const service = new CleanupService(core);
-          json(res, service.listBackups());
-        } else if (pathname === "/api/themes") {
-          const { listThemes } = await import("@sriinnu/tokmeter");
-          json(res, listThemes());
-        } else {
-          res.writeHead(404);
-          json(res, {
-            error: "Not found",
-            endpoints: [
-              "/api/ready",
-              "/api/quick",
-              "/api/today",
-              "/api/statusline-context",
-              "/api/bar-snapshot",
-              "/api/summary",
-              "/api/live",
-              "/api/projects",
-              "/api/sessions",
-              "/api/stats",
-              "/api/statbar-signals",
-              "/api/models",
-              "/api/rates",
-              "/api/daily",
-              "/api/providers",
-              "/api/antigravity-live",
-              "/api/backups",
-              "/api/themes",
-            ],
-          });
-        }
-        return;
-      }
-
-      // POST endpoints (fresh core for mutations). Authentication was checked
-      // before routing, alongside the private GET endpoints.
-      if (req.method === "POST") {
-        // Deleting and restoring session data stay out of here on purpose: they run
-        // only from the CLI or TUI, where a person is at the keyboard.
-        if (pathname === "/api/update-pricing") {
-          // Mutation (network fetch + full rescan), so token-gated under POST —
-          // a GET here let any visited web page force repeated multi-GB rescans
-          // cross-origin (CSRF / resource-exhaustion DoS).
-          try {
-            await refreshKoshaRegistry();
-            // Pricing changed → today must reprice. Full re-scan of the warm
-            // singleton (history stays frozen per the core's rules) keeps the
-            // daemon warm and bounded instead of paying a cold start next read.
-            await rescanHttpCore();
-            json(res, { ok: true });
-          } catch (err) {
-            res.writeHead(500);
-            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
-          }
-        } else if (pathname === "/api/rescan") {
-          // DEEP rescan — the ONE explicit path that re-reads RAW history. It is
-          // WINDOWED, not full-history: it re-derives only the last
-          // DEEP_RESCAN_WINDOW_DAYS sealed days and overwrites just those files.
-          // That's exactly what's needed — backfill pace's costByHour (which only
-          // reads the last few days) and correct any recently mis-sealed day —
-          // without the multi-GB full-corpus parse that once drove the machine to
-          // an OOM reboot. Older days' curves are never read, so re-deriving them
-          // is pure waste. Token-gated POST (CSRF/DoS, like update-pricing) and
-          // FIRE-AND-FORGET: returns immediately, rebuilds in the background.
-          try {
-            // Memory guard: even windowed + streamed, the rebuild is the heaviest
-            // thing the daemon does. Refuse unless there's real headroom — the
-            // fast path keeps serving; the user frees RAM and retries. This is
-            // the guard that was missing when a rescan stacked on a 16 GB local
-            // LLM and Jetsam-rebooted the box.
-            //
-            // On macOS the signal must be the kernel's memory-pressure level,
-            // NOT os.freemem(): freemem maps to truly-free pages only, which
-            // sit near zero on any warm Mac (inactive/purgeable pages are
-            // reclaimed on demand), so a GB threshold blocks every rescan on
-            // a machine that's actually fine (observed: 0.3 GB "free" at 68%
-            // real availability on a 38 GB box). Pressure levels: 1 = normal,
-            // 2 = warning, 4 = critical.
-            let memRefusal: string | null = null;
-            if (process.platform === "darwin") {
-              try {
-                const { execFileSync } = await import("node:child_process");
-                const level = Number(
-                  execFileSync("/usr/sbin/sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], {
-                    timeout: 2000,
-                  })
-                    .toString()
-                    .trim()
-                );
-                if (Number.isFinite(level) && level > 1) {
-                  memRefusal = `Memory pressure is ${level === 2 ? "warning" : "critical"} — close memory-heavy apps (e.g. a local LLM) and retry.`;
-                }
-              } catch {
-                // Can't read the pressure level — don't block an explicit,
-                // user-initiated action on a missing metric.
-              }
-            } else {
-              const os = await import("node:os");
-              const freeGb = os.freemem() / 1_073_741_824;
-              const NEED_FREE_GB = 6;
-              if (freeGb < NEED_FREE_GB) {
-                memRefusal = `Low memory: ${freeGb.toFixed(1)} GB free, need ~${NEED_FREE_GB} GB to rebuild safely. Close memory-heavy apps (e.g. a local LLM) and retry.`;
-              }
-            }
-            if (memRefusal) {
-              res.writeHead(503);
-              json(res, { ok: false, error: memRefusal });
-              return;
-            }
-            const core = await getHttpCore();
-            if (_rescanInFlight) {
-              json(res, { ok: true, started: false, alreadyRunning: true });
-            } else {
-              // `?force=true` bypasses the sealed-day shrink guard — an explicit
-              // "replace even if the rebuild carries less data" rescan. The
-              // default deep rescan can only grow or match sealed days.
-              const qi = url.indexOf("?");
-              const force =
-                qi >= 0 && new URLSearchParams(url.slice(qi + 1)).get("force") === "true";
-              _rescanInFlight = true;
-              void core
-                .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS, Date.now(), force)
-                .then(() => {
-                  _httpCore = {
-                    core,
-                    ts: Date.now(),
-                    lastScanDurationMs: _httpCore?.lastScanDurationMs ?? 0,
-                  };
-                })
-                .catch((e: unknown) => {
-                  console.error(`deep rescan failed: ${e instanceof Error ? e.message : e}`);
-                })
-                .finally(() => {
-                  _rescanInFlight = false;
-                });
-              json(res, { ok: true, started: true });
-            }
-          } catch (err) {
-            res.writeHead(500);
-            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
-          }
-        } else if (pathname === "/api/antigravity-live/fetch") {
-          // The one-shot manual counterpart to the (opt-in, default-off)
-          // background poll interval: fetches once, right now, and returns
-          // the result inline instead of waiting for the next tick. Still
-          // does the same credential-read + undocumented-RPC call the
-          // background job does, just for a single explicit invocation
-          // instead of running unsupervised forever — but a website could
-          // CSRF a GET here just as easily as it could CSRF /api/rescan, so
-          // this is POST + token-gated for the same reason those are.
-          try {
-            const snapshot = await pollAntigravityLiveStatus();
-            json(res, { ok: true, snapshot });
-          } catch (err) {
-            res.writeHead(500);
-            json(res, { ok: false, error: err instanceof Error ? err.message : String(err) });
-          }
-        } else {
-          res.writeHead(404);
-          json(res, { error: "Not found" });
-        }
-        return;
-      }
-
-      res.writeHead(405);
-      json(res, { error: "Method not allowed" });
-    } catch (err) {
-      // Log the real cause — a silent 500 here is exactly what made the
-      // daemon's read endpoints look "broken" with no way to diagnose. We
-      // log `.message` only (NOT `.stack`) — stack traces contain absolute
-      // paths and internal file structure that's an info leak when daemon
-      // logs end up in a shared location (e.g. `/tmp/d_b.log` during dev,
-      // launchd logs, screenshots in support tickets). Daemon authors who
-      // need a stack trace can attach a debugger or set TOKMETER_DAEMON_DEBUG.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (process.env.TOKMETER_DAEMON_DEBUG === "1" && err instanceof Error) {
-        console.error(`HTTP request failed [${req.url}]:`, err.stack);
-      } else {
-        console.error(`HTTP request failed [${req.url}]: ${msg}`);
-      }
-      res.writeHead(500);
-      json(res, { error: "Internal server error" });
-    }
-  });
-
-  httpServer.requestTimeout = 20_000;
-  httpServer.headersTimeout = 5_000;
-  httpServer.maxHeadersCount = 32;
-
-  let bound = false;
-  httpServer.on("error", (err: Error & { code?: string }) => {
-    if (!bound) {
-      handlers.onBindError(err);
-      return;
-    }
-    console.error("HTTP API error:", err.message);
-  });
-
-  httpServer.listen(HTTP_PORT, DAEMON_HOST, () => {
-    bound = true;
-    console.log(`【♾️】 HTTP API listening on http://${DAEMON_HOST}:${HTTP_PORT}`);
-    console.log(`   Auth token: ${DAEMON_TOKEN_FILE}`);
-    handlers.onListening();
-  });
-}
-
-function json(res: ServerResponse, data: unknown): void {
-  res.end(JSON.stringify(data));
-}
-
-export interface TodayTotals {
-  cost: number;
-  in: number;
-  out: number;
-  projects: Record<string, { cost: number; in: number; out: number }>;
-  day: string;
-}
-
-/**
- * Compute today's cross-provider totals from the warm core's loaded records.
- * Cheap — a single filtered pass, no disk scan. Shape MUST stay in lockstep
- * with the statusline's TodayTotals consumer in src/statusline.ts.
- */
-/**
- * Parse a `?providers=codex,claude-code` (or `?provider=codex`) filter off a
- * request URL. Returns null when absent. Lets read endpoints serve a
- * provider-scoped view from the warm core — so the CLI's `--codex` flag maps to
- * a cheap filtered read instead of a fresh provider-scoped scan.
- */
-/**
- * Defensive caps:
- *   - MAX_PROVIDERS: hard upper bound on list length so a pathological URL
- *     `?providers=a,a,a,...` (10MB worth) can't get fanned into a giant array
- *     and a quadratic filter scan.
- *   - MAX_PROVIDER_LEN: per-id length cap — provider IDs are short slugs
- *     (`codex`, `claude-code`, ...). Anything over this is junk input.
- *   - PROVIDER_PATTERN: alphanumeric + hyphen only. Rejects `?providers=../../`
- *     style probes, control chars, and Unicode shenanigans before they reach
- *     the filter layer.
- */
-const MAX_PROVIDERS = 32;
-const MAX_PROVIDER_LEN = 64;
-const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
-let _validProviderIds: Set<string> | null = null;
-function getValidProviderIds(): Set<string> {
-  if (!_validProviderIds) {
-    _validProviderIds = new Set<string>(ALL_PROVIDER_IDS);
-  }
-  return _validProviderIds;
-}
-
-function parseBoolParam(raw: string | null): boolean | undefined | "invalid" {
-  if (raw === null) return undefined;
-  if (raw === "true" || raw === "1") return true;
-  if (raw === "false" || raw === "0" || raw === "") return false;
-  return "invalid";
-}
-
-/**
- * Parse scoped query parameters for daemon read endpoints (`/api/summary`,
- * `/api/stats`, `/api/daily`, `/api/models`, `/api/projects`, `/api/providers`,
- * `/api/scoped-view`). Validates providers against `ALL_PROVIDER_IDS` and numeric
- * year bounds cleanly so invalid inputs return HTTP 400.
- */
-export function parseDaemonScopeQuery(url: string): {
-  options: ScanOptions;
-  hasScope: boolean;
-  error?: string;
-} {
-  const qi = url.indexOf("?");
-  if (qi < 0) return { options: {}, hasScope: false };
-  const params = new URLSearchParams(url.slice(qi + 1));
-  const options: ScanOptions = {};
-
-  const rawProviders = params.get("providers") ?? params.get("provider");
-  if (rawProviders !== null && rawProviders.trim() !== "") {
-    const seen = new Set<string>();
-    const list: ProviderId[] = [];
-    for (const part of rawProviders.split(",")) {
-      const s = part.trim();
-      if (!s) continue;
-      if (
-        s.length > MAX_PROVIDER_LEN ||
-        !PROVIDER_PATTERN.test(s) ||
-        !getValidProviderIds().has(s)
-      ) {
-        return { options: {}, hasScope: true, error: `Unknown provider "${s}".` };
-      }
-      if (seen.has(s)) continue;
-      seen.add(s);
-      list.push(s as ProviderId);
-      if (list.length > MAX_PROVIDERS) {
-        return { options: {}, hasScope: true, error: "Too many providers in query." };
-      }
-    }
-    if (list.length > 0) options.providers = list;
-  }
-
-  const project = params.get("project")?.trim();
-  if (project) {
-    if (project.length > 512) {
-      return { options: {}, hasScope: true, error: "project filter is too long." };
-    }
-    options.project = project;
-  }
-
-  const since = params.get("since")?.trim();
-  if (since) options.since = since;
-  const until = params.get("until")?.trim();
-  if (until) options.until = until;
-
-  const scope = params.get("scope")?.trim();
-  if (scope) {
-    if (scope === "today") options.today = true;
-    else if (scope === "week") options.week = true;
-    else if (scope === "month") options.month = true;
-    else if (scope !== "all") {
-      return {
-        options: {},
-        hasScope: true,
-        error: `Invalid scope "${scope}". Expected today, week, month, or all.`,
-      };
-    }
-  }
-
-  for (const flag of ["today", "week", "month"] as const) {
-    const parsedFlag = parseBoolParam(params.get(flag));
-    if (parsedFlag === "invalid") {
-      return { options: {}, hasScope: true, error: `${flag} must be true or false.` };
-    }
-    if (parsedFlag === true) options[flag] = true;
-  }
-
-  if (params.has("year")) {
-    const rawYear = (params.get("year") ?? "").trim();
-    if (!/^\d{4}$/.test(rawYear)) {
-      return { options: {}, hasScope: true, error: "year must be a four-digit calendar year." };
-    }
-    const year = Number(rawYear);
-    if (!Number.isInteger(year) || year < 1000 || year > 9999) {
-      return { options: {}, hasScope: true, error: "year must be a four-digit calendar year." };
-    }
-    options.year = year;
-  }
-
-  const hasScope = Boolean(
-    options.providers?.length ||
-      options.project ||
-      options.since ||
-      options.until ||
-      options.today ||
-      options.week ||
-      options.month ||
-      options.year !== undefined
-  );
-  return { options, hasScope };
-}
-
-function toScopeParams(options: ScanOptions): ScopeParams {
-  return {
-    scope: options.today
-      ? "today"
-      : options.week
-        ? "week"
-        : options.month
-          ? "month"
-          : options.year !== undefined
-            ? undefined
-            : "all",
-    since: options.year !== undefined ? `${options.year}-01-01` : options.since,
-    until: options.year !== undefined ? `${options.year}-12-31` : options.until,
-    project: options.project,
-    providers: options.providers,
-  };
-}
-
-export interface ScopedRouteResult {
-  status: number;
-  body: unknown;
-  headers?: Record<string, string>;
-}
-
-/**
- * Shared scoped HTTP route handler for both the live daemon HTTP API and
- * ephemeral test servers. Returns `null` when the request has no scoping params
- * (for routes other than `/api/scoped-view`) so the live server's legacy
- * floored/cached fast paths continue uninterrupted.
- */
-export function executeScopedRoute(
-  pathname: string,
-  url: string,
-  core: TokmeterCore,
-  scanDurationMs = 0
-): ScopedRouteResult | null {
-  const isScopedView = pathname === "/api/scoped-view";
-  const isScopedRoute =
-    isScopedView ||
-    pathname === "/api/summary" ||
-    pathname === "/api/stats" ||
-    pathname === "/api/daily" ||
-    pathname === "/api/models" ||
-    pathname === "/api/projects" ||
-    pathname === "/api/providers";
-  if (!isScopedRoute) return null;
-
-  const parsed = parseDaemonScopeQuery(url);
-  if (parsed.error) {
-    return { status: 400, body: { error: parsed.error } };
-  }
-  if (!isScopedView && !parsed.hasScope) {
-    return null;
-  }
-
-  try {
-    const records = core.getRecentRecords();
-    const meta = {
-      recordCount: records.length,
-      ...unpricedOf(records),
-      scanDurationMs,
-    };
-
-    if (isScopedView) {
-      // Validate explicit date/year bounds using core.getSummary first so malformed dates fail 400.
-      if (parsed.hasScope) core.getSummary(parsed.options);
-      const view = computeScopedView(core, records, meta, toScopeParams(parsed.options));
-      return { status: 200, body: serializeScopedView(view) };
-    }
-
-    const summary = core.getSummary(parsed.options);
-    if (pathname === "/api/summary") {
-      return {
-        status: 200,
-        body: summary,
-        headers: { [SUMMARY_SOURCE_HEADER]: "live" },
-      };
-    }
-    if (pathname === "/api/stats") return { status: 200, body: summary.stats };
-    if (pathname === "/api/daily") return { status: 200, body: summary.daily };
-    if (pathname === "/api/models") return { status: 200, body: summary.models };
-    if (pathname === "/api/projects") return { status: 200, body: summary.projects };
-    if (pathname === "/api/providers") {
-      const view = computeScopedView(core, records, meta, toScopeParams(parsed.options));
-      return { status: 200, body: view.providers };
-    }
-    return null;
-  } catch (err) {
-    return { status: 400, body: { error: toErrorMessage(err) } };
-  }
-}
-
-export interface StatuslineContextResponse {
-  today: TodayTotals & { computedAt: number };
-  repo: { name: string; cost: number; in: number; out: number } | null;
-  liveSessions: {
-    count: number;
-    others: string[];
-    active: Array<{
-      provider: string;
-      sessionId: string;
-      model: string;
-      project?: string;
-      cost: number;
-      contextFillPct?: number;
-      lastUpdate: number;
-    }>;
-  };
-  paceMultiple: number | null;
-  subagentToday: { cost: number; share: number; records: number };
-  dailyCostThreshold: number | null;
-  unpricedModelsCount: number;
-  quotas: QuotaWindow[];
-  computedAt: number;
-}
-
-const QUOTA_CACHE_TTL_MS = 15_000;
-const _quotaCache = new Map<
-  string,
-  { windows: QuotaWindow[]; at: number; refreshing?: Promise<void> }
->();
-
-async function getCachedQuota(homeDir: string): Promise<QuotaWindow[]> {
-  const now = Date.now();
-  const entry = _quotaCache.get(homeDir);
-  const fetchFresh = async (): Promise<QuotaWindow[]> => {
-    try {
-      const { getQuota } = await import("@sriinnu/tokmeter");
-      const windows = await getQuota(homeDir, Date.now());
-      _quotaCache.set(homeDir, { windows, at: Date.now() });
-      return windows;
-    } catch {
-      return entry?.windows ?? [];
-    }
-  };
-  if (!entry) {
-    return fetchFresh();
-  }
-  if (now - entry.at >= QUOTA_CACHE_TTL_MS && !entry.refreshing) {
-    entry.refreshing = fetchFresh().then(() => {
-      const cur = _quotaCache.get(homeDir);
-      if (cur) delete cur.refreshing;
-    });
-  }
-  return entry.windows;
-}
-
-function normalizeProjectMatchKey(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-export async function buildStatuslineContext(
-  core: TokmeterCore,
-  opts: {
-    project?: string;
-    agent?: string;
-    sessions?: Session[];
-    computedAt?: number;
-    homeDir?: string;
-    todayFloored?: TodayTotals;
-    quotasOverride?: QuotaWindow[];
-  } = {}
-): Promise<StatuslineContextResponse> {
-  const computedAt = opts.computedAt ?? Date.now();
-  const homeDir = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
-  const baseToday = opts.todayFloored ?? computeTodayTotals(core);
-  const today = { ...baseToday, computedAt };
-
-  const coreApi = await import("@sriinnu/tokmeter");
-  let repo: StatuslineContextResponse["repo"] = null;
-  if (opts.project) {
-    const slug = opts.project.replace(/[^A-Za-z0-9]/g, "-");
-    const needles = new Set(
-      [
-        coreApi.canonicalizeProjectName(opts.project, ""),
-        coreApi.canonicalizeProjectName(slug, ""),
-        opts.project,
-      ]
-        .map(normalizeProjectMatchKey)
-        .filter(Boolean)
-    );
-    let cost = 0;
-    let inTok = 0;
-    let outTok = 0;
-    let matchedName: string | null = null;
-    for (const [key, val] of Object.entries(today.projects)) {
-      if (!needles.has(normalizeProjectMatchKey(key))) continue;
-      if (!matchedName) matchedName = key;
-      cost += val.cost;
-      inTok += val.in;
-      outTok += val.out;
-    }
-    if (matchedName !== null) {
-      repo = { name: matchedName, cost, in: inTok, out: outTok };
-    }
-  }
-
-  let paceMultiple: number | null = null;
-  let subagentToday = { cost: 0, share: 0, records: 0 };
-  if (typeof core.getStatbarSignals === "function") {
-    try {
-      const sig = core.getStatbarSignals();
-      paceMultiple = sig.pace?.multiple ?? null;
-      if (sig.subagentToday) {
-        subagentToday = {
-          cost: sig.subagentToday.cost,
-          share: sig.subagentToday.share,
-          records: sig.subagentToday.records,
-        };
-      }
-    } catch {}
-  }
-
-  let unpricedModelsCount = 0;
-  if (typeof core.getScanMeta === "function") {
-    try {
-      unpricedModelsCount = core.getScanMeta().unpricedModels.length;
-    } catch {}
-  }
-
-  let dailyCostThreshold: number | null = null;
-  try {
-    dailyCostThreshold = coreApi.loadConfig(homeDir).alerts.dailyCostThreshold;
-  } catch {}
-
-  const live = (opts.sessions ?? [])
-    .filter((s) => !s.ended)
-    .slice()
-    .sort((a, b) => b.lastUpdate - a.lastUpdate);
-  const filteredOthers = new Set<string>();
-  for (const s of live) {
-    if (!opts.agent || s.provider !== opts.agent) {
-      filteredOthers.add(s.provider);
-    }
-  }
-  const active = live.slice(0, 16).map((s) => {
-    const pct =
-      s.contextWindow && s.contextWindow.maxTokens > 0
-        ? (s.contextWindow.usedTokens / s.contextWindow.maxTokens) * 100
-        : undefined;
-    return {
-      provider: s.provider,
-      sessionId: s.sessionId,
-      model: s.model,
-      ...(s.project ? { project: s.project } : {}),
-      cost: s.cost,
-      ...(pct !== undefined && Number.isFinite(pct) ? { contextFillPct: pct } : {}),
-      lastUpdate: s.lastUpdate,
-    };
-  });
-
-  const quotas = opts.quotasOverride ?? (await getCachedQuota(homeDir));
-
-  return {
-    today,
-    repo,
-    liveSessions: {
-      count: live.length,
-      others: [...filteredOthers],
-      active,
-    },
-    paceMultiple,
-    subagentToday,
-    dailyCostThreshold,
-    unpricedModelsCount,
-    quotas,
-    computedAt,
-  };
-}
-
-function readDailyFloored(core: TokmeterCore, applyFloor: boolean) {
-  const daily = core.getDailyBreakdown().map((entry) => ({ ...entry }));
-  if (!applyFloor) return daily;
-  const todayKey = localDateKey();
-  const floored = applyTodayFloor(computeTodayTotals(core));
-  if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
-    const last = daily[daily.length - 1];
-    if (floored.cost > last.cost) last.cost = floored.cost;
-    const flooredTokens = floored.in + floored.out;
-    if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
-  }
-  return daily;
-}
-
-function readSessionsPayload(core: TokmeterCore, today: boolean) {
-  return core
-    .getAllProjects({ today })
-    .slice()
-    .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed)
-    .slice(0, 50);
-}
-
-function readHealthPayload(core: TokmeterCore) {
-  const meta = core.getScanMeta();
-  const UNPRICED_CAP = 100;
-  const allUnpriced = meta.unpricedModels;
-  return {
-    ready: true,
-    unpricedModels: allUnpriced.slice(0, UNPRICED_CAP),
-    unpricedModelsTotal: allUnpriced.length,
-    unpricedModelsTruncated: allUnpriced.length > UNPRICED_CAP,
-    unpricedRecords: meta.unpricedRecords,
-    warnings: meta.warnings,
-    lastScanAt: meta.lastScanAt,
-  };
-}
-
-function readPricingStatusPayload(homeDir = homedir()): { registryMtime: number } {
-  let mtime = 0;
-  try {
-    // Sync statSync imported statically in server.ts header or fallback
-    const path = join(homeDir, ".kosha", "registry.json");
-    if (existsSync(path)) {
-      const fd = openSync(path, fsConstants.O_RDONLY);
-      try {
-        mtime = fstatSync(fd).mtimeMs;
-      } finally {
-        closeSync(fd);
-      }
-    }
-  } catch {}
-  return { registryMtime: mtime };
-}
-
-function readCronStatusPayload(homeDir = homedir()) {
-  const plistPath = join(homeDir, "Library", "LaunchAgents", "com.sriinnu.tokmeter.daily.plist");
-  const logPath = join(homeDir, ".cache", "tokmeter", "daily-cron.log");
-  let installed = false;
-  let lastRunMtime = 0;
-  let lastRunOk: boolean | null = null;
-  let lastRunTail = "";
-  try {
-    installed = existsSync(plistPath);
-  } catch {}
-  try {
-    const fd = openSync(logPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    try {
-      const stat = fstatSync(fd);
-      lastRunMtime = stat.mtimeMs;
-      const cap = 8192;
-      const offset = Math.max(0, stat.size - cap);
-      const buf = Buffer.alloc(Math.min(cap, stat.size));
-      if (buf.length > 0) {
-        readSync(fd, buf, 0, buf.length, offset);
-      }
-      const data = buf.toString("utf8");
-      const lines = data.trim().split("\n");
-      lastRunTail = lines.slice(-3).join("\n");
-      if (data.includes("Kosha registry refreshed")) lastRunOk = true;
-      else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
-    } finally {
-      closeSync(fd);
-    }
-  } catch {}
-  return { installed, lastRunMtime, lastRunOk, lastRunTail };
-}
-
-function readAnomaliesPayload(homeDir = homedir()) {
-  const ANOM_CAP = 50;
-  const TWENTY_FOUR_H = 24 * 3600 * 1000;
-  let recent: unknown[] = [];
-  let total = 0;
-  try {
-    const parsed = JSON.parse(readFileSync(join(homeDir, ".kosha", "anomalies.json"), "utf-8")) as {
-      anomalies?: Array<{ ts: number }>;
-    };
-    const cutoff = Date.now() - TWENTY_FOUR_H;
-    const all = (parsed.anomalies ?? []).filter((a) => a.ts >= cutoff);
-    total = all.length;
-    recent = all.slice(-ANOM_CAP).reverse();
-  } catch {}
-  return { anomalies: recent, total, cappedAt: ANOM_CAP };
-}
-
-async function readAntigravityLivePayload() {
-  const { computeCreditsUsedToday, readLatestAntigravitySnapshot } = await import(
-    "@sriinnu/tokmeter"
-  );
-  return {
-    latestSnapshot: readLatestAntigravitySnapshot(),
-    creditsUsedToday: computeCreditsUsedToday(),
-  };
-}
-
-export interface BarSnapshotResponse {
-  daily: ReturnType<TokmeterCore["getDailyBreakdown"]>;
-  models: ReturnType<TokmeterCore["getModelCosts"]>;
-  todayModels: ReturnType<TokmeterCore["getModelCosts"]>;
-  sessions: ReturnType<TokmeterCore["getAllProjects"]>;
-  todayProjects: ReturnType<TokmeterCore["getAllProjects"]>;
-  pricingStatus: ReturnType<typeof readPricingStatusPayload> | null;
-  cronStatus: ReturnType<typeof readCronStatusPayload> | null;
-  health: ReturnType<typeof readHealthPayload> | null;
-  anomalies: ReturnType<typeof readAnomaliesPayload> | null;
-  statbarSignals: ReturnType<TokmeterCore["getStatbarSignals"]> | null;
-  crossTool: Awaited<ReturnType<TokmeterCore["getCrossToolComparison"]>> | null;
-  quota: { windows: QuotaWindow[] } | null;
-  antigravityLive: Awaited<ReturnType<typeof readAntigravityLivePayload>> | null;
-  partialErrors: string[];
-}
-
-/**
- * Consolidated Phase-2 payload for the macOS menubar app (`/api/bar-snapshot`),
- * collapsing 13 separate GET requests into one HTTP round-trip while tracking
- * per-section failures in `partialErrors`.
- */
-export async function buildBarSnapshot(
-  core: TokmeterCore,
-  opts: { applyFloor?: boolean; homeDir?: string; quotasOverride?: QuotaWindow[] } = {}
-): Promise<BarSnapshotResponse> {
-  const home = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
-  const partialErrors: string[] = [];
-
-  const capture = <T>(name: string, fn: () => T): T | null => {
-    try {
-      return fn();
-    } catch {
-      partialErrors.push(name);
-      return null;
-    }
-  };
-  const captureAsync = async <T>(name: string, fn: () => Promise<T>): Promise<T | null> => {
-    try {
-      return await fn();
-    } catch {
-      partialErrors.push(name);
-      return null;
-    }
-  };
-
-  const daily = readDailyFloored(core, opts.applyFloor === true);
-  const models = core.getModelCosts();
-  const todayModels = core.getModelCosts({ today: true });
-  const sessions = readSessionsPayload(core, false);
-  const todayProjects = readSessionsPayload(core, true);
-  const pricingStatus = capture("pricingStatus", () => readPricingStatusPayload(home));
-  const cronStatus = capture("cronStatus", () => readCronStatusPayload(home));
-  const health = capture("health", () => readHealthPayload(core));
-  const anomalies = capture("anomalies", () => readAnomaliesPayload(home));
-  const statbarSignals = capture("statbarSignals", () => core.getStatbarSignals());
-
-  const [crossTool, quotaWindows, antigravityLive] = await Promise.all([
-    captureAsync("crossTool", () => core.getCrossToolComparison()),
-    opts.quotasOverride !== undefined
-      ? Promise.resolve(opts.quotasOverride)
-      : captureAsync("quota", async () => {
-          const { getQuota } = await import("@sriinnu/tokmeter");
-          return getQuota(home, Date.now(), (msg) => console.warn(`[quota] ${msg}`));
-        }),
-    captureAsync("antigravityLive", () => readAntigravityLivePayload()),
-  ]);
-
-  return {
-    daily,
-    models,
-    todayModels,
-    sessions,
-    todayProjects,
-    pricingStatus,
-    cronStatus,
-    health,
-    anomalies,
-    statbarSignals,
-    crossTool,
-    quota: quotaWindows !== null ? { windows: quotaWindows } : null,
-    antigravityLive,
-    partialErrors,
-  };
-}
-
-/**
- * Create an isolated loopback HTTP server backed by an injected `TokmeterCore`
- * for unit/integration tests without mutating process-wide daemon globals.
- */
-export function createDaemonTestHttpServer(
-  core: TokmeterCore,
-  token: string,
-  opts?: { sessions?: Session[]; homeDir?: string; quotas?: QuotaWindow[] }
-) {
-  return createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
-    res.setHeader("Content-Type", "application/json");
-    for (const [name, value] of apiVersionHeaders(API_VERSION)) res.setHeader(name, value);
-    const url = req.url ?? "/";
-    const pathname = url.split("?")[0];
-    if (req.method === "GET" && pathname === "/api/ready") {
-      json(res, { ready: true, warming: false, apiVersion: API_VERSION });
-      return;
-    }
-    if (!isValidAuthHeader(req.headers.authorization, token)) {
-      res.writeHead(401);
-      json(res, { error: "Unauthorized" });
-      return;
-    }
-    const scoped = executeScopedRoute(pathname, url, core, 1);
-    if (scoped) {
-      if (scoped.headers) {
-        for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
-      }
-      if (scoped.status !== 200) res.writeHead(scoped.status);
-      json(res, scoped.body);
-      return;
-    }
-    if (pathname === "/api/quick") {
-      const stats = core.getStats();
-      const blockElapsedPct = core.getStatbarSignals().billingWindow?.elapsedPct;
-      json(res, { ready: true, stats, blockElapsedPct });
-      return;
-    }
-    if (pathname === "/api/summary") {
-      res.setHeader(SUMMARY_SOURCE_HEADER, "live");
-      json(res, core.getSummary());
-      return;
-    }
-    if (pathname === "/api/stats") {
-      json(res, core.getStats());
-      return;
-    }
-    if (pathname === "/api/daily") {
-      json(res, core.getDailyBreakdown());
-      return;
-    }
-    if (pathname === "/api/models") {
-      json(res, core.getModelCosts());
-      return;
-    }
-    if (pathname === "/api/projects") {
-      json(res, core.getAllProjects());
-      return;
-    }
-    if (pathname === "/api/sessions") {
-      const today = new URL(url, "http://localhost").searchParams.get("today") === "true";
-      json(res, readSessionsPayload(core, today));
-      return;
-    }
-    if (pathname.startsWith("/api/projects/")) {
-      const name = decodeURIComponent(pathname.slice("/api/projects/".length));
-      json(res, core.getProjectSummary(name) ?? { error: "Not found" });
-      return;
-    }
-    if (pathname === "/api/providers") {
-      json(res, core.getProviderBreakdown());
-      return;
-    }
-    if (pathname === "/api/statbar-signals") {
-      json(res, core.getStatbarSignals());
-      return;
-    }
-    if (pathname === "/api/today") {
-      json(res, { ...computeTodayTotals(core), computedAt: Date.now() });
-      return;
-    }
-    if (pathname === "/api/statusline-context") {
-      const qi = url.indexOf("?");
-      const params = qi >= 0 ? new URLSearchParams(url.slice(qi + 1)) : new URLSearchParams();
-      json(
-        res,
-        await buildStatuslineContext(core, {
-          project: params.get("project")?.trim() || undefined,
-          agent: params.get("agent")?.trim() || undefined,
-          sessions: opts?.sessions ?? [],
-          homeDir: opts?.homeDir,
-          quotasOverride: opts?.quotas,
-        })
-      );
-      return;
-    }
-    if (pathname === "/api/rates") {
-      const scope =
-        new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
-      json(res, await core.getModelRates(scope));
-      return;
-    }
-    if (pathname === "/api/quota") {
-      json(res, { windows: opts?.quotas ?? (await getCachedQuota(opts?.homeDir ?? homedir())) });
-      return;
-    }
-    if (pathname === "/api/cross-tool") {
-      json(res, await core.getCrossToolComparison());
-      return;
-    }
-    if (pathname === "/api/health") {
-      json(res, readHealthPayload(core));
-      return;
-    }
-    if (pathname === "/api/pricing-status") {
-      json(res, readPricingStatusPayload(opts?.homeDir ?? homedir()));
-      return;
-    }
-    if (pathname === "/api/anomalies") {
-      json(res, readAnomaliesPayload(opts?.homeDir ?? homedir()));
-      return;
-    }
-    if (pathname === "/api/cron-status") {
-      json(res, readCronStatusPayload(opts?.homeDir ?? homedir()));
-      return;
-    }
-    if (pathname === "/api/antigravity-live") {
-      json(res, await readAntigravityLivePayload());
-      return;
-    }
-    if (pathname === "/api/bar-snapshot") {
-      json(
-        res,
-        await buildBarSnapshot(core, {
-          applyFloor: false,
-          homeDir: opts?.homeDir,
-          quotasOverride: opts?.quotas,
-        })
-      );
-      return;
-    }
-    res.writeHead(404);
-    json(res, { error: "Not found" });
-  });
-}
-
-/**
- * Per-day high-water marks for "today" — today's cost MUST be monotonic
- * upward within a day (you cannot un-spend money), but the codex parser's
- * fork-dedup ("latest mtime sibling wins") can swap winners as new sibling
- * rollouts appear, momentarily showing a SMALLER today total than the prior
- * scan. That's parser flux, not a real refund. The floor pins each field to
- * the high-water mark observed during the current local day so the displayed
- * "today" only ever grows. Resets automatically on day rollover (when
- * `localDateKey()` changes). Note: the underlying records and the
- * non-today endpoints are unaffected — this is a display-stability guard
- * scoped to /api/today only.
- */
-let _todayHighWater: TodayTotals | null = null;
-
-/**
- * Lifetime-cost high-water for /api/stats and /api/quick. Same rationale as
- * `_todayHighWater`: lifetime = frozen history + today, frozen history is
- * immutable, so the only thing that can move lifetime is today — and today
- * must be monotonic upward within the day. Reset on day rollover (tracked
- * by `localDateKey()`) so a new day's totals can climb fresh.
- *
- * Why a separate floor from today's: the bar's lifetime hero reads
- * `stats.totalCost`, not `today.cost`. They live on different endpoints and
- * a parser swap that nudges today by $0.10 nudges lifetime by the same
- * $0.10 — both displays would flicker if we only floored one.
- */
-export interface StatsFloor {
-  day: string;
-  totalCost: number;
-  totalTokens: number;
-}
-let _statsHighWater: StatsFloor | null = null;
-
-/**
- * Pure high-water merge, split out from {@link applyTodayFloor} so the
- * monotonicity math is testable without the module-level `_todayHighWater`
- * singleton. `prior === null` (or a stale day) resets the floor to `computed`
- * as-is; otherwise every field — including each project's own cost/in/out —
- * is pinned to its own running max.
- */
-export function computeTodayFloor(computed: TodayTotals, prior: TodayTotals | null): TodayTotals {
-  // Day rollover (or first call) — reset the floor and accept what we see.
-  if (!prior || prior.day !== computed.day) {
-    return {
-      cost: computed.cost,
-      in: computed.in,
-      out: computed.out,
-      day: computed.day,
-      projects: { ...computed.projects },
-    };
-  }
-
-  const dropped = computed.cost + 0.005 < prior.cost;
-  if (dropped) {
-    // Surface the suppression so it's not invisible — small per-scan dips are
-    // usually codex fork-dedup winner swaps and we DELIBERATELY keep the
-    // high-water. Logged at console.warn for daemon stderr only.
-    console.warn(
-      `[today-floor] computed today $${computed.cost.toFixed(2)} < high-water $${prior.cost.toFixed(2)} — keeping high-water (likely codex fork-dedup winner swap; data not lost, just a parser-side reweighting).`
-    );
-  }
-
-  // Take per-field max (cost/in/out and per-project) so each number is
-  // pinned to its own monotone-upward floor. Build a NEW snapshot rather
-  // than mutating either side so callers can't see partial state.
-  const allKeys = new Set([...Object.keys(computed.projects), ...Object.keys(prior.projects)]);
-  // Null prototype: a project literally named "__proto__" stays a key.
-  const projects = nullMap<{ cost: number; in: number; out: number }>();
-  for (const k of allKeys) {
-    const a = computed.projects[k] ?? { cost: 0, in: 0, out: 0 };
-    const b = prior.projects[k] ?? { cost: 0, in: 0, out: 0 };
-    projects[k] = {
-      cost: Math.max(a.cost, b.cost),
-      in: Math.max(a.in, b.in),
-      out: Math.max(a.out, b.out),
-    };
-  }
-
-  return {
-    cost: Math.max(computed.cost, prior.cost),
-    in: Math.max(computed.in, prior.in),
-    out: Math.max(computed.out, prior.out),
-    day: computed.day,
-    projects,
-  };
-}
-
-function applyTodayFloor(computed: TodayTotals): TodayTotals {
-  _todayHighWater = computeTodayFloor(computed, _todayHighWater);
-  return _todayHighWater;
-}
-
-/**
- * Pin lifetime `totalCost` and `totalTokens` to a within-day high-water mark.
- * Other fields (counts, streaks, firstUsed/lastUsed) pass through unchanged —
- * they aren't subject to the same parser-flux drop pattern that motivates the
- * today-floor. If the input shape doesn't look like the stats object we expect
- * (e.g. a future signature change), we pass through unmodified.
- */
-/**
- * Pure high-water merge, split out from {@link applyStatsFloor} so it's
- * testable without the module-level `_statsHighWater` singleton or the real
- * current date — `day` is an explicit parameter instead of `localDateKey()`.
- * `prior === null` means "no data at all yet" (not a code path {@link
- * applyStatsFloor} can hit, since it always seeds a floor on first call, but
- * kept for a clean pure-function signature) and passes `stats` through
- * unfloored with no floor recorded.
- */
-export function computeStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(
-  stats: T,
-  prior: StatsFloor | null,
-  day: string
-): { result: T; floor: StatsFloor | null } {
-  if (!stats || typeof stats.totalCost !== "number" || typeof stats.totalTokens !== "number") {
-    return { result: stats, floor: prior };
-  }
-  if (!prior || prior.day !== day) {
-    return {
-      result: stats,
-      floor: { day, totalCost: stats.totalCost, totalTokens: stats.totalTokens },
-    };
-  }
-  if (stats.totalCost + 0.005 < prior.totalCost) {
-    console.warn(
-      `[stats-floor] lifetime $${stats.totalCost.toFixed(2)} < high-water $${prior.totalCost.toFixed(2)} — keeping high-water (matches today-floor; almost certainly a codex fork-dedup winner swap).`
-    );
-  }
-  const totalCost = Math.max(stats.totalCost, prior.totalCost);
-  const totalTokens = Math.max(stats.totalTokens, prior.totalTokens);
-  return { result: { ...stats, totalCost, totalTokens }, floor: { day, totalCost, totalTokens } };
-}
-
-function applyStatsFloor<T extends { totalCost?: number; totalTokens?: number }>(stats: T): T {
-  const { result, floor } = computeStatsFloor(stats, _statsHighWater, localDateKey());
-  _statsHighWater = floor;
-  return result;
-}
-
-function computeTodayTotals(core: any): TodayTotals {
-  return todayTotalsFrom(core.getTodayAggregate?.() ?? null, localDateKey());
-}
-
-/**
- * Today's totals for `day` from the core's today aggregate. Just after
- * midnight a warm core served without waiting on its refresh (see
- * getHttpCoreNoWait) still holds yesterday's accumulator; labelling that with
- * the wall-clock day made the floor take yesterday's whole total as today's
- * high-water and hold it all day (10-20's sealed $290.85 showed as 10-21's
- * today, 10-04's $501.03 as 10-05's). An aggregate for another day counts as
- * nothing yet for `day`.
- */
-export function todayTotalsFrom(
-  today: {
-    date?: string;
-    cost: number;
-    inputTokens: number;
-    outputTokens: number;
-    projects: Record<string, { cost: number; inputTokens: number; outputTokens: number }>;
-  } | null,
-  day: string
-): TodayTotals {
-  // Null prototype: a project literally named "__proto__" stays a key.
-  const projects = nullMap<{ cost: number; in: number; out: number }>();
-  if (today && (today.date === undefined || today.date === day)) {
-    for (const [name, pb] of Object.entries(today.projects)) {
-      projects[name || "unknown"] = {
-        cost: pb.cost,
-        in: pb.inputTokens,
-        out: pb.outputTokens,
-      };
-    }
-    return { cost: today.cost, in: today.inputTokens, out: today.outputTokens, projects, day };
-  }
-  return { cost: 0, in: 0, out: 0, projects, day };
-}
-
-function appendSummaryWarnings(
-  summary: TokmeterSummary,
-  warnings: ScanWarning[],
-  todayState: TokmeterSummary["meta"]["todayState"]
-): TokmeterSummary {
-  return {
-    ...summary,
-    meta: {
-      ...summary.meta,
-      todayState,
-      warnings: [...summary.meta.warnings, ...warnings],
-    },
-  };
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-// ─── CLI Entry Point ────────────────────────────────────────────────────
-
-/**
- * Internal flag: when the process is the DETACHED daemon child, it runs
- * `startDaemon()` in the foreground. The parent (the CLI the user ran)
- * forks, prints a confirmation, and exits immediately so the terminal
- * isn't left hanging.
- */
-export async function runDaemonCLI(command: string): Promise<void> {
-  // The launchd agent supervises the default-port daemon. A daemon on an
-  // overridden port (port.ts) is an isolated sandbox and must never kickstart,
-  // stop or reinstall the real one.
-  const portOverridden = daemonPortOverride() !== null;
-  if (portOverridden && ["install-agent", "uninstall-agent"].includes(command)) {
-    console.log(
-      `launchd supervision applies to the default daemon port only; unset ${DAEMON_PORT_ENV}.`
-    );
-    return;
-  }
-  const agentLoaded = () => !portOverridden && isAgentLoaded();
-  if (
-    ["stop", "restart", "install-agent"].includes(command) &&
-    !agentLoaded() &&
-    getDaemonStatus().identity === "unverified"
-  ) {
-    throw new Error(
-      "Cannot verify daemon ownership; refusing process control. Inspect daemon status before retrying."
-    );
-  }
-  switch (command) {
-    case "start":
-      if (isDaemonRunning()) {
-        console.log("Daemon is already running");
-        console.log(getDaemonStatus());
-        break;
-      }
-
-      // If launchd is actively managing the daemon, don't fork our own
-      // detached child (it would race the agent's copy on port 9876). Ask
-      // launchd to start it. We gate on isAgentLoaded() (actually bootstrapped)
-      // rather than isAgentInstalled() (plist merely on disk) so a plist that
-      // exists but isn't loaded falls through to the normal fork path below
-      // instead of stranding the user offline on a kickstart that errors.
-      // The daemon-child env guard lets launchd's OWN `daemon start` fall
-      // through to the foreground path below.
-      if (!isDaemonChildEnv() && agentLoaded()) {
-        try {
-          kickstartAgent();
-          await new Promise((r) => setTimeout(r, 800));
-          console.log("【♾️】 Tokmeter daemon started via launchd");
-          console.log(getDaemonStatus());
-          break;
-        } catch (err) {
-          // Fall through to the manual fork path rather than leave it down.
-          console.log(`launchd kickstart failed (${err}); starting manually instead`);
-        }
-      }
-
-      // If we ARE the detached child (or launchd's foreground process), run
-      // the daemon in the foreground.
-      if (isDaemonChildEnv()) {
-        startDaemon();
-        process.on("SIGINT", () => {
-          stopDaemon();
-          process.exit(0);
-        });
-        process.on("SIGTERM", () => {
-          stopDaemon();
-          process.exit(0);
-        });
-        break;
-      }
-
-      // Otherwise, fork a detached child and exit the parent immediately.
-      // This is the classic Unix daemonization pattern — the user's terminal
-      // gets its prompt back right away, the daemon runs in the background,
-      // and closing the terminal doesn't kill the daemon.
-      //
-      // We use spawn() instead of fork() because fork() inherits the ESM
-      // module graph and can't be combined with top-level require(). spawn()
-      // starts a clean Node process with the same argv.
-      {
-        const { spawn } = await import("node:child_process");
-        // Cap the daemon's heap so even a runaway scan can't balloon the box
-        // back into kernel-panic territory. Threaded via NODE_OPTIONS so it
-        // applies whether the child is launched directly or re-execs.
-        const child = spawn(process.execPath, [process.argv[1], "daemon", "start"], {
-          detached: true,
-          stdio: "ignore",
-          env: {
-            ...process.env,
-            ...daemonChildEnv(),
-            NODE_OPTIONS:
-              `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${DAEMON_HEAP_CAP_MB}`.trim(),
-          },
-        });
-        child.unref();
-
-        // Give the child a moment to write the PID file, then confirm.
-        await new Promise((r) => setTimeout(r, 800));
-        if (isDaemonRunning()) {
-          console.log("【♾️】 Tokmeter daemon started (background)");
-          console.log(getDaemonStatus());
-        } else {
-          console.log("【♾️】 Daemon starting… (check `tokmeter-mcp daemon status` in a moment)");
-        }
-        process.exit(0);
-      }
-      break;
-
-    case "stop":
-      // Under launchd, a plain SIGTERM is futile — the agent respawns it on
-      // abnormal exit. Bail with the real instruction instead of looking like
-      // the stop failed. Gate on isAgentLoaded() (actually managing it), not a
-      // stale plist on disk.
-      if (agentLoaded()) {
-        console.log(
-          "Daemon is launchd-supervised — stopping it directly won't stick.\n" +
-            "    To stop it, run: tokmeter-mcp daemon uninstall-agent"
-        );
-        break;
-      }
-      if (isDaemonRunning()) {
-        const { pid } = getDaemonStatus();
-        if (pid) {
-          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
-          // Wait for the daemon to actually exit and clean up its PID file.
-          let stopRetries = 10;
-          while (stopRetries > 0 && isDaemonRunning()) {
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-            stopRetries--;
-          }
-          console.log(isDaemonRunning() ? "Daemon still shutting down…" : "Daemon stopped");
-        }
-      } else {
-        console.log("Daemon is not running");
-      }
-      break;
-
-    case "status":
-      console.log(getDaemonStatus());
-      break;
-
-    case "restart":
-      // launchd-managed: a single kickstart -k kills + restarts atomically,
-      // and avoids a SIGTERM the agent would just respawn anyway. Gate on
-      // loaded, and fall through to the manual path if the kickstart errors.
-      if (agentLoaded()) {
-        try {
-          kickstartAgent();
-          await new Promise((r) => setTimeout(r, 800));
-          console.log("【♾️】 Tokmeter daemon restarted via launchd");
-          console.log(getDaemonStatus());
-          break;
-        } catch (err) {
-          console.log(`launchd kickstart failed (${err}); restarting manually instead`);
-        }
-      }
-      if (isDaemonRunning()) {
-        const { pid } = getDaemonStatus();
-        if (pid) {
-          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
-          // Wait for old process to die
-          let retries = 10;
-          while (retries > 0 && isDaemonRunning()) {
-            // Busy-wait 200ms — can't use require() in ESM, and this
-            // only runs during an explicit user-initiated restart.
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-            retries--;
-          }
-        }
-      }
-      // Delegate to "start" which handles forking
-      await runDaemonCLI("start");
-      break;
-
-    case "install-agent": {
-      if (process.platform !== "darwin") {
-        console.log("launchd supervision is macOS-only; on this platform use `daemon start`.");
-        break;
-      }
-      // Stop any manually-spawned daemon first so launchd's RunAtLoad copy
-      // doesn't race it on the port.
-      if (isDaemonRunning()) {
-        const { pid } = getDaemonStatus();
-        if (pid) {
-          signalVerifiedDaemon(DAEMON_PID_FILE, DAEMON_IDENTITY_FILE);
-          let retries = 10;
-          while (retries > 0 && isDaemonRunning()) {
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-            retries--;
-          }
-        }
-      }
-      // If it's STILL alive, bootstrapping now would just collide on the port
-      // (the launchd copy bows out on EADDRINUSE). Abort cleanly instead of
-      // installing into a guaranteed race.
-      if (isDaemonRunning()) {
-        console.log(
-          "A daemon is still running and wouldn't release port. Aborting install.\n" +
-            "    Stop it (tokmeter-mcp daemon stop) and retry install-agent."
-        );
-        break;
-      }
-      try {
-        const { plistPath, heapEnforced } = installAgent();
-        console.log(`【♾️】 launchd agent installed: ${plistPath}`);
-        console.log("    Respawns on crash, OOM, and login (clean exits stay down).");
-        if (!heapEnforced) {
-          console.log(
-            "    ⚠ heap cap NOT enforced — the agent launches via bun, which ignores\n" +
-              "      NODE_OPTIONS --max-old-space-size. Build the dist (bun run build) so a\n" +
-              "      node+dist entry is available, or set TOKMETER_DAEMON_HEAP_MB awareness."
-          );
-        }
-        await new Promise((r) => setTimeout(r, 1000));
-        console.log(getDaemonStatus());
-      } catch (err) {
-        console.log(`Failed to install launchd agent: ${err}`);
-      }
-      break;
-    }
-
-    case "uninstall-agent": {
-      if (!isAgentInstalled()) {
-        console.log("No launchd agent installed.");
-        break;
-      }
-      try {
-        uninstallAgent();
-        console.log(`Removed launchd agent (${AGENT_LABEL}) and plist at ${agentPlistPath()}`);
-        console.log("    The daemon is no longer supervised. Use `daemon start` to run it.");
-      } catch (err) {
-        console.log(`Failed to remove launchd agent: ${err}`);
-      }
-      break;
-    }
-
-    default:
-      console.log(
-        "Usage: tokmeter-mcp daemon [start|stop|status|restart|install-agent|uninstall-agent]"
-      );
-  }
 }
