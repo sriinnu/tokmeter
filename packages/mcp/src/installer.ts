@@ -13,9 +13,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { C } from "./formatter.js";
 
@@ -713,6 +713,146 @@ export function uninstallHooks(): void {
     C.success(`  ✓ Claude Code — removed ${removed} guard hook${removed === 1 ? "" : "s"}`)
   );
   console.log();
+}
+
+// ─── Slash Plugin & Multi-CLI Snippets ──────────────────────────────────────
+
+const MANAGED_PLUGIN_MARKER = "<!-- managed by tokmeter-mcp install-plugin -->";
+
+function buildSlashCommandDoc(commandName: string): string {
+  const slashCmd = cliCommandString("slash");
+  return `---
+description: Show read-only 66-col ${commandName} spend/quota/cache card ($ARGUMENTS)
+allowed-tools: Bash(${slashCmd}*)
+---
+
+${MANAGED_PLUGIN_MARKER}
+Run the deterministic zero-token tokmeter card below and present its output verbatim inside a single fenced code block without altering numbers or labels:
+
+!\`${slashCmd} $ARGUMENTS\`
+`;
+}
+
+export function formatStatuslineSnippets(): string {
+  const statusCmd = cliCommandString("statusline");
+  return [
+    "tmux (~/.tmux.conf):",
+    `  set -g status-right '#(${statusCmd} --ambient --format tmux --cols 90)'`,
+    "",
+    "Zellij / split watch pane:",
+    `  ${statusCmd} --ambient --watch 2000 --density balanced`,
+    "",
+    "Starship (~/.config/starship.toml):",
+    "  [custom.tokmeter]",
+    `  command = "${statusCmd} --ambient --format plain --density compact --cols 70"`,
+    '  when = "true"',
+    "",
+    "Terminal window title (zsh precmd):",
+    `  precmd() { ${statusCmd} --ambient --format title --cols 80; }`,
+  ].join("\n");
+}
+
+export interface InstallPluginOptions {
+  homeDir?: string;
+  editors?: string[];
+  snippetsOnly?: boolean;
+  quiet?: boolean;
+}
+
+export function installPlugin(options: InstallPluginOptions = {}): {
+  written: string[];
+  skipped: string[];
+} {
+  const home = options.homeDir ?? homedir();
+  const written: string[] = [];
+  const skipped: string[] = [];
+  const log = (msg: string) => {
+    if (!options.quiet) console.log(msg);
+  };
+
+  if (!options.snippetsOnly) {
+    const targets: Array<{ label: string; path: string; onlyIfDirExists?: string }> = [
+      {
+        label: "Claude Code (/tokmeter)",
+        path: join(home, ".claude", "commands", "tokmeter.md"),
+      },
+      {
+        label: "Claude Code (/tm)",
+        path: join(home, ".claude", "commands", "tm.md"),
+      },
+      {
+        label: "OpenCode (/tokmeter)",
+        path: join(home, ".config", "opencode", "commands", "tokmeter.md"),
+        onlyIfDirExists: join(home, ".config", "opencode"),
+      },
+    ];
+
+    const filterList = options.editors?.map((e) => e.toLowerCase());
+    log(C.title("\n【♾️】 Installing /tokmeter Slash Plugin\n"));
+    for (const target of targets) {
+      if (filterList && !filterList.some((f) => target.label.toLowerCase().includes(f))) {
+        continue;
+      }
+      if (target.onlyIfDirExists && !filterList && !existsSync(target.onlyIfDirExists)) {
+        skipped.push(target.path);
+        continue;
+      }
+      if (existsSync(target.path)) {
+        const existing = readFileSync(target.path, "utf-8");
+        if (!existing.includes(MANAGED_PLUGIN_MARKER)) {
+          log(
+            C.warn(
+              `  ⊘ ${target.label} — custom command file exists, leaving untouched (${target.path})`
+            )
+          );
+          skipped.push(target.path);
+          continue;
+        }
+      }
+      ensureDir(target.path);
+      writeFileSync(target.path, buildSlashCommandDoc("tokmeter"), "utf-8");
+      written.push(target.path);
+      log(C.success(`  ✓ ${target.label}`));
+      log(C.dim(`    ${target.path}`));
+    }
+  }
+
+  log(C.title("\nMulti-CLI Statusline Snippets\n"));
+  log(formatStatuslineSnippets());
+  log("");
+  return { written, skipped };
+}
+
+export function uninstallPlugin(options: { homeDir?: string; quiet?: boolean } = {}): {
+  removed: string[];
+  kept: string[];
+} {
+  const home = options.homeDir ?? homedir();
+  const removed: string[] = [];
+  const kept: string[] = [];
+  const log = (msg: string) => {
+    if (!options.quiet) console.log(msg);
+  };
+  const candidates = [
+    join(home, ".claude", "commands", "tokmeter.md"),
+    join(home, ".claude", "commands", "tm.md"),
+    join(home, ".config", "opencode", "commands", "tokmeter.md"),
+  ];
+  log(C.title("\n【♾️】 Uninstalling /tokmeter Slash Plugin\n"));
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    const content = readFileSync(path, "utf-8");
+    if (!content.includes(MANAGED_PLUGIN_MARKER)) {
+      kept.push(path);
+      log(C.warn(`  ⊘ kept user-managed file ${path}`));
+      continue;
+    }
+    rmSync(path);
+    removed.push(path);
+    log(C.success(`  ✓ removed ${path}`));
+  }
+  log("");
+  return { removed, kept };
 }
 
 // ─── Install All ────────────────────────────────────────────────────────────

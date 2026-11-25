@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { SessionPush } from "./daemon/push.js";
 import {
   afterOutput,
+  buildAmbientStatusView,
   cacheFromInput,
   colorEnabled,
   findProjectTotal,
@@ -15,6 +16,7 @@ import {
   isConnectionRefused,
   isDumbTerminal,
   type PromptCacheInput,
+  parseStatuslineArgs,
   readLastGoodToday,
   runGit,
   statuslineCacheDir,
@@ -342,5 +344,117 @@ describe('findProjectTotal (the "here" slot)', () => {
     });
     expect(findProjectTotal(t, "/Users/me/.ribhu/eval/work/r/t/1")?.cost).toBe(6);
     expect(findProjectTotal(t, "/Users/me/src/eval")?.cost).toBe(1);
+  });
+});
+
+describe("parseStatuslineArgs & buildAmbientStatusView", () => {
+  test("parses multi-CLI flags (--ambient, --agent, --watch, --style, --density, --theme, --format, --cols)", () => {
+    const opts = parseStatuslineArgs([
+      "--ambient",
+      "--agent",
+      "codex",
+      "--style=deck",
+      "--density",
+      "telemetry",
+      "--theme",
+      "light",
+      "--format",
+      "tmux",
+      "--cols",
+      "90",
+      "--watch",
+      "1500",
+      "--no-color",
+    ]);
+    expect(opts).toEqual({
+      ambient: true,
+      agent: "codex",
+      style: "deck",
+      density: "telemetry",
+      theme: "light",
+      format: "tmux",
+      cols: 90,
+      watch: true,
+      watchMs: 1500,
+      noColor: true,
+    });
+  });
+
+  test("builds ambient view without stdin using injected daemon context and marks estimated ctx ~%", async () => {
+    const now = new Date(2026, 10, 20, 14, 15, 0).getTime();
+    const view = await buildAmbientStatusView(
+      {
+        ambient: true,
+        agent: "codex",
+        cwd: "/tmp/my-repo",
+        watch: false,
+        watchMs: 2000,
+        noColor: false,
+      },
+      {
+        homeDir: dir,
+        now,
+        context: {
+          state: "fresh",
+          ageMs: 2000,
+          ctx: {
+            today: {
+              cost: 48.0,
+              in: 500_000,
+              out: 100_000,
+              day: localDateKey(now),
+              projects: { "my-repo": { cost: 12.0, in: 100_000, out: 20_000 } },
+              computedAt: now,
+            },
+            repo: { name: "my-repo", cost: 12.0, in: 100_000, out: 20_000 },
+            liveSessions: {
+              count: 2,
+              others: ["claude-code"],
+              active: [
+                {
+                  provider: "codex",
+                  sessionId: "c1",
+                  model: "gpt-5",
+                  cost: 5.5,
+                  contextFillPct: 58,
+                  lastUpdate: now,
+                },
+              ],
+            },
+            paceMultiple: 1.4,
+            subagentToday: { cost: 0, share: 0, records: 0 },
+            dailyCostThreshold: 40,
+            unpricedModelsCount: 0,
+            quotas: [
+              {
+                agent: "codex",
+                window: "7d",
+                windowMinutes: 10080,
+                usedPct: 24,
+                windowStart: Math.floor(now / 1000) - 3600,
+                resetsAt: Math.floor(now / 1000) + 500000,
+                sampledAt: now,
+                avgPctPerHour: 1,
+                recentPctPerHour: null,
+                projectedPctAtReset: 50,
+                hitsLimitBeforeReset: false,
+                verdict: "resets-first",
+              },
+            ],
+            computedAt: now,
+          },
+        },
+      }
+    );
+
+    expect(view.project).toBe("my-repo");
+    expect(view.model).toBe("gpt-5");
+    expect(view.ctx.pct).toBe(58);
+    expect(view.ctx.estimated).toBe(true);
+    expect(view.seven?.pct).toBe(24);
+    expect(view.today.usd).toBe(48.0);
+    expect(view.repo?.usd).toBe(12.0);
+    expect(view.budget).toEqual({ dailyThresholdUsd: 40, todayUsd: 48.0 });
+    expect(view.liveSessions).toEqual({ count: 2, others: ["claude-code"] });
   });
 });

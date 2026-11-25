@@ -209,6 +209,60 @@ const solarizedDark: Theme = {
   },
 };
 
+const solarizedLight: Theme = {
+  id: "solarized-light",
+  name: "Solarized Light",
+  description: "Ethan Schoonover's precision color scheme — light variant",
+  variant: "light",
+  colors: {
+    primary: "#268bd2",
+    secondary: "#2aa198",
+    success: "#859900",
+    warning: "#b58900",
+    danger: "#dc322f",
+    muted: "#93a1a1",
+    text: "#657b83",
+    bg: "#fdf6e3",
+    cost: "#cb4b16",
+    input: "#268bd2",
+    output: "#d33682",
+    cache: "#93a1a1",
+    thinking: "#6c71c4",
+    segProject: "#eee8d5",
+    segModel: "#268bd2",
+    segContext: "#859900",
+    segGit: "#dc322f",
+    segCost: "#b58900",
+  },
+};
+
+const paperLight: Theme = {
+  id: "light",
+  name: "Light (Paper)",
+  description: "Crisp daylight ink on warm paper — high readability on light terminals",
+  variant: "light",
+  colors: {
+    primary: "#6d28d9",
+    secondary: "#4c1d95",
+    success: "#15803d",
+    warning: "#a16207",
+    danger: "#b91c1c",
+    muted: "#656d76",
+    text: "#1f2328",
+    bg: "#f7f4ec",
+    cost: "#92400e",
+    input: "#1d4ed8",
+    output: "#be185d",
+    cache: "#656d76",
+    thinking: "#6d28d9",
+    segProject: "#3730a3",
+    segModel: "#1d4ed8",
+    segContext: "#0f766e",
+    segGit: "#475569",
+    segCost: "#92400e",
+  },
+};
+
 const highContrast: Theme = {
   id: "high-contrast",
   name: "High Contrast",
@@ -245,8 +299,173 @@ export const BUILT_IN_THEMES: Record<string, Theme> = {
   catppuccin: catppuccin,
   dracula: dracula,
   "solarized-dark": solarizedDark,
+  light: paperLight,
+  "solarized-light": solarizedLight,
   "high-contrast": highContrast,
 };
+
+/** Statusline semantic palette (foregrounds, chip, alerts, and pill segments). */
+export interface StatuslinePalette {
+  themeId: string;
+  variant: "dark" | "light";
+  plain: string;
+  dim: string;
+  ok: string;
+  warn: string;
+  bad: string;
+  accent: string;
+  cost: string;
+  bold: string;
+  chipFg: string;
+  chipBg: string;
+  alertWarnFg: string;
+  alertWarnBg: string;
+  alertBadFg: string;
+  alertBadBg: string;
+  pillSegs: readonly { fg: string; bg: string }[];
+}
+
+const DEFAULT_STATUSLINE_PALETTE: StatuslinePalette = {
+  themeId: "default",
+  variant: "dark",
+  plain: "#e6edf3",
+  dim: "#7d8590",
+  ok: "#4ade80",
+  warn: "#fbbf24",
+  bad: "#f87171",
+  accent: "#a78bfa",
+  cost: "#fcd34d",
+  bold: "#ffffff",
+  chipFg: "#ffffff",
+  chipBg: "#5b21b6",
+  alertWarnFg: "#fbbf24",
+  alertWarnBg: "#3b1d0a",
+  alertBadFg: "#f87171",
+  alertBadBg: "#3d1111",
+  pillSegs: [
+    { fg: "#ffffff", bg: "#4338ca" },
+    { fg: "#ffffff", bg: "#2563eb" },
+    { fg: "#ffffff", bg: "#0f766e" },
+    { fg: "#ffffff", bg: "#b45309" },
+  ],
+};
+
+const LIGHT_STATUSLINE_PALETTE: StatuslinePalette = {
+  themeId: "light",
+  variant: "light",
+  plain: "#1f2328",
+  dim: "#656d76",
+  ok: "#15803d",
+  warn: "#a16207",
+  bad: "#b91c1c",
+  accent: "#6d28d9",
+  cost: "#92400e",
+  bold: "#111827",
+  chipFg: "#ffffff",
+  chipBg: "#4c1d95",
+  alertWarnFg: "#92400e",
+  alertWarnBg: "#fef3c7",
+  alertBadFg: "#991b1b",
+  alertBadBg: "#fee2e2",
+  pillSegs: [
+    { fg: "#ffffff", bg: "#3730a3" },
+    { fg: "#ffffff", bg: "#1d4ed8" },
+    { fg: "#ffffff", bg: "#0f766e" },
+    { fg: "#ffffff", bg: "#92400e" },
+  ],
+};
+
+const SOLARIZED_LIGHT_STATUSLINE_PALETTE: StatuslinePalette = {
+  themeId: "solarized-light",
+  variant: "light",
+  plain: "#586e75",
+  dim: "#93a1a1",
+  ok: "#6b7c00",
+  warn: "#9c7000",
+  bad: "#c92020",
+  accent: "#268bd2",
+  cost: "#b54010",
+  bold: "#073642",
+  chipFg: "#fdf6e3",
+  chipBg: "#268bd2",
+  alertWarnFg: "#8a6200",
+  alertWarnBg: "#eee8d5",
+  alertBadFg: "#991b1b",
+  alertBadBg: "#fee2e2",
+  pillSegs: [
+    { fg: "#fdf6e3", bg: "#073642" },
+    { fg: "#fdf6e3", bg: "#268bd2" },
+    { fg: "#fdf6e3", bg: "#2aa198" },
+    { fg: "#fdf6e3", bg: "#b58900" },
+  ],
+};
+
+const HIGH_CONTRAST_STATUSLINE_PALETTE: StatuslinePalette = {
+  themeId: "high-contrast",
+  variant: "dark",
+  plain: "#ffffff",
+  dim: "#a3a3a3",
+  ok: "#00ddff",
+  warn: "#ffd000",
+  bad: "#ff7b00",
+  accent: "#7dd3fc",
+  cost: "#ffd000",
+  bold: "#ffffff",
+  chipFg: "#ffffff",
+  chipBg: "#004488",
+  alertWarnFg: "#ffd000",
+  alertWarnBg: "#423300",
+  alertBadFg: "#ff8800",
+  alertBadBg: "#4a2200",
+  pillSegs: [
+    { fg: "#ffffff", bg: "#333333" },
+    { fg: "#ffffff", bg: "#004488" },
+    { fg: "#ffffff", bg: "#006688" },
+    { fg: "#ffffff", bg: "#886600" },
+  ],
+};
+
+/** Resolve semantic statusline palette for any theme id (falls back to default). */
+export function resolveStatuslinePalette(themeId?: string): StatuslinePalette {
+  const theme = getTheme(themeId);
+  switch (theme.id) {
+    case "default":
+      return DEFAULT_STATUSLINE_PALETTE;
+    case "light":
+      return LIGHT_STATUSLINE_PALETTE;
+    case "solarized-light":
+      return SOLARIZED_LIGHT_STATUSLINE_PALETTE;
+    case "high-contrast":
+      return HIGH_CONTRAST_STATUSLINE_PALETTE;
+    default: {
+      const c = theme.colors;
+      return {
+        themeId: theme.id,
+        variant: theme.variant,
+        plain: c.text,
+        dim: c.muted,
+        ok: c.success,
+        warn: c.warning,
+        bad: c.danger,
+        accent: c.primary,
+        cost: c.cost,
+        bold: theme.variant === "light" ? "#111827" : "#ffffff",
+        chipFg: theme.variant === "light" ? c.bg : "#ffffff",
+        chipBg: c.segProject,
+        alertWarnFg: c.warning,
+        alertWarnBg: theme.variant === "light" ? "#fef3c7" : "#362b1a",
+        alertBadFg: c.danger,
+        alertBadBg: theme.variant === "light" ? "#fee2e2" : "#3b1b24",
+        pillSegs: [
+          { fg: "#ffffff", bg: c.segProject },
+          { fg: "#ffffff", bg: c.segModel },
+          { fg: "#ffffff", bg: c.segContext },
+          { fg: "#ffffff", bg: c.segCost },
+        ],
+      };
+    }
+  }
+}
 
 /** Get a theme by id. Returns default theme if not found. */
 export function getTheme(id?: string): Theme {

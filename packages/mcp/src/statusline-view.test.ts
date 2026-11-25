@@ -1,3 +1,4 @@
+import { STATUSLINE_DENSITIES, STATUSLINE_STYLES } from "@sriinnu/tokmeter";
 import { describe, expect, test } from "vitest";
 import { estimateTurnsLeft } from "./statusline.js";
 import {
@@ -8,6 +9,7 @@ import {
   formatWhen,
   renderStatusline,
   type StatusView,
+  textWidth,
 } from "./statusline-view.js";
 
 // 2026-10-18 16:19 local, the moment of the captured payload these mirror.
@@ -609,5 +611,171 @@ describe("text from outside", () => {
     expect(out).not.toContain("\u001b");
     expect(out).not.toContain("\u0007");
     expect(out).not.toContain("‮");
+  });
+});
+
+describe("statusline v2: skins, densities, palettes, formats & wired signals", () => {
+  const richView = (): StatusView =>
+    base({
+      worktree: "wt-feature",
+      fastMode: true,
+      ctx: { pct: 68, windowTokens: 1_000_000, turnsLeft: 9, exceeds200k: true },
+      cost: { usd: 14.5, activeMs: 1_800_000 },
+      today: { state: "fresh", usd: 54.2, ageMs: 2_000, paceMultiple: 1.6 },
+      liveSessions: { count: 3, others: ["codex", "cursor"] },
+      subagentToday: { cost: 9.8, share: 0.18, records: 12 },
+      budget: { dailyThresholdUsd: 50, todayUsd: 54.2 },
+      unpricedModelsCount: 2,
+      linesDelta: { added: 142, removed: 38 },
+      tokensLast: { in: 18_400, out: 4_200, cacheRead: 162_000, cacheWrite: 6_400 },
+      quotas: [{ agent: "codex", label: "7d", pct: 24 }],
+      pr: { number: 294, reviewState: "approved" },
+    });
+
+  test("all 5 skins × 3 densities stay within 40..150 columns", () => {
+    const scenarios = [
+      base(),
+      richView(),
+      base({ project: "日本語プロジェクト名", cache: BROKEN }),
+    ];
+    for (const style of STATUSLINE_STYLES) {
+      for (const density of STATUSLINE_DENSITIES) {
+        for (const view of scenarios) {
+          for (let cols = 40; cols <= 150; cols += 5) {
+            const out = renderStatusline(view, { cols, color: false, style, density });
+            const lines = out.split("\n");
+            if (density === "compact") expect(lines).toHaveLength(1);
+            if (density === "balanced") expect(lines.length).toBeLessThanOrEqual(2);
+            if (density === "telemetry") expect(lines.length).toBeLessThanOrEqual(3);
+            for (const line of lines) {
+              expect(
+                textWidth(line),
+                `style=${style} density=${density} cols=${cols}: ${line}`
+              ).toBeLessThanOrEqual(cols);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test("surfaces newly wired StatusView fields, budget alert, unpriced alert, and (+N) stacking", () => {
+    const out = renderStatusline(richView(), {
+      cols: 220,
+      color: false,
+      style: "rams",
+      density: "telemetry",
+    });
+    const [l1, l2, l3] = out.split("\n");
+    expect(l1).toContain("(wt-feature)");
+    expect(l1).toContain("⚡fast");
+    expect(l1).toContain("200K+");
+    expect(l1).toContain("#294 ✓");
+    expect(l2).toContain("⚠ daily budget $54.2 / $50");
+    expect(l2).toContain("(+1)");
+    expect(l2).toContain("+3 live (codex,cursor)");
+    expect(l2).toContain("1.6×");
+    expect(l3).toContain("last 18K in · 4K out · 162K cR · 6K cW");
+    expect(l3).toContain("+142/-38 lines");
+    expect(l3).toContain("sub $9.80 (18%)");
+    expect(l3).toContain("codex 7d 24%");
+
+    // Standalone unpriced alert when no higher alert preempts
+    const unpricedOut = plain(base({ unpricedModelsCount: 2 }));
+    expect(unpricedOut).toContain("⚠ 2 unpriced models ($0 in ledger)");
+  });
+
+  test("supports light, solarized-light, high-contrast palettes and ledger zero-bg mode", () => {
+    const view = richView();
+    const light = renderStatusline(view, {
+      cols: 220,
+      color: true,
+      theme: "light",
+    });
+    expect(light).toContain("\x1b[38;2;31;35;40m"); // #1f2328 plain ink
+    expect(light).toContain("\x1b[1;38;2;146;64;14;48;2;254;243;199m"); // light warn banner
+
+    const solLight = renderStatusline(view, {
+      cols: 220,
+      color: true,
+      theme: "solarized-light",
+    });
+    expect(solLight).toContain("\x1b[38;2;88;110;117m");
+
+    const hc = renderStatusline(view, {
+      cols: 140,
+      color: true,
+      theme: "high-contrast",
+      style: "pill",
+    });
+    // High-contrast ok/bad uses cyan (#00ddff) & orange (#ff8800), not default green/red
+    expect(hc).not.toContain("74;222;128");
+    expect(hc).not.toContain("248;113;113");
+
+    const ledger = renderStatusline(view, {
+      cols: 140,
+      color: true,
+      theme: "light",
+      style: "ledger",
+    });
+    // Zero ANSI 48;2 background escapes anywhere in ledger skin
+    expect(ledger).not.toContain(";48;2;");
+  });
+
+  test("renders tmux, plain, and title formats cleanly within cols", () => {
+    const view = richView();
+    const tmux = renderStatusline(view, {
+      cols: 120,
+      color: true,
+      format: "tmux",
+      theme: "light",
+    });
+    expect(tmux).toContain("#[fg=");
+    expect(tmux).not.toContain("\x1b[");
+
+    const plainFmt = renderStatusline(view, {
+      cols: 120,
+      color: true,
+      format: "plain",
+    });
+    expect(plainFmt).not.toContain("\x1b[");
+    expect(plainFmt).not.toContain("#[fg=");
+
+    const title = renderStatusline(view, {
+      cols: 42,
+      color: true,
+      format: "title",
+    });
+    expect(title.startsWith("\x1b]0;")).toBe(true);
+    expect(title.endsWith("\x07")).toBe(true);
+    const inner = title.slice(4, -1);
+    expect(textWidth(inner)).toBeLessThanOrEqual(42);
+  });
+
+  test("respects show.* section toggles and ASCII mapping across new glyphs", () => {
+    const view = richView();
+    const hidden = renderStatusline(view, {
+      cols: 200,
+      color: false,
+      density: "telemetry",
+      show: { git: false, pr: false, cache: false, windows: false, pace: false, linesDelta: false },
+    });
+    expect(hidden).not.toContain("fix/opencode-db-schema");
+    expect(hidden).not.toContain("#294");
+    expect(hidden).not.toContain("cache");
+    expect(hidden).not.toContain("5h ");
+    expect(hidden).not.toContain("1.6×");
+    expect(hidden).not.toContain("+142/-38");
+
+    const ascii = renderStatusline(view, {
+      cols: 200,
+      color: false,
+      ascii: true,
+      style: "deck",
+      density: "telemetry",
+    });
+    for (const line of ascii.split("\n")) {
+      expect(line).toMatch(/^[ -~]*$/);
+    }
   });
 });

@@ -49,9 +49,12 @@ interface CliArgs extends ScanOptions {
     | "stats"
     | "live"
     | "statusline"
+    | "slash"
     | "daemon"
     | "install-statusline"
     | "install-mcp"
+    | "install-plugin"
+    | "uninstall-plugin"
     | "install-cron"
     | "uninstall-statusline"
     | "uninstall-mcp"
@@ -326,7 +329,8 @@ Commands:
 
 Live & Daemon:
   live            Start live TUI dashboard (from tokmeter-mcp)
-  statusline      Statusline mode for Claude Code hooks
+  statusline      Statusline mode (--ambient, --agent, --watch, --style, --density, --theme, --format)
+  slash <cmd>     Render zero-token 66-col /tokmeter card (cockpit|why|quota|live|routes|digest|statusline|doctor)
   daemon start    Start cross-provider aggregation daemon
   daemon stop     Stop the daemon
   daemon status   Check daemon status
@@ -364,6 +368,8 @@ Config (knobs in ~/.tokmeter/config.json):
 Installer:
   install-statusline   Install statusline hook for ALL editors
   install-mcp          Install MCP server for ALL editors
+  install-plugin       Install /tokmeter slash command + multi-CLI snippets
+  uninstall-plugin     Remove /tokmeter slash command files
   install-cron         Install daily price refresh (macOS launchd)
   uninstall-statusline Remove statusline hook from all editors
   uninstall-mcp        Remove MCP server from all editors
@@ -444,9 +450,12 @@ Output:
       case "pricing":
       case "live":
       case "statusline":
+      case "slash":
       case "daemon":
       case "install-statusline":
       case "install-mcp":
+      case "install-plugin":
+      case "uninstall-plugin":
       case "install-cron":
       case "uninstall-statusline":
       case "uninstall-mcp":
@@ -994,6 +1003,22 @@ async function main() {
   if (process.argv[2] === "cursor" && process.argv[3] === "sync") {
     process.exit(await runCursorSyncCommand(process.argv.slice(3)));
   }
+  if (process.argv[2] === "statusline" || process.argv[2] === "status") {
+    const { runStatusline } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/statusline.js"),
+      "statusline"
+    );
+    await runStatusline(process.argv.slice(3));
+    return;
+  }
+  if (process.argv[2] === "slash") {
+    const { runSlashCommand } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/slash.js"),
+      "slash"
+    );
+    await runSlashCommand(process.argv[3], process.argv.slice(4));
+    return;
+  }
   const args = parseArgs(process.argv);
 
   // Translate --older-than Nx into an ISO --until cutoff. "Older than N days"
@@ -1083,6 +1108,24 @@ async function main() {
       "install-mcp"
     );
     installMCP();
+    return;
+  }
+
+  if (args.command === "install-plugin") {
+    const { installPlugin } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "install-plugin"
+    );
+    installPlugin();
+    return;
+  }
+
+  if (args.command === "uninstall-plugin") {
+    const { uninstallPlugin } = await loadMcpModule(
+      () => import("@sriinnu/tokmeter-mcp/installer.js"),
+      "uninstall-plugin"
+    );
+    uninstallPlugin();
     return;
   }
 

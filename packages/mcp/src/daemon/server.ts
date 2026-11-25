@@ -30,6 +30,7 @@ import { homedir, setPriority } from "node:os";
 import { join } from "node:path";
 import type {
   ProviderId,
+  QuotaWindow,
   ScanOptions,
   ScanWarning,
   TokmeterCore,
@@ -90,7 +91,7 @@ import {
   LEGACY_DAEMON_TOKEN_FILE,
 } from "./protocol.js";
 import { RefreshCoordinator } from "./refresh-coordinator.js";
-import { SessionManager } from "./session.js";
+import { type Session, SessionManager } from "./session.js";
 import { computeSessionLedger } from "./session-ledger.js";
 
 // ─── Server State ───────────────────────────────────────────────────────
@@ -1148,6 +1149,28 @@ function startHttpApi(handlers: {
           return;
         }
 
+        if (pathname === "/api/statusline-context") {
+          const qi = url.indexOf("?");
+          const params = qi >= 0 ? new URLSearchParams(url.slice(qi + 1)) : new URLSearchParams();
+          const project = params.get("project")?.trim() || undefined;
+          const agent = params.get("agent")?.trim() || undefined;
+          const warm = await getHttpCoreNoWait();
+          const todayFloored = applyTodayFloor(computeTodayTotals(warm));
+          const computedAt = _httpCore?.ts ?? Date.now();
+          json(
+            res,
+            await buildStatuslineContext(warm, {
+              project,
+              agent,
+              sessions: sessionManager?.getLive() ?? [],
+              computedAt,
+              homeDir: warm.getHomeDir?.(),
+              todayFloored,
+            })
+          );
+          return;
+        }
+
         const core = await getHttpCore();
         const scoped = executeScopedRoute(pathname, url, core, _httpCore?.lastScanDurationMs ?? 0);
         if (scoped) {
@@ -1379,6 +1402,7 @@ function startHttpApi(handlers: {
               "/api/ready",
               "/api/quick",
               "/api/today",
+              "/api/statusline-context",
               "/api/summary",
               "/api/live",
               "/api/projects",
@@ -1814,11 +1838,196 @@ export function executeScopedRoute(
   }
 }
 
+export interface StatuslineContextResponse {
+  today: TodayTotals & { computedAt: number };
+  repo: { name: string; cost: number; in: number; out: number } | null;
+  liveSessions: {
+    count: number;
+    others: string[];
+    active: Array<{
+      provider: string;
+      sessionId: string;
+      model: string;
+      project?: string;
+      cost: number;
+      contextFillPct?: number;
+      lastUpdate: number;
+    }>;
+  };
+  paceMultiple: number | null;
+  subagentToday: { cost: number; share: number; records: number };
+  dailyCostThreshold: number | null;
+  unpricedModelsCount: number;
+  quotas: QuotaWindow[];
+  computedAt: number;
+}
+
+const QUOTA_CACHE_TTL_MS = 15_000;
+const _quotaCache = new Map<
+  string,
+  { windows: QuotaWindow[]; at: number; refreshing?: Promise<void> }
+>();
+
+async function getCachedQuota(homeDir: string): Promise<QuotaWindow[]> {
+  const now = Date.now();
+  const entry = _quotaCache.get(homeDir);
+  const fetchFresh = async (): Promise<QuotaWindow[]> => {
+    try {
+      const { getQuota } = await import("@sriinnu/tokmeter");
+      const windows = await getQuota(homeDir, Date.now());
+      _quotaCache.set(homeDir, { windows, at: Date.now() });
+      return windows;
+    } catch {
+      return entry?.windows ?? [];
+    }
+  };
+  if (!entry) {
+    return fetchFresh();
+  }
+  if (now - entry.at >= QUOTA_CACHE_TTL_MS && !entry.refreshing) {
+    entry.refreshing = fetchFresh().then(() => {
+      const cur = _quotaCache.get(homeDir);
+      if (cur) delete cur.refreshing;
+    });
+  }
+  return entry.windows;
+}
+
+function normalizeProjectMatchKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export async function buildStatuslineContext(
+  core: TokmeterCore,
+  opts: {
+    project?: string;
+    agent?: string;
+    sessions?: Session[];
+    computedAt?: number;
+    homeDir?: string;
+    todayFloored?: TodayTotals;
+    quotasOverride?: QuotaWindow[];
+  } = {}
+): Promise<StatuslineContextResponse> {
+  const computedAt = opts.computedAt ?? Date.now();
+  const homeDir = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
+  const baseToday = opts.todayFloored ?? computeTodayTotals(core);
+  const today = { ...baseToday, computedAt };
+
+  const coreApi = await import("@sriinnu/tokmeter");
+  let repo: StatuslineContextResponse["repo"] = null;
+  if (opts.project) {
+    const slug = opts.project.replace(/[^A-Za-z0-9]/g, "-");
+    const needles = new Set(
+      [
+        coreApi.canonicalizeProjectName(opts.project, ""),
+        coreApi.canonicalizeProjectName(slug, ""),
+        opts.project,
+      ]
+        .map(normalizeProjectMatchKey)
+        .filter(Boolean)
+    );
+    let cost = 0;
+    let inTok = 0;
+    let outTok = 0;
+    let matchedName: string | null = null;
+    for (const [key, val] of Object.entries(today.projects)) {
+      if (!needles.has(normalizeProjectMatchKey(key))) continue;
+      if (!matchedName) matchedName = key;
+      cost += val.cost;
+      inTok += val.in;
+      outTok += val.out;
+    }
+    if (matchedName !== null) {
+      repo = { name: matchedName, cost, in: inTok, out: outTok };
+    }
+  }
+
+  let paceMultiple: number | null = null;
+  let subagentToday = { cost: 0, share: 0, records: 0 };
+  if (typeof core.getStatbarSignals === "function") {
+    try {
+      const sig = core.getStatbarSignals();
+      paceMultiple = sig.pace?.multiple ?? null;
+      if (sig.subagentToday) {
+        subagentToday = {
+          cost: sig.subagentToday.cost,
+          share: sig.subagentToday.share,
+          records: sig.subagentToday.records,
+        };
+      }
+    } catch {}
+  }
+
+  let unpricedModelsCount = 0;
+  if (typeof core.getScanMeta === "function") {
+    try {
+      unpricedModelsCount = core.getScanMeta().unpricedModels.length;
+    } catch {}
+  }
+
+  let dailyCostThreshold: number | null = null;
+  try {
+    dailyCostThreshold = coreApi.loadConfig(homeDir).alerts.dailyCostThreshold;
+  } catch {}
+
+  const live = (opts.sessions ?? [])
+    .filter((s) => !s.ended)
+    .slice()
+    .sort((a, b) => b.lastUpdate - a.lastUpdate);
+  const filteredOthers = new Set<string>();
+  for (const s of live) {
+    if (!opts.agent || s.provider !== opts.agent) {
+      filteredOthers.add(s.provider);
+    }
+  }
+  const active = live.slice(0, 16).map((s) => {
+    const pct =
+      s.contextWindow && s.contextWindow.maxTokens > 0
+        ? (s.contextWindow.usedTokens / s.contextWindow.maxTokens) * 100
+        : undefined;
+    return {
+      provider: s.provider,
+      sessionId: s.sessionId,
+      model: s.model,
+      ...(s.project ? { project: s.project } : {}),
+      cost: s.cost,
+      ...(pct !== undefined && Number.isFinite(pct) ? { contextFillPct: pct } : {}),
+      lastUpdate: s.lastUpdate,
+    };
+  });
+
+  const quotas = opts.quotasOverride ?? (await getCachedQuota(homeDir));
+
+  return {
+    today,
+    repo,
+    liveSessions: {
+      count: live.length,
+      others: [...filteredOthers],
+      active,
+    },
+    paceMultiple,
+    subagentToday,
+    dailyCostThreshold,
+    unpricedModelsCount,
+    quotas,
+    computedAt,
+  };
+}
+
 /**
  * Create an isolated loopback HTTP server backed by an injected `TokmeterCore`
  * for unit/integration tests without mutating process-wide daemon globals.
  */
-export function createDaemonTestHttpServer(core: TokmeterCore, token: string) {
+export function createDaemonTestHttpServer(
+  core: TokmeterCore,
+  token: string,
+  opts?: { sessions?: Session[]; homeDir?: string; quotas?: QuotaWindow[] }
+) {
   return createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     res.setHeader("Content-Type", "application/json");
     for (const [name, value] of apiVersionHeaders(API_VERSION)) res.setHeader(name, value);
@@ -1871,10 +2080,50 @@ export function createDaemonTestHttpServer(core: TokmeterCore, token: string) {
       json(res, core.getStatbarSignals());
       return;
     }
+    if (pathname === "/api/today") {
+      json(res, { ...computeTodayTotals(core), computedAt: Date.now() });
+      return;
+    }
+    if (pathname === "/api/statusline-context") {
+      const qi = url.indexOf("?");
+      const params = qi >= 0 ? new URLSearchParams(url.slice(qi + 1)) : new URLSearchParams();
+      json(
+        res,
+        await buildStatuslineContext(core, {
+          project: params.get("project")?.trim() || undefined,
+          agent: params.get("agent")?.trim() || undefined,
+          sessions: opts?.sessions ?? [],
+          homeDir: opts?.homeDir,
+          quotasOverride: opts?.quotas,
+        })
+      );
+      return;
+    }
     if (pathname === "/api/rates") {
       const scope =
         new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
       json(res, await core.getModelRates(scope));
+      return;
+    }
+    if (pathname === "/api/quota") {
+      json(res, { windows: opts?.quotas ?? (await getCachedQuota(opts?.homeDir ?? homedir())) });
+      return;
+    }
+    if (pathname === "/api/cross-tool") {
+      json(res, await core.getCrossToolComparison());
+      return;
+    }
+    if (pathname === "/api/health") {
+      const meta = core.getScanMeta();
+      json(res, {
+        ready: true,
+        unpricedModels: meta.unpricedModels.slice(0, 100),
+        unpricedModelsTotal: meta.unpricedModels.length,
+        unpricedModelsTruncated: meta.unpricedModels.length > 100,
+        unpricedRecords: meta.unpricedRecords,
+        warnings: meta.warnings,
+        lastScanAt: meta.lastScanAt,
+      });
       return;
     }
     res.writeHead(404);

@@ -22,6 +22,10 @@
       "types": "./dist/statusline.d.ts",
       "import": "./dist/statusline.js"
     },
+    "./slash.js": {
+      "types": "./dist/slash.d.ts",
+      "import": "./dist/slash.js"
+    },
     "./daemon/server.js": {
       "types": "./dist/daemon/server.d.ts",
       "import": "./dist/daemon/server.js"

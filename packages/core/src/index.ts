@@ -57,15 +57,22 @@ export type {
   ConfigFieldMeta,
   DefaultRange,
   DefaultSort,
+  StatuslineConfig,
+  StatuslineDensity,
+  StatuslineShowConfig,
+  StatuslineStyle,
   UserConfig,
 } from "./config-service.js";
 export {
+  BUILT_IN_THEME_IDS,
   CONFIG_FIELDS,
   configFilePath,
   DEFAULT_CONFIG,
   getConfigValue,
   loadConfig,
   mergeConfigs,
+  STATUSLINE_DENSITIES,
+  STATUSLINE_STYLES,
   saveConfig,
   setConfigValue,
 } from "./config-service.js";
@@ -194,7 +201,7 @@ export {
   loadSummaryCache,
   saveSummaryCache,
 } from "./summary-cache.js";
-export type { Theme, ThemeColors } from "./themes.js";
+export type { StatuslinePalette, Theme, ThemeColors } from "./themes.js";
 export {
   BUILT_IN_THEMES,
   getConfigPath,
@@ -203,6 +210,7 @@ export {
   listThemeIds,
   listThemes,
   loadUserTheme,
+  resolveStatuslinePalette,
 } from "./themes.js";
 export {
   computeTimeOfDayProfile,

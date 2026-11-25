@@ -1,6 +1,6 @@
 /**
  * @sriinnu/tokmeter-mcp — statusline view: a pure function from a
- * harness-neutral snapshot to the two printed lines.
+ * harness-neutral snapshot to rendered statusline output.
  *
  * Every segment exists because it changes a decision: compact now, send before
  * the prompt cache cools, find what just broke the cache, slow down before a
@@ -24,7 +24,14 @@
  * same in tests as on screen.
  */
 
-import { sanitizeDataLabel } from "@sriinnu/tokmeter";
+import {
+  resolveStatuslinePalette,
+  type StatuslineDensity,
+  type StatuslinePalette,
+  type StatuslineShowConfig,
+  type StatuslineStyle,
+  sanitizeDataLabel,
+} from "@sriinnu/tokmeter";
 
 export interface RateWindowView {
   /** Percent of the window used, as the harness reports it. */
@@ -77,10 +84,7 @@ export interface CacheView {
   hitRatio?: number | null;
   /**
    * Requests whose cached prefix shrank with no compaction to explain it.
-   * Claude Code's payload calls these `misses`. They're "breaks" here because
-   * core's `cacheMissRate` already means something else (the uncached share
-   * of input tokens, which the menu bar shows) and one word can't be both a
-   * count of requests and a share of tokens.
+   * Claude Code's payload calls these `misses`.
    */
   breaks?: number;
   /** Tokens those requests wrote back to the cache. */
@@ -91,36 +95,68 @@ export interface CacheView {
   lastBreakCauses?: string[];
 }
 
+export type PrReviewState = "approved" | "pending" | "changes_requested" | "draft";
+
 export interface StatusView {
   /** Epoch milliseconds the snapshot was taken. */
   now: number;
   project: string;
-  /** The session runs in a git worktree; `project` is then the repo's name. */
-  worktree?: boolean;
+  /**
+   * The session runs in a git worktree. `true` marks it generically as
+   * `(worktree)`; a string shows the named worktree tag.
+   */
+  worktree?: boolean | string;
   /** Model label as shown to the user, e.g. "Opus 5.5". */
   model: string;
   effort?: string;
+  fastMode?: boolean;
   route?: RouteView;
   /** Context fill. `pct: null` = the harness doesn't report it. */
-  ctx: { pct: number | null; windowTokens?: number; turnsLeft?: number | null };
+  ctx: {
+    pct: number | null;
+    windowTokens?: number;
+    turnsLeft?: number | null;
+    exceeds200k?: boolean;
+    /** True when derived from ambient daemon estimate rather than exact hook fill. */
+    estimated?: boolean;
+  };
   cache?: CacheView;
   /** Session cost at list prices. `usd: null` = not priced. */
-  cost?: { usd: number | null };
+  cost?: { usd: number | null; activeMs?: number };
   five?: RateWindowView;
   seven?: RateWindowView;
   spend?: SpendLimitView;
-  today: { state: "fresh" | "stale" | "down" | "none"; usd?: number; ageMs?: number };
+  today: {
+    state: "fresh" | "stale" | "down" | "none";
+    usd?: number;
+    ageMs?: number;
+    paceMultiple?: number | null;
+  };
   /** Today's spend in this repo; part of `today`, never added to it. */
   repo?: { usd: number; stale: boolean };
+  liveSessions?: { count: number; others: string[] };
+  subagentToday?: { cost: number; share: number; records?: number };
+  budget?: { dailyThresholdUsd: number; todayUsd: number };
+  unpricedModelsCount?: number;
+  linesDelta?: { added: number; removed: number };
+  tokensLast?: { in: number; out: number; cacheRead: number; cacheWrite: number };
+  quotas?: Array<{ agent: string; label: string; pct: number; resetsAt?: number }>;
   git?: { branch: string; dirty: number };
-  pr?: { number: number };
+  pr?: { number: number; reviewState?: PrReviewState };
 }
+
+export type StatuslineFormat = "ansi" | "tmux" | "plain" | "title";
 
 export interface RenderOptions {
   cols: number;
   color: boolean;
   /** Plain ASCII glyphs, for `TERM=dumb`. */
   ascii?: boolean;
+  style?: StatuslineStyle;
+  density?: StatuslineDensity;
+  theme?: string;
+  format?: StatuslineFormat;
+  show?: Partial<StatuslineShowConfig>;
 }
 
 // ─── Styling ───────────────────────────────────────────────────────────
@@ -136,21 +172,11 @@ type Tone =
   | "bold"
   | "chip"
   | "alertWarn"
-  | "alertBad";
-
-const SGR: Record<Tone, string> = {
-  plain: "",
-  dim: "\x1b[2m",
-  ok: "\x1b[38;2;74;222;128m",
-  warn: "\x1b[38;2;251;191;36m",
-  bad: "\x1b[38;2;248;113;113m",
-  accent: "\x1b[38;2;167;139;250m",
-  cost: "\x1b[38;2;252;211;77m",
-  bold: "\x1b[1m",
-  chip: "\x1b[1;38;2;255;255;255;48;2;91;33;182m",
-  alertWarn: "\x1b[1;38;2;251;191;36;48;2;59;29;10m",
-  alertBad: "\x1b[1;38;2;248;113;113;48;2;61;17;17m",
-};
+  | "alertBad"
+  | "pill0"
+  | "pill1"
+  | "pill2"
+  | "pill3";
 
 interface Span {
   tone: Tone;
@@ -172,13 +198,113 @@ interface Segment {
   fullPrio?: number;
 }
 
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = Number.parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function ansiFg(hex: string, bold = false): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return bold ? "\x1b[1m" : "";
+  return `\x1b[${bold ? "1;" : ""}38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+}
+
+function ansiFgBg(fg: string, bg: string, bold = false): string {
+  const f = hexToRgb(fg);
+  const b = hexToRgb(bg);
+  if (!f || !b) return bold ? "\x1b[1m" : "";
+  return `\x1b[${bold ? "1;" : ""}38;2;${f[0]};${f[1]};${f[2]};48;2;${b[0]};${b[1]};${b[2]}m`;
+}
+
+function toneToAnsi(tone: Tone, palette: StatuslinePalette, noBg: boolean): string {
+  switch (tone) {
+    case "plain":
+      return palette.themeId === "default" ? "" : ansiFg(palette.plain);
+    case "dim":
+      return palette.themeId === "default" ? "\x1b[2m" : ansiFg(palette.dim);
+    case "ok":
+      return ansiFg(palette.ok);
+    case "warn":
+      return ansiFg(palette.warn);
+    case "bad":
+      return ansiFg(palette.bad);
+    case "accent":
+      return ansiFg(palette.accent);
+    case "cost":
+      return ansiFg(palette.cost);
+    case "bold":
+      return palette.themeId === "default" ? "\x1b[1m" : ansiFg(palette.bold, true);
+    case "chip":
+      return noBg ? ansiFg(palette.accent, true) : ansiFgBg(palette.chipFg, palette.chipBg, true);
+    case "alertWarn":
+      return noBg
+        ? ansiFg(palette.warn, true)
+        : ansiFgBg(palette.alertWarnFg, palette.alertWarnBg, true);
+    case "alertBad":
+      return noBg
+        ? ansiFg(palette.bad, true)
+        : ansiFgBg(palette.alertBadFg, palette.alertBadBg, true);
+    case "pill0":
+    case "pill1":
+    case "pill2":
+    case "pill3": {
+      const idx = Number(tone.slice(4));
+      const p = palette.pillSegs[idx] ?? palette.pillSegs[0];
+      return noBg ? ansiFg(palette.accent, true) : ansiFgBg(p.fg, p.bg, true);
+    }
+  }
+}
+
+function toneToTmux(tone: Tone, palette: StatuslinePalette, noBg: boolean): string {
+  switch (tone) {
+    case "plain":
+      return "";
+    case "dim":
+      return `#[fg=${palette.dim}]`;
+    case "ok":
+      return `#[fg=${palette.ok}]`;
+    case "warn":
+      return `#[fg=${palette.warn}]`;
+    case "bad":
+      return `#[fg=${palette.bad}]`;
+    case "accent":
+      return `#[fg=${palette.accent}]`;
+    case "cost":
+      return `#[fg=${palette.cost}]`;
+    case "bold":
+      return `#[fg=${palette.bold},bold]`;
+    case "chip":
+      return noBg
+        ? `#[fg=${palette.accent},bold]`
+        : `#[fg=${palette.chipFg},bg=${palette.chipBg},bold]`;
+    case "alertWarn":
+      return noBg
+        ? `#[fg=${palette.warn},bold]`
+        : `#[fg=${palette.alertWarnFg},bg=${palette.alertWarnBg},bold]`;
+    case "alertBad":
+      return noBg
+        ? `#[fg=${palette.bad},bold]`
+        : `#[fg=${palette.alertBadFg},bg=${palette.alertBadBg},bold]`;
+    case "pill0":
+    case "pill1":
+    case "pill2":
+    case "pill3": {
+      const idx = Number(tone.slice(4));
+      const p = palette.pillSegs[idx] ?? palette.pillSegs[0];
+      return noBg ? `#[fg=${palette.accent},bold]` : `#[fg=${p.fg},bg=${p.bg},bold]`;
+    }
+  }
+}
+
 /**
  * Terminal cells one code point takes: 0 for combining marks, joiners and
  * variation selectors, 2 for East Asian wide/fullwidth and emoji, else 1.
  * The renderer's own glyphs are all one cell; data (a project name, a branch)
  * can be anything, and counting code points let a CJK name overflow the line.
  */
-function cellWidth(cp: number): number {
+export function cellWidth(cp: number): number {
   if (
     (cp >= 0x0300 && cp <= 0x036f) ||
     (cp >= 0x200b && cp <= 0x200f) ||
@@ -210,7 +336,7 @@ function cellWidth(cp: number): number {
   return 1;
 }
 
-function textWidth(text: string): number {
+export function textWidth(text: string): number {
   let n = 0;
   for (const ch of text) n += cellWidth(ch.codePointAt(0) ?? 0);
   return n;
@@ -236,8 +362,13 @@ function width(spans: Span[]): number {
 const ASCII: Record<string, string> = {
   "│": "|",
   "◆": "*",
+  "◇": "*",
   "▰": "#",
   "▱": "-",
+  "█": "#",
+  "░": "-",
+  "━": "#",
+  "─": "-",
   "⎇": "@",
   "⚠": "!",
   "■": "#",
@@ -247,6 +378,12 @@ const ASCII: Record<string, string> = {
   "—": "-",
   "…": ".",
   "∞": "+",
+  "⚡": "*",
+  "✓": "+",
+  "✗": "x",
+  "○": "?",
+  "◌": ".",
+  "×": "x",
 };
 
 function toAscii(text: string): string {
@@ -255,16 +392,98 @@ function toAscii(text: string): string {
   return out;
 }
 
-function paint(spans: Span[], opts: RenderOptions): string {
+function paint(
+  spans: Span[],
+  opts: RenderOptions,
+  palette: StatuslinePalette,
+  noBg: boolean
+): string {
+  const fmt = opts.format ?? "ansi";
+  const wantColor = opts.color && fmt !== "plain" && fmt !== "title";
   return spans
     .map((sp) => {
       const text = opts.ascii ? toAscii(sp.text) : sp.text;
-      return opts.color && SGR[sp.tone] ? `${SGR[sp.tone]}${text}\x1b[0m` : text;
+      if (!wantColor) return text;
+      if (fmt === "tmux") {
+        const tag = toneToTmux(sp.tone, palette, noBg);
+        return tag ? `${tag}${text}#[default]` : text;
+      }
+      const seq = toneToAnsi(sp.tone, palette, noBg);
+      return seq ? `${seq}${text}\x1b[0m` : text;
     })
     .join("");
 }
 
-const SEP: Span = s("dim", " │ ");
+interface StyleSkinSpec {
+  style: StatuslineStyle;
+  sepText: string;
+  barFilled: string;
+  barEmpty: string;
+  barCells: number;
+  uppercaseLabels: boolean;
+  noBg: boolean;
+  l1PillTones: boolean;
+}
+
+function resolveSkinSpec(style: StatuslineStyle = "rams"): StyleSkinSpec {
+  switch (style) {
+    case "deck":
+      return {
+        style: "deck",
+        sepText: " · ",
+        barFilled: "█",
+        barEmpty: "░",
+        barCells: 8,
+        uppercaseLabels: true,
+        noBg: false,
+        l1PillTones: false,
+      };
+    case "pill":
+      return {
+        style: "pill",
+        sepText: " ",
+        barFilled: "▰",
+        barEmpty: "▱",
+        barCells: 8,
+        uppercaseLabels: false,
+        noBg: false,
+        l1PillTones: true,
+      };
+    case "meter":
+      return {
+        style: "meter",
+        sepText: " | ",
+        barFilled: "━",
+        barEmpty: "─",
+        barCells: 6,
+        uppercaseLabels: false,
+        noBg: false,
+        l1PillTones: false,
+      };
+    case "ledger":
+      return {
+        style: "ledger",
+        sepText: " · ",
+        barFilled: "▰",
+        barEmpty: "▱",
+        barCells: 8,
+        uppercaseLabels: false,
+        noBg: true,
+        l1PillTones: false,
+      };
+    default:
+      return {
+        style: "rams",
+        sepText: " │ ",
+        barFilled: "▰",
+        barEmpty: "▱",
+        barCells: 8,
+        uppercaseLabels: false,
+        noBg: false,
+        l1PillTones: false,
+      };
+  }
+}
 
 /** Cut spans to `cols` cells, ending in an ellipsis. */
 function clip(spans: Span[], cols: number): Span[] {
@@ -304,7 +523,7 @@ const GONE = 2;
  * value. The top segment is always shown; if it alone is too wide it is
  * clipped. Original order is kept.
  */
-function fit(segments: Segment[], cols: number): Span[][] {
+function fit(segments: Segment[], cols: number, sepWidth = 3): Span[][] {
   if (segments.length === 0) return [];
   const state = segments.map(() => GONE);
   const spansOf = (i: number) =>
@@ -317,7 +536,7 @@ function fit(segments: Segment[], cols: number): Span[][] {
       n += width(spansOf(i));
       shown++;
     }
-    return n + Math.max(0, shown - 1) * 3;
+    return n + Math.max(0, shown - 1) * sepWidth;
   };
   const fullWorth = (i: number) => segments[i].fullPrio ?? segments[i].prio / 2;
   const base = (i: number) => (segments[i].short ? SHORT : FULL);
@@ -328,7 +547,7 @@ function fit(segments: Segment[], cols: number): Span[][] {
   const grants: { worth: number; i: number; long: boolean; cost: number }[] = [];
   segments.forEach((g, i) => {
     const shownWidth = width(g.short ?? g.spans);
-    if (i !== top) grants.push({ worth: g.prio, i, long: false, cost: shownWidth + 3 });
+    if (i !== top) grants.push({ worth: g.prio, i, long: false, cost: shownWidth + sepWidth });
     if (g.short)
       grants.push({ worth: fullWorth(i), i, long: true, cost: width(g.spans) - shownWidth });
   });
@@ -350,14 +569,22 @@ function fit(segments: Segment[], cols: number): Span[][] {
   return out;
 }
 
-function line(segments: Segment[], opts: RenderOptions): string {
+function lineWith(
+  segments: Segment[],
+  opts: RenderOptions,
+  palette: StatuslinePalette,
+  sepText: string,
+  noBg: boolean
+): string {
   if (segments.length === 0) return "";
+  const sepSpan = s("dim", sepText);
+  const sepWidth = textWidth(sepText);
   const spans: Span[] = [];
-  fit(segments, opts.cols).forEach((g, i) => {
-    if (i > 0) spans.push(SEP);
+  fit(segments, opts.cols, sepWidth).forEach((g, i) => {
+    if (i > 0) spans.push(sepSpan);
     spans.push(...g);
   });
-  return paint(spans, opts);
+  return paint(spans, opts, palette, noBg);
 }
 
 // ─── Formatting ────────────────────────────────────────────────────────
@@ -415,10 +642,10 @@ function label(value: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : clean;
 }
 
-function bar(pct: number, cells = 8): string {
+function gauge(pct: number, skin: StyleSkinSpec): string {
   const p = Math.max(0, Math.min(100, pct));
-  const n = Math.round((p / 100) * cells);
-  return "▰".repeat(n) + "▱".repeat(cells - n);
+  const n = Math.round((p / 100) * skin.barCells);
+  return skin.barFilled.repeat(n) + skin.barEmpty.repeat(skin.barCells - n);
 }
 
 function ctxTone(pct: number): Tone {
@@ -448,8 +675,6 @@ export interface WindowForecast {
  * that a single burst reads as a runaway.
  */
 export function forecastWindow(w: RateWindowView, nowMs: number): WindowForecast | null {
-  // Claude Code reports whole percents. Below 5% the rounding alone moves a
-  // projection by 10%+ (2% is anything from 1.5 to 2.5), so it would be noise.
   if (!w.resetsAt || !Number.isFinite(w.pct) || w.pct < 5) return null;
   const nowSec = nowMs / 1000;
   const left = w.resetsAt - nowSec;
@@ -466,11 +691,6 @@ export function forecastWindow(w: RateWindowView, nowMs: number): WindowForecast
 /** A break stays in the alert slot this long; a turn can take minutes. */
 const FRESH_BREAK_SEC = 300;
 
-/**
- * Short words for Claude Code's closed set of cache-break causes
- * (PROMPT_CACHE_MISS_CAUSES in 2.1.329). A name this table doesn't know is
- * shown as sent, underscores as spaces; `unknown` is shown as nothing.
- */
 const BREAK_CAUSE: Record<string, string> = {
   system_prompt_changed: "system prompt changed",
   tools_changed: "tools changed",
@@ -507,7 +727,7 @@ interface Alert {
   short?: string;
 }
 
-function pickAlert(v: StatusView): Alert | null {
+function pickAlert(v: StatusView, show: StatuslineShowConfig): Alert | null {
   const nowSec = v.now / 1000;
   const alerts: Alert[] = [];
   const windows: [string, RateWindowView | undefined][] = [
@@ -605,8 +825,25 @@ function pickAlert(v: StatusView): Alert | null {
     });
   }
 
+  if (
+    v.budget &&
+    v.budget.dailyThresholdUsd > 0 &&
+    v.budget.todayUsd >= v.budget.dailyThresholdUsd
+  ) {
+    const overPct = Math.round(
+      ((v.budget.todayUsd - v.budget.dailyThresholdUsd) / v.budget.dailyThresholdUsd) * 100
+    );
+    const plus = overPct > 0 ? ` (+${overPct}%)` : "";
+    alerts.push({
+      severity: 82,
+      tone: "alertWarn",
+      text: ` ⚠ daily budget ${formatUsd(v.budget.todayUsd)} / ${formatUsd(v.budget.dailyThresholdUsd)}${plus} `,
+      short: " ⚠ over daily budget ",
+    });
+  }
+
   const c = v.cache;
-  if (c?.warm && c.expiresAt) {
+  if (show.cache && c?.warm && c.expiresAt) {
     const left = c.expiresAt - nowSec;
     if (left > 0 && left < 300) {
       const rebuild = c.rebuildTokens
@@ -620,8 +857,7 @@ function pickAlert(v: StatusView): Alert | null {
       });
     }
   }
-  // A break that just happened: the moment to connect it to what changed.
-  if (c?.breaks && c.lastBreakAt) {
+  if (show.cache && c?.breaks && c.lastBreakAt) {
     const ago = nowSec - c.lastBreakAt;
     if (ago >= 0 && ago < FRESH_BREAK_SEC) {
       const cause = breakCause(c.lastBreakCauses);
@@ -642,10 +878,19 @@ function pickAlert(v: StatusView): Alert | null {
     }
   }
 
+  if (v.unpricedModelsCount && v.unpricedModelsCount > 0) {
+    const n = v.unpricedModelsCount;
+    alerts.push({
+      severity: 60,
+      tone: "alertWarn",
+      text: ` ⚠ ${n} unpriced ${n === 1 ? "model" : "models"} ($0 in ledger) `,
+      short: ` ⚠ ${n} unpriced `,
+    });
+  }
+
   if (alerts.length === 0) return null;
   const worst = alerts.reduce((a, b) => (b.severity > a.severity ? b : a));
   if (alerts.length === 1) return worst;
-  // One slot, so say that more are waiting behind it rather than hide them.
   const more = (t: string) => `${t.trimEnd()} (+${alerts.length - 1}) `;
   return {
     ...worst,
@@ -656,31 +901,98 @@ function pickAlert(v: StatusView): Alert | null {
 
 // ─── Segments ──────────────────────────────────────────────────────────
 
-function ctxSegment(v: StatusView): Segment {
+function projectSegment(v: StatusView, skin: StyleSkinSpec): Segment {
+  const project = label(v.project || "tokmeter", 28);
+  const projectShort = label(v.project || "tokmeter", 12);
+  const longName = textWidth(v.project || "tokmeter") > 12;
+  const wtText =
+    v.worktree === true
+      ? "(worktree) "
+      : typeof v.worktree === "string" && v.worktree.trim().length > 0
+        ? `(${label(v.worktree.trim(), 16)}) `
+        : null;
+
+  const chipSpan = (name: string): Span => {
+    if (skin.style === "deck") return s("chip", ` [${name}] `);
+    if (skin.style === "pill") return s("pill0", ` ◆ ${name} `);
+    if (skin.style === "meter") return s("chip", ` ■ ${name} `);
+    if (skin.style === "ledger") return s("chip", `◇ ${name}`);
+    return s("chip", ` ◆ ${name} `);
+  };
+
+  return {
+    prio: 100,
+    spans: wtText ? [chipSpan(project), s("dim", wtText)] : [chipSpan(project)],
+    ...(wtText || longName ? { short: [chipSpan(longName ? projectShort : project)] } : {}),
+  };
+}
+
+function ctxSegment(v: StatusView, skin: StyleSkinSpec): Segment {
+  const lbl = skin.uppercaseLabels ? "CTX" : "ctx";
   const pct = v.ctx.pct;
-  if (pct === null) return { prio: 95, spans: [s("dim", "ctx ?")] };
-  if (pct >= 100) return { prio: 98, spans: [s("alertBad", " ctx 100% · compacting ")] };
+  if (pct === null) {
+    return {
+      prio: 95,
+      spans: [skin.l1PillTones ? s("pill2", ` ${lbl} ? `) : s("dim", `${lbl} ?`)],
+    };
+  }
+  const prefix = v.ctx.estimated && pct < 100 ? "~" : "";
+  if (pct >= 100) {
+    return { prio: 98, spans: [s("alertBad", ` ${lbl} 100% · compacting `)] };
+  }
   const shown = shownPct(pct);
+  const longCtxBadge = v.ctx.exceeds200k ? [s("warn", " · 200K+")] : [];
   if (pct >= 95) {
     return {
       prio: 98,
-      spans: [s("alertBad", ` ctx ${bar(pct)} ${shown}% · compacts next turn `)],
-      short: [s("alertBad", ` ctx ${shown}% `)],
+      spans: [
+        s("alertBad", ` ${lbl} ${gauge(pct, skin)} ${prefix}${shown}% · compacts next turn `),
+        ...longCtxBadge,
+      ],
+      short: [s("alertBad", ` ${lbl} ${prefix}${shown}% `)],
+    };
+  }
+  if (skin.l1PillTones && pct < 70) {
+    return {
+      prio: 98,
+      spans: [
+        s(
+          "pill2",
+          ` ${lbl} ${gauge(pct, skin)} ${prefix}${shown}%${v.ctx.exceeds200k ? " · 200K+" : ""} `
+        ),
+      ],
+      short: [s("pill2", ` ${lbl} ${prefix}${shown}% `)],
     };
   }
   const tone = ctxTone(pct);
-  const spans = [s("dim", "ctx "), s(tone, `${bar(pct)} ${shown}%`)];
+  const spans = [
+    s("dim", `${lbl} `),
+    s(tone, `${gauge(pct, skin)} ${prefix}${shown}%`),
+    ...longCtxBadge,
+  ];
   if (pct >= 70 && v.ctx.turnsLeft) spans.push(s("dim", ` · ~${v.ctx.turnsLeft} turns left`));
-  return { prio: 98, spans, short: [s("dim", "ctx "), s(tone, `${shown}%`)] };
+  return { prio: 98, spans, short: [s("dim", `${lbl} `), s(tone, `${prefix}${shown}%`)] };
 }
 
-function modelSegment(v: StatusView): Segment {
+function modelSegment(v: StatusView, skin: StyleSkinSpec): Segment {
   const r = v.route;
   const model = label(v.model, 40);
   if (!r) {
-    const spans = [s("bold", model)];
-    if (!v.effort) return { prio: 90, spans };
-    return { prio: 90, spans: [...spans, s("dim", ` · ${label(v.effort, 8)}`)], short: spans };
+    const fast = v.fastMode ? [s("warn", " ⚡fast")] : [];
+    const baseSpans = skin.l1PillTones ? [s("pill1", ` ${model} `)] : [s("bold", model)];
+    if (!v.effort && !v.fastMode) {
+      return { prio: 90, spans: baseSpans };
+    }
+    const effortText = v.effort ? ` · ${label(v.effort, 8)}` : "";
+    if (skin.l1PillTones) {
+      const fullPill = [s("pill1", ` ${model}${effortText}${v.fastMode ? " ⚡fast" : ""} `)];
+      return { prio: 90, spans: fullPill, short: [s("pill1", ` ${model} `)] };
+    }
+    return {
+      prio: 90,
+      spans: [...baseSpans, ...(v.effort ? [s("dim", effortText)] : []), ...fast],
+      short: baseSpans,
+    };
   }
   const via = label(r.via, 24);
   if (r.offline) return { prio: 96, spans: [s("bad", `⇄ ${via} offline`)] };
@@ -705,22 +1017,14 @@ function modelSegment(v: StatusView): Segment {
   };
 }
 
-/**
- * Cache health, in the order it changes a decision: is the next turn a
- * rebuild (cold, or about to be), then how well the session has cached so far.
- *
- * The hit share gets a color only when it's good. A low share is normal early
- * (the first request can only write), so the warning is the break count, which
- * the harness raises only for a prefix that should have been cached.
- */
-function cacheSegment(v: StatusView): Segment | null {
+function cacheSegment(v: StatusView, skin: StyleSkinSpec): Segment | null {
   const c = v.cache;
   if (!c) return null;
+  const lbl = skin.uppercaseLabels ? "CACHE" : "cache";
   const nowSec = v.now / 1000;
-  // A warm cache with no expiry, or no word on warmth, is unknown, not cold.
   const left = c.expiresAt ? c.expiresAt - nowSec : null;
   if (c.warm === false || (left !== null && left <= 0)) {
-    const short = [s("warn", "cache cold")];
+    const short = [s("warn", `${lbl} cold`)];
     return c.rebuildTokens
       ? {
           prio: 72,
@@ -733,7 +1037,7 @@ function cacheSegment(v: StatusView): Segment | null {
       : { prio: 72, spans: short };
   }
   if (c.warm && left !== null && left < 300) {
-    const short = [s("warn", `cache ${formatSpan(left)}`)];
+    const short = [s("warn", `${lbl} ${formatSpan(left)}`)];
     return c.rebuildTokens
       ? {
           prio: 80,
@@ -745,42 +1049,64 @@ function cacheSegment(v: StatusView): Segment | null {
   const ttl = c.warm && left !== null ? s(left < 900 ? "warn" : "ok", formatSpan(left)) : null;
   const ratio = c.hitRatio;
   if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
-    if (ttl) return { prio: 70, spans: [s("dim", "cache "), ttl] };
-    return c.warm ? { prio: 70, spans: [s("dim", "cache warm")] } : null;
+    if (ttl) return { prio: 70, spans: [s("dim", `${lbl} `), ttl] };
+    return c.warm ? { prio: 70, spans: [s("dim", `${lbl} warm`)] } : null;
   }
   const share = Math.round(Math.max(0, Math.min(1, ratio)) * 100);
-  const hit = [s("dim", "cache "), s(share >= 80 ? "ok" : "plain", `${share}%`), s("dim", " hit")];
+  const hit = [s("dim", `${lbl} `), s(share >= 80 ? "ok" : "plain", `${share}%`), s("dim", " hit")];
   const breaks = c.breaks
     ? [s("dim", " · "), s("warn", `${c.breaks} ${c.breaks === 1 ? "break" : "breaks"}`)]
     : [];
   return {
     prio: 70,
     spans: [...hit, ...breaks, ...(ttl ? [s("dim", " · "), ttl] : [])],
-    // Under 15 minutes the countdown is the number that matters.
-    ...(ttl && left !== null && left < 900 ? { short: [s("dim", "cache "), ttl] } : { short: hit }),
-    // The break count and countdown outlast the branch and PR number.
+    ...(ttl && left !== null && left < 900
+      ? { short: [s("dim", `${lbl} `), ttl] }
+      : { short: hit }),
     fullPrio: 45,
   };
 }
 
-function costSegment(v: StatusView): Segment | null {
+function costSegment(v: StatusView, skin: StyleSkinSpec): Segment | null {
   const c = v.cost;
   if (!c) return null;
+  const lbl = skin.uppercaseLabels ? "SESS" : "session";
   if (c.usd === null) {
     return { prio: 85, spans: [s("dim", "$— not priced")], short: [s("dim", "$—")] };
   }
-  const usd = s("cost", formatUsd(c.usd));
-  return { prio: 88, spans: [s("dim", "session "), usd], short: [usd] };
+  const usdStr = formatUsd(c.usd);
+  if (skin.l1PillTones) {
+    return {
+      prio: 88,
+      spans: [s("pill3", ` ${lbl} ${usdStr} `)],
+      short: [s("pill3", ` ${usdStr} `)],
+    };
+  }
+  const usd = s("cost", usdStr);
+  const rate =
+    c.activeMs && c.activeMs >= 60_000 && c.usd > 0
+      ? ` · ${formatUsd((c.usd * 3_600_000) / c.activeMs)}/h`
+      : "";
+  return {
+    prio: 88,
+    spans: [s("dim", `${lbl} `), usd, ...(rate ? [s("dim", rate)] : [])],
+    short: [usd],
+  };
 }
 
-function windowSegment(name: string, w: RateWindowView, v: StatusView, prio: number): Segment {
+function windowSegment(
+  name: string,
+  w: RateWindowView,
+  v: StatusView,
+  prio: number,
+  skin: StyleSkinSpec
+): Segment {
+  const lbl = skin.uppercaseLabels ? name.toUpperCase() : name;
   const nowSec = v.now / 1000;
-  // A reset in the past means the window has started over and the harness
-  // hasn't sent fresh numbers yet; the old percentage is no longer true.
-  if (w.resetsAt && w.resetsAt <= nowSec) return { prio, spans: [s("dim", `${name} reset`)] };
+  if (w.resetsAt && w.resetsAt <= nowSec) return { prio, spans: [s("dim", `${lbl} reset`)] };
   const pct = shownPct(w.pct);
   if (w.pct >= 100) {
-    const short = [s("dim", `${name} `), s("bad", "100%")];
+    const short = [s("dim", `${lbl} `), s("bad", "100%")];
     return w.resetsAt
       ? {
           prio,
@@ -791,17 +1117,14 @@ function windowSegment(name: string, w: RateWindowView, v: StatusView, prio: num
   }
   const f = forecastWindow(w, v.now);
   if (f?.hitsLimitAt) {
-    // On course to run out: say when, not "237% by reset".
-    const short = [s("dim", `${name} `), s("bad", `${pct}%`)];
+    const short = [s("dim", `${lbl} `), s("bad", `${pct}%`)];
     return {
       prio,
       spans: [...short, s("dim", " → "), s("bad", `out ~${formatWhen(f.hitsLimitAt, nowSec)}`)],
       short,
     };
   }
-  const short = [s("dim", `${name} `), s(windowTone(w.pct), `${pct}%`)];
-  // A 7d projection is noise until it points somewhere that matters; the 5h
-  // one is always worth seeing because its reset is today.
+  const short = [s("dim", `${lbl} `), s(windowTone(w.pct), `${pct}%`)];
   if (f && w.resetsAt && (name === "5h" || f.atReset >= 50)) {
     return {
       prio,
@@ -840,61 +1163,162 @@ function spendSegment(v: StatusView): Segment | null {
 }
 
 /** Today across every agent, and this repo's part of it. */
-function todaySegment(v: StatusView): Segment | null {
+function todaySegment(
+  v: StatusView,
+  skin: StyleSkinSpec,
+  show: StatuslineShowConfig
+): Segment | null {
+  if (!show.today) return null;
   const t = v.today;
+  const lbl = skin.uppercaseLabels ? "DAY" : "today";
   if (t.state === "none") return null;
   if (t.state === "down") {
     return {
       prio: 80,
-      spans: [s("dim", "today — "), s("bad", "daemon offline")],
-      short: [s("dim", "today —")],
+      spans: [s("dim", `${lbl} — `), s("bad", "daemon offline")],
+      short: [s("dim", `${lbl} —`)],
     };
   }
   if (t.usd === undefined) return null;
-  const here = v.repo && v.repo.usd > 0 ? v.repo : null;
+  const here = show.repo && v.repo && v.repo.usd > 0 ? v.repo : null;
+  const paceVal =
+    show.pace &&
+    typeof t.paceMultiple === "number" &&
+    Number.isFinite(t.paceMultiple) &&
+    t.paceMultiple > 0
+      ? t.paceMultiple
+      : null;
+  const paceSpan =
+    paceVal !== null ? s(paceVal >= 1.5 ? "warn" : "dim", ` · ${paceVal.toFixed(1)}×`) : null;
   if (t.state === "stale") {
-    const short = [s("dim", `today ~${formatUsd(t.usd)}`)];
+    const short = [s("dim", `${lbl} ~${formatUsd(t.usd)}`)];
     const age = t.ageMs !== undefined ? ` · ${formatSpan(t.ageMs / 1000)} old` : "";
     const part = here ? ` · ~${formatUsd(here.usd)} here` : "";
-    return age || part
-      ? { prio: 80, spans: [s("dim", `today ~${formatUsd(t.usd)}${part}${age}`)], short }
+    const paceStr = paceVal !== null ? ` · ${paceVal.toFixed(1)}×` : "";
+    return age || part || paceStr
+      ? { prio: 80, spans: [s("dim", `${lbl} ~${formatUsd(t.usd)}${part}${paceStr}${age}`)], short }
       : { prio: 80, spans: short };
   }
-  const short = [s("accent", "today "), s("cost", formatUsd(t.usd))];
-  if (!here) return { prio: 80, spans: short };
-  return {
-    prio: 80,
-    spans: [
-      ...short,
+  const short = [s("accent", `${lbl} `), s("cost", formatUsd(t.usd))];
+  if (!here && !paceSpan) return { prio: 80, spans: short };
+  const spans: Span[] = [...short];
+  if (here) {
+    spans.push(
       s("dim", " · "),
       s("cost", `${here.stale ? "~" : ""}${formatUsd(here.usd)}`),
-      s("dim", " here"),
-    ],
+      s("dim", " here")
+    );
+  }
+  if (paceSpan) spans.push(paceSpan);
+  return { prio: 80, spans, short };
+}
+
+function prSegment(v: StatusView): Segment | null {
+  if (!v.pr) return null;
+  const num = s("warn", `#${v.pr.number}`);
+  switch (v.pr.reviewState) {
+    case "approved":
+      return { prio: 30, spans: [num, s("ok", " ✓")], short: [num] };
+    case "changes_requested":
+      return { prio: 30, spans: [num, s("bad", " ✗")], short: [num] };
+    case "pending":
+      return { prio: 30, spans: [num, s("warn", " ○")], short: [num] };
+    case "draft":
+      return { prio: 30, spans: [num, s("dim", " ◌")], short: [num] };
+    default:
+      return { prio: 30, spans: [num] };
+  }
+}
+
+function liveSessionsSegment(v: StatusView): Segment | null {
+  if (!v.liveSessions || v.liveSessions.count <= 1) return null;
+  const others = v.liveSessions.others
+    .slice(0, 3)
+    .map((o) => label(o, 16))
+    .filter(Boolean);
+  const shortText = `+${v.liveSessions.count} live`;
+  if (others.length === 0) return { prio: 55, spans: [s("accent", shortText)] };
+  return {
+    prio: 55,
+    spans: [s("accent", shortText), s("dim", ` (${others.join(",")})`)],
+    short: [s("accent", shortText)],
+  };
+}
+
+function subagentSegment(v: StatusView): Segment | null {
+  const sub = v.subagentToday;
+  if (!sub || sub.cost <= 0 || sub.share < 0.05) return null;
+  const pct = Math.round(sub.share * 100);
+  const short = [s("dim", "sub "), s("cost", formatUsd(sub.cost))];
+  return {
+    prio: 42,
+    spans: [...short, s("dim", ` (${pct}%)`)],
     short,
+  };
+}
+
+function normalizeShow(partial?: Partial<StatuslineShowConfig>): StatuslineShowConfig {
+  return {
+    git: partial?.git !== false,
+    pr: partial?.pr !== false,
+    cache: partial?.cache !== false,
+    windows: partial?.windows !== false,
+    today: partial?.today !== false,
+    repo: partial?.repo !== false,
+    pace: partial?.pace !== false,
+    liveSessions: partial?.liveSessions !== false,
+    subagents: partial?.subagents !== false,
+    linesDelta: partial?.linesDelta !== false,
   };
 }
 
 // ─── Render ────────────────────────────────────────────────────────────
 
+function renderTitleFormat(v: StatusView, opts: RenderOptions, show: StatuslineShowConfig): string {
+  const parts: string[] = [label(v.project || "tokmeter", 24), label(v.model, 24)];
+  if (v.ctx.pct !== null) {
+    const p = shownPct(v.ctx.pct);
+    parts.push(`ctx ${v.ctx.estimated && p < 100 ? "~" : ""}${p}%`);
+  }
+  if (v.cost && v.cost.usd !== null) {
+    parts.push(formatUsd(v.cost.usd));
+  }
+  if (show.today && v.today.state === "fresh" && v.today.usd !== undefined) {
+    parts.push(`day ${formatUsd(v.today.usd)}`);
+  }
+  if (show.windows && v.five) {
+    parts.push(`5h ${shownPct(v.five.pct)}%`);
+  }
+  const maxCols = Math.max(1, opts.cols);
+  let title = sanitizeDataLabel(parts.join(" · "), 256);
+  const chars = [...title];
+  if (chars.length > maxCols) {
+    title = `${chars.slice(0, Math.max(0, maxCols - 1)).join("")}${maxCols > 0 ? "…" : ""}`;
+  }
+  return `\x1b]0;${opts.ascii ? toAscii(title) : title}\x07`;
+}
+
 export function renderStatusline(v: StatusView, opts: RenderOptions): string {
+  const show = normalizeShow(opts.show);
+  if (opts.format === "title") {
+    return renderTitleFormat(v, opts, show);
+  }
+
+  const skin = resolveSkinSpec(opts.style ?? "rams");
+  const density: StatuslineDensity = opts.density ?? "balanced";
+  const palette = resolveStatuslinePalette(opts.theme);
+
   const l1: Segment[] = [];
-  // A folder name is repo-controlled text, like the branch below.
-  const project = v.project || "tokmeter";
-  const chip = (max: number) => s("chip", ` ◆ ${label(project, max)} `);
-  const longName = textWidth(project) > 12;
-  l1.push({
-    prio: 100,
-    // "(worktree)" is the first thing the chip gives up; the name outlasts it.
-    spans: v.worktree ? [chip(28), s("dim", "(worktree) ")] : [chip(28)],
-    ...(v.worktree || longName ? { short: [chip(longName ? 12 : 28)] } : {}),
-  });
-  l1.push(modelSegment(v));
-  l1.push(ctxSegment(v));
-  const cache = cacheSegment(v);
-  if (cache) l1.push(cache);
-  const cost = costSegment(v);
+  l1.push(projectSegment(v, skin));
+  l1.push(modelSegment(v, skin));
+  l1.push(ctxSegment(v, skin));
+  if (show.cache) {
+    const cache = cacheSegment(v, skin);
+    if (cache) l1.push(cache);
+  }
+  const cost = costSegment(v, skin);
   if (cost) l1.push(cost);
-  if (v.git) {
+  if (show.git && v.git) {
     const dirty = v.git.dirty ? "*" : "";
     const branch = (max: number) => [
       s("dim", "⎇ "),
@@ -906,22 +1330,26 @@ export function renderStatusline(v: StatusView, opts: RenderOptions): string {
       ...([...v.git.branch].length > 16 ? { short: branch(16) } : {}),
     });
   }
-  if (v.pr) l1.push({ prio: 30, spans: [s("warn", `#${v.pr.number}`)] });
+  if (show.pr) {
+    const pr = prSegment(v);
+    if (pr) l1.push(pr);
+  }
 
   const l2: Segment[] = [];
-  const alert = pickAlert(v);
+  const alert = pickAlert(v, show);
   if (alert) {
     l2.push({
       prio: 99,
       spans: [s(alert.tone, alert.text)],
-      // The wording outlasts the 7d window, not the 5h one or today's spend.
       ...(alert.short ? { short: [s(alert.tone, alert.short)], fullPrio: 55 } : {}),
     });
   }
-  if (v.five) l2.push(windowSegment("5h", v.five, v, 75));
-  if (v.seven) l2.push(windowSegment("7d", v.seven, v, 50));
-  const spend = spendSegment(v);
-  if (spend) l2.push(spend);
+  if (show.windows) {
+    if (v.five) l2.push(windowSegment("5h", v.five, v, 75, skin));
+    if (v.seven) l2.push(windowSegment("7d", v.seven, v, 50, skin));
+    const spend = spendSegment(v);
+    if (spend) l2.push(spend);
+  }
   if (v.route?.recent && v.route.recent.total > 0) {
     const { fallbacks, total } = v.route.recent;
     l2.push({
@@ -934,11 +1362,94 @@ export function renderStatusline(v: StatusView, opts: RenderOptions): string {
           ],
     });
   }
-  const today = todaySegment(v);
+  if (show.liveSessions) {
+    const live = liveSessionsSegment(v);
+    if (live) l2.push(live);
+  }
+  const today = todaySegment(v, skin, show);
   if (today) l2.push(today);
+  if (density === "balanced" && show.subagents) {
+    const sub = subagentSegment(v);
+    if (sub) l2.push(sub);
+  }
 
-  const first = line(l1, opts);
-  return l2.length ? `${first}\n${line(l2, opts)}` : first;
+  if (density === "compact") {
+    const compactSegs: Segment[] = [
+      projectSegment(v, skin),
+      ...(alert ? [{ prio: 99, spans: [s(alert.tone, alert.short ?? alert.text)] }] : []),
+      ctxSegment(v, skin),
+      modelSegment(v, skin),
+      ...(cost ? [cost] : []),
+      ...(today ? [today] : []),
+      ...(show.windows && v.five ? [windowSegment("5h", v.five, v, 75, skin)] : []),
+    ];
+    return lineWith(compactSegs, opts, palette, skin.sepText, skin.noBg);
+  }
+
+  const lines: string[] = [lineWith(l1, opts, palette, skin.sepText, skin.noBg)];
+  if (l2.length > 0) {
+    // Pill skin keeps L2 clean text with │ or · separator
+    const l2Sep = skin.style === "pill" ? " │ " : skin.sepText;
+    lines.push(lineWith(l2, opts, palette, l2Sep, skin.noBg));
+  }
+
+  if (density === "telemetry") {
+    const l3: Segment[] = [];
+    if (v.tokensLast) {
+      const tl = v.tokensLast;
+      l3.push({
+        prio: 85,
+        spans: [
+          s("dim", "last "),
+          s("plain", `${formatTokens(tl.in)} in`),
+          s("dim", " · "),
+          s("plain", `${formatTokens(tl.out)} out`),
+          s("dim", " · "),
+          s("ok", `${formatTokens(tl.cacheRead)} cR`),
+          s("dim", " · "),
+          s("dim", `${formatTokens(tl.cacheWrite)} cW`),
+        ],
+        short: [s("dim", "last "), s("plain", `${formatTokens(tl.in + tl.out)} tok`)],
+      });
+    }
+    if (show.linesDelta && v.linesDelta && (v.linesDelta.added > 0 || v.linesDelta.removed > 0)) {
+      l3.push({
+        prio: 70,
+        spans: [
+          s("ok", `+${v.linesDelta.added}`),
+          s("dim", "/"),
+          s("bad", `-${v.linesDelta.removed}`),
+          s("dim", " lines"),
+        ],
+        short: [
+          s("ok", `+${v.linesDelta.added}`),
+          s("dim", "/"),
+          s("bad", `-${v.linesDelta.removed}`),
+        ],
+      });
+    }
+    if (show.subagents) {
+      const sub = subagentSegment(v);
+      if (sub) l3.push({ ...sub, prio: 65 });
+    }
+    if (show.windows && v.quotas && v.quotas.length > 0) {
+      for (const q of v.quotas.slice(0, 3)) {
+        l3.push({
+          prio: 55,
+          spans: [
+            s("dim", `${label(q.agent, 12)} ${label(q.label, 6)} `),
+            s(windowTone(q.pct), `${shownPct(q.pct)}%`),
+          ],
+        });
+      }
+    }
+    if (l3.length > 0) {
+      const l3Sep = skin.style === "pill" ? " │ " : skin.sepText;
+      lines.push(lineWith(l3, opts, palette, l3Sep, skin.noBg));
+    }
+  }
+
+  return lines.join("\n");
 }
 
 /** The width fitter, for its invariant tests. */

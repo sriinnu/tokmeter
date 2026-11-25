@@ -3230,6 +3230,83 @@ export function createServer(): McpServer {
     }
   );
 
+  const SLASH_PROMPTS: ReadonlyArray<{
+    name: string;
+    card: "cockpit" | "why" | "quota" | "live" | "routes" | "digest";
+    title: string;
+    description: string;
+  }> = [
+    {
+      name: "tokmeter_cockpit",
+      card: "cockpit",
+      title: "Tokmeter Cockpit",
+      description:
+        "Read-only 66-col cockpit summary (today, week, month, burn pace, active quotas).",
+    },
+    {
+      name: "tokmeter_why",
+      card: "why",
+      title: "Tokmeter Why",
+      description:
+        "Read-only breakdown of today's top cost drivers, cache hit, subagents, and compaction tax.",
+    },
+    {
+      name: "tokmeter_quota",
+      card: "quota",
+      title: "Tokmeter Plan Quotas",
+      description:
+        "Read-only plan rate windows (Claude 5h/7d, Codex 7d, Grok Bot 7d) and pace verdicts.",
+    },
+    {
+      name: "tokmeter_live",
+      card: "live",
+      title: "Tokmeter Live Sessions",
+      description:
+        "Read-only view of currently active coding-agent sessions reported to the daemon.",
+    },
+    {
+      name: "tokmeter_routes",
+      card: "routes",
+      title: "Tokmeter Model Routes",
+      description:
+        "Neutral read-only model rate & cross-tool pricing projection card ($? for unpriced).",
+    },
+    {
+      name: "tokmeter_digest",
+      card: "digest",
+      title: "Tokmeter Spend Digest",
+      description:
+        "Read-only daily and multi-day spend digest across all configured AI coding agents.",
+    },
+  ];
+
+  for (const spec of SLASH_PROMPTS) {
+    server.registerPrompt(
+      spec.name,
+      {
+        title: spec.title,
+        description: spec.description,
+      },
+      async () => {
+        const { loadSlashCardData, renderSlashCard } = await import("./slash.js");
+        const data = await loadSlashCardData();
+        const card = renderSlashCard(spec.card, data);
+        return {
+          description: spec.description,
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `Present this read-only 66-column Tokmeter card verbatim inside a fenced code block without modifying any numbers or labels:\n\n${card}`,
+              },
+            },
+          ],
+        };
+      }
+    );
+  }
+
   return server;
 }
 
