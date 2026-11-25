@@ -44,7 +44,7 @@ name: Release macOS Bar
 
 on:
   release:
-    types: [created]
+    types: [published]
 
 concurrency:
   group: release-macos-publish
@@ -127,6 +127,7 @@ jobs:
       - name: Bundle unsigned .app
         working-directory: packages/macos-bar
         env:
+          BUILD_ARCH: universal
           CFBundleShortVersionString: ${{ needs.verify-tag.outputs.version }}
           # CFBundleVersion deliberately NOT set: bundle.sh's committed
           # BUILD_VERSION is the single source of truth, and scripts/bump-version.sh

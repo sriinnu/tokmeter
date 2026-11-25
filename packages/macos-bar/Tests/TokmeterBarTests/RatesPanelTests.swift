@@ -50,6 +50,13 @@ final class RatesPanelTests: XCTestCase {
         XCTAssertEqual(RateFormat.average(0.0566), "$0.057")
     }
 
+    func testSeededPricingTierHasDedicatedHelpCopy() {
+        let seeded = PricingSource(tier: "seeded", matchedId: nil)
+        XCTAssertEqual(seeded.label, "built-in rate")
+        XCTAssertTrue(seeded.help.contains("built-in rate"))
+        XCTAssertFalse(seeded.help.contains("No price anywhere"))
+    }
+
     @MainActor
     func testRenderCardsOnEveryTheme() throws {
         guard let directory = ProcessInfo.processInfo.environment["TOKMETER_UI_QA_DIR"] else {

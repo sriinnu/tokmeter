@@ -11,12 +11,14 @@ import {
   closeSync,
   existsSync,
   constants as fsConstants,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   unlinkSync,
   writeSync,
@@ -1185,208 +1187,52 @@ function startHttpApi(handlers: {
         if (pathname === "/api/projects") {
           json(res, core.getAllProjects());
         } else if (pathname === "/api/sessions") {
-          // All projects across providers, sorted by most-recently-used descending.
-          // Used by the menubar's expandable session list — supports 10/20/50+ items.
-          const projects = core
-            .getAllProjects({
-              today: new URL(url, "http://localhost").searchParams.get("today") === "true",
-            })
-            .slice()
-            .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed);
-          json(res, projects.slice(0, 50));
+          const today = new URL(url, "http://localhost").searchParams.get("today") === "true";
+          json(res, readSessionsPayload(core, today));
         } else if (pathname.startsWith("/api/projects/")) {
           const name = decodeURIComponent(pathname.slice("/api/projects/".length));
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
         } else if (pathname === "/api/stats") {
-          // Lifetime stats — floored so the bar's hero stays monotonic
-          // within the day. See applyStatsFloor for the why.
           json(res, applyStatsFloor(core.getStats()));
         } else if (pathname === "/api/statbar-signals") {
-          // Live "right now" signals for the menubar — burn rate, cache hit,
-          // pace vs typical, compaction tax, and the live session pointer.
-          // Cheap to compute (single pass over records), so polled on the
-          // same 30s cadence as everything else.
           json(res, core.getStatbarSignals());
         } else if (pathname === "/api/session-ledger") {
-          // Cumulative totals for one transcript (main file + nested subagent
-          // runs), summed from the warm today window. Same numbers the WS
-          // broadcast hands the statusline; exposed over HTTP for the bar and
-          // for end-to-end checks.
           const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
           json(res, sessionLedgerFor(transcript) ?? { error: "Not found" });
         } else if (pathname === "/api/models") {
           json(res, core.getModelCosts());
         } else if (pathname === "/api/health") {
-          // Surface silent-pricing leaks: today-records that priced at $0
-          // because no tier (kosha runtime, manifest, override) had pricing.
-          // The bar UI uses unpricedModels.length to flip to amber state.
-          //
-          // Cap the array at 100 entries to defend against a pathological
-          // parser bug that could emit thousands of distinct fake model IDs;
-          // the bar only needs the count + a sample to render the warning.
-          const meta = core.getScanMeta();
-          const UNPRICED_CAP = 100;
-          const allUnpriced = meta.unpricedModels;
-          json(res, {
-            ready: true,
-            unpricedModels: allUnpriced.slice(0, UNPRICED_CAP),
-            unpricedModelsTotal: allUnpriced.length,
-            unpricedModelsTruncated: allUnpriced.length > UNPRICED_CAP,
-            unpricedRecords: meta.unpricedRecords,
-            warnings: meta.warnings,
-            lastScanAt: meta.lastScanAt,
-          });
+          json(res, readHealthPayload(core));
         } else if (pathname === "/api/today-models") {
           json(res, core.getModelCosts({ today: true }));
         } else if (pathname === "/api/rates") {
-          // Per-model rate card: list $/M per bucket exactly as billing uses
-          // it, which pricing tier resolved it (override / kosha exact /
-          // fuzzy → matched id / manifest / unpriced), and the effective $/M
-          // paid. `?scope=all` widens from today's models to every model with
-          // recorded usage. Unpriced models report null rates — never a guess.
           const scope =
             new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
           json(res, await core.getModelRates(scope));
         } else if (pathname === "/api/cross-tool") {
-          // Project today's token shape against the user's top lifetime
-          // models. Surfaces "what would today have cost on model X" — the
-          // kind of comparison only kosha-backed tools can ship honestly.
           json(res, await core.getCrossToolComparison());
         } else if (pathname === "/api/pricing-status") {
-          // Reports the mtime of ~/.kosha/registry.json so the menubar can
-          // surface "Pricing: 2h ago". 0 if the registry is missing.
-          let mtime = 0;
-          try {
-            const { statSync } = await import("node:fs");
-            const { join } = await import("node:path");
-            const { homedir } = await import("node:os");
-            mtime = statSync(join(homedir(), ".kosha", "registry.json")).mtimeMs;
-          } catch {}
-          json(res, { registryMtime: mtime });
+          json(res, readPricingStatusPayload(homedir()));
         } else if (pathname === "/api/anomalies") {
-          // Pricing anomalies kosha logs at merge time. Read-only window:
-          // last 24h of >25% rate movements. Caps the response so a
-          // pathological diff burst (provider migration day) doesn't ship
-          // megabytes through the bar's 30s poll.
-          const ANOM_CAP = 50;
-          const TWENTY_FOUR_H = 24 * 3600 * 1000;
-          let recent: unknown[] = [];
-          let total = 0;
-          try {
-            const { readFileSync } = await import("node:fs");
-            const { join: pjoin } = await import("node:path");
-            const { homedir: hd } = await import("node:os");
-            const path = pjoin(hd(), ".kosha", "anomalies.json");
-            const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
-              anomalies?: Array<{ ts: number }>;
-            };
-            const cutoff = Date.now() - TWENTY_FOUR_H;
-            const all = (parsed.anomalies ?? []).filter((a) => a.ts >= cutoff);
-            total = all.length;
-            recent = all.slice(-ANOM_CAP).reverse(); // newest first
-          } catch {}
-          json(res, { anomalies: recent, total, cappedAt: ANOM_CAP });
+          json(res, readAnomaliesPayload(homedir()));
         } else if (pathname === "/api/coverage") {
-          // The last week's coverage reports (files that changed on a sealed
-          // day, carry usage, and fed no record), newest first. Written by the
-          // daemon after each midnight seal and by `tokmeter coverage`.
           const { readCoverageReports } = await import("@sriinnu/tokmeter");
-          const { homedir } = await import("node:os");
           json(res, { reports: await readCoverageReports(homedir(), 7) });
         } else if (pathname === "/api/quota") {
-          // Each agent's plan windows (Codex weekly, Claude Code 5h/7d, Grok
-          // Bot weekly): used %, reset time, and whether the current pace hits
-          // 100% first. Codex is read from its newest rollouts' tails, Grok Bot
-          // from its app's weekly-usage cache (re-read only when it changes);
-          // Claude Code's windows are whatever the statusline last recorded.
           const { getQuota } = await import("@sriinnu/tokmeter");
-          const { homedir } = await import("node:os");
           json(res, {
             windows: await getQuota(homedir(), Date.now(), (msg) => console.warn(`[quota] ${msg}`)),
           });
         } else if (pathname === "/api/cron-status") {
-          // Report whether the daily kosha-refresh launchd job is installed
-          // and the result of its last run. The plist truncates the log on
-          // every run, so the entire file contents represent the last run
-          // only — the success/failure substring scan is unambiguous. We
-          // bound the read to 8KB as a defense against runaway logs and
-          // open with O_NOFOLLOW so a hostile symlink at logPath can't
-          // exfiltrate arbitrary user-readable files via this endpoint.
-          const fs = await import("node:fs");
-          const { existsSync, openSync, readSync, closeSync, fstatSync } = fs;
-          const { join } = await import("node:path");
-          const { homedir } = await import("node:os");
-          const home = homedir();
-          const plistPath = join(
-            home,
-            "Library",
-            "LaunchAgents",
-            "com.sriinnu.tokmeter.daily.plist"
-          );
-          const logPath = join(home, ".cache", "tokmeter", "daily-cron.log");
-          let installed = false;
-          let lastRunMtime = 0;
-          let lastRunOk: boolean | null = null;
-          let lastRunTail = "";
-          try {
-            installed = existsSync(plistPath);
-          } catch {}
-          try {
-            const fd = openSync(logPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-            try {
-              // fstat the open fd, not the path — eliminates the TOCTOU window
-              // between path-stat and path-open.
-              const stat = fstatSync(fd);
-              lastRunMtime = stat.mtimeMs;
-              const cap = 8192;
-              const offset = Math.max(0, stat.size - cap);
-              const buf = Buffer.alloc(Math.min(cap, stat.size));
-              if (buf.length > 0) {
-                readSync(fd, buf, 0, buf.length, offset);
-              }
-              const data = buf.toString("utf8");
-              const lines = data.trim().split("\n");
-              lastRunTail = lines.slice(-3).join("\n");
-              // The CLI emits "Kosha registry refreshed." on success and
-              // "Failed to refresh kosha:" on error. Anything else → unknown.
-              if (data.includes("Kosha registry refreshed")) lastRunOk = true;
-              else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
-            } finally {
-              closeSync(fd);
-            }
-          } catch {
-            // ENOENT (no log yet) and ELOOP (symlink — refused) both fall
-            // through to defaults. Fail closed.
-          }
-          json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
+          json(res, readCronStatusPayload(homedir()));
         } else if (pathname === "/api/daily") {
-          // Floor today's last entry to the per-day high-water so the macOS
-          // bar's hero (which reads daily.last.cost) is monotonic upward —
-          // codex fork-dedup winner swaps can't make today's display drop.
-          const daily = core.getDailyBreakdown().map((entry) => ({ ...entry }));
-          const todayKey = localDateKey();
-          const floored = applyTodayFloor(computeTodayTotals(core));
-          if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
-            const last = daily[daily.length - 1];
-            if (floored.cost > last.cost) last.cost = floored.cost;
-            const flooredTokens = floored.in + floored.out;
-            if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
-          }
-          json(res, daily);
+          json(res, readDailyFloored(core, true));
         } else if (pathname === "/api/providers") {
           json(res, core.getProviderBreakdown());
         } else if (pathname === "/api/antigravity-live") {
-          // Cache-only read — never triggers a poll. The background
-          // interval (see startDaemon) is the only thing that ever hits
-          // Antigravity's process/network; readers just see what it's
-          // already captured, or null if Antigravity has never answered.
-          const { computeCreditsUsedToday, readLatestAntigravitySnapshot } = await import(
-            "@sriinnu/tokmeter"
-          );
-          json(res, {
-            latestSnapshot: readLatestAntigravitySnapshot(),
-            creditsUsedToday: computeCreditsUsedToday(),
-          });
+          json(res, await readAntigravityLivePayload());
+        } else if (pathname === "/api/bar-snapshot") {
+          json(res, await buildBarSnapshot(core, { applyFloor: true, homeDir: homedir() }));
         } else if (pathname === "/api/backups") {
           const { CleanupService } = await import("@sriinnu/tokmeter");
           const service = new CleanupService(core);
@@ -1403,6 +1249,7 @@ function startHttpApi(handlers: {
               "/api/quick",
               "/api/today",
               "/api/statusline-context",
+              "/api/bar-snapshot",
               "/api/summary",
               "/api/live",
               "/api/projects",
@@ -2019,6 +1866,206 @@ export async function buildStatuslineContext(
   };
 }
 
+function readDailyFloored(core: TokmeterCore, applyFloor: boolean) {
+  const daily = core.getDailyBreakdown().map((entry) => ({ ...entry }));
+  if (!applyFloor) return daily;
+  const todayKey = localDateKey();
+  const floored = applyTodayFloor(computeTodayTotals(core));
+  if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
+    const last = daily[daily.length - 1];
+    if (floored.cost > last.cost) last.cost = floored.cost;
+    const flooredTokens = floored.in + floored.out;
+    if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
+  }
+  return daily;
+}
+
+function readSessionsPayload(core: TokmeterCore, today: boolean) {
+  return core
+    .getAllProjects({ today })
+    .slice()
+    .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed)
+    .slice(0, 50);
+}
+
+function readHealthPayload(core: TokmeterCore) {
+  const meta = core.getScanMeta();
+  const UNPRICED_CAP = 100;
+  const allUnpriced = meta.unpricedModels;
+  return {
+    ready: true,
+    unpricedModels: allUnpriced.slice(0, UNPRICED_CAP),
+    unpricedModelsTotal: allUnpriced.length,
+    unpricedModelsTruncated: allUnpriced.length > UNPRICED_CAP,
+    unpricedRecords: meta.unpricedRecords,
+    warnings: meta.warnings,
+    lastScanAt: meta.lastScanAt,
+  };
+}
+
+function readPricingStatusPayload(homeDir = homedir()): { registryMtime: number } {
+  let mtime = 0;
+  try {
+    // Sync statSync imported statically in server.ts header or fallback
+    const path = join(homeDir, ".kosha", "registry.json");
+    if (existsSync(path)) {
+      const fd = openSync(path, fsConstants.O_RDONLY);
+      try {
+        mtime = fstatSync(fd).mtimeMs;
+      } finally {
+        closeSync(fd);
+      }
+    }
+  } catch {}
+  return { registryMtime: mtime };
+}
+
+function readCronStatusPayload(homeDir = homedir()) {
+  const plistPath = join(homeDir, "Library", "LaunchAgents", "com.sriinnu.tokmeter.daily.plist");
+  const logPath = join(homeDir, ".cache", "tokmeter", "daily-cron.log");
+  let installed = false;
+  let lastRunMtime = 0;
+  let lastRunOk: boolean | null = null;
+  let lastRunTail = "";
+  try {
+    installed = existsSync(plistPath);
+  } catch {}
+  try {
+    const fd = openSync(logPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const stat = fstatSync(fd);
+      lastRunMtime = stat.mtimeMs;
+      const cap = 8192;
+      const offset = Math.max(0, stat.size - cap);
+      const buf = Buffer.alloc(Math.min(cap, stat.size));
+      if (buf.length > 0) {
+        readSync(fd, buf, 0, buf.length, offset);
+      }
+      const data = buf.toString("utf8");
+      const lines = data.trim().split("\n");
+      lastRunTail = lines.slice(-3).join("\n");
+      if (data.includes("Kosha registry refreshed")) lastRunOk = true;
+      else if (data.includes("Failed to refresh kosha")) lastRunOk = false;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {}
+  return { installed, lastRunMtime, lastRunOk, lastRunTail };
+}
+
+function readAnomaliesPayload(homeDir = homedir()) {
+  const ANOM_CAP = 50;
+  const TWENTY_FOUR_H = 24 * 3600 * 1000;
+  let recent: unknown[] = [];
+  let total = 0;
+  try {
+    const parsed = JSON.parse(readFileSync(join(homeDir, ".kosha", "anomalies.json"), "utf-8")) as {
+      anomalies?: Array<{ ts: number }>;
+    };
+    const cutoff = Date.now() - TWENTY_FOUR_H;
+    const all = (parsed.anomalies ?? []).filter((a) => a.ts >= cutoff);
+    total = all.length;
+    recent = all.slice(-ANOM_CAP).reverse();
+  } catch {}
+  return { anomalies: recent, total, cappedAt: ANOM_CAP };
+}
+
+async function readAntigravityLivePayload() {
+  const { computeCreditsUsedToday, readLatestAntigravitySnapshot } = await import(
+    "@sriinnu/tokmeter"
+  );
+  return {
+    latestSnapshot: readLatestAntigravitySnapshot(),
+    creditsUsedToday: computeCreditsUsedToday(),
+  };
+}
+
+export interface BarSnapshotResponse {
+  daily: ReturnType<TokmeterCore["getDailyBreakdown"]>;
+  models: ReturnType<TokmeterCore["getModelCosts"]>;
+  todayModels: ReturnType<TokmeterCore["getModelCosts"]>;
+  sessions: ReturnType<TokmeterCore["getAllProjects"]>;
+  todayProjects: ReturnType<TokmeterCore["getAllProjects"]>;
+  pricingStatus: ReturnType<typeof readPricingStatusPayload> | null;
+  cronStatus: ReturnType<typeof readCronStatusPayload> | null;
+  health: ReturnType<typeof readHealthPayload> | null;
+  anomalies: ReturnType<typeof readAnomaliesPayload> | null;
+  statbarSignals: ReturnType<TokmeterCore["getStatbarSignals"]> | null;
+  crossTool: Awaited<ReturnType<TokmeterCore["getCrossToolComparison"]>> | null;
+  quota: { windows: QuotaWindow[] } | null;
+  antigravityLive: Awaited<ReturnType<typeof readAntigravityLivePayload>> | null;
+  partialErrors: string[];
+}
+
+/**
+ * Consolidated Phase-2 payload for the macOS menubar app (`/api/bar-snapshot`),
+ * collapsing 13 separate GET requests into one HTTP round-trip while tracking
+ * per-section failures in `partialErrors`.
+ */
+export async function buildBarSnapshot(
+  core: TokmeterCore,
+  opts: { applyFloor?: boolean; homeDir?: string; quotasOverride?: QuotaWindow[] } = {}
+): Promise<BarSnapshotResponse> {
+  const home = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
+  const partialErrors: string[] = [];
+
+  const capture = <T>(name: string, fn: () => T): T | null => {
+    try {
+      return fn();
+    } catch {
+      partialErrors.push(name);
+      return null;
+    }
+  };
+  const captureAsync = async <T>(name: string, fn: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await fn();
+    } catch {
+      partialErrors.push(name);
+      return null;
+    }
+  };
+
+  const daily = readDailyFloored(core, opts.applyFloor === true);
+  const models = core.getModelCosts();
+  const todayModels = core.getModelCosts({ today: true });
+  const sessions = readSessionsPayload(core, false);
+  const todayProjects = readSessionsPayload(core, true);
+  const pricingStatus = capture("pricingStatus", () => readPricingStatusPayload(home));
+  const cronStatus = capture("cronStatus", () => readCronStatusPayload(home));
+  const health = capture("health", () => readHealthPayload(core));
+  const anomalies = capture("anomalies", () => readAnomaliesPayload(home));
+  const statbarSignals = capture("statbarSignals", () => core.getStatbarSignals());
+
+  const [crossTool, quotaWindows, antigravityLive] = await Promise.all([
+    captureAsync("crossTool", () => core.getCrossToolComparison()),
+    opts.quotasOverride !== undefined
+      ? Promise.resolve(opts.quotasOverride)
+      : captureAsync("quota", async () => {
+          const { getQuota } = await import("@sriinnu/tokmeter");
+          return getQuota(home, Date.now(), (msg) => console.warn(`[quota] ${msg}`));
+        }),
+    captureAsync("antigravityLive", () => readAntigravityLivePayload()),
+  ]);
+
+  return {
+    daily,
+    models,
+    todayModels,
+    sessions,
+    todayProjects,
+    pricingStatus,
+    cronStatus,
+    health,
+    anomalies,
+    statbarSignals,
+    crossTool,
+    quota: quotaWindows !== null ? { windows: quotaWindows } : null,
+    antigravityLive,
+    partialErrors,
+  };
+}
+
 /**
  * Create an isolated loopback HTTP server backed by an injected `TokmeterCore`
  * for unit/integration tests without mutating process-wide daemon globals.
@@ -2114,16 +2161,18 @@ export function createDaemonTestHttpServer(
       return;
     }
     if (pathname === "/api/health") {
-      const meta = core.getScanMeta();
-      json(res, {
-        ready: true,
-        unpricedModels: meta.unpricedModels.slice(0, 100),
-        unpricedModelsTotal: meta.unpricedModels.length,
-        unpricedModelsTruncated: meta.unpricedModels.length > 100,
-        unpricedRecords: meta.unpricedRecords,
-        warnings: meta.warnings,
-        lastScanAt: meta.lastScanAt,
-      });
+      json(res, readHealthPayload(core));
+      return;
+    }
+    if (pathname === "/api/bar-snapshot") {
+      json(
+        res,
+        await buildBarSnapshot(core, {
+          applyFloor: false,
+          homeDir: opts?.homeDir,
+          quotasOverride: opts?.quotas,
+        })
+      );
       return;
     }
     res.writeHead(404);

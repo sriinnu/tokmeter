@@ -12,7 +12,7 @@ final class StartupRenderTests: XCTestCase {
         let root = URL(fileURLWithPath: directory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let view = VStack(alignment: .leading, spacing: 16) {
-            ConnectionIssueView(error: "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service.",
+            ConnectionIssueView(error: "Install Node.js 22 or later, then choose Retry. Tokmeter needs Node to run its local usage service.",
                                 needsNodeSetup: true, isRetrying: false, retry: {})
             ConnectionIssueView(error: DaemonError.versionMismatch(2).localizedDescription,
                                 needsNodeSetup: false, isRetrying: false, retry: {})

@@ -57,15 +57,11 @@ final class DaemonClient {
     private static let baseURL = URL(string: "http://127.0.0.1:9877")!
     // Prefer the private canonical file. The /tmp path is compatibility-only
     // and is read with O_NOFOLLOW plus owner/type/size validation below.
-    private let pidPaths = [
-        NSHomeDirectory() + "/.tokmeter/daemon/daemon.pid",
-        "/tmp/drishti-daemon.pid",
-    ]
-    private let tokenPaths = [
-        NSHomeDirectory() + "/.tokmeter/daemon/daemon.token",
-        "/tmp/drishti-daemon.token", // Compatibility with an older daemon.
-    ]
+    private let pidPaths: [String]
+    private let tokenPaths: [String]
     private let session: URLSession
+    private let tokenLock = NSLock()
+    private var cachedBearerToken: String?
 
     /// Read a tiny, current-user-owned regular file without following a final
     /// symlink. This keeps legacy /tmp shims from becoming an unbounded read
@@ -95,29 +91,59 @@ final class DaemonClient {
         return (text, TimeInterval(info.st_mtimespec.tv_sec))
     }
 
-    /// Read on each request because a restarted daemon has a new token.
-    private var bearerToken: String? {
+    func invalidateBearerToken() {
+        tokenLock.lock()
+        cachedBearerToken = nil
+        tokenLock.unlock()
+    }
+
+    /// Cached in memory to avoid opening/statting/reading `daemon.token` on
+    /// every poll tick; automatically reloaded on 401 Unauthorized.
+    func currentBearerToken(forceReload: Bool = false) -> String? {
+        if !forceReload {
+            tokenLock.lock()
+            let cached = cachedBearerToken
+            tokenLock.unlock()
+            if let cached { return cached }
+        }
+        var found: String?
         for path in tokenPaths {
             if let token = Self.readOwnedSmallFile(path, maxBytes: 128)?.text
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                token.count == 64,
                token.allSatisfy({ $0.isHexDigit }) {
-                return token
+                found = token
+                break
             }
         }
-        return nil
+        tokenLock.lock()
+        cachedBearerToken = found
+        tokenLock.unlock()
+        return found
     }
 
-    private init() {
-        let config = URLSessionConfiguration.default
-        // The first request to a cold daemon triggers a full disk scan
-        // (potentially hundreds of MB of JSONL across 16 providers). 60s
-        // is generous; subsequent calls hit the daemon's 5s in-memory cache.
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 90
-        // No persistent caches: every request is fresh telemetry.
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = URLSession(configuration: config)
+    init(
+        pidPaths: [String] = [
+            NSHomeDirectory() + "/.tokmeter/daemon/daemon.pid",
+            "/tmp/drishti-daemon.pid",
+        ],
+        tokenPaths: [String] = [
+            NSHomeDirectory() + "/.tokmeter/daemon/daemon.token",
+            "/tmp/drishti-daemon.token", // Compatibility with an older daemon.
+        ],
+        session: URLSession? = nil
+    ) {
+        self.pidPaths = pidPaths
+        self.tokenPaths = tokenPaths
+        if let session {
+            self.session = session
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 60
+            config.timeoutIntervalForResource = 90
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            self.session = URLSession(configuration: config)
+        }
     }
 
     /// True if the daemon's PID file exists, the process is alive, AND the
@@ -174,6 +200,12 @@ final class DaemonClient {
     /// Fast endpoint — returns immediately even if the daemon is still
     /// warming up. The `ready` flag tells the UI whether to show real
     /// numbers or a skeleton.
+    /// Consolidated Phase-2 snapshot (models, daily, sessions, signals, quota,
+    /// health, cron, anomalies, cross-tool, antigravity) in one HTTP call.
+    func fetchBarSnapshot() async throws -> BarSnapshotResponse {
+        try await get("/api/bar-snapshot", as: BarSnapshotResponse.self)
+    }
+
     func fetchQuick() async throws -> QuickResponse {
         try await get("/api/quick", as: QuickResponse.self)
     }
@@ -321,28 +353,43 @@ final class DaemonClient {
         URL(string: path, relativeTo: baseURL)!.absoluteURL
     }
 
-    /// Writes need the bearer token. The pidfile no longer gates them on its
-    /// own: it gets reaped while the daemon serves, and the bar then showed a
-    /// live daemon whose Rescan said "offline". No pidfile and no token means
-    /// there's nothing to authenticate with, so that still reads as offline.
+    /// Writes need the bearer token. Check the cached bearer token first so
+    /// steady-state POSTs avoid per-request `proc_pidinfo` kernel probes.
     private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        guard isDaemonRunning || !(bearerToken ?? "").isEmpty else { throw DaemonError.daemonNotRunning }
+        var token = currentBearerToken()
+        guard !(token ?? "").isEmpty || isDaemonRunning else { throw DaemonError.daemonNotRunning }
 
         let url = Self.requestURL(for: path)
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
-        if let token = bearerToken, !token.isEmpty {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let bodyData = try? JSONSerialization.data(withJSONObject: body)
+        func makeRequest(with bearer: String?) -> URLRequest {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+            if let bearer, !bearer.isEmpty {
+                req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            }
+            req.httpBody = bodyData
+            return req
         }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
-            let (data, response) = try await session.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
+            var (data, response) = try await session.data(for: makeRequest(with: token))
+            guard var http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
+            }
+            if http.statusCode == 401 {
+                invalidateBearerToken()
+                let refreshed = currentBearerToken(forceReload: true)
+                if let refreshed, !refreshed.isEmpty, refreshed != token {
+                    token = refreshed
+                    (data, response) = try await session.data(for: makeRequest(with: refreshed))
+                    guard let retryHttp = response as? HTTPURLResponse else {
+                        throw DaemonError.networkError("non-HTTP response")
+                    }
+                    http = retryHttp
+                }
             }
             guard (200..<300).contains(http.statusCode) else {
                 throw DaemonError.httpError(http.statusCode)
@@ -359,39 +406,47 @@ final class DaemonClient {
         }
     }
 
-    /// Reads don't require the pidfile. /tmp/drishti-daemon.pid gets reaped
-    /// while the daemon keeps serving, and gating on it reported a healthy
-    /// daemon as offline — which then triggered the auto-start path. The HTTP
-    /// answer is the liveness signal. Without a valid pidfile a response must
-    /// still carry the daemon's API version header (X-Tokmeter-API, or the
-    /// legacy X-Drishti-API). That's a sanity check
-    /// that tokmeter answered. Private GETs carry the same bearer as writes.
-    /// A refused connection maps to daemonNotRunning so the offline path runs.
+    /// Reads validate daemon authenticity via the API version header first,
+    /// avoiding synchronous `proc_pidinfo` / pidfile I/O on every request.
+    /// On 401 Unauthorized (e.g. daemon restarted with a new bearer token),
+    /// invalidates the cached token, reloads from disk, and retries once.
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        let pidfileValid = isDaemonRunning
-
         let url = Self.requestURL(for: path)
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
-        if let token = bearerToken {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var token = currentBearerToken()
+        func makeRequest(with bearer: String?) -> URLRequest {
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+            if let bearer, !bearer.isEmpty {
+                req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            }
+            return req
         }
 
         do {
-            let (data, response) = try await session.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
+            var (data, response) = try await session.data(for: makeRequest(with: token))
+            guard var http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
             }
+            if http.statusCode == 401 {
+                invalidateBearerToken()
+                let refreshed = currentBearerToken(forceReload: true)
+                if let refreshed, !refreshed.isEmpty, refreshed != token {
+                    token = refreshed
+                    (data, response) = try await session.data(for: makeRequest(with: refreshed))
+                    guard let retryHttp = response as? HTTPURLResponse else {
+                        throw DaemonError.networkError("non-HTTP response")
+                    }
+                    http = retryHttp
+                }
+            }
+
             let apiHeader = Self.apiVersionHeader(from: http)
-            if !pidfileValid && apiHeader == nil {
+            if apiHeader == nil && !isDaemonRunning {
                 throw DaemonError.daemonNotRunning
             }
 
-            // API version check — header looks like "tokmeter-api/1" (or the
-            // legacy "drishti-api/1"); we only care about MAJOR for breakage.
-            // If absent, daemon is old/unknown and we proceed (best-effort).
             if let apiHeader,
                let major = Self.apiMajor(fromHeader: apiHeader),
                major != Self.expectedApiMajor {
@@ -401,9 +456,6 @@ final class DaemonClient {
             guard (200..<300).contains(http.statusCode) else {
                 throw DaemonError.httpError(http.statusCode)
             }
-            // Defensive cap: any single API response >10MB is suspicious.
-            // Protects against an OOM if something else binds 127.0.0.1:9877
-            // and returns an unbounded payload (security P1 from perf/security review).
             guard data.count <= 10_000_000 else {
                 throw DaemonError.networkError("response too large (\(data.count) bytes)")
             }

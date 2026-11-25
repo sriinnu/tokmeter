@@ -41,4 +41,51 @@ final class UXClarityTests: XCTestCase {
         XCTAssertFalse(Fmt.isEmptySynthetic(model: "<synthetic>", tokens: 10, cost: 0))
         XCTAssertFalse(Fmt.isEmptySynthetic(model: "claude-opus-5-5", tokens: 0, cost: 0))
     }
+
+    func testShortErrorAvoidsStaleOfflineCachedClaims() {
+        let offline = Fmt.shortError("Tokmeter daemon is not running")
+        XCTAssertFalse(offline.contains("cached data"))
+        XCTAssertEqual(offline, "Daemon offline — waiting to reconnect")
+
+        let net = Fmt.shortError("Network: offline")
+        XCTAssertFalse(net.contains("cached data"))
+        XCTAssertEqual(net, "Network error — retrying…")
+    }
+
+    @MainActor
+    func testLoaderApplyTodayMatchesLocalDayKey() {
+        let loader = TokmeterLoader(startPolling: false)
+        let now = Date()
+        let todayKey = LocalDay.todayKey(now)
+        loader.applyToday(
+            from: [
+                DailyData(
+                    date: "1999-01-01",
+                    totalTokens: 500,
+                    cost: 9.99,
+                    inputTokens: 400,
+                    outputTokens: 100,
+                    cacheReadTokens: 0,
+                    cacheWriteTokens: 0,
+                    reasoningTokens: 0
+                ),
+                DailyData(
+                    date: todayKey,
+                    totalTokens: 2500,
+                    cost: 3.45,
+                    inputTokens: 1000,
+                    outputTokens: 500,
+                    cacheReadTokens: 800,
+                    cacheWriteTokens: 200,
+                    reasoningTokens: 0
+                ),
+            ],
+            now: now
+        )
+        XCTAssertEqual(loader.todayCost, 3.45, accuracy: 0.0001)
+        XCTAssertEqual(loader.todayTokens, 2500)
+        XCTAssertEqual(loader.todayInputTokens, 1000)
+        XCTAssertEqual(loader.todayOutputTokens, 500)
+        XCTAssertEqual(loader.todayCachedTokens, 1000)
+    }
 }

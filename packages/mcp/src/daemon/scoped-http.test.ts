@@ -17,7 +17,11 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { SerializedScopedView } from "../scoped-view.js";
 import { createServer } from "../server.js";
-import { createDaemonTestHttpServer, parseDaemonScopeQuery } from "./server.js";
+import {
+  type BarSnapshotResponse,
+  createDaemonTestHttpServer,
+  parseDaemonScopeQuery,
+} from "./server.js";
 
 function dayKeyAgo(days: number): string {
   const d = new Date();
@@ -330,6 +334,21 @@ describe("daemon scoped HTTP API & MCP delegation", () => {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     expect(badRes.status).toBe(400);
+
+    const snapRes = await fetchDaemonJson<BarSnapshotResponse>("/api/bar-snapshot", {
+      homeDir: home,
+    });
+    expect(snapRes.ok).toBe(true);
+    if (snapRes.ok) {
+      expect(Array.isArray(snapRes.data.daily)).toBe(true);
+      expect(Array.isArray(snapRes.data.models)).toBe(true);
+      expect(Array.isArray(snapRes.data.todayModels)).toBe(true);
+      expect(Array.isArray(snapRes.data.sessions)).toBe(true);
+      expect(Array.isArray(snapRes.data.todayProjects)).toBe(true);
+      expect(snapRes.data.health?.ready).toBe(true);
+      expect(snapRes.data.statbarSignals).not.toBeNull();
+      expect(Array.isArray(snapRes.data.partialErrors)).toBe(true);
+    }
   });
 
   it("MCP server routes getScopedView through the warm daemon without scanning locally", async () => {

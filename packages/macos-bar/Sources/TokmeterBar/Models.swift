@@ -518,3 +518,21 @@ struct ProjectDetailData: Codable {
     let firstUsed: Double
     let lastUsed: Double
 }
+
+/// Consolidated Phase-2 payload from GET /api/bar-snapshot (1 round-trip).
+struct BarSnapshotResponse: Decodable {
+    let daily: [DailyData]?
+    let models: [ModelData]?
+    let todayModels: [ModelData]?
+    let sessions: [ProjectData]?
+    let todayProjects: [ProjectData]?
+    let pricingStatus: PricingStatus?
+    let cronStatus: CronStatus?
+    let health: HealthStatus?
+    let anomalies: AnomaliesResponse?
+    let statbarSignals: StatbarSignals?
+    let crossTool: CrossToolComparison?
+    let quota: QuotaResponse?
+    let antigravityLive: AntigravityLiveResponse?
+    let partialErrors: [String]?
+}
