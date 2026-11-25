@@ -8,6 +8,7 @@ import {
   type StatsFloor,
   type TodayTotals,
   todayTotalsFrom,
+  waitForDaemonExit,
 } from "./server.js";
 
 describe("isAllowedWsOrigin — WS handshake origin allowlist", () => {
@@ -229,5 +230,33 @@ describe("per-project maps keep hostile project names", () => {
     expect(Object.keys(floor.projects)).toContain("__proto__");
     const raised = computeTodayFloor(today, floor);
     expect(Object.getOwnPropertyDescriptor(raised.projects, "__proto__")?.value?.cost).toBe(2);
+  });
+});
+
+describe("waitForDaemonExit — asynchronous daemon shutdown polling", () => {
+  test("stops polling as soon as isRunning() becomes false", async () => {
+    let checks = 0;
+    await waitForDaemonExit(
+      () => {
+        checks++;
+        return checks < 3;
+      },
+      10,
+      1
+    );
+    expect(checks).toBe(3);
+  });
+
+  test("caps polling at maxAttempts when the process stays running", async () => {
+    let checks = 0;
+    await waitForDaemonExit(
+      () => {
+        checks++;
+        return true;
+      },
+      4,
+      1
+    );
+    expect(checks).toBe(4);
   });
 });

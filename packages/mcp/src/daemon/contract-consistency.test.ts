@@ -83,11 +83,11 @@ function swiftStructFields(source: string, name: string): string[] {
   return fields;
 }
 
-/** Slice the handler body for one `pathname === "..."` branch in server.ts, up to the next one. */
+/** Slice the handler body for one `pathname === "..."` branch in http-api.ts, up to the next one. */
 function handlerBody(source: string, pathname: string): string {
   const startMarker = `pathname === "${pathname}"`;
   const start = source.indexOf(startMarker);
-  if (start === -1) throw new Error(`handler for ${pathname} not found in server.ts`);
+  if (start === -1) throw new Error(`handler for ${pathname} not found in http-api.ts`);
   const next = source.indexOf('pathname === "', start + startMarker.length);
   return source.slice(start, next === -1 ? undefined : next);
 }
@@ -118,8 +118,8 @@ describe("daemon contract — Swift decode structs stay within their TS source s
   });
 
   test("/api/quick's response covers QuickResponse's non-optional fields (ready, stats)", () => {
-    const serverTs = read("mcp/src/daemon/server.ts");
-    const body = handlerBody(serverTs, "/api/quick");
+    const httpApiTs = read("mcp/src/daemon/http-api.ts");
+    const body = handlerBody(httpApiTs, "/api/quick");
     // Both the warm and cold-start branches must emit these — they're the
     // only two QuickResponse fields Swift decodes as non-optional.
     expect(body).toMatch(/\bready\b/);
