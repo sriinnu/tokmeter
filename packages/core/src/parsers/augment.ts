@@ -21,8 +21,8 @@
  */
 
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonFile } from "./utils.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonFile } from "./utils.js";
 
 interface AugmentTokenUsage {
   input_tokens?: number;
@@ -73,13 +73,25 @@ export class AugmentParser implements SessionParser {
     return [expandHome("~/.augment/sessions", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f.endsWith(".json"), 2);
+    let files = await findFiles(sessionsDir, (f) => f.endsWith(".json"), 2);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const session = await readJsonFile<AugmentSession>(file);
+      let session: AugmentSession | null;
+      try {
+        session = await readJsonFile<AugmentSession>(file);
+      } catch (error) {
+        opts?.onWarning?.(
+          `augment: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
+        continue;
+      }
       if (!session?.chatHistory) continue;
 
       const repoRoot = findRepoRoot(session);

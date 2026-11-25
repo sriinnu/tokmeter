@@ -36,12 +36,15 @@ import {
   conversationActiveBetween,
   conversationDirs,
   listConversationDbs,
+  type ProtoField,
+  readProtoFields,
   scanConversations,
 } from "./antigravity-conversations.js";
 import {
   createRecord,
   expandHome,
   fileExists,
+  fileMtimeWithWal,
   getConfiguredProviderPaths,
   openReadonlySqlite,
   vscodeFamilyUserDirs,
@@ -67,50 +70,7 @@ const SUMMARY_ONLY_USAGE: Partial<UsageProvenance> = {
 // that message early rather than guessing — a truncated read is safer
 // than a misread.
 
-interface WireField {
-  num: number;
-  wireType: number;
-  varint?: number;
-  bytes?: Uint8Array;
-}
-
-function readVarint(buf: Uint8Array, offset: number): [value: number, next: number] {
-  let result = 0;
-  let shift = 0;
-  let i = offset;
-  while (i < buf.length) {
-    const byte = buf[i];
-    result |= (byte & 0x7f) << shift;
-    i++;
-    if ((byte & 0x80) === 0) break;
-    shift += 7;
-  }
-  return [result >>> 0, i];
-}
-
-function readFields(buf: Uint8Array): WireField[] {
-  const fields: WireField[] = [];
-  let i = 0;
-  while (i < buf.length) {
-    const [tag, afterTag] = readVarint(buf, i);
-    const num = tag >>> 3;
-    const wireType = tag & 0x7;
-    if (wireType === 0) {
-      const [val, next] = readVarint(buf, afterTag);
-      fields.push({ num, wireType, varint: val });
-      i = next;
-    } else if (wireType === 2) {
-      const [len, next] = readVarint(buf, afterTag);
-      fields.push({ num, wireType, bytes: buf.subarray(next, next + len) });
-      i = next + len;
-    } else {
-      break;
-    }
-  }
-  return fields;
-}
-
-function field(fields: WireField[], num: number): WireField | undefined {
+function field(fields: ProtoField[], num: number): ProtoField | undefined {
   return fields.find((f) => f.num === num);
 }
 
@@ -125,7 +85,7 @@ interface DecodedTrajectory {
 }
 
 function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
-  const outer = readFields(entryBytes);
+  const outer = readProtoFields(entryBytes);
   const idBytes = field(outer, 1)?.bytes;
   const id = idBytes ? Buffer.from(idBytes).toString("utf-8") : "";
   const summaryWrapper = field(outer, 2)?.bytes;
@@ -137,12 +97,12 @@ function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
   // most entries — Buffer's base64 decoder silently drops the non-base64
   // wrapper tag/length header bytes — but not on all of them; it silently
   // dropped 1 real session out of 10 during testing.
-  const base64Text = field(readFields(summaryWrapper), 1)?.bytes;
+  const base64Text = field(readProtoFields(summaryWrapper), 1)?.bytes;
   if (!base64Text) return null;
 
-  let inner: WireField[];
+  let inner: ProtoField[];
   try {
-    inner = readFields(
+    inner = readProtoFields(
       new Uint8Array(Buffer.from(Buffer.from(base64Text).toString("utf-8"), "base64"))
     );
   } catch {
@@ -152,7 +112,7 @@ function decodeTrajectory(entryBytes: Uint8Array): DecodedTrajectory | null {
   let timestamp: number | undefined;
   const ts = field(inner, 3)?.bytes;
   if (ts) {
-    const seconds = field(readFields(ts), 1)?.varint;
+    const seconds = field(readProtoFields(ts), 1)?.varint;
     if (typeof seconds === "number") timestamp = seconds * 1000;
   }
   if (!timestamp) return null;
@@ -210,34 +170,47 @@ export class AntigravityParser implements SessionParser {
 
     for (const dbPath of this.summaryStores(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
+      if (
+        opts?.modifiedSinceMs !== undefined &&
+        (await fileMtimeWithWal(dbPath)) < opts.modifiedSinceMs
+      ) {
+        continue;
+      }
 
-      const db = await openReadonlySqlite(dbPath);
       try {
-        const row = db.get<{ value?: string }>(
-          "SELECT value FROM ItemTable WHERE key = ?",
-          TRAJECTORY_SUMMARIES_KEY
-        );
-        if (!row?.value) continue;
-
-        const raw = new Uint8Array(Buffer.from(row.value, "base64"));
-        const entries = readFields(raw).filter((f) => f.num === 1 && f.bytes);
-
-        for (const entry of entries) {
-          const decoded = decodeTrajectory(entry.bytes as Uint8Array);
-          if (!decoded || cascades.has(decoded.id)) continue;
-          records.push(
-            createRecord({
-              timestamp: decoded.timestamp,
-              provider: "antigravity",
-              model: "unknown",
-              project: decoded.project,
-              sourceFile: dbPath,
-              usage: SUMMARY_ONLY_USAGE,
-            })
+        const db = await openReadonlySqlite(dbPath);
+        try {
+          const row = db.get<{ value?: string }>(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            TRAJECTORY_SUMMARIES_KEY
           );
+          if (!row?.value) continue;
+
+          const raw = new Uint8Array(Buffer.from(row.value, "base64"));
+          const entries = readProtoFields(raw).filter((f) => f.num === 1 && f.bytes);
+
+          for (const entry of entries) {
+            const decoded = decodeTrajectory(entry.bytes as Uint8Array);
+            if (!decoded || cascades.has(decoded.id)) continue;
+            records.push(
+              createRecord({
+                timestamp: decoded.timestamp,
+                provider: "antigravity",
+                model: "unknown",
+                project: decoded.project,
+                sourceFile: dbPath,
+                usage: SUMMARY_ONLY_USAGE,
+              })
+            );
+          }
+        } finally {
+          db.close();
         }
-      } finally {
-        db.close();
+      } catch (error) {
+        opts?.onWarning?.(
+          `antigravity: failed read of ${dbPath}: ${error instanceof Error ? error.message : error}`,
+          { file: dbPath }
+        );
       }
     }
     return records;

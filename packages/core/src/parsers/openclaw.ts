@@ -5,9 +5,9 @@
  * Also scans legacy paths: ~/.clawdbot/, ~/.moltbot/, ~/.moldbot/
  */
 
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, sep } from "node:path";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import {
   ANY_PATH_SEGMENT,
   createRecord,
@@ -64,7 +64,7 @@ export class OpenClawParser implements SessionParser {
     );
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
 
     for (const dir of this.sessionRoots(homeDir)) {
@@ -77,7 +77,16 @@ export class OpenClawParser implements SessionParser {
       const sessionFiles = await findFiles(dir, (f) => f === "sessions.json", 4);
 
       for (const sf of sessionFiles) {
-        const index = await readJsonFile<OpenClawSessionIndex>(sf);
+        let index: OpenClawSessionIndex | null;
+        try {
+          index = await readJsonFile<OpenClawSessionIndex>(sf);
+        } catch (error) {
+          opts?.onWarning?.(
+            `openclaw: failed read of ${sf}: ${error instanceof Error ? error.message : error}`,
+            { file: sf }
+          );
+          continue;
+        }
         if (!index) continue;
 
         const sfDir = dirname(sf);
@@ -92,37 +101,55 @@ export class OpenClawParser implements SessionParser {
           try {
             if (lstatSync(sessionFilePath).isSymbolicLink()) continue;
             resolvedSessionFile = realpathSync(sessionFilePath);
+            if (
+              opts?.modifiedSinceMs !== undefined &&
+              statSync(resolvedSessionFile).mtimeMs < opts.modifiedSinceMs
+            ) {
+              continue;
+            }
           } catch {
             continue;
           }
           if (!resolvedSessionFile.startsWith(realRoot + sep)) continue;
 
-          const lines = await readJsonlFile<OpenClawMessage>(resolvedSessionFile);
-          let currentModel = "unknown";
+          try {
+            const lines = await readJsonlFile<OpenClawMessage>(resolvedSessionFile, (error) => {
+              opts?.onWarning?.(
+                `openclaw: failed read of ${sessionFilePath}: ${error instanceof Error ? error.message : error}`,
+                { file: sessionFilePath }
+              );
+            });
+            let currentModel = "unknown";
 
-          for (const msg of lines) {
-            if (msg.type === "model_change") {
-              currentModel = msg.modelId || currentModel;
-              continue;
+            for (const msg of lines) {
+              if (msg.type === "model_change") {
+                currentModel = msg.modelId || currentModel;
+                continue;
+              }
+              if (msg.type !== "message" || msg.message?.role !== "assistant") continue;
+              if (!msg.message?.usage) continue;
+              const cost = msg.message.usage.cost?.total;
+              const hasCost = typeof cost === "number";
+
+              records.push(
+                createRecord({
+                  timestamp: msg.message.timestamp,
+                  provider: "openclaw",
+                  model: currentModel,
+                  project: "openclaw",
+                  sourceFile: sessionFilePath,
+                  inputTokens: msg.message.usage.input ?? 0,
+                  outputTokens: msg.message.usage.output ?? 0,
+                  cacheReadTokens: msg.message.usage.cacheRead ?? 0,
+                  cost: hasCost ? cost : 0,
+                  usage: hasCost ? { cost: "direct" } : { cost: "calculated" },
+                })
+              );
             }
-            if (msg.type !== "message" || msg.message?.role !== "assistant") continue;
-            if (!msg.message?.usage) continue;
-            const cost = msg.message.usage.cost?.total;
-            const hasCost = typeof cost === "number";
-
-            records.push(
-              createRecord({
-                timestamp: msg.message.timestamp,
-                provider: "openclaw",
-                model: currentModel,
-                project: "openclaw",
-                sourceFile: sessionFilePath,
-                inputTokens: msg.message.usage.input ?? 0,
-                outputTokens: msg.message.usage.output ?? 0,
-                cacheReadTokens: msg.message.usage.cacheRead ?? 0,
-                cost: hasCost ? cost : 0,
-                usage: hasCost ? { cost: "direct" } : { cost: "calculated" },
-              })
+          } catch (error) {
+            opts?.onWarning?.(
+              `openclaw: failed read of ${sessionFilePath}: ${error instanceof Error ? error.message : error}`,
+              { file: sessionFilePath }
             );
           }
         }

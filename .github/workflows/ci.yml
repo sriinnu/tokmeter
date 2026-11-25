@@ -86,6 +86,12 @@ jobs:
       - name: Codex oracle fixtures
         run: node scripts/oracle/test-fixtures.mjs
 
+      - name: Claude oracle fixtures
+        run: node scripts/oracle/test-claude-fixtures.mjs
+
+      - name: Oracle Python syntax check
+        run: python3 -m py_compile scripts/oracle/codex_oracle.py scripts/oracle/antigravity_oracle.py scripts/oracle/claude_oracle.py
+
   # Windows is not a supported platform yet. This job exists to show what
   # breaks before any Windows app work starts. It is not a required check, so
   # a red run reports problems without blocking a PR.

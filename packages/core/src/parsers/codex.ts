@@ -173,6 +173,8 @@ interface CodexParseState {
   legacyRecordTurns: Map<number, string>;
   /** From this rollout's own (first) session_meta. */
   isSubagent: boolean;
+  /** Whether the first session_meta has been applied. */
+  sawSessionMeta: boolean;
   /** Whether this rollout has started a turn of its own yet. */
   taskStarted: boolean;
   /** Whether this rollout opened with a `compacted` (carried-over) history. */
@@ -190,6 +192,7 @@ function defaultState(): CodexParseState {
     responseIds: new Set(),
     legacyRecordTurns: new Map(),
     isSubagent: false,
+    sawSessionMeta: false,
     taskStarted: false,
     sawCompacted: false,
   };
@@ -434,7 +437,7 @@ async function readZstHead(file: string, limit: number): Promise<string> {
  */
 async function readSessionMeta(
   file: string,
-  onWarning?: (message: string) => void
+  onWarning?: (message: string, detail?: ScanFaultDetail) => void
 ): Promise<CodexFileMeta> {
   const { open } = await import("node:fs/promises");
   let sessionId = "";
@@ -482,7 +485,8 @@ async function readSessionMeta(
     }
   } catch (error) {
     onWarning?.(
-      `failed metadata read of ${file}: ${error instanceof Error ? error.message : error}`
+      `failed metadata read of ${file}: ${error instanceof Error ? error.message : error}`,
+      { file }
     );
     // Fail open into a standalone group. Parsing gets another chance to read
     // it, while the warning prevents authoritative persistence this scan.
@@ -585,7 +589,7 @@ function resolveRoot(meta: CodexFileMeta, bySessionId: Map<string, CodexFileMeta
  */
 async function dedupForkedFiles(
   files: string[],
-  onWarning?: (message: string) => void
+  onWarning?: (message: string, detail?: ScanFaultDetail) => void
 ): Promise<string[]> {
   const metas = await mapWithConcurrency(files, CODEX_SCAN_CONCURRENCY, (f) =>
     readSessionMeta(f, onWarning)
@@ -639,14 +643,15 @@ function foldCodexEvent(
 ): void {
   if (!evt.type) return;
   if (evt.type === "compacted" && !state.taskStarted) state.sawCompacted = true;
-  if (evt.type === "session_meta" && evt.payload?.id && !state.sessionId) {
+  if (evt.type === "session_meta" && evt.payload && !state.sawSessionMeta) {
     // FIRST session_meta only: a subagent rollout replays its parent's next.
-    state.sessionId = evt.payload.id;
+    state.sawSessionMeta = true;
+    if (evt.payload.id) state.sessionId = evt.payload.id;
     state.isSubagent = isSubagentMeta(evt.payload);
-  }
-  if (evt.type === "session_meta" && evt.payload?.cwd) {
-    state.project = projectFromCwd(evt.payload.cwd);
-    state.cwd = evt.payload.cwd;
+    if (evt.payload.cwd) {
+      state.project = projectFromCwd(evt.payload.cwd);
+      state.cwd = evt.payload.cwd;
+    }
   }
   if (evt.type === "turn_context" && evt.payload?.model) {
     state.currentModel = evt.payload.model;
@@ -947,7 +952,8 @@ export class CodexParser implements SessionParser {
         return { file: f, size: await rolloutSize(f) };
       } catch (error) {
         opts?.onWarning?.(
-          `failed size read of ${f}: ${error instanceof Error ? error.message : error}`
+          `failed size read of ${f}: ${error instanceof Error ? error.message : error}`,
+          { file: f }
         );
         return { file: f, size: 0 };
       }

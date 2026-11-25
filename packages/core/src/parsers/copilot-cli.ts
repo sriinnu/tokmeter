@@ -91,8 +91,21 @@ export class CopilotCliParser implements SessionParser {
     }
 
     for (const file of files) {
-      const records = this.parseFile(await readJsonlFile<CopilotEvent>(file), file);
-      if (records.length > 0) await onFile(records);
+      try {
+        const lines = await readJsonlFile<CopilotEvent>(file, (err) =>
+          opts?.onWarning?.(
+            `copilot-cli: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+            { file }
+          )
+        );
+        const records = this.parseFile(lines, file);
+        if (records.length > 0) await onFile(records);
+      } catch (error) {
+        opts?.onWarning?.(
+          `copilot-cli: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
+        );
+      }
     }
   }
 

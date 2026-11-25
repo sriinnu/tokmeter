@@ -95,14 +95,19 @@ export class KimiParser implements SessionParser {
       ]);
     }
     const records: TokenRecord[] = [];
-    for (const file of cliFiles) records.push(...(await this.scanCliFile(file)));
+    for (const file of cliFiles) records.push(...(await this.scanCliFile(file, opts)));
     for (const file of codeFiles) records.push(...(await this.scanCodeFile(file, opts)));
     return records;
   }
 
-  private async scanCliFile(file: string): Promise<TokenRecord[]> {
+  private async scanCliFile(file: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const records: TokenRecord[] = [];
-    const lines = await readJsonlFile<KimiStatusUpdate>(file);
+    const lines = await readJsonlFile<KimiStatusUpdate>(file, (err) =>
+      opts?.onWarning?.(
+        `kimi: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+        { file }
+      )
+    );
     for (const line of lines) {
       const payload = line.message?.payload;
       if (!payload?.token_usage) continue;
@@ -142,7 +147,8 @@ export class KimiParser implements SessionParser {
       raw = await readFile(file, "utf-8");
     } catch (error) {
       opts?.onWarning?.(
-        `failed read of ${file}: ${error instanceof Error ? error.message : error}`
+        `failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+        { file }
       );
       return [];
     }
@@ -155,9 +161,11 @@ export class KimiParser implements SessionParser {
       try {
         line = JSON.parse(text) as KimiCodeWireLine;
       } catch (error) {
-        throw new Error(
-          `Malformed Kimi usage payload in ${file}: ${error instanceof Error ? error.message : error}`
+        opts?.onWarning?.(
+          `Malformed Kimi usage payload in ${file}: ${error instanceof Error ? error.message : error}`,
+          { file }
         );
+        return [];
       }
       if (line.type !== "usage.record" || !line.usage || typeof line.time !== "number") continue;
       if (line.usageScope && line.usageScope !== "turn") continue;

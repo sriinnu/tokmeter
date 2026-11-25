@@ -5,8 +5,8 @@
  */
 
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 interface PiSessionHeader {
   type: "session";
@@ -41,13 +41,21 @@ export class PiParser implements SessionParser {
     return [expandHome("~/.pi/agent/sessions", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 3);
+    let files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 3);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const lines = await readJsonlFile<PiSessionHeader | PiMessage>(file);
+      const lines = await readJsonlFile<PiSessionHeader | PiMessage>(file, (err) =>
+        opts?.onWarning?.(
+          `pi: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+          { file }
+        )
+      );
       let project = "pi";
 
       for (const line of lines) {

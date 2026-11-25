@@ -29,12 +29,13 @@ import { join } from "node:path";
 import * as zlib from "node:zlib";
 import { localDateKey } from "../date-utils.js";
 import { canonicalizeProjectName } from "../project-name.js";
-import type { SessionParser, TokenRecord } from "../types.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
 import { type Buckets, dayDelta, updateBaselines } from "./cumulative-baselines.js";
 import {
   createRecord,
   expandHome,
   fileExists,
+  fileMtimeWithWal,
   getConfiguredProviderPaths,
   openReadonlySqlite,
 } from "./utils.js";
@@ -130,7 +131,7 @@ export class ZedParser implements SessionParser {
     return this.sessionRoots(homeDir);
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const observations: Array<{
       dbPath: string;
       threadId: string;
@@ -143,40 +144,53 @@ export class ZedParser implements SessionParser {
 
     for (const dbPath of this.sessionRoots(homeDir)) {
       if (!(await fileExists(dbPath))) continue;
+      if (
+        opts?.modifiedSinceMs !== undefined &&
+        (await fileMtimeWithWal(dbPath)) < opts.modifiedSinceMs
+      ) {
+        continue;
+      }
 
-      const db = await openReadonlySqlite(dbPath);
       try {
-        const rows = db.all<ThreadRow>(
-          "SELECT id, summary, updated_at, created_at, data_type, data, folder_paths, folder_paths_order FROM threads"
-        );
+        const db = await openReadonlySqlite(dbPath);
+        try {
+          const rows = db.all<ThreadRow>(
+            "SELECT id, summary, updated_at, created_at, data_type, data, folder_paths, folder_paths_order FROM threads"
+          );
 
-        for (const row of rows) {
-          const thread = decodeThreadData(row);
-          if (!thread) continue;
+          for (const row of rows) {
+            const thread = decodeThreadData(row);
+            if (!thread) continue;
 
-          const usage = thread.cumulative_token_usage;
-          const current: Buckets = {
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-            reasoningTokens: 0,
-          };
-          const updatedMs = new Date(row.updated_at || row.created_at || "").getTime();
-          if (!Number.isFinite(updatedMs)) continue;
-          const createdMs = row.created_at ? new Date(row.created_at).getTime() : Number.NaN;
-          observations.push({
-            dbPath,
-            threadId: row.id,
-            updatedMs,
-            createdOn: Number.isFinite(createdMs) ? localDateKey(createdMs) : undefined,
-            model: thread.model?.model || "unknown",
-            project: resolveProject(row.folder_paths, row.folder_paths_order),
-            current,
-          });
+            const usage = thread.cumulative_token_usage;
+            const current: Buckets = {
+              inputTokens: usage?.input_tokens ?? 0,
+              outputTokens: usage?.output_tokens ?? 0,
+              cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+              reasoningTokens: 0,
+            };
+            const updatedMs = new Date(row.updated_at || row.created_at || "").getTime();
+            if (!Number.isFinite(updatedMs)) continue;
+            const createdMs = row.created_at ? new Date(row.created_at).getTime() : Number.NaN;
+            observations.push({
+              dbPath,
+              threadId: row.id,
+              updatedMs,
+              createdOn: Number.isFinite(createdMs) ? localDateKey(createdMs) : undefined,
+              model: thread.model?.model || "unknown",
+              project: resolveProject(row.folder_paths, row.folder_paths_order),
+              current,
+            });
+          }
+        } finally {
+          db.close();
         }
-      } finally {
-        db.close();
+      } catch (error) {
+        opts?.onWarning?.(
+          `zed: failed read of ${dbPath}: ${error instanceof Error ? error.message : error}`,
+          { file: dbPath }
+        );
       }
     }
 

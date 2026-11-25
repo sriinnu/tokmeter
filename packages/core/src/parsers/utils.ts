@@ -183,7 +183,11 @@ function cacheHomeKey(homeDir?: string): string {
 // 32 — direct-cost provenance: `cline` and `custom-source` record
 //      `usage.cost = "direct"` when carrying a positive tool-reported cost so
 //      repricing never resets those records to $0.
-const CACHE_VERSION = 32;
+// 33 — parser accuracy & coverage fixes: Gemini CLI `.jsonl` sessions, model IDs,
+//      and project extraction; Cursor WAL invalidation and quoted CSV fields;
+//      Codex subagent `cwd`/`project` preservation across replayed parent meta;
+//      Antigravity 64-bit proto fields.
+const CACHE_VERSION = 33;
 
 function loadRecordCache(homeDir?: string): RecordCacheStore {
   const key = cacheHomeKey(homeDir);
@@ -1080,6 +1084,41 @@ function withBusyTimeout(db: ReadonlySqlite): ReadonlySqlite {
  * `node:sqlite` needs no install; better-sqlite3 remains the fallback for
  * older Node. With none available the result is `null`, not a crash.
  */
+/**
+ * Highest mtime across a SQLite database and its non-empty `-wal` sidecar
+ * (returns `0` if the main database file is missing). Empty `-wal` files left
+ * behind on macOS SQLite close are ignored so unchanged DBs stay skippable.
+ */
+export async function fileMtimeWithWal(dbPath: string): Promise<number> {
+  let maxMtime = 0;
+  try {
+    maxMtime = (await stat(dbPath)).mtimeMs;
+  } catch {
+    return 0;
+  }
+  try {
+    const wal = await stat(`${dbPath}-wal`);
+    if (wal.size > 0 && wal.mtimeMs > maxMtime) maxMtime = wal.mtimeMs;
+  } catch {
+    /* no -wal */
+  }
+  return maxMtime;
+}
+
+/** Cache key combining size + mtime for a SQLite DB and its `-wal` sidecar. */
+export async function dbFileStateKey(dbPath: string): Promise<string> {
+  const one = async (p: string, requireNonEmpty = false) => {
+    try {
+      const s = await stat(p);
+      if (requireNonEmpty && s.size === 0) return "-";
+      return `${s.size}:${s.mtimeMs}`;
+    } catch {
+      return "-";
+    }
+  };
+  return `${await one(dbPath)}|${await one(`${dbPath}-wal`, true)}`;
+}
+
 export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     try {
@@ -1097,26 +1136,37 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqlite> 
       );
     }
   }
-  try {
-    // Specifier in a variable so bundlers and older type libs leave it alone.
-    const builtin = "node:sqlite";
-    const { DatabaseSync } = (await import(builtin)) as {
-      DatabaseSync: new (
+  let BuiltinDatabaseSync:
+    | (new (
         path: string,
         opts: { readOnly: boolean }
       ) => {
         prepare(sql: string): { get(...p: unknown[]): unknown; all(...p: unknown[]): unknown[] };
         close(): void;
-      };
-    };
-    const db = new DatabaseSync(path, { readOnly: true });
-    return withBusyTimeout({
-      get: (sql, ...params) => db.prepare(sql).get(...params) as never,
-      all: (sql, ...params) => db.prepare(sql).all(...params) as never,
-      close: () => db.close(),
+      })
+    | undefined;
+  try {
+    // Specifier in a variable so bundlers and older type libs leave it alone.
+    const builtin = "node:sqlite";
+    ({ DatabaseSync: BuiltinDatabaseSync } = (await import(builtin)) as {
+      DatabaseSync: NonNullable<typeof BuiltinDatabaseSync>;
     });
   } catch {
-    // Node < 22.5 — fall through to better-sqlite3.
+    BuiltinDatabaseSync = undefined;
+  }
+  if (BuiltinDatabaseSync) {
+    try {
+      const db = new BuiltinDatabaseSync(path, { readOnly: true });
+      return withBusyTimeout({
+        get: (sql, ...params) => db.prepare(sql).get(...params) as never,
+        all: (sql, ...params) => db.prepare(sql).all(...params) as never,
+        close: () => db.close(),
+      });
+    } catch (error) {
+      throw new Error(
+        `Unable to open SQLite database ${path}: ${error instanceof Error ? error.message : error}`
+      );
+    }
   }
   try {
     // @ts-expect-error — better-sqlite3 is an optional dependency

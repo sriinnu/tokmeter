@@ -4,8 +4,8 @@
  * Reads from ~/.factory/sessions/
  */
 
-import type { SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 interface DroidMessage {
   role?: string;
@@ -27,13 +27,21 @@ export class DroidParser implements SessionParser {
     return [expandHome("~/.factory/sessions", homeDir)];
   }
 
-  async scan(homeDir: string): Promise<TokenRecord[]> {
+  async scan(homeDir: string, opts?: ScanFilterOptions): Promise<TokenRecord[]> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    const files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
+    let files = await findFiles(sessionsDir, (f) => f.endsWith(".jsonl"), 2);
+    if (opts?.modifiedSinceMs !== undefined) {
+      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+    }
     const records: TokenRecord[] = [];
 
     for (const file of files) {
-      const lines = await readJsonlFile<DroidMessage>(file);
+      const lines = await readJsonlFile<DroidMessage>(file, (err) =>
+        opts?.onWarning?.(
+          `droid: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+          { file }
+        )
+      );
       for (const msg of lines) {
         if (msg.role !== "assistant" || !msg.usage) continue;
 

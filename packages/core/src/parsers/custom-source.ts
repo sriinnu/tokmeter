@@ -54,7 +54,7 @@
 import { type CustomSource, loadConfig } from "../config-service.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ProviderId, ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
-import { createRecord, expandHome, findFiles, readJsonlFile } from "./utils.js";
+import { createRecord, expandHome, filterFilesByMtime, findFiles, readJsonlFile } from "./utils.js";
 
 /** Provider ids a custom source is allowed to claim. */
 export const CUSTOM_ELIGIBLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
@@ -166,18 +166,33 @@ export class CustomSourceParser implements SessionParser {
 
   async scanStreaming(
     homeDir: string,
-    _opts: ScanFilterOptions | undefined,
+    opts: ScanFilterOptions | undefined,
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
     for (const source of enabledSources(homeDir)) {
       const provider = resolveProvider(source);
       const root = expandHome(source.path, homeDir);
-      const files = await findFiles(root, (f) => f.endsWith(".jsonl") || f.endsWith(".json"), 6);
+      let files = await findFiles(root, (f) => f.endsWith(".jsonl") || f.endsWith(".json"), 6);
+      if (opts?.modifiedSinceMs !== undefined) {
+        files = await filterFilesByMtime(files, opts.modifiedSinceMs);
+      }
 
       for (const file of files) {
-        const lines = await readJsonlFile<CanonicalUsageLine>(file);
-        const records = this.parseLines(lines, file, provider);
-        if (records.length > 0) await onFile(records);
+        try {
+          const lines = await readJsonlFile<CanonicalUsageLine>(file, (err) =>
+            opts?.onWarning?.(
+              `${provider}: failed read of ${file}: ${err instanceof Error ? err.message : err}`,
+              { file }
+            )
+          );
+          const records = this.parseLines(lines, file, provider);
+          if (records.length > 0) await onFile(records);
+        } catch (error) {
+          opts?.onWarning?.(
+            `${provider}: failed read of ${file}: ${error instanceof Error ? error.message : error}`,
+            { file }
+          );
+        }
       }
     }
   }
