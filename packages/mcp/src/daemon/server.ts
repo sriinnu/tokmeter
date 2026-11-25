@@ -28,8 +28,15 @@ import {
 } from "node:http";
 import { homedir, setPriority } from "node:os";
 import { join } from "node:path";
-import type { ProviderId, ScanWarning, TokmeterSummary } from "@sriinnu/tokmeter";
+import type {
+  ProviderId,
+  ScanOptions,
+  ScanWarning,
+  TokmeterCore,
+  TokmeterSummary,
+} from "@sriinnu/tokmeter";
 import {
+  ALL_PROVIDER_IDS,
   ensureCursorHook,
   loadConfig,
   localDateKey,
@@ -39,6 +46,12 @@ import {
   refreshKoshaRegistry,
 } from "@sriinnu/tokmeter";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  computeScopedView,
+  type ScopeParams,
+  serializeScopedView,
+  unpricedOf,
+} from "../scoped-view.js";
 import {
   API_HEADER,
   apiVersionHeaders,
@@ -820,7 +833,7 @@ export function getDaemonStatus(): {
  *
  * `_httpCore` holds the singleton; `ts` is the last time TODAY was refreshed.
  */
-let _httpCore: { core: any; ts: number } | null = null;
+let _httpCore: { core: TokmeterCore; ts: number; lastScanDurationMs: number } | null = null;
 /**
  * How stale today's data may get before a warm `refreshToday()` runs. The full
  * frozen history is never re-read here — only today's ~2 active files.
@@ -852,22 +865,24 @@ let _rescanInFlight = false;
 // staying far below the full-history parse that exhausts memory.
 const DEEP_RESCAN_WINDOW_DAYS = 30;
 
-const coreRefresh = new RefreshCoordinator<any>(async (full) => {
+const coreRefresh = new RefreshCoordinator<TokmeterCore>(async (full) => {
+  const startedAt = Date.now();
   if (_httpCore) {
     if (full) await _httpCore.core.scan();
     else await _httpCore.core.refreshToday();
     _httpCore.ts = Date.now();
+    _httpCore.lastScanDurationMs = Date.now() - startedAt;
     return _httpCore.core;
   }
-  const { TokmeterCore } = await import("@sriinnu/tokmeter");
-  const core = new TokmeterCore();
+  const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
+  const core = new CoreCtor();
   await core.scan();
-  _httpCore = { core, ts: Date.now() };
+  _httpCore = { core, ts: Date.now(), lastScanDurationMs: Date.now() - startedAt };
   _httpCoreReady = true;
   return core;
 });
 
-async function ensureCoreFresh(forceFullRescan = false): Promise<any> {
+async function ensureCoreFresh(forceFullRescan = false): Promise<TokmeterCore> {
   if (
     !forceFullRescan &&
     !coreRefresh.busy &&
@@ -878,7 +893,7 @@ async function ensureCoreFresh(forceFullRescan = false): Promise<any> {
   return coreRefresh.run(forceFullRescan);
 }
 
-async function getHttpCore(): Promise<any> {
+async function getHttpCore(): Promise<TokmeterCore> {
   return ensureCoreFresh(false);
 }
 
@@ -890,7 +905,7 @@ async function getHttpCore(): Promise<any> {
  * Code cancels a statusline that hasn't printed by its next ~300ms update.
  * Cold start still waits, since there is nothing to serve yet.
  */
-async function getHttpCoreNoWait(): Promise<any> {
+async function getHttpCoreNoWait(): Promise<TokmeterCore> {
   if (!_httpCore) return getHttpCore();
   return coreRefresh.serveStale(
     _httpCore.core,
@@ -1084,6 +1099,29 @@ function startHttpApi(handlers: {
 
         // Slow endpoints — wait for the core to be ready.
         if (pathname === "/api/summary") {
+          const parsed = parseDaemonScopeQuery(url);
+          if (parsed.error) {
+            res.writeHead(400);
+            json(res, { error: parsed.error });
+            return;
+          }
+          if (parsed.hasScope) {
+            const core = await getHttpCore();
+            const scoped = executeScopedRoute(
+              pathname,
+              url,
+              core,
+              _httpCore?.lastScanDurationMs ?? 0
+            );
+            if (scoped) {
+              if (scoped.headers) {
+                for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
+              }
+              if (scoped.status !== 200) res.writeHead(scoped.status);
+              json(res, scoped.body);
+              return;
+            }
+          }
           const { summary, source } = await getHttpSummaryPayload();
           res.setHeader(SUMMARY_SOURCE_HEADER, source);
           json(res, summary);
@@ -1111,6 +1149,15 @@ function startHttpApi(handlers: {
         }
 
         const core = await getHttpCore();
+        const scoped = executeScopedRoute(pathname, url, core, _httpCore?.lastScanDurationMs ?? 0);
+        if (scoped) {
+          if (scoped.headers) {
+            for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
+          }
+          if (scoped.status !== 200) res.writeHead(scoped.status);
+          json(res, scoped.body);
+          return;
+        }
 
         if (pathname === "/api/projects") {
           json(res, core.getAllProjects());
@@ -1128,18 +1175,9 @@ function startHttpApi(handlers: {
           const name = decodeURIComponent(pathname.slice("/api/projects/".length));
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
         } else if (pathname === "/api/stats") {
-          const providers = parseProviders(url);
-          if (providers) {
-            // Provider-filtered stats: NOT floored. The floor is a
-            // display-stability guard for the BAR's lifetime hero, which
-            // reads unfiltered /api/stats. A provider-scoped read is a
-            // different number and shouldn't inherit the lifetime floor.
-            json(res, core.getStats({ providers }));
-          } else {
-            // Lifetime stats — floored so the bar's hero stays monotonic
-            // within the day. See applyStatsFloor for the why.
-            json(res, applyStatsFloor(core.getStats()));
-          }
+          // Lifetime stats — floored so the bar's hero stays monotonic
+          // within the day. See applyStatsFloor for the why.
+          json(res, applyStatsFloor(core.getStats()));
         } else if (pathname === "/api/statbar-signals") {
           // Live "right now" signals for the menubar — burn rate, cache hit,
           // pace vs typical, compaction tax, and the live session pointer.
@@ -1154,8 +1192,7 @@ function startHttpApi(handlers: {
           const transcript = new URL(url, "http://localhost").searchParams.get("transcript") ?? "";
           json(res, sessionLedgerFor(transcript) ?? { error: "Not found" });
         } else if (pathname === "/api/models") {
-          const providers = parseProviders(url);
-          json(res, core.getModelCosts(providers ? { providers } : undefined));
+          json(res, core.getModelCosts());
         } else if (pathname === "/api/health") {
           // Surface silent-pricing leaks: today-records that priced at $0
           // because no tier (kosha runtime, manifest, override) had pricing.
@@ -1300,29 +1337,19 @@ function startHttpApi(handlers: {
           }
           json(res, { installed, lastRunMtime, lastRunOk, lastRunTail });
         } else if (pathname === "/api/daily") {
-          const providers = parseProviders(url);
-          if (providers) {
-            json(res, core.getDailyBreakdown({ providers }));
-          } else {
-            // Floor today's last entry to the per-day high-water so the macOS
-            // bar's hero (which reads daily.last.cost) is monotonic upward —
-            // codex fork-dedup winner swaps can't make today's display drop.
-            const daily = core.getDailyBreakdown() as Array<{
-              date: string;
-              cost: number;
-              totalTokens: number;
-              [k: string]: unknown;
-            }>;
-            const todayKey = localDateKey();
-            const floored = applyTodayFloor(computeTodayTotals(core));
-            if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
-              const last = daily[daily.length - 1];
-              if (floored.cost > last.cost) last.cost = floored.cost;
-              const flooredTokens = floored.in + floored.out;
-              if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
-            }
-            json(res, daily);
+          // Floor today's last entry to the per-day high-water so the macOS
+          // bar's hero (which reads daily.last.cost) is monotonic upward —
+          // codex fork-dedup winner swaps can't make today's display drop.
+          const daily = core.getDailyBreakdown().map((entry) => ({ ...entry }));
+          const todayKey = localDateKey();
+          const floored = applyTodayFloor(computeTodayTotals(core));
+          if (daily.length > 0 && daily[daily.length - 1]?.date === todayKey) {
+            const last = daily[daily.length - 1];
+            if (floored.cost > last.cost) last.cost = floored.cost;
+            const flooredTokens = floored.in + floored.out;
+            if (flooredTokens > last.totalTokens) last.totalTokens = flooredTokens;
           }
+          json(res, daily);
         } else if (pathname === "/api/providers") {
           json(res, core.getProviderBreakdown());
         } else if (pathname === "/api/antigravity-live") {
@@ -1460,7 +1487,11 @@ function startHttpApi(handlers: {
               void core
                 .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS, Date.now(), force)
                 .then(() => {
-                  _httpCore = { core, ts: Date.now() };
+                  _httpCore = {
+                    core,
+                    ts: Date.now(),
+                    lastScanDurationMs: _httpCore?.lastScanDurationMs ?? 0,
+                  };
                 })
                 .catch((e: unknown) => {
                   console.error(`deep rescan failed: ${e instanceof Error ? e.message : e}`);
@@ -1576,25 +1607,279 @@ export interface TodayTotals {
 const MAX_PROVIDERS = 32;
 const MAX_PROVIDER_LEN = 64;
 const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
-
-function parseProviders(url: string): ProviderId[] | null {
-  const qi = url.indexOf("?");
-  if (qi < 0) return null;
-  const params = new URLSearchParams(url.slice(qi + 1));
-  const raw = params.get("providers") ?? params.get("provider");
-  if (!raw) return null;
-  const seen = new Set<string>();
-  const list: string[] = [];
-  for (const part of raw.split(",")) {
-    const s = part.trim();
-    if (!s || s.length > MAX_PROVIDER_LEN) continue;
-    if (!PROVIDER_PATTERN.test(s)) continue;
-    if (seen.has(s)) continue;
-    seen.add(s);
-    list.push(s);
-    if (list.length >= MAX_PROVIDERS) break;
+let _validProviderIds: Set<string> | null = null;
+function getValidProviderIds(): Set<string> {
+  if (!_validProviderIds) {
+    _validProviderIds = new Set<string>(ALL_PROVIDER_IDS);
   }
-  return list.length > 0 ? (list as ProviderId[]) : null;
+  return _validProviderIds;
+}
+
+function parseBoolParam(raw: string | null): boolean | undefined | "invalid" {
+  if (raw === null) return undefined;
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0" || raw === "") return false;
+  return "invalid";
+}
+
+/**
+ * Parse scoped query parameters for daemon read endpoints (`/api/summary`,
+ * `/api/stats`, `/api/daily`, `/api/models`, `/api/projects`, `/api/providers`,
+ * `/api/scoped-view`). Validates providers against `ALL_PROVIDER_IDS` and numeric
+ * year bounds cleanly so invalid inputs return HTTP 400.
+ */
+export function parseDaemonScopeQuery(url: string): {
+  options: ScanOptions;
+  hasScope: boolean;
+  error?: string;
+} {
+  const qi = url.indexOf("?");
+  if (qi < 0) return { options: {}, hasScope: false };
+  const params = new URLSearchParams(url.slice(qi + 1));
+  const options: ScanOptions = {};
+
+  const rawProviders = params.get("providers") ?? params.get("provider");
+  if (rawProviders !== null && rawProviders.trim() !== "") {
+    const seen = new Set<string>();
+    const list: ProviderId[] = [];
+    for (const part of rawProviders.split(",")) {
+      const s = part.trim();
+      if (!s) continue;
+      if (
+        s.length > MAX_PROVIDER_LEN ||
+        !PROVIDER_PATTERN.test(s) ||
+        !getValidProviderIds().has(s)
+      ) {
+        return { options: {}, hasScope: true, error: `Unknown provider "${s}".` };
+      }
+      if (seen.has(s)) continue;
+      seen.add(s);
+      list.push(s as ProviderId);
+      if (list.length > MAX_PROVIDERS) {
+        return { options: {}, hasScope: true, error: "Too many providers in query." };
+      }
+    }
+    if (list.length > 0) options.providers = list;
+  }
+
+  const project = params.get("project")?.trim();
+  if (project) {
+    if (project.length > 512) {
+      return { options: {}, hasScope: true, error: "project filter is too long." };
+    }
+    options.project = project;
+  }
+
+  const since = params.get("since")?.trim();
+  if (since) options.since = since;
+  const until = params.get("until")?.trim();
+  if (until) options.until = until;
+
+  const scope = params.get("scope")?.trim();
+  if (scope) {
+    if (scope === "today") options.today = true;
+    else if (scope === "week") options.week = true;
+    else if (scope === "month") options.month = true;
+    else if (scope !== "all") {
+      return {
+        options: {},
+        hasScope: true,
+        error: `Invalid scope "${scope}". Expected today, week, month, or all.`,
+      };
+    }
+  }
+
+  for (const flag of ["today", "week", "month"] as const) {
+    const parsedFlag = parseBoolParam(params.get(flag));
+    if (parsedFlag === "invalid") {
+      return { options: {}, hasScope: true, error: `${flag} must be true or false.` };
+    }
+    if (parsedFlag === true) options[flag] = true;
+  }
+
+  if (params.has("year")) {
+    const rawYear = (params.get("year") ?? "").trim();
+    if (!/^\d{4}$/.test(rawYear)) {
+      return { options: {}, hasScope: true, error: "year must be a four-digit calendar year." };
+    }
+    const year = Number(rawYear);
+    if (!Number.isInteger(year) || year < 1000 || year > 9999) {
+      return { options: {}, hasScope: true, error: "year must be a four-digit calendar year." };
+    }
+    options.year = year;
+  }
+
+  const hasScope = Boolean(
+    options.providers?.length ||
+      options.project ||
+      options.since ||
+      options.until ||
+      options.today ||
+      options.week ||
+      options.month ||
+      options.year !== undefined
+  );
+  return { options, hasScope };
+}
+
+function toScopeParams(options: ScanOptions): ScopeParams {
+  return {
+    scope: options.today
+      ? "today"
+      : options.week
+        ? "week"
+        : options.month
+          ? "month"
+          : options.year !== undefined
+            ? undefined
+            : "all",
+    since: options.year !== undefined ? `${options.year}-01-01` : options.since,
+    until: options.year !== undefined ? `${options.year}-12-31` : options.until,
+    project: options.project,
+    providers: options.providers,
+  };
+}
+
+export interface ScopedRouteResult {
+  status: number;
+  body: unknown;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Shared scoped HTTP route handler for both the live daemon HTTP API and
+ * ephemeral test servers. Returns `null` when the request has no scoping params
+ * (for routes other than `/api/scoped-view`) so the live server's legacy
+ * floored/cached fast paths continue uninterrupted.
+ */
+export function executeScopedRoute(
+  pathname: string,
+  url: string,
+  core: TokmeterCore,
+  scanDurationMs = 0
+): ScopedRouteResult | null {
+  const isScopedView = pathname === "/api/scoped-view";
+  const isScopedRoute =
+    isScopedView ||
+    pathname === "/api/summary" ||
+    pathname === "/api/stats" ||
+    pathname === "/api/daily" ||
+    pathname === "/api/models" ||
+    pathname === "/api/projects" ||
+    pathname === "/api/providers";
+  if (!isScopedRoute) return null;
+
+  const parsed = parseDaemonScopeQuery(url);
+  if (parsed.error) {
+    return { status: 400, body: { error: parsed.error } };
+  }
+  if (!isScopedView && !parsed.hasScope) {
+    return null;
+  }
+
+  try {
+    const records = core.getRecentRecords();
+    const meta = {
+      recordCount: records.length,
+      ...unpricedOf(records),
+      scanDurationMs,
+    };
+
+    if (isScopedView) {
+      // Validate explicit date/year bounds using core.getSummary first so malformed dates fail 400.
+      if (parsed.hasScope) core.getSummary(parsed.options);
+      const view = computeScopedView(core, records, meta, toScopeParams(parsed.options));
+      return { status: 200, body: serializeScopedView(view) };
+    }
+
+    const summary = core.getSummary(parsed.options);
+    if (pathname === "/api/summary") {
+      return {
+        status: 200,
+        body: summary,
+        headers: { [SUMMARY_SOURCE_HEADER]: "live" },
+      };
+    }
+    if (pathname === "/api/stats") return { status: 200, body: summary.stats };
+    if (pathname === "/api/daily") return { status: 200, body: summary.daily };
+    if (pathname === "/api/models") return { status: 200, body: summary.models };
+    if (pathname === "/api/projects") return { status: 200, body: summary.projects };
+    if (pathname === "/api/providers") {
+      const view = computeScopedView(core, records, meta, toScopeParams(parsed.options));
+      return { status: 200, body: view.providers };
+    }
+    return null;
+  } catch (err) {
+    return { status: 400, body: { error: toErrorMessage(err) } };
+  }
+}
+
+/**
+ * Create an isolated loopback HTTP server backed by an injected `TokmeterCore`
+ * for unit/integration tests without mutating process-wide daemon globals.
+ */
+export function createDaemonTestHttpServer(core: TokmeterCore, token: string) {
+  return createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+    res.setHeader("Content-Type", "application/json");
+    for (const [name, value] of apiVersionHeaders(API_VERSION)) res.setHeader(name, value);
+    const url = req.url ?? "/";
+    const pathname = url.split("?")[0];
+    if (req.method === "GET" && pathname === "/api/ready") {
+      json(res, { ready: true, warming: false, apiVersion: API_VERSION });
+      return;
+    }
+    if (!isValidAuthHeader(req.headers.authorization, token)) {
+      res.writeHead(401);
+      json(res, { error: "Unauthorized" });
+      return;
+    }
+    const scoped = executeScopedRoute(pathname, url, core, 1);
+    if (scoped) {
+      if (scoped.headers) {
+        for (const [k, v] of Object.entries(scoped.headers)) res.setHeader(k, v);
+      }
+      if (scoped.status !== 200) res.writeHead(scoped.status);
+      json(res, scoped.body);
+      return;
+    }
+    if (pathname === "/api/summary") {
+      res.setHeader(SUMMARY_SOURCE_HEADER, "live");
+      json(res, core.getSummary());
+      return;
+    }
+    if (pathname === "/api/stats") {
+      json(res, core.getStats());
+      return;
+    }
+    if (pathname === "/api/daily") {
+      json(res, core.getDailyBreakdown());
+      return;
+    }
+    if (pathname === "/api/models") {
+      json(res, core.getModelCosts());
+      return;
+    }
+    if (pathname === "/api/projects") {
+      json(res, core.getAllProjects());
+      return;
+    }
+    if (pathname === "/api/providers") {
+      json(res, core.getProviderBreakdown());
+      return;
+    }
+    if (pathname === "/api/statbar-signals") {
+      json(res, core.getStatbarSignals());
+      return;
+    }
+    if (pathname === "/api/rates") {
+      const scope =
+        new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
+      json(res, await core.getModelRates(scope));
+      return;
+    }
+    res.writeHead(404);
+    json(res, { error: "Not found" });
+  });
 }
 
 /**

@@ -15,14 +15,21 @@ process.on("uncaughtException", (error) => {
 });
 
 import { homedir } from "node:os";
-import type { ModelSummary, ProjectSummary, ProviderId, ScanOptions } from "@sriinnu/tokmeter";
-import { localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
+import type {
+  ModelSummary,
+  ProjectSummary,
+  ProviderId,
+  ScanOptions,
+  TokmeterSummary,
+} from "@sriinnu/tokmeter";
+import { fetchDaemonJson, localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { readOwnVersion } from "./cron.js";
 import { runCursorSyncCommand } from "./cursor-sync.js";
 import {
+  buildDaemonReadQuery,
   DAEMON_READ_ENDPOINTS,
-  daemonReadAuthorization,
+  type DaemonReadArgs,
   daemonReadEligible,
 } from "./daemon-read.js";
 import { loadMcpModule } from "./mcp-bridge.js";
@@ -882,67 +889,44 @@ async function runRoutes(options: { json: boolean; project?: string }): Promise<
 
 // ---- Daemon-read fast path ----
 
-/**
- * HTTP base for the local tokmeter-mcp daemon: DAEMON_HOST:DAEMON_PORT+1
- * (9876 + 1 = 9877). Hardcoded to avoid a build-time subpath dependency on the
- * tokmeter-mcp package internals; the daemon's port is a stable protocol constant.
- */
-const DAEMON_HTTP_BASE = "http://127.0.0.1:9877";
+function printSummaryTables(command: string, summary: TokmeterSummary): void {
+  if (summary.stats.totalRecords === 0) {
+    console.log("No token usage data found.");
+    console.log("\nMake sure you have session files from supported AI coding agents:");
+    console.log("  Claude Code: ~/.claude/projects/");
+    console.log("  OpenCode: ~/.local/share/opencode/");
+    console.log("  Codex CLI: ~/.codex/sessions/");
+    console.log("  Gemini CLI: ~/.gemini/tmp/");
+    console.log("  and more... Run `tokmeter --help` for all supported platforms.");
+    return;
+  }
 
-async function daemonReady(base: string, timeoutMs: number): Promise<"ready" | "warming" | "down"> {
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${base}/api/ready`, { signal: ctrl.signal });
-      if (!res.ok) return "down";
-      const j = (await res.json()) as { ready?: boolean };
-      return j.ready ? "ready" : "warming";
-    } finally {
-      clearTimeout(t);
+  switch (command) {
+    case "models":
+      renderModelsTable(summary.models);
+      break;
+    case "daily":
+      renderDailyTable(summary.daily);
+      break;
+    case "projects":
+      renderProjectsTable(summary.projects);
+      break;
+    case "stats":
+      renderStats(summary.stats);
+      break;
+    default: {
+      const stats = summary.stats;
+      renderProjectsTable(summary.projects);
+      console.log(
+        `\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`
+      );
     }
-  } catch {
-    return "down";
   }
 }
 
-/**
- * Fast path for `--json` read commands: read the warm singleton daemon over
- * HTTP instead of doing a full-corpus scan. Keeps an external poller (e.g. a
- * status bridge calling `tokmeter stats --json --codex` on a loop) from
- * spawning repeated multi-GB scans — each call becomes a millisecond warm read.
- *
- * Returns false (→ caller falls back to a normal scan) when the daemon is
- * down/warming or the query uses a filter the daemon endpoints don't express
- * (project or date windows). When the daemon is down, we also nudge the
- * singleton up (detached, heap-capped) so the NEXT call is cheap.
- */
-async function tryServeFromDaemon(
-  command: string,
-  args: {
-    providers?: ProviderId[];
-    project?: string;
-    since?: string;
-    until?: string;
-    today?: boolean;
-    week?: boolean;
-    month?: boolean;
-    year?: number;
-  }
-): Promise<boolean> {
-  // Correctness guard (extracted + unit-tested in daemon-read.ts): only serve
-  // from the daemon when its LIFETIME, cross-provider endpoints can answer the
-  // exact query without silently broadening it.
-  if (!daemonReadEligible(command, args)) return false;
-  const path = DAEMON_READ_ENDPOINTS[command];
-
-  const base = DAEMON_HTTP_BASE;
-  const state = await daemonReady(base, 1500);
-  if (state === "down") {
-    // Genuinely unreachable — bring the singleton daemon up for next time (it
-    // enforces its own PID singleton), then scan this one cold call.
-    try {
-      const { spawn } = await import("node:child_process");
+function nudgeDaemonStart(): void {
+  try {
+    void import("node:child_process").then(({ spawn }) => {
       const heapMb = process.env.TOKMETER_DAEMON_HEAP_MB ?? "6144";
       spawn(process.execPath, [process.argv[1], "daemon", "start"], {
         detached: true,
@@ -952,64 +936,54 @@ async function tryServeFromDaemon(
           NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${heapMb}`.trim(),
         },
       }).unref();
-    } catch {}
-    return false;
-  }
-  // Reachable — read it whether "ready" or "warming". A local scan here is
-  // exactly the multi-GB balloon we're eliminating, so we MUST NOT fall back to
-  // one just because the daemon is mid-refresh. The daemon coalesces refreshes
-  // (~0.2s, mtime-pruned) and the data endpoint awaits its own warm core, so a
-  // call landing during a refresh just waits briefly.
-  //
-  // Two-tier timeout (concurrency guard): when the daemon is "ready", data
-  // endpoints serve from memory in milliseconds. Anything slower than 15s
-  // means a stuck handler — short timeout so 40 concurrent callers can't pile
-  // 40 idle sockets each holding the process alive. When "warming", we give a
-  // generous 90s for the cold first-warm to finish.
+    });
+  } catch {}
+}
 
-  const qs =
-    args.providers && args.providers.length > 0
-      ? `?providers=${encodeURIComponent(args.providers.join(","))}`
-      : "";
-  const authorization = daemonReadAuthorization();
-  if (!authorization) return false;
-  const timeoutMs = state === "warming" ? 90_000 : 15_000;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${base}${path}${qs}`, {
-        signal: ctrl.signal,
-        headers: { Authorization: authorization },
-      });
-      if (!res.ok) {
-        // Daemon errored (e.g. 500 from a parser bug or a transient warm
-        // failure). Surface a one-line hint to stderr so the operator knows
-        // why the next call did a local scan, but keep stdout clean for the
-        // caller (JSON pipelines must not see this hint mixed in).
-        process.stderr.write(
-          `tokmeter: daemon returned ${res.status} for ${path}; falling back to local scan.\n`
-        );
-        return false;
-      }
-      const body = await res.json();
-      console.log(JSON.stringify(body, null, 2));
-      return true;
-    } finally {
-      clearTimeout(t);
+/**
+ * Fast path for read commands (both `--json` and formatted tables): read the
+ * warm singleton daemon over HTTP instead of running a fresh corpus scan.
+ * Honors `TOKMETER_DAEMON_PORT` and all CLI scope/filter flags. When the daemon
+ * is down, nudges it up once (detached, heap-capped) and falls back cleanly.
+ */
+async function tryServeFromDaemon(
+  command: string,
+  args: DaemonReadArgs & { json: boolean }
+): Promise<boolean> {
+  if (!daemonReadEligible(command, args)) return false;
+  const endpoint = args.json ? DAEMON_READ_ENDPOINTS[command] : "/api/summary";
+  const pathWithQuery = `${endpoint}${buildDaemonReadQuery(args)}`;
+
+  const res = await fetchDaemonJson<unknown>(pathWithQuery, {
+    probeTimeoutMs: 1500,
+    timeoutMs: 15_000,
+    warmingTimeoutMs: 90_000,
+    onDown: nudgeDaemonStart,
+  });
+
+  if (res.ok) {
+    if (args.json) {
+      console.log(JSON.stringify(res.data, null, 2));
+    } else {
+      printSummaryTables(command, res.data as TokmeterSummary);
     }
-  } catch (err) {
-    // Differentiate a real abort (timeout) from a transient connection error
-    // so the operator can tell "daemon is wedged" from "daemon died mid-read".
-    const msg = err instanceof Error ? err.message : String(err);
-    const isAbort = err instanceof Error && (err.name === "AbortError" || /aborted/i.test(msg));
-    process.stderr.write(
-      isAbort
-        ? `tokmeter: daemon read timed out after ${timeoutMs}ms (${path}); falling back to local scan.\n`
-        : `tokmeter: daemon read failed (${msg}); falling back to local scan.\n`
-    );
-    return false;
+    return true;
   }
+
+  if (res.reason === "http-error") {
+    process.stderr.write(
+      `tokmeter: daemon returned ${res.status} for ${endpoint}; falling back to local scan.\n`
+    );
+  } else if (res.reason === "timeout") {
+    process.stderr.write(
+      `tokmeter: daemon read timed out after ${res.timeoutMs}ms (${endpoint}); falling back to local scan.\n`
+    );
+  } else if (res.reason === "network-error") {
+    process.stderr.write(
+      `tokmeter: daemon read failed (${res.message}); falling back to local scan.\n`
+    );
+  }
+  return false;
 }
 
 // ---- Main ----
@@ -1051,18 +1025,19 @@ async function main() {
     );
   }
 
-  const core = new TokmeterCore({ skipPricing: args.light });
-
   // Handle special commands first
   if (args.command === "tui") {
-    console.log("TUI mode — run `tokmeter-tui` or use packages/tui");
-    process.exit(0);
+    const { startTui } = await import("@sriinnu/tokmeter/tui");
+    await startTui();
+    return;
   }
 
   if (args.command === "serve") {
     console.log("Web dashboard — run `bun run dev:web` from the repo or open it from TokmeterBar");
     process.exit(0);
   }
+
+  const core = new TokmeterCore({ skipPricing: args.light });
 
   // Delegate to tokmeter-mcp for live/statusline/daemon commands
   if (args.command === "live") {
@@ -1485,15 +1460,12 @@ async function main() {
     args.until = localDateKey(cutoff.getTime());
   }
 
-  // Daemon-read fast path: for `--json` read commands, prefer the warm
-  // singleton daemon over a fresh full-corpus scan. This is the fix for
-  // external pollers that loop `tokmeter stats/daily --json --codex` — each
-  // call becomes a cheap warm read instead of a multi-GB scan. Falls through to
-  // a normal scan when the daemon is down/warming or the query is narrower.
-  if (args.json) {
-    const cmd = args.command || "overview";
-    if (await tryServeFromDaemon(cmd, args)) return;
-  }
+  // Daemon-read fast path: for both `--json` and table read commands, prefer
+  // the warm singleton daemon over a fresh full-corpus scan. Falls through to
+  // a local scan when the daemon is down, `--light`/`--rescan-history` is set,
+  // or a query filter cannot be served by the daemon.
+  const reportCmd = args.command || "overview";
+  if (await tryServeFromDaemon(reportCmd, args)) return;
 
   // Refresh shared state, then filter saved daily aggregates. A raw-record
   // return can be empty while sealed history still contains valid usage.
@@ -1501,21 +1473,9 @@ async function main() {
   await core.scan({ today: args.today, rescanHistory: args.rescanHistory });
   const summary = core.getSummary(args);
 
-  if (!args.json && summary.stats.totalRecords === 0) {
-    console.log("No token usage data found.");
-    console.log("\nMake sure you have session files from supported AI coding agents:");
-    console.log("  Claude Code: ~/.claude/projects/");
-    console.log("  OpenCode: ~/.local/share/opencode/");
-    console.log("  Codex CLI: ~/.codex/sessions/");
-    console.log("  Gemini CLI: ~/.gemini/tmp/");
-    console.log("  and more... Run `tokmeter --help` for all supported platforms.");
-    return;
-  }
-
   // JSON output
   if (args.json) {
-    const command = args.command || "overview";
-    switch (command) {
+    switch (reportCmd) {
       case "models":
         console.log(JSON.stringify(summary.models, null, 2));
         break;
@@ -1535,29 +1495,7 @@ async function main() {
   }
 
   // Table output
-  const command = args.command || "overview";
-  switch (command) {
-    case "models":
-      renderModelsTable(summary.models);
-      break;
-    case "daily":
-      renderDailyTable(summary.daily);
-      break;
-    case "projects":
-      renderProjectsTable(summary.projects);
-      break;
-    case "stats":
-      renderStats(summary.stats);
-      break;
-    default: {
-      // Overview: projects + totals
-      const stats = summary.stats;
-      renderProjectsTable(summary.projects);
-      console.log(
-        `\nTotal: ${formatNumber(stats.totalTokens)} tokens | ${formatCost(stats.totalCost)} | ${stats.activeDays} active days`
-      );
-    }
-  }
+  printSummaryTables(reportCmd, summary);
 }
 
 main().catch((err) => {

@@ -9,9 +9,16 @@ interface OverviewViewProps {
   models: ModelSummary[];
   daily: DailyEntry[];
   providers: ProviderSummary[];
+  burnRatePerHour?: number;
 }
 
-export function OverviewView({ stats, models, daily, providers }: OverviewViewProps) {
+export function OverviewView({
+  stats,
+  models,
+  daily,
+  providers,
+  burnRatePerHour,
+}: OverviewViewProps) {
   if (stats.totalRecords === 0) {
     return (
       <Box flexDirection="column" padding={1}>
@@ -61,6 +68,14 @@ export function OverviewView({ stats, models, daily, providers }: OverviewViewPr
           <Text color={T.muted}>Active Days</Text>
           <Text bold>{stats.activeDays}</Text>
         </Box>
+        {burnRatePerHour !== undefined && (
+          <Box width={18} flexDirection="column" borderStyle="round" paddingX={1}>
+            <Text color={T.muted}>Burn (60m)</Text>
+            <Text bold color={burnRatePerHour > 10 ? T.warn : T.success}>
+              ${burnRatePerHour.toFixed(2)}/h
+            </Text>
+          </Box>
+        )}
       </Box>
 
       {/* Top models bar chart */}

@@ -5,7 +5,8 @@
     "rootDir": "src",
     "jsx": "react-jsx",
     "paths": {
-      "@sriinnu/tokmeter": ["../core/dist/index.d.ts"]
+      "@sriinnu/tokmeter": ["../core/dist/index.d.ts"],
+      "@sriinnu/tokmeter/tui": ["../tui/dist/index.d.ts"]
     }
   },
   "include": ["src"],

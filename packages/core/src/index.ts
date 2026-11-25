@@ -107,6 +107,17 @@ export {
   syncCursorUsage,
 } from "./cursor-sync.js";
 export {
+  DAEMON_PORT_ENV,
+  DEFAULT_DAEMON_WS_PORT,
+  type FetchDaemonJsonOptions,
+  type FetchDaemonJsonResult,
+  fetchDaemonJson,
+  probeDaemonReady,
+  readDaemonAuthHeader,
+  resolveDaemonHttpBase,
+  resolveDaemonWsPort,
+} from "./daemon-client.js";
+export {
   endOfLocalDay,
   isBeforeToday,
   isSameLocalDay,

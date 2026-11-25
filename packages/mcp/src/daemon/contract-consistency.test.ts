@@ -22,8 +22,11 @@ const read = (rel: string) => readFileSync(join(packagesDir, rel), "utf8");
 const httpBase = `http://${DAEMON_HOST}:${DAEMON_PORT + 1}`;
 
 describe("daemon contract — HTTP base stays in sync with protocol.ts", () => {
-  test("CLI hardcodes the HTTP base derived from DAEMON_PORT", () => {
-    expect(read("cli/src/cli.ts")).toContain(httpBase);
+  test("shared daemon client derives HTTP base from DAEMON_PORT + 1 and CLI routes through it", () => {
+    const clientSrc = read("core/src/daemon-client.ts");
+    expect(clientSrc).toContain(`DEFAULT_DAEMON_WS_PORT = ${DAEMON_PORT}`);
+    expect(clientSrc).toContain("resolveDaemonWsPort(env) + 1");
+    expect(read("cli/src/cli.ts")).toContain("fetchDaemonJson");
   });
 
   test("macOS bar DaemonClient hardcodes the same HTTP base", () => {
