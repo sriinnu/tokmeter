@@ -12,6 +12,7 @@ Tokmeter reads the session files your agents already write to disk and turns the
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
+[![sriinnu/tokmeter MCP server](https://glama.ai/mcp/servers/sriinnu/tokmeter/badges/score.svg)](https://glama.ai/mcp/servers/sriinnu/tokmeter)
 
 </div>
 
