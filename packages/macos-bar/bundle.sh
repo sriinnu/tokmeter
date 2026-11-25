@@ -53,11 +53,13 @@ cd "$(dirname "$0")"
 # installing (e.g. CI producing an upload artifact), pass --no-install.
 MODE="dev"
 INSTALL=1
+BUILD_ARCH="${BUILD_ARCH:-host}"
 for arg in "$@"; do
     case "${arg}" in
         --release)    MODE="release" ;;
         --signed)     MODE="signed" ;;
         --unsigned)   MODE="unsigned" ;;
+        --universal)  BUILD_ARCH="universal" ;;
         --install)    INSTALL=1 ;;          # explicit, but it's the default
         --no-install) INSTALL=0 ;;
         "")           ;;
@@ -85,12 +87,28 @@ SUFEED_URL="${SUFEED_URL:-https://raw.githubusercontent.com/sriinnu/tokmeter/mai
 SUPUBLIC_KEY="${SUPUBLIC_KEY:-}"  # populated below if private key is present
 
 # ─── 1. Build the binary ────────────────────────────────────────────────
-echo "==> [${MODE}] Building release binary"
-swift build -c release
-
-BINARY_PATH=".build/release/${APP_NAME}"
+echo "==> [${MODE}] Building release binary (arch: ${BUILD_ARCH})"
+if [[ "${BUILD_ARCH}" == "universal" ]]; then
+    swift build -c release --arch arm64 --arch x86_64
+    if [[ -f ".build/apple/Products/Release/${APP_NAME}" ]]; then
+        BINARY_PATH=".build/apple/Products/Release/${APP_NAME}"
+    elif [[ -f ".build/release/${APP_NAME}" ]]; then
+        BINARY_PATH=".build/release/${APP_NAME}"
+    else
+        echo "ERROR: Universal build binary not found in .build/apple/Products/Release or .build/release" >&2
+        exit 1
+    fi
+    ARCHS="$(lipo -archs "${BINARY_PATH}")"
+    if [[ "${ARCHS}" != *"arm64"* || "${ARCHS}" != *"x86_64"* ]]; then
+        echo "ERROR: Universal build requested, but ${BINARY_PATH} has archs: ${ARCHS}" >&2
+        exit 1
+    fi
+else
+    swift build -c release
+    BINARY_PATH=".build/release/${APP_NAME}"
+fi
 if [[ ! -f "${BINARY_PATH}" ]]; then
-    echo "Build failed: ${BINARY_PATH} not found"
+    echo "Build failed: ${BINARY_PATH} not found" >&2
     exit 1
 fi
 
@@ -116,18 +134,17 @@ else
     install_name_tool -add_rpath "@executable_path/../Frameworks" "${MACOS_DIR}/${APP_NAME}"
 fi
 
-# ─── 4. Copy Sparkle.framework if it was built ──────────────────────────
-# SPM resolves Sparkle into .build/checkouts/Sparkle/. We need the
-# Sparkle.framework artifact which Sparkle ships as an XCFramework.
+# ─── 4. Copy Sparkle.framework (required) ────────────────────────────────
+# SPM resolves Sparkle into .build/artifacts/sparkle/Sparkle/Sparkle.xcframework.
 SPARKLE_XC=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework"
-if [[ -d "${SPARKLE_XC}" ]]; then
-    # Pick the macOS (universal) slice
-    SPARKLE_SLICE="${SPARKLE_XC}/macos-arm64_x86_64"
-    if [[ -d "${SPARKLE_SLICE}/Sparkle.framework" ]]; then
-        cp -R "${SPARKLE_SLICE}/Sparkle.framework" "${FRAMEWORKS_DIR}/"
-        echo "==> Bundled Sparkle.framework"
-    fi
+SPARKLE_SLICE="${SPARKLE_XC}/macos-arm64_x86_64"
+if [[ ! -d "${SPARKLE_SLICE}/Sparkle.framework" ]]; then
+    echo "ERROR: Sparkle.framework not found at ${SPARKLE_SLICE}/Sparkle.framework" >&2
+    echo "       Refusing to build an un-updateable bundle without Sparkle." >&2
+    exit 3
 fi
+cp -R "${SPARKLE_SLICE}/Sparkle.framework" "${FRAMEWORKS_DIR}/"
+echo "==> Bundled Sparkle.framework"
 
 # Bundle code-only web assets. Never ship public/data.json from this machine.
 (cd ../web && TOKMETER_APP_BUILD=1 bunx vite build --outDir dist/dashboard --emptyOutDir)
@@ -410,7 +427,7 @@ if [[ "${MODE}" == "release" ]]; then
 
     # Re-zip the stapled .app for distribution
     rm -f "${ZIP_PATH}"
-    /usr/bin/ditto -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
+    /usr/bin/ditto --norsrc -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
     ZIP_SIZE=$(stat -f%z "${ZIP_PATH}")
 
     echo "==> Stapled & zipped: ${ZIP_PATH} (${ZIP_SIZE} bytes)"
@@ -492,7 +509,10 @@ import re
 
 ed_sig = os.environ["DRISHTI_ED_SIG"]
 match = re.search(r'sparkle:edSignature="([^"]+)"', ed_sig)
-sig_value = match.group(1) if match else ""
+if not match:
+    print(f"ERROR: could not extract sparkle:edSignature from: {ed_sig!r}", file=sys.stderr)
+    sys.exit(1)
+sig_value = match.group(1)
 
 enclosure = ET.SubElement(item, "enclosure")
 enclosure.set("url", os.environ["DRISHTI_DOWNLOAD_URL"])

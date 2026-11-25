@@ -98,6 +98,8 @@ final class TokmeterLoader: ObservableObject {
     /// Whether the daemon process is currently alive. Updated on each
     /// `loadData()` call so the view never does sync I/O in its body.
     @Published var isDaemonAlive: Bool = false
+    /// Section names that failed or returned partial errors in the latest refresh.
+    @Published var partialStaleSections: [String] = []
 
     private let client = DaemonClient.shared
     private var timer: Timer?
@@ -179,11 +181,8 @@ final class TokmeterLoader: ObservableObject {
     }
 
     func applyToday(from daily: [DailyData], now: Date = Date()) {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = daily.first { $0.date == formatter.string(from: now) }
+        let todayKey = LocalDay.todayKey(now)
+        let today = daily.first { $0.date == todayKey }
         todayCost = today?.cost ?? 0
         todayTokens = today?.totalTokens ?? 0
         todayInputTokens = today?.inputTokens ?? 0
@@ -340,8 +339,94 @@ final class TokmeterLoader: ObservableObject {
         // the first scan. Try again on the next 30s tick.
         if isWarming { return }
 
-        // ─── Phase 2: details (parallel, independent) ────────────────
-        // Each fetch is independent — a failure on one doesn't kill the others.
+        // ─── Phase 2: consolidated snapshot (1 round-trip) ────────────
+        antigravityLiveGeneration += 1
+        let antigravityLiveIssuedAsGeneration = antigravityLiveGeneration
+        do {
+            let snapshot = try await client.fetchBarSnapshot()
+            applySnapshot(
+                snapshot,
+                antigravityLiveIssuedAsGeneration: antigravityLiveIssuedAsGeneration,
+                noAnim: noAnim
+            )
+        } catch DaemonError.httpError(404) {
+            // Legacy daemons predating /api/bar-snapshot fall back cleanly.
+            await loadPhase2Legacy(
+                antigravityLiveIssuedAsGeneration: antigravityLiveIssuedAsGeneration,
+                noAnim: noAnim
+            )
+        } catch {
+            withTransaction(noAnim) {
+                self.partialStaleSections = ["bar-snapshot"]
+            }
+        }
+    }
+
+    private func applySnapshot(
+        _ snapshot: BarSnapshotResponse,
+        antigravityLiveIssuedAsGeneration: Int,
+        noAnim: Transaction
+    ) {
+        var stale = snapshot.partialErrors ?? []
+        func noteNil(_ name: String, _ value: Any?) {
+            if value == nil && !stale.contains(name) { stale.append(name) }
+        }
+        noteNil("daily", snapshot.daily)
+        noteNil("models", snapshot.models)
+        noteNil("todayModels", snapshot.todayModels)
+        noteNil("sessions", snapshot.sessions)
+        noteNil("todayProjects", snapshot.todayProjects)
+
+        withTransaction(noAnim) {
+            if let daily = snapshot.daily {
+                self.applyToday(from: daily)
+                let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
+                self.allDaily = mapped
+                self.recentDaily = Array(mapped.suffix(7))
+            }
+            if let models = snapshot.models {
+                self.topModels = models.map(Self.toUsage)
+            }
+            if let todayMs = snapshot.todayModels {
+                self.todayModels = todayMs.map(Self.toUsage)
+            }
+            if let projects = snapshot.todayProjects { self.todayProjects = projects }
+            if let sessionsList = snapshot.sessions {
+                self.sessions = sessionsList
+            }
+            if let pricing = snapshot.pricingStatus {
+                self.pricingMtime = pricing.registryMtime
+            }
+            if let cron = snapshot.cronStatus {
+                self.cronStatus = cron
+            }
+            if let health = snapshot.health {
+                self.healthStatus = health
+            }
+            if let anomalies = snapshot.anomalies {
+                self.pricingAnomalies = anomalies
+            }
+            if let signals = snapshot.statbarSignals {
+                self.statbarSignals = signals
+            }
+            if let crossTool = snapshot.crossTool {
+                self.crossToolComparison = crossTool
+            }
+            if let quota = snapshot.quota, quota.windows != self.quotaWindows {
+                self.quotaWindows = quota.windows
+            }
+            if let antigravityLive = snapshot.antigravityLive,
+               antigravityLiveIssuedAsGeneration == antigravityLiveGeneration {
+                self.antigravityLive = antigravityLive
+            }
+            self.partialStaleSections = stale
+        }
+    }
+
+    private func loadPhase2Legacy(
+        antigravityLiveIssuedAsGeneration: Int,
+        noAnim: Transaction
+    ) async {
         async let dailyTask = fetchDailySafe()
         async let modelsTask = fetchModelsSafe()
         async let todayModelsTask = fetchTodayModelsSafe()
@@ -354,8 +439,6 @@ final class TokmeterLoader: ObservableObject {
         async let signalsTask = fetchStatbarSignalsSafe()
         async let crossToolTask = fetchCrossToolSafe()
         async let quotaTask = try? client.fetchQuota()
-        antigravityLiveGeneration += 1
-        let antigravityLiveIssuedAsGeneration = antigravityLiveGeneration
         async let antigravityLiveTask = fetchAntigravityLiveSafe()
 
         let (
@@ -378,53 +461,27 @@ final class TokmeterLoader: ObservableObject {
             antigravityLiveTask
         )
 
-        withTransaction(noAnim) {
-            if let daily = dailyResult {
-                self.applyToday(from: daily)
-                let mapped = daily.map { DailyUsage(date: $0.date, tokens: $0.totalTokens, cost: $0.cost) }
-                self.allDaily = mapped
-                self.recentDaily = Array(mapped.suffix(7))
-            }
-            if let models = modelsResult {
-                self.topModels = models.map(Self.toUsage)
-            }
-            if let todayMs = todayModelsResult {
-                // Keep the complete list; the view owns its collapsed limit.
-                self.todayModels = todayMs.map(Self.toUsage)
-            }
-            if let projects = todayProjectsResult { self.todayProjects = projects }
-            if let sessionsList = sessionsResult {
-                self.sessions = sessionsList
-            }
-            if let pricing = pricingStatusResult {
-                self.pricingMtime = pricing.registryMtime
-            }
-            if let cron = cronStatusResult {
-                self.cronStatus = cron
-            }
-            if let health = healthResult {
-                self.healthStatus = health
-            }
-            if let anomalies = anomaliesResult {
-                self.pricingAnomalies = anomalies
-            }
-            if let signals = signalsResult {
-                self.statbarSignals = signals
-            }
-            if let crossTool = crossToolResult {
-                self.crossToolComparison = crossTool
-            }
-            if let quota = quotaResult, quota.windows != self.quotaWindows {
-                self.quotaWindows = quota.windows
-            }
-            // Only apply if nothing newer (a manual Fetch now, or another
-            // loadData tick) was issued while this request was in flight —
-            // see antigravityLiveGeneration's doc comment.
-            if let antigravityLive = antigravityLiveResult,
-               antigravityLiveIssuedAsGeneration == antigravityLiveGeneration {
-                self.antigravityLive = antigravityLive
-            }
-        }
+        let snapshot = BarSnapshotResponse(
+            daily: dailyResult,
+            models: modelsResult,
+            todayModels: todayModelsResult,
+            sessions: sessionsResult,
+            todayProjects: todayProjectsResult,
+            pricingStatus: pricingStatusResult,
+            cronStatus: cronStatusResult,
+            health: healthResult,
+            anomalies: anomaliesResult,
+            statbarSignals: signalsResult,
+            crossTool: crossToolResult,
+            quota: quotaResult,
+            antigravityLive: antigravityLiveResult,
+            partialErrors: nil
+        )
+        applySnapshot(
+            snapshot,
+            antigravityLiveIssuedAsGeneration: antigravityLiveIssuedAsGeneration,
+            noAnim: noAnim
+        )
     }
 
     private func fetchCrossToolSafe() async -> CrossToolComparison? {
@@ -580,9 +637,11 @@ final class TokmeterLoader: ObservableObject {
         cronInstallError = nil
         defer { isInstallingCron = false }
 
-        guard let toolchain = NodeToolchain.resolve() else {
+        let candidates = NodeToolchain.candidates()
+        guard let toolchain = await NodeToolchain.firstSupported(
+            candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
             cronInstallError =
-                "No node toolchain found — run `tokmeter \(subcommand)` manually."
+                "No working Node.js 22 or later was found — run `tokmeter \(subcommand)` manually."
             return
         }
         do {

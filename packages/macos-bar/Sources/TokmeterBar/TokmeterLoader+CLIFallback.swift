@@ -74,7 +74,7 @@ extension TokmeterLoader {
         let candidates = NodeToolchain.candidates()
         guard !candidates.isEmpty else {
             self.lastError =
-                "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
+                "Install Node.js 22 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
             self.isWarming = false
             self.hasFreshData = false
             self.needsNodeSetup = true
@@ -92,7 +92,7 @@ extension TokmeterLoader {
                 guard let toolchain = await NodeToolchain.firstSupported(
                     candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
                     self.needsNodeSetup = true
-                    throw DaemonError.networkError("No working Node.js 18 or later was found. Update Node and choose Retry.")
+                    throw DaemonError.networkError("No working Node.js 22 or later was found. Update Node and choose Retry.")
                 }
                 // `daemon start` forks a detached child and returns fast; the
                 // child becomes the long-lived daemon. This invocation never
@@ -133,7 +133,7 @@ extension TokmeterLoader {
         guard !candidates.isEmpty else {
             self.needsNodeSetup = true
             self.lastError =
-                "Install Node.js 18 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
+                "Install Node.js 22 or later, then choose Retry. Tokmeter needs Node to run its local usage service."
             return
         }
         needsNodeSetup = false
@@ -145,7 +145,7 @@ extension TokmeterLoader {
                 guard let toolchain = await NodeToolchain.firstSupported(
                     candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
                     self.needsNodeSetup = true
-                    throw DaemonError.networkError("No working Node.js 18 or later was found. Update Node and choose Retry.")
+                    throw DaemonError.networkError("No working Node.js 22 or later was found. Update Node and choose Retry.")
                 }
                 _ = try await self.runProcess(
                     executable: toolchain.npx,
@@ -164,8 +164,11 @@ extension TokmeterLoader {
     // ─── Pricing refresh via CLI (user-triggered, one-shot) ──────────
 
     func refreshPricingViaCLI() async {
-        guard let toolchain = NodeToolchain.resolve() else {
-            pricingRefreshError = "No node toolchain found — run `tokmeter update` manually."
+        let candidates = NodeToolchain.candidates()
+        guard let toolchain = await NodeToolchain.firstSupported(
+            candidates: candidates, environment: ProcessInfo.processInfo.environment) else {
+            pricingRefreshError =
+                "No working Node.js 22 or later was found — run `tokmeter update` manually."
             return
         }
         do {

@@ -52,10 +52,60 @@ final class DaemonClientURLTests: XCTestCase {
     }
 
     func testPlainReadAndMutationRoutesKeepTheirPaths() {
-        for path in ["/api/quick", "/api/sessions", "/api/update-pricing", "/api/rescan"] {
+        for path in ["/api/quick", "/api/sessions", "/api/bar-snapshot", "/api/update-pricing", "/api/rescan"] {
             XCTAssertEqual(DaemonClient.requestURL(for: path).absoluteString,
                            "http://127.0.0.1:9877" + path)
         }
+    }
+
+    func testBearerTokenCachesInMemoryAndReloadsAfterInvalidation() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tokmeter-token-cache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tokenURL = dir.appendingPathComponent("daemon.token")
+        let token1 = String(repeating: "a", count: 64)
+        let token2 = String(repeating: "b", count: 64)
+        try Data(token1.utf8).write(to: tokenURL)
+
+        let client = DaemonClient(pidPaths: [], tokenPaths: [tokenURL.path])
+        XCTAssertEqual(client.currentBearerToken(), token1)
+
+        // Rotated token on disk does not trigger disk reads while cached token stands
+        try Data(token2.utf8).write(to: tokenURL)
+        XCTAssertEqual(client.currentBearerToken(), token1)
+
+        // Invalidating (e.g. on 401) or forcing reload picks up the rotated token
+        client.invalidateBearerToken()
+        XCTAssertEqual(client.currentBearerToken(), token2)
+    }
+
+    func testBarSnapshotResponseDecodesPartialPayload() throws {
+        let json = """
+        {
+          "daily": [{"date": "2026-11-25", "totalTokens": 1200, "cost": 1.25}],
+          "models": [],
+          "todayModels": [],
+          "sessions": [],
+          "todayProjects": [],
+          "pricingStatus": {"registryMtime": 12345},
+          "cronStatus": null,
+          "health": {"unpricedModels": ["opaque"], "unpricedRecords": 1},
+          "anomalies": null,
+          "statbarSignals": null,
+          "crossTool": null,
+          "quota": {"windows": []},
+          "antigravityLive": null,
+          "partialErrors": ["cronStatus", "anomalies"]
+        }
+        """
+        let decoded = try JSONDecoder().decode(BarSnapshotResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.daily?.first?.cost, 1.25)
+        XCTAssertEqual(decoded.pricingStatus?.registryMtime, 12345)
+        XCTAssertEqual(decoded.health?.unpricedModels, ["opaque"])
+        XCTAssertNil(decoded.cronStatus)
+        XCTAssertEqual(decoded.partialErrors, ["cronStatus", "anomalies"])
     }
 
     func testOwnedSmallFileReaderRejectsSymlinksAndOversizedFiles() throws {

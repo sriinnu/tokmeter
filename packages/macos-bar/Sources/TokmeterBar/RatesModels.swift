@@ -136,6 +136,8 @@ struct PricingSource: Decodable {
             return "Price source: kosha, the model price catalog. Priced at the rate of the provider that served it, \(matchedId ?? "unknown"); the same model costs differently on other routes."
         case "manifest":
             return "Price source: kosha. Read from the saved catalog (~/.kosha/registry.json)\(matchedId.map { " as \($0)" } ?? ""); the live catalog didn't have it."
+        case "seeded":
+            return "Price source: built-in rate shipped with Tokmeter — used when the kosha catalog is offline or missing this model."
         default: return "No price anywhere: usage priced by API rates counts as $0. Add it to pricing-overrides.json to price it."
         }
     }

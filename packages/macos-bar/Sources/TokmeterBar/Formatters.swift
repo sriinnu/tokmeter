@@ -164,9 +164,9 @@ enum Fmt {
     /// Error short-text — collapses common daemon error messages into a
     /// single readable status line; anything unknown is truncated at 50ch.
     static func shortError(_ error: String) -> String {
-        if error.contains("not running") { return "Daemon offline — using cached data" }
+        if error.contains("not running") { return "Daemon offline — waiting to reconnect" }
         if error.contains("timed out")   { return "Scan timed out — retrying…" }
-        if error.contains("Network")     { return "Network error — using cached data" }
+        if error.contains("Network")     { return "Network error — retrying…" }
         let first = error.prefix(50)
         return first.count < error.count ? "\(first)…" : error
     }

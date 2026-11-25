@@ -140,7 +140,7 @@ final class WebDashboardController: ObservableObject {
             return
         }
         guard let toolchain = await resolveToolchain() else {
-            if generation == attempt { error = "Install Node.js 18 or newer to open the web dashboard." }
+            if generation == attempt { error = "Install Node.js 22 or newer to open the web dashboard." }
             return
         }
         guard generation == attempt else { return }
