@@ -1,5 +1,7 @@
 # tokmeter-mcp
 
+[![sriinnu/tokmeter MCP server](https://glama.ai/mcp/servers/sriinnu/tokmeter/badges/score.svg)](https://glama.ai/mcp/servers/sriinnu/tokmeter)
+
 `@sriinnu/tokmeter-mcp` provides an MCP server for usage queries, a local aggregation daemon, a live terminal UI, and editor statusline hooks.
 
 Pairs with [`@sriinnu/tokmeter`](https://www.npmjs.com/package/@sriinnu/tokmeter) for the core parsing engine. Works with Claude Code, Cursor, OpenCode, Codex CLI, Windsurf, Zed, VS Code Copilot, and more.
