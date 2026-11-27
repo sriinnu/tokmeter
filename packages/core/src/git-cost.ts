@@ -8,7 +8,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { type AliasMap, resolveProjectName } from "./alias-service.js";
 import { startOfLocalDay } from "./date-utils.js";
 import { sanitizeDataLabel } from "./display-safety.js";
@@ -219,19 +219,55 @@ export function inspectGitBranch(
   };
 }
 
+function stripWindowsLongPrefix(p: string): string {
+  if (p.startsWith("\\\\?\\UNC\\")) {
+    return `\\\\${p.slice(8)}`;
+  }
+  if (p.startsWith("\\\\?\\") || p.startsWith("//?/")) {
+    return p.slice(4);
+  }
+  return p;
+}
+
+function safeRealpath(p: string): string | null {
+  try {
+    const resolved = realpathSync.native ? realpathSync.native(p) : realpathSync(p);
+    return stripWindowsLongPrefix(resolved);
+  } catch {
+    return null;
+  }
+}
+
+function resolveExistingAncestorRealpath(candidate: string): string | null {
+  let cur = resolve(candidate);
+  const trailing: string[] = [];
+
+  while (!existsSync(cur)) {
+    const parent = dirname(cur);
+    if (parent === cur) {
+      return null;
+    }
+    trailing.push(basename(cur));
+    cur = parent;
+  }
+
+  const realAncestor = safeRealpath(cur);
+  if (!realAncestor) {
+    return null;
+  }
+  return trailing.length > 0 ? join(realAncestor, ...trailing.reverse()) : realAncestor;
+}
+
 function normalizeForMatch(p: string): string {
-  const normalized = resolve(p).replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalized = stripWindowsLongPrefix(resolve(p)).replaceAll("\\", "/").replace(/\/+$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function expandRootVariants(repoRoot: string): string[] {
   const variants = new Set<string>([normalizeForMatch(repoRoot)]);
-  if (existsSync(repoRoot)) {
-    try {
-      variants.add(normalizeForMatch(realpathSync(repoRoot)));
-    } catch {
-      /* ignore */
-    }
+  const real = safeRealpath(repoRoot);
+  if (real) {
+    variants.add(normalizeForMatch(real));
   }
   return [...variants];
 }
@@ -241,14 +277,11 @@ function isPathInsideRoot(candidateCwd: string, rootVariants: string[]): boolean
   for (const root of rootVariants) {
     if (norm === root || norm.startsWith(`${root}/`)) return true;
   }
-  if (existsSync(candidateCwd)) {
-    try {
-      const real = normalizeForMatch(realpathSync(candidateCwd));
-      for (const root of rootVariants) {
-        if (real === root || real.startsWith(`${root}/`)) return true;
-      }
-    } catch {
-      /* ignore */
+  const real = resolveExistingAncestorRealpath(candidateCwd);
+  if (real) {
+    const resolvedNorm = normalizeForMatch(real);
+    for (const root of rootVariants) {
+      if (resolvedNorm === root || resolvedNorm.startsWith(`${root}/`)) return true;
     }
   }
   return false;

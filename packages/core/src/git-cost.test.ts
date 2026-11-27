@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -146,6 +146,71 @@ describe("git branch cost attribution", () => {
     const md = renderGitCostMarkdown(report);
     expect(md).toContain("<details>");
     expect(md).toContain("$2.00");
+  });
+
+  it("attributes non-existent subdirs inside symlinked repo aliases via ancestor realpath", () => {
+    const parent = mkdtempSync(join(tmpdir(), "tokmeter-git-symlink-"));
+    dirs.push(parent);
+    const repo = join(parent, "real-repo");
+    const linkPath = join(parent, "alias-repo");
+    const env = {
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+      GIT_AUTHOR_DATE: "2026-11-27T10:00:00Z",
+      GIT_COMMITTER_DATE: "2026-11-27T10:00:00Z",
+    };
+
+    git(parent, ["init", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "base\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "initial"], env);
+
+    git(repo, ["checkout", "-b", "feat/symlink-test"]);
+    writeFileSync(join(repo, "work.ts"), "export const ok = true;\n");
+    git(repo, ["add", "work.ts"]);
+    git(repo, ["commit", "-m", "work"], {
+      ...env,
+      GIT_AUTHOR_DATE: "2026-11-27T12:00:00Z",
+      GIT_COMMITTER_DATE: "2026-11-27T12:00:00Z",
+    });
+
+    try {
+      symlinkSync(repo, linkPath, process.platform === "win32" ? "junction" : "dir");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EACCES") {
+        return;
+      }
+      throw err;
+    }
+
+    const win = inspectGitBranch(repo, {
+      base: "main",
+      leadMinutes: 30,
+      now: Date.parse("2026-11-27T13:00:00Z"),
+    });
+    const records: TokenRecord[] = [
+      {
+        timestamp: Date.parse("2026-11-27T11:50:00Z"),
+        provider: "codex",
+        model: "gpt-5.6",
+        project: "ignored",
+        cwd: join(linkPath, "deleted-subdir", "nested"),
+        inputTokens: 400,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 500,
+        cost: 0.42,
+      },
+    ];
+
+    const report = attributeGitBranchCost(records, win);
+    expect(report.matchedRecords).toBe(1);
+    expect(report.directCwdMatches).toBe(1);
   });
 
   it("rejects unsafe git refs containing option flags or '..'", () => {
