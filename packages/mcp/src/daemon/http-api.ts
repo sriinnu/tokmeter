@@ -9,6 +9,7 @@ import {
 } from "node:http";
 import { homedir } from "node:os";
 import {
+  localDateKey,
   pollAntigravityLiveStatus,
   type QuotaWindow,
   refreshKoshaRegistry,
@@ -18,7 +19,7 @@ import {
 import { API_HEADER, apiVersionHeaders, LEGACY_API_HEADER } from "./compat-names.js";
 import { applyStatsFloor, applyTodayFloor, computeTodayTotals } from "./floors.js";
 import { checkAuth, isAllowedHttpHost, isValidAuthHeader } from "./http-auth.js";
-import { DAEMON_HOST, DAEMON_PORT, DAEMON_TOKEN_FILE } from "./protocol.js";
+import { DAEMON_HOST, DAEMON_PORT, DAEMON_TOKEN_FILE, type DaemonEventKind } from "./protocol.js";
 import { RefreshCoordinator } from "./refresh-coordinator.js";
 import {
   appendSummaryWarnings,
@@ -53,25 +54,48 @@ export interface HttpCoreEntry {
   lastScanDurationMs: number;
 }
 
+export type DaemonEventListener = (
+  event: DaemonEventKind,
+  computedAt: number,
+  localDate: string
+) => void;
+
 let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let _httpCore: HttpCoreEntry | null = null;
 let _httpCoreReady = false;
 let _rescanInFlight = false;
+let _onCoreEvent: DaemonEventListener | null = null;
+let _lastCompletedLocalDate: string | null = null;
+
+function emitCoreEvent(event: DaemonEventKind, computedAt: number): void {
+  _onCoreEvent?.(event, computedAt, localDateKey(computedAt));
+}
 
 const coreRefresh = new RefreshCoordinator<TokmeterCore>(async (full) => {
+  const wasReady = _httpCoreReady;
   const startedAt = Date.now();
+  let core: TokmeterCore;
   if (_httpCore) {
     if (full) await _httpCore.core.scan();
     else await _httpCore.core.refreshToday();
-    _httpCore.ts = Date.now();
-    _httpCore.lastScanDurationMs = Date.now() - startedAt;
-    return _httpCore.core;
+    core = _httpCore.core;
+  } else {
+    const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
+    core = new CoreCtor();
+    await core.scan();
   }
-  const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
-  const core = new CoreCtor();
-  await core.scan();
-  _httpCore = { core, ts: Date.now(), lastScanDurationMs: Date.now() - startedAt };
+  const finishedAt = Date.now();
+  const todayKey = localDateKey(finishedAt);
+  _httpCore = { core, ts: finishedAt, lastScanDurationMs: finishedAt - startedAt };
   _httpCoreReady = true;
+  if (!wasReady) {
+    emitCoreEvent("core_warmed", finishedAt);
+  } else if (_lastCompletedLocalDate && _lastCompletedLocalDate !== todayKey) {
+    emitCoreEvent("day_rolled_over", finishedAt);
+  } else {
+    emitCoreEvent("refresh_completed", finishedAt);
+  }
+  _lastCompletedLocalDate = todayKey;
   return core;
 });
 
@@ -108,13 +132,24 @@ async function rescanHttpCore(): Promise<void> {
 }
 
 export function warmHttpCore(): void {
-  void getHttpCore()
-    .then(() => {
+  void (async () => {
+    try {
+      const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
+      const core = new CoreCtor();
+      if (!_httpCore && core.hydrateFromDiskCache()) {
+        _httpCore = { core, ts: 0, lastScanDurationMs: 0 };
+        _httpCoreReady = true;
+        console.log("【♾️】 HTTP core hydrated from disk cache — warming live scan");
+        await coreRefresh.run(true);
+        console.log("【♾️】 HTTP core warm — ready to serve");
+        return;
+      }
+      await getHttpCore();
       console.log("【♾️】 HTTP core warm — ready to serve");
-    })
-    .catch((err) => {
+    } catch (err) {
       console.error("HTTP core warmup failed:", err);
-    });
+    }
+  })();
 }
 
 export function getWarmHttpCoreEntry(): HttpCoreEntry | null {
@@ -126,6 +161,8 @@ export function flushHttpCoreRecordCache(): void {
 }
 
 export function closeHttpApi(): void {
+  _onCoreEvent = null;
+  _lastCompletedLocalDate = null;
   if (httpServer) {
     httpServer.close();
     httpServer = null;
@@ -175,9 +212,11 @@ export interface HttpApiHandlers {
   getSessionManager: () => SessionManager | null;
   onListening: () => void;
   onBindError: (err: Error & { code?: string }) => void;
+  onCoreEvent?: DaemonEventListener;
 }
 
 export function startHttpApi(handlers: HttpApiHandlers): void {
+  _onCoreEvent = handlers.onCoreEvent ?? null;
   httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     const origin = req.headers.origin ?? "";
     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
@@ -316,6 +355,20 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
           return;
         }
 
+        if (pathname === "/api/bar-snapshot") {
+          const warm = await getHttpCoreNoWait();
+          json(
+            res,
+            await buildBarSnapshot(warm, {
+              applyFloor: true,
+              homeDir: homedir(),
+              refreshing: coreRefresh.busy,
+              computedAt: _httpCore?.ts ?? Date.now(),
+            })
+          );
+          return;
+        }
+
         const core = await getHttpCore();
         const scoped = executeScopedRoute(pathname, url, core, _httpCore?.lastScanDurationMs ?? 0);
         if (scoped) {
@@ -377,8 +430,6 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
           json(res, core.getProviderBreakdown());
         } else if (pathname === "/api/antigravity-live") {
           json(res, await readAntigravityLivePayload());
-        } else if (pathname === "/api/bar-snapshot") {
-          json(res, await buildBarSnapshot(core, { applyFloor: true, homeDir: homedir() }));
         } else if (pathname === "/api/backups") {
           const { CleanupService } = await import("@sriinnu/tokmeter");
           const service = new CleanupService(core);
@@ -468,11 +519,13 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
               void core
                 .rebuildRecentDays(DEEP_RESCAN_WINDOW_DAYS, Date.now(), force)
                 .then(() => {
+                  const finishedAt = Date.now();
                   _httpCore = {
                     core,
-                    ts: Date.now(),
+                    ts: finishedAt,
                     lastScanDurationMs: _httpCore?.lastScanDurationMs ?? 0,
                   };
+                  emitCoreEvent("refresh_completed", finishedAt);
                 })
                 .catch((e: unknown) => {
                   console.error(`deep rescan failed: ${e instanceof Error ? e.message : e}`);
@@ -673,6 +726,8 @@ export function createDaemonTestHttpServer(
           applyFloor: false,
           homeDir: opts?.homeDir,
           quotasOverride: opts?.quotas,
+          refreshing: false,
+          computedAt: Date.now(),
         })
       );
       return;

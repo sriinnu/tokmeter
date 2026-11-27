@@ -55,6 +55,7 @@ final class DaemonClient {
     }
 
     private static let baseURL = URL(string: "http://127.0.0.1:9877")!
+    static let wsURL = URL(string: "ws://127.0.0.1:9876")!
     // Prefer the private canonical file. The /tmp path is compatibility-only
     // and is read with O_NOFOLLOW plus owner/type/size validation below.
     private let pidPaths: [String]
@@ -412,7 +413,6 @@ final class DaemonClient {
     /// invalidates the cached token, reloads from disk, and retries once.
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         let url = Self.requestURL(for: path)
-        var token = currentBearerToken()
         func makeRequest(with bearer: String?) -> URLRequest {
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
@@ -423,15 +423,21 @@ final class DaemonClient {
             }
             return req
         }
-
-        do {
+        func performAttempt() async throws -> (Data, HTTPURLResponse) {
+            var token = currentBearerToken()
             var (data, response) = try await session.data(for: makeRequest(with: token))
             guard var http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
             }
             if http.statusCode == 401 {
                 invalidateBearerToken()
-                let refreshed = currentBearerToken(forceReload: true)
+                var refreshed = currentBearerToken(forceReload: true)
+                if refreshed == token {
+                    // Daemon restart may still be atomically swapping daemon.token.
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    invalidateBearerToken()
+                    refreshed = currentBearerToken(forceReload: true)
+                }
                 if let refreshed, !refreshed.isEmpty, refreshed != token {
                     token = refreshed
                     (data, response) = try await session.data(for: makeRequest(with: refreshed))
@@ -440,6 +446,20 @@ final class DaemonClient {
                     }
                     http = retryHttp
                 }
+            }
+            return (data, http)
+        }
+
+        do {
+            let (data, http): (Data, HTTPURLResponse)
+            do {
+                (data, http) = try await performAttempt()
+            } catch let err as URLError where err.code == .networkConnectionLost {
+                // Stale keep-alive socket after Mac sleep/wake or daemon restart:
+                // wait briefly, reload bearer token in case the daemon restarted, and retry once.
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                invalidateBearerToken()
+                (data, http) = try await performAttempt()
             }
 
             let apiHeader = Self.apiVersionHeader(from: http)

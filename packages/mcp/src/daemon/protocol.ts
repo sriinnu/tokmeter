@@ -54,6 +54,19 @@ export interface SessionUnregister {
   provider: string;
 }
 
+export interface EventsSubscribe {
+  type: "subscribe_events";
+}
+
+export type DaemonEventKind = "core_warmed" | "refresh_completed" | "day_rolled_over";
+
+export interface DaemonEventMessage {
+  type: "daemon_event";
+  event: DaemonEventKind;
+  computedAt: number;
+  localDate: string;
+}
+
 export interface BroadcastMessage {
   type: "broadcast";
   yourSession: {
@@ -105,9 +118,10 @@ export interface ProviderBreakdown {
   sessions: number;
 }
 
-export type ClientMessage = SessionRegister | SessionUpdate | SessionUnregister;
+export type ClientMessage = SessionRegister | SessionUpdate | SessionUnregister | EventsSubscribe;
 export type ServerMessage =
   | BroadcastMessage
+  | DaemonEventMessage
   | { type: "ack"; success: boolean }
   | { type: "error"; message: string };
 

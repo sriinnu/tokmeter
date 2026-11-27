@@ -217,6 +217,7 @@ export {
   TIME_OF_DAY_MIN_DAYS,
   TIME_OF_DAY_WINDOW_DAYS,
 } from "./time-of-day.js";
+export { peekTodayJournalRecords } from "./today-journal.js";
 export { TokmeterCore } from "./tokmeter-core.js";
 export type {
   BackupInfo,

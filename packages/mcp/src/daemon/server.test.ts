@@ -260,3 +260,95 @@ describe("waitForDaemonExit — asynchronous daemon shutdown polling", () => {
     expect(checks).toBe(4);
   });
 });
+
+describe("daemon /api/bar-snapshot contract", () => {
+  test("includes refreshing and computedAt metadata", async () => {
+    const http = await import("node:http");
+    const { createDaemonTestHttpServer } = await import("./server.js");
+    const fakeCore = {
+      getStats: () => ({
+        totalCost: 1,
+        totalTokens: 100,
+        inputTokens: 50,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        totalRecords: 1,
+        projects: 1,
+        models: 1,
+        providers: 1,
+        activeDays: 1,
+        longestStreak: 1,
+        firstUsed: 1,
+        lastUsed: 1,
+      }),
+      getStatbarSignals: () => ({
+        burnRate: { costPerHour: 0, tokensPerHour: 0, windowMinutes: 60, recordsInWindow: 0 },
+        cacheHitToday: { rate: 0, cacheReadTokens: 0, inputTokens: 0 },
+        contextPressure: null,
+        projectContextToday: [],
+        pace: { multiple: null, typicalCostByNow: 0, actualCostByNow: 0, daysOfHistory: 0 },
+        compactionToday: { cost: 0, tokens: 0, share: 0, events: 0 },
+        subagentToday: { cost: 0, records: 0, share: 0 },
+        reasoningToday: { tokens: 0, outputTokens: 0, share: 0, records: 0 },
+        toolCallsToday: { byTool: [], totalCost: 0, callCount: 0, turnsWithTools: 0 },
+        billingWindow: null,
+        liveSession: null,
+      }),
+      getDailyBreakdown: () => [],
+      getModelCosts: () => [],
+      getAllProjects: () => [],
+      getScanMeta: () => ({
+        stableThrough: null,
+        historySource: "snapshot",
+        todayState: "live",
+        lastScanAt: 1,
+        warnings: [],
+        unpricedModels: [],
+        unpricedRecords: 0,
+      }),
+      getCrossToolComparison: async () => ({
+        todayActualCost: 0,
+        todayTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        projections: [],
+      }),
+    } as never;
+
+    const token = "a".repeat(64);
+    const server = createDaemonTestHttpServer(fakeCore, token, { quotas: [] });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const addr = server.address() as { port: number };
+      const res = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: addr.port,
+            path: "/api/bar-snapshot",
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+          (incoming) => {
+            const chunks: Buffer[] = [];
+            incoming.on("data", (c: Buffer) => chunks.push(c));
+            incoming.on("end", () =>
+              resolve({
+                status: incoming.statusCode ?? 0,
+                body: Buffer.concat(chunks).toString("utf8"),
+              })
+            );
+          }
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      expect(res.status).toBe(200);
+      const body = JSON.parse(res.body) as { refreshing?: boolean; computedAt?: number };
+      expect(body.refreshing).toBe(false);
+      expect(typeof body.computedAt).toBe("number");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

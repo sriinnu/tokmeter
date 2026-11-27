@@ -26,19 +26,149 @@
  * full input rate.
  */
 
-import { stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { sanitizeDataLabel } from "../display-safety.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
+import { mapWithConcurrency } from "./utils/fs-helpers.js";
 import {
   createRecord,
   expandHome,
   filterFilesByMtime,
-  findFiles,
   getCachedRecords,
   readJsonlFile,
   setCachedRecords,
 } from "./utils.js";
+
+const DAY_LISTING_CACHE_MAX = 2000;
+const DAY_DIR_STAT_CONCURRENCY = 32;
+const dayListingCache = new Map<string, { mtimeMs: number; sessionFiles: string[] }>();
+
+function cacheDayListing(dayPath: string, mtimeMs: number, sessionFiles: string[]): void {
+  if (dayListingCache.has(dayPath)) dayListingCache.delete(dayPath);
+  dayListingCache.set(dayPath, { mtimeMs, sessionFiles });
+  if (dayListingCache.size > DAY_LISTING_CACHE_MAX) {
+    const oldest = dayListingCache.keys().next().value;
+    if (oldest !== undefined) dayListingCache.delete(oldest);
+  }
+}
+
+async function readVisibleDirs(dir: string): Promise<Dirent[] | null> {
+  try {
+    return (await readdir(dir, { withFileTypes: true })).filter(
+      (entry) => !entry.name.startsWith(".") && entry.name !== "approval-review"
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function listDaySessionFiles(dayPath: string): Promise<string[]> {
+  try {
+    const s = await stat(dayPath);
+    const cached = dayListingCache.get(dayPath);
+    if (cached && cached.mtimeMs === s.mtimeMs) {
+      dayListingCache.delete(dayPath);
+      dayListingCache.set(dayPath, cached);
+      return cached.sessionFiles;
+    }
+    const entries = await readVisibleDirs(dayPath);
+    if (!entries) return [];
+    const candidates: string[] = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        candidates.push(join(dayPath, entry.name, "session.jsonl"));
+      } else if (entry.name === "session.jsonl") {
+        candidates.push(join(dayPath, entry.name));
+      }
+    }
+    const existing = (
+      await mapWithConcurrency(candidates, DAY_DIR_STAT_CONCURRENCY, async (filePath) => {
+        try {
+          await stat(filePath);
+          return filePath;
+        } catch {
+          return null;
+        }
+      })
+    ).filter((filePath): filePath is string => filePath !== null);
+    cacheDayListing(dayPath, s.mtimeMs, existing);
+    return existing;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Discover `session.jsonl` files under Muse's sessions tree while skipping
+ * hidden maintenance views (`.msp-view-*`) and per-session `approval-review/`
+ * / SQLite sidecar directories.
+ */
+async function discoverMuseSessionFiles(
+  sessionsDir: string,
+  modifiedSinceMs?: number
+): Promise<string[]> {
+  const topEntries = await readVisibleDirs(sessionsDir);
+  if (!topEntries) return [];
+
+  const sessionFiles: string[] = [];
+  const walkFallback = async (dir: string, depth: number): Promise<void> => {
+    if (depth <= 0) return;
+    const entries = await readVisibleDirs(dir);
+    if (!entries) return;
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walkFallback(fullPath, depth - 1);
+      } else if (entry.isFile() && entry.name === "session.jsonl") {
+        sessionFiles.push(fullPath);
+      }
+    }
+  };
+
+  for (const yearEntry of topEntries) {
+    const yearPath = join(sessionsDir, yearEntry.name);
+    if (yearEntry.isDirectory() && /^\d{4}$/.test(yearEntry.name)) {
+      const monthEntries = await readVisibleDirs(yearPath);
+      if (!monthEntries) continue;
+      for (const monthEntry of monthEntries) {
+        const monthPath = join(yearPath, monthEntry.name);
+        if (monthEntry.isDirectory() && /^\d{2}$/.test(monthEntry.name)) {
+          const dayEntries = await readVisibleDirs(monthPath);
+          if (!dayEntries) continue;
+          const dayDirs = dayEntries.filter((d) => d.isDirectory() && /^\d{2}$/.test(d.name));
+          const nonDayEntries = dayEntries.filter(
+            (d) => !(d.isDirectory() && /^\d{2}$/.test(d.name))
+          );
+          const dayBatches = await mapWithConcurrency(dayDirs, 16, (dayEntry) =>
+            listDaySessionFiles(join(monthPath, dayEntry.name))
+          );
+          for (const batch of dayBatches) sessionFiles.push(...batch);
+          for (const extra of nonDayEntries) {
+            const extraPath = join(monthPath, extra.name);
+            if (extra.isDirectory()) await walkFallback(extraPath, 3);
+            else if (extra.isFile() && extra.name === "session.jsonl") sessionFiles.push(extraPath);
+          }
+        } else if (monthEntry.isDirectory()) {
+          await walkFallback(monthPath, 4);
+        } else if (monthEntry.isFile() && monthEntry.name === "session.jsonl") {
+          sessionFiles.push(monthPath);
+        }
+      }
+    } else if (yearEntry.isDirectory()) {
+      await walkFallback(yearPath, 5);
+    } else if (yearEntry.isFile() && yearEntry.name === "session.jsonl") {
+      sessionFiles.push(yearPath);
+    }
+  }
+
+  return modifiedSinceMs !== undefined
+    ? filterFilesByMtime(sessionFiles, modifiedSinceMs)
+    : sessionFiles;
+}
 
 interface MuseUsage {
   input_tokens?: number;
@@ -96,10 +226,7 @@ export class MuseParser implements SessionParser {
     onFile: (records: TokenRecord[]) => void | Promise<void>
   ): Promise<void> {
     const [sessionsDir] = this.sessionRoots(homeDir);
-    let files = await findFiles(sessionsDir, (f) => f.endsWith("session.jsonl"), 6);
-    if (opts?.modifiedSinceMs !== undefined) {
-      files = await filterFilesByMtime(files, opts.modifiedSinceMs);
-    }
+    const files = await discoverMuseSessionFiles(sessionsDir, opts?.modifiedSinceMs);
 
     for (const file of files) {
       try {

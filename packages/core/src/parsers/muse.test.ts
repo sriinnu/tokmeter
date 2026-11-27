@@ -154,4 +154,32 @@ describe("MuseParser: the today refresh doesn't re-parse old sessions", () => {
     seedSession([modelCompleted("r1", usage), modelCompleted("r2", usage)]);
     expect(await parser.scan(tmpDir)).toHaveLength(2);
   });
+
+  it("ignores hidden .msp-view-* maintenance trees and approval-review dirs", async () => {
+    const file = seedSession([modelCompleted("r1", usage)]);
+    const noiseDir = join(tmpDir, ".local", "share", "muse", "sessions", ".msp-view-g12", "x");
+    mkdirSync(noiseDir, { recursive: true });
+    writeFileSync(join(noiseDir, "session.jsonl"), JSON.stringify(modelCompleted("noise", usage)));
+    const approvalDir = join(
+      tmpDir,
+      ".local",
+      "share",
+      "muse",
+      "sessions",
+      "2026",
+      "10",
+      "02",
+      "01a0fc98-7285-7e71-be1c-0303e1066a1b",
+      "approval-review"
+    );
+    mkdirSync(approvalDir, { recursive: true });
+    writeFileSync(
+      join(approvalDir, "session.jsonl"),
+      JSON.stringify(modelCompleted("approval-dup", usage))
+    );
+
+    const records = await new MuseParser().scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.sourceFile).toBe(file);
+  });
 });

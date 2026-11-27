@@ -102,6 +102,9 @@ extension TokmeterLoader {
                     arguments: NodeToolchain.daemonArguments(version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String),
                     timeout: 120
                 )
+                self.eventStream?.reconnectNow()
+                self.recoveryAttempts = 0
+                self.scheduleRecoveryRetry()
             } catch {
                 let message = "Couldn't start the usage service: \(error.localizedDescription)"
                 self.daemonStartError = message
@@ -154,6 +157,7 @@ extension TokmeterLoader {
                         subcommand: "restart"),
                     timeout: 120
                 )
+                self.eventStream?.reconnectNow()
                 await self.reloadAfterChange()
             } catch {
                 self.lastError = "Couldn't restart the usage service: \(error.localizedDescription)"

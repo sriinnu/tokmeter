@@ -30,8 +30,14 @@ describe("daemon contract — HTTP base stays in sync with protocol.ts", () => {
     expect(read("cli/src/cli.ts")).toContain("tryServeFromDaemon");
   });
 
-  test("macOS bar DaemonClient hardcodes the same HTTP base", () => {
+  test("macOS bar DaemonClient and DaemonEventStream hardcode the same HTTP/WS base", () => {
     expect(read("macos-bar/Sources/TokmeterBar/DaemonClient.swift")).toContain(httpBase);
+    expect(read("macos-bar/Sources/TokmeterBar/DaemonClient.swift")).toContain(
+      `ws://${DAEMON_HOST}:${DAEMON_PORT}`
+    );
+    expect(read("macos-bar/Sources/TokmeterBar/DaemonEventStream.swift")).toContain(
+      "DaemonClient.wsURL"
+    );
   });
 
   test("canonical values are what the hardcoders assume", () => {

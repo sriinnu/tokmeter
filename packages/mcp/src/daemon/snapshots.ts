@@ -363,6 +363,8 @@ export interface BarSnapshotResponse {
   quota: { windows: QuotaWindow[] } | null;
   antigravityLive: Awaited<ReturnType<typeof readAntigravityLivePayload>> | null;
   partialErrors: string[];
+  refreshing?: boolean;
+  computedAt?: number;
 }
 
 /**
@@ -372,7 +374,13 @@ export interface BarSnapshotResponse {
  */
 export async function buildBarSnapshot(
   core: TokmeterCore,
-  opts: { applyFloor?: boolean; homeDir?: string; quotasOverride?: QuotaWindow[] } = {}
+  opts: {
+    applyFloor?: boolean;
+    homeDir?: string;
+    quotasOverride?: QuotaWindow[];
+    refreshing?: boolean;
+    computedAt?: number;
+  } = {}
 ): Promise<BarSnapshotResponse> {
   const home = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
   const partialErrors: string[] = [];
@@ -409,10 +417,7 @@ export async function buildBarSnapshot(
     captureAsync("crossTool", () => core.getCrossToolComparison()),
     opts.quotasOverride !== undefined
       ? Promise.resolve(opts.quotasOverride)
-      : captureAsync("quota", async () => {
-          const { getQuota } = await import("@sriinnu/tokmeter");
-          return getQuota(home, Date.now(), (msg) => console.warn(`[quota] ${msg}`));
-        }),
+      : captureAsync("quota", () => getCachedQuota(home)),
     captureAsync("antigravityLive", () => readAntigravityLivePayload()),
   ]);
 
@@ -431,5 +436,7 @@ export async function buildBarSnapshot(
     quota: quotaWindows !== null ? { windows: quotaWindows } : null,
     antigravityLive,
     partialErrors,
+    ...(opts.refreshing !== undefined ? { refreshing: opts.refreshing } : {}),
+    ...(opts.computedAt !== undefined ? { computedAt: opts.computedAt } : {}),
   };
 }
