@@ -161,12 +161,12 @@ final class TokmeterLoaderRecoveryTests: XCTestCase {
             tokenProvider: { _ in nil },
             onEvent: { _ in }
         )
-        weak let weakStream = stream
+        let weakStream: () -> DaemonEventStream? = { [weak stream] in stream }
         stream?.start()
         try? await Task.sleep(nanoseconds: 30_000_000)
         stream?.stop()
         stream = nil
         await Task.yield()
-        XCTAssertNil(weakStream)
+        XCTAssertNil(weakStream())
     }
 }
