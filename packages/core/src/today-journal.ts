@@ -372,6 +372,26 @@ export function journalDates(homeDir: string): string[] {
 }
 
 /**
+ * Pure read-only load of today's persisted journal snapshot (`seen` + `carried`),
+ * used by daemon cold-start hydration so HTTP endpoints can serve non-zero totals
+ * immediately while the first live scan runs in the background.
+ */
+export function peekTodayJournalRecords(homeDir: string, date: string): TokenRecord[] {
+  const path = journalPath(homeDir, date);
+  if (!existsSync(path)) return [];
+  let journal: JournalFile | null;
+  try {
+    journal = readJournal(homeDir, date);
+  } catch {
+    return [];
+  }
+  if (!journal) return [];
+  const seen = [...toMap(journal.seen).values()].flat();
+  const carried = [...toMap(journal.carried).values()].flat();
+  return withCarried(seen, carried).filter((r) => localDateKey(r.timestamp) === date);
+}
+
+/**
  * What a past day's journal says vanished: its carried records, plus any
  * file from its last "seen" snapshot that is gone from disk now (deleted
  * while no daemon ran). For a cold start that seals a day the daemon never

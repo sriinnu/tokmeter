@@ -204,6 +204,7 @@ struct TokmeterBarView: View {
         .onChange(of: panelVisibility.isVisible, initial: true) { _, visible in
             if visible {
                 breathToggle = true
+                Task { await loader.handlePopoverOpened() }
             } else {
                 var t = Transaction()
                 t.disablesAnimations = true

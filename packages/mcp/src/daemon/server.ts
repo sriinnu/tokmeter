@@ -38,7 +38,12 @@ import {
 } from "./http-auth.js";
 import { captureDaemonIdentity, inspectDaemon, readProcessEvidence } from "./identity.js";
 import { capDaemonLogs, LOG_CAP_CHECK_MS } from "./log-cap.js";
-import type { BroadcastMessage, ClientMessage, ServerMessage } from "./protocol.js";
+import type {
+  BroadcastMessage,
+  ClientMessage,
+  DaemonEventKind,
+  ServerMessage,
+} from "./protocol.js";
 import {
   DAEMON_HOST,
   DAEMON_IDENTITY_FILE,
@@ -118,9 +123,20 @@ export function isAllowedWsOrigin(origin?: string): boolean {
 // Client tracking: WebSocket -> most-recent { provider, sessionId }
 const clientSessions = new Map<WebSocket, { provider: string; sessionId: string }>();
 const clientTouched = new Map<WebSocket, Map<string, { provider: string; sessionId: string }>>();
+const eventSubscribers = new Set<WebSocket>();
 const MAX_WS_CLIENTS = 128;
 const MAX_SESSIONS_PER_CLIENT = 64;
 const touchedKey = (provider: string, sessionId: string) => JSON.stringify([provider, sessionId]);
+
+function broadcastDaemonEvent(event: DaemonEventKind, computedAt: number, localDate: string): void {
+  if (eventSubscribers.size === 0) return;
+  const msg: ServerMessage = { type: "daemon_event", event, computedAt, localDate };
+  for (const ws of eventSubscribers) {
+    if (ws.readyState === WebSocket.OPEN) {
+      send(ws, msg);
+    }
+  }
+}
 
 function canTrackTouched(ws: WebSocket, provider: string, sessionId: string): boolean {
   const touched = clientTouched.get(ws);
@@ -195,6 +211,7 @@ export function startDaemon(): void {
       getSessionManager: () => sessionManager,
       onListening: () => publishAndRun(evidence),
       onBindError: (err) => refuseStartup(err),
+      onCoreEvent: broadcastDaemonEvent,
     });
   });
 
@@ -269,6 +286,7 @@ export function startDaemon(): void {
       }
       clientSessions.delete(ws);
       clientTouched.delete(ws);
+      eventSubscribers.delete(ws);
       broadcast();
     });
 
@@ -366,6 +384,12 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
       clientSessions.delete(ws);
       send(ws, { type: "ack", success: true });
       broadcast();
+      break;
+    }
+
+    case "subscribe_events": {
+      eventSubscribers.add(ws);
+      send(ws, { type: "ack", success: true });
       break;
     }
   }
@@ -520,6 +544,7 @@ export function stopDaemon(): void {
     wss.close();
     wss = null;
   }
+  eventSubscribers.clear();
 
   closeHttpApi();
 

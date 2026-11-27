@@ -601,6 +601,8 @@
       "latestSnapshot": null,
       "creditsUsedToday": null
     },
-    "partialErrors": []
+    "partialErrors": [],
+    "refreshing": false,
+    "computedAt": 1764003600000
   }
 }

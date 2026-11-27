@@ -102,6 +102,7 @@ final class TokmeterLoader: ObservableObject {
     @Published var partialStaleSections: [String] = []
 
     private let client = DaemonClient.shared
+    private let pollingEnabled: Bool
     private var timer: Timer?
     /// Fast, lightweight poll for JUST the menubar color signal. The full
     /// refresh can be minutes (user-configurable, e.g. 300s) which is far too
@@ -112,6 +113,11 @@ final class TokmeterLoader: ObservableObject {
     private static let colorPollSeconds: TimeInterval = 5
     private var fetchInFlight: Bool = false
     private var cancellables: Set<AnyCancellable> = []
+    private var recoveryTask: Task<Void, Never>?
+    var recoveryAttempts = 0
+    var lastSuccessfulFetchAt: Date?
+    var eventStream: DaemonEventStream?
+
     /// Debounce flag for the singleton daemon auto-start. Set true while a
     /// `tokmeter daemon start` spawn is in flight so concurrent poll ticks /
     /// fetches can't launch a stampede of starts. The daemon itself enforces
@@ -125,6 +131,48 @@ final class TokmeterLoader: ObservableObject {
     var daemonStartError: String?
     static let daemonStartBackoffCap: TimeInterval = 300
     @Published var needsNodeSetup = false
+
+    static func recoveryDelay(attempt: Int, refreshSeconds: Int) -> TimeInterval {
+        let cap = Double(max(5, min(30, refreshSeconds)))
+        guard attempt > 0 else { return min(2, cap) }
+        return min(cap, 2.0 * pow(2.0, Double(attempt - 1)))
+    }
+
+    func shouldReloadOnPopoverOpen(now: Date = Date()) -> Bool {
+        if isWarming || !isDaemonAlive || lastError != nil || !partialStaleSections.isEmpty {
+            return true
+        }
+        guard let lastFetch = lastSuccessfulFetchAt else { return true }
+        if LocalDay.todayKey(lastFetch) != LocalDay.todayKey(now) { return true }
+        return now.timeIntervalSince(lastFetch) >= 15
+    }
+
+    func handlePopoverOpened() async {
+        guard pollingEnabled, shouldReloadOnPopoverOpen() else { return }
+        if !isDaemonAlive || isWarming || lastError != nil {
+            eventStream?.reconnectNow()
+        }
+        await reloadAfterChange()
+    }
+
+    func scheduleRecoveryRetry() {
+        guard pollingEnabled, recoveryTask == nil else { return }
+        recoveryAttempts += 1
+        let refreshSeconds = HubConfigStore.shared.config.bar.refreshSeconds
+        let delay = Self.recoveryDelay(attempt: recoveryAttempts, refreshSeconds: refreshSeconds)
+        recoveryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.recoveryTask = nil
+            await self.reloadAfterChange()
+        }
+    }
+
+    func cancelRecoveryRetry() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryAttempts = 0
+    }
 
     /// Coarse lifecycle phase for the daemon, so the UI can be honest instead of
     /// showing a "WARMING" skeleton while the daemon is actually down. `warming`
@@ -158,7 +206,13 @@ final class TokmeterLoader: ObservableObject {
     }
 
     init(startPolling: Bool = true) {
+        self.pollingEnabled = startPolling
         guard startPolling else { return }
+        let stream = DaemonEventStream { [weak self] _ in
+            Task { await self?.reloadAfterChange() }
+        }
+        self.eventStream = stream
+        stream.start()
         Task { await loadData() }
         let initial = HubConfigStore.shared.config.bar.refreshSeconds
         restartTimer(interval: TimeInterval(initial))
@@ -176,7 +230,10 @@ final class TokmeterLoader: ObservableObject {
         NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
             .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in Task { await self?.reloadAfterChange() } }
+            .sink { [weak self] _ in
+                self?.eventStream?.reconnectNow()
+                Task { await self?.reloadAfterChange() }
+            }
             .store(in: &cancellables)
     }
 
@@ -240,6 +297,11 @@ final class TokmeterLoader: ObservableObject {
     deinit {
         timer?.invalidate()
         colorTimer?.invalidate()
+        recoveryTask?.cancel()
+        let stream = eventStream
+        Task { @MainActor in
+            stream?.stop()
+        }
     }
 
     /// A reload requested mid-fetch. Poll ticks can skip an in-flight pass,
@@ -302,9 +364,11 @@ final class TokmeterLoader: ObservableObject {
         do {
             let quick = try await client.fetchQuick()
             withTransaction(noAnim) {
-                self.stats = quick.stats
-                self.totalCost = quick.stats.totalCost
-                self.totalTokens = quick.stats.totalTokens
+                if quick.ready || !self.hasFreshData {
+                    self.stats = quick.stats
+                    self.totalCost = quick.stats.totalCost
+                    self.totalTokens = quick.stats.totalTokens
+                }
                 self.liveContextFillPct = quick.liveContextFillPct
                 self.blockPct = quick.blockElapsedPct
                 self.isWarming = !quick.ready
@@ -326,18 +390,27 @@ final class TokmeterLoader: ObservableObject {
             // Instead we start the singleton daemon once (debounced) and show
             // the warming skeleton; the next poll tick reads from HTTP.
             await handleDaemonOffline()
+            scheduleRecoveryRetry()
             return
         } catch {
             // A live service with incompatible/malformed data cannot be
             // repaired by launching another copy. Keep the actual failure
-            // visible and retry the read on the normal poll cadence.
+            // visible and retry the read quickly for transient socket errors.
             recordConnectionFailure(error)
+            if case DaemonError.versionMismatch = error {
+                cancelRecoveryRetry()
+            } else {
+                scheduleRecoveryRetry()
+            }
             return
         }
 
-        // If still warming, skip phase 2 — those endpoints will block on
-        // the first scan. Try again on the next 30s tick.
-        if isWarming { return }
+        // If still warming, skip phase 2 — retry quickly instead of waiting the
+        // full refreshSeconds interval (which can be 5 minutes).
+        if isWarming {
+            scheduleRecoveryRetry()
+            return
+        }
 
         // ─── Phase 2: consolidated snapshot (1 round-trip) ────────────
         antigravityLiveGeneration += 1
@@ -349,16 +422,25 @@ final class TokmeterLoader: ObservableObject {
                 antigravityLiveIssuedAsGeneration: antigravityLiveIssuedAsGeneration,
                 noAnim: noAnim
             )
+            lastSuccessfulFetchAt = Date()
+            if snapshot.refreshing == true || !partialStaleSections.isEmpty {
+                scheduleRecoveryRetry()
+            } else {
+                cancelRecoveryRetry()
+            }
         } catch DaemonError.httpError(404) {
             // Legacy daemons predating /api/bar-snapshot fall back cleanly.
             await loadPhase2Legacy(
                 antigravityLiveIssuedAsGeneration: antigravityLiveIssuedAsGeneration,
                 noAnim: noAnim
             )
+            lastSuccessfulFetchAt = Date()
+            cancelRecoveryRetry()
         } catch {
             withTransaction(noAnim) {
                 self.partialStaleSections = ["bar-snapshot"]
             }
+            scheduleRecoveryRetry()
         }
     }
 
@@ -475,7 +557,9 @@ final class TokmeterLoader: ObservableObject {
             crossTool: crossToolResult,
             quota: quotaResult,
             antigravityLive: antigravityLiveResult,
-            partialErrors: nil
+            partialErrors: nil,
+            refreshing: false,
+            computedAt: nil
         )
         applySnapshot(
             snapshot,

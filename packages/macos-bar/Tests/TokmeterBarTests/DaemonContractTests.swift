@@ -107,5 +107,7 @@ final class DaemonContractTests: XCTestCase {
         XCTAssertFalse(snapshot.daily?.isEmpty ?? true)
         XCTAssertEqual(snapshot.partialErrors, [])
         XCTAssertNotNil(snapshot.statbarSignals)
+        XCTAssertEqual(snapshot.refreshing, false)
+        XCTAssertNotNil(snapshot.computedAt)
     }
 }

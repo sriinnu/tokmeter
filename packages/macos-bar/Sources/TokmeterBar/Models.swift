@@ -535,4 +535,6 @@ struct BarSnapshotResponse: Decodable {
     let quota: QuotaResponse?
     let antigravityLive: AntigravityLiveResponse?
     let partialErrors: [String]?
+    let refreshing: Bool?
+    let computedAt: Double?
 }

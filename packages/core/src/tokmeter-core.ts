@@ -22,6 +22,7 @@ import { aggregateRecordsByDay, type DailyAggregate, mergeDailyAggregate } from 
 import {
   DailyAccumulator,
   dayFileMtime,
+  loadAggregates,
   readDayFile,
   sealRolledOverDay,
   writeDayFile,
@@ -73,7 +74,7 @@ import {
 import { computeStatbarSignals } from "./signals.js";
 import { saveSummaryCache } from "./summary-cache.js";
 import { createSummaryQuery } from "./summary-query.js";
-import { TodayJournal } from "./today-journal.js";
+import { peekTodayJournalRecords, TodayJournal } from "./today-journal.js";
 import type {
   DailyEntry,
   ModelSummary,
@@ -136,12 +137,46 @@ export class TokmeterCore {
   private scanMeta: ScanMeta = EMPTY_SCAN_META;
   private aliases: AliasMap | null = null;
   private scanChain: Promise<unknown> = Promise.resolve();
+  private hasCompletedLiveScan = false;
 
   constructor(config?: TokmeterConfig) {
     this.homeDir = config?.homeDir || homedir();
     this.skipPricing = config?.skipPricing ?? false;
     this.pricing = new PricingService(config?.cacheDir, this.homeDir);
     this.todayJournal = new TodayJournal(this.homeDir);
+  }
+
+  /**
+   * Populate aggregates and today's accumulator purely from persisted on-disk
+   * caches (relay day files + today's journal snapshot), without running any
+   * provider parsers. Lets the daemon answer queries immediately at startup
+   * while the first live scan warms in the background.
+   */
+  hydrateFromDiskCache(now: number = Date.now()): boolean {
+    const aggregates = loadAggregates(this.homeDir);
+    const todayKey = localDateKey(now);
+    aggregates.delete(todayKey);
+    const todayRecords = peekTodayJournalRecords(this.homeDir, todayKey);
+    if (aggregates.size === 0 && todayRecords.length === 0) return false;
+
+    this.aggregates = aggregates;
+    this.recentRecords = todayRecords;
+    const [todayAgg] = aggregateRecordsByDay(todayRecords);
+    const acc = new DailyAccumulator(todayKey);
+    if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
+    this.todayAccumulator = acc;
+    this.lastTickStartedAt = null;
+    const dates = [...aggregates.keys()].sort();
+    this.scanMeta = {
+      stableThrough: dates.length > 0 ? dates[dates.length - 1]! : null,
+      historySource: "snapshot",
+      todayState: "snapshot-only",
+      lastScanAt: 0,
+      warnings: [],
+      unpricedModels: [],
+      unpricedRecords: 0,
+    };
+    return true;
   }
 
   getHomeDir(): string {
@@ -292,9 +327,9 @@ export class TokmeterCore {
     // window's before-today records + today. On cold start this.recentRecords is
     // empty, so it's today-only (and no seal runs — refreshTodayAccumulator only
     // seals when a prior accumulator exists, i.e. the daemon crossed midnight).
-    const carriedRecent = this.recentRecords.filter((r) =>
-      isBeforeToday(r.timestamp, referenceTimestamp)
-    );
+    const carriedRecent = this.hasCompletedLiveScan
+      ? this.recentRecords.filter((r) => isBeforeToday(r.timestamp, referenceTimestamp))
+      : [];
     // A provider-filtered scan only saw those providers. Keep everyone else's
     // today as it was, or a filtered scan just before midnight would leave
     // the rollover seal a partial day.
@@ -360,6 +395,10 @@ export class TokmeterCore {
       unpricedRecords: unpricedTracker.records,
     };
 
+    if (!isTodayOnlyScan && !options?.providers?.length) {
+      this.hasCompletedLiveScan = true;
+    }
+
     await this.capturePricedCards();
     writeKoshaWishlist(this.homeDir, unpricedTracker, returned);
     const summaryCacheWarnings = saveSummaryCache(this.homeDir, this.getSummary());
@@ -375,11 +414,14 @@ export class TokmeterCore {
 
   /**
    * Warm-path refresh: today-only scan + splice into the rolling window.
-   * The daemon's hot path. Falls back to a full {@link scan} on cold start.
+   * The daemon's hot path. Falls back to a full {@link scan} on cold start
+   * or when the core was only hydrated from disk cache so far.
    */
   refreshToday(now: number = Date.now()): Promise<TokenRecord[]> {
     return this.runSerialized(() =>
-      this.todayAccumulator === null ? this.scanUnlocked() : this.refreshTodayUnlocked(now)
+      !this.hasCompletedLiveScan || this.todayAccumulator === null
+        ? this.scanUnlocked()
+        : this.refreshTodayUnlocked(now)
     );
   }
 
@@ -597,7 +639,12 @@ export class TokmeterCore {
     // the day survives even if its raw JSONL is later deleted, instead of
     // waiting for a cold-start gap-fill that re-reads the JSONL.
     const prev = this.todayAccumulator;
-    if (prev && prev.date < todayKey && !this.heldSeals.has(prev.date)) {
+    if (
+      this.hasCompletedLiveScan &&
+      prev &&
+      prev.date < todayKey &&
+      !this.heldSeals.has(prev.date)
+    ) {
       this.heldSeals.set(prev.date, {
         acc: prev,
         floor: this.stragglerFloor(referenceTimestamp),

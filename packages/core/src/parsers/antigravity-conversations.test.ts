@@ -448,4 +448,44 @@ INSERT INTO ItemTable VALUES ('antigravityUnifiedStateSync.trajectorySummaries',
     expect(summary?.usage?.inputTokens).toBe("not_exposed");
     expect(records.find((r) => r.apiCallId === "g")?.inputTokens).toBe(5);
   });
+
+  it("persists enum-name mappings across cache clears without changing model resolution", async () => {
+    const { clearAntigravityCaches } = await import("./antigravity-conversations.js");
+    const oldDb = seedConversation(
+      "cascade-persist-1",
+      [
+        generation({
+          startMs: T0 - 5 * 86_400_000,
+          lastStep: 0,
+          modelId: "gemini-pro-default",
+          display: "Gemini 3.1 Pro (High)",
+          modelEnum: "M99",
+          calls: [{ input: 1, thinking: 0, response: 1, id: "p1" }],
+        }),
+      ],
+      [{ idx: 0, ms: T0 - 5 * 86_400_000 }]
+    );
+    utimesSync(oldDb, new Date(T0 - 5 * 86_400_000), new Date(T0 - 5 * 86_400_000));
+    seedConversation(
+      "cascade-persist-2",
+      [
+        generation({
+          startMs: T0,
+          lastStep: 0,
+          modelId: "gemini-pro-default",
+          modelEnum: "M99",
+          calls: [{ input: 2, thinking: 0, response: 2, id: "p2" }],
+        }),
+      ],
+      [{ idx: 0, ms: T0 }]
+    );
+
+    const first = await new AntigravityParser().scan(home, { modifiedSinceMs: T0 - 86_400_000 });
+    expect(first.map((r) => r.model)).toEqual(["gemini-3.1-pro"]);
+    expect(existsSync(join(home, ".cache", "tokmeter", "antigravity-enum-names.json"))).toBe(true);
+
+    clearAntigravityCaches();
+    const second = await new AntigravityParser().scan(home, { modifiedSinceMs: T0 - 86_400_000 });
+    expect(second.map((r) => r.model)).toEqual(["gemini-3.1-pro"]);
+  });
 });
