@@ -37,6 +37,9 @@ export type CliCommand =
   | "kosha-update"
   | "pricing-audit"
   | "routes"
+  | "receipt"
+  | "git"
+  | "bar"
   | "update"
   | "refresh"
   | "backfill"
@@ -70,6 +73,16 @@ export interface CliArgs extends ScanOptions {
   restoreId?: string;
   restoreLatest?: boolean;
   olderThan?: string;
+  receiptStyle?: "thermal" | "broadsheet";
+  svgPath?: string;
+  markdown?: boolean;
+  includeProjects?: boolean;
+  gitBase?: string;
+  gitSinceCommit?: string;
+  gitLeadMinutes?: number;
+  gitDir?: string;
+  barFormat?: "plain" | "ansi" | "tmux" | "starship" | "waybar" | "polybar" | "powershell" | "json";
+  barSnippet?: "tmux" | "starship" | "waybar" | "polybar" | "zsh" | "fish" | "powershell";
 }
 
 export const PROVIDER_FLAG_MAP: Record<string, ProviderId> = {
@@ -136,6 +149,9 @@ const SIMPLE_COMMANDS = new Set<CliCommand>([
   "refresh",
   "pricing-audit",
   "routes",
+  "receipt",
+  "git",
+  "bar",
   "coverage",
   "quota",
 ]);
@@ -154,6 +170,9 @@ Commands:
   update          Refresh the price catalogs now; today reprices on the next scan
   routes          Today's tokens priced on every model you've used, cheapest first
   pricing-audit   JSON: which of today's models resolved a price, and which moved
+  receipt         Shareable Thermal/Broadsheet receipt (text, --svg <path>, --markdown)
+  git             Attribute AI coding cost & cache hit to the current git branch/PR
+  bar             Multi-OS ambient bar output (--format tmux|starship|waybar|polybar|powershell|json)
   digest          Weekly cost digest with trends and tips
                   (aliases: weekly, report)
   backfill        Add a newly supported provider or custom source to
@@ -269,9 +288,19 @@ Other Filters:
   --vscode-copilot  Only VS Code Copilot
   --codex-desktop Only Codex Desktop
 
-Output:
-  --json          Output as JSON
-  --light         Lightweight mode (skip pricing)
+Output & Command Options:
+  --json                 Output as JSON
+  --light                Lightweight mode (skip pricing)
+  --style S              Receipt style: thermal (default) or broadsheet
+  --svg PATH             Write receipt as SVG (or "-" for stdout)
+  --markdown             Render receipt or git report as Markdown
+  --include-projects     Include project names in receipt (scrubbed by default)
+  --base REF             Git base branch/ref for tokmeter git
+  --since-commit SHA     Git starting commit/ref for tokmeter git
+  --lead-minutes N       Lead window before first branch commit (default 30, 0-240)
+  --dir PATH             Repository directory for tokmeter git
+  --format FMT           Bar format: plain|ansi|tmux|starship|waybar|polybar|powershell|json
+  --snippet TARGET       Print setup config: tmux|starship|waybar|polybar|zsh|fish|powershell
 `;
 
 /**
@@ -400,6 +429,108 @@ export function parseArgs(argv: string[]): CliArgs {
           process.exit(1);
         }
         args.digestPeriod = val;
+        break;
+      }
+      case "--style": {
+        const val = rest[++i];
+        if (val !== "thermal" && val !== "broadsheet") {
+          console.error("Error: --style must be thermal or broadsheet");
+          process.exit(1);
+        }
+        args.receiptStyle = val;
+        break;
+      }
+      case "--svg": {
+        const val = rest[++i];
+        if (!val) {
+          console.error("Error: --svg requires a file path (or '-' for stdout)");
+          process.exit(1);
+        }
+        args.svgPath = val;
+        break;
+      }
+      case "--markdown":
+        args.markdown = true;
+        break;
+      case "--include-projects":
+        args.includeProjects = true;
+        break;
+      case "--base": {
+        const val = rest[++i];
+        if (!val) {
+          console.error("Error: --base requires a git ref argument");
+          process.exit(1);
+        }
+        args.gitBase = val;
+        break;
+      }
+      case "--since-commit": {
+        const val = rest[++i];
+        if (!val) {
+          console.error("Error: --since-commit requires a commit or ref argument");
+          process.exit(1);
+        }
+        args.gitSinceCommit = val;
+        break;
+      }
+      case "--lead-minutes": {
+        const raw = rest[++i];
+        const n = Number(raw);
+        if (!raw || !Number.isFinite(n) || n < 0 || n > 240) {
+          console.error("Error: --lead-minutes requires a number between 0 and 240");
+          process.exit(1);
+        }
+        args.gitLeadMinutes = Math.round(n);
+        break;
+      }
+      case "--dir": {
+        const val = rest[++i];
+        if (!val) {
+          console.error("Error: --dir requires a directory path");
+          process.exit(1);
+        }
+        args.gitDir = val;
+        break;
+      }
+      case "--format": {
+        const val = rest[++i];
+        const valid = new Set([
+          "plain",
+          "ansi",
+          "tmux",
+          "starship",
+          "waybar",
+          "polybar",
+          "powershell",
+          "json",
+        ]);
+        if (!val || !valid.has(val)) {
+          console.error(
+            "Error: --format must be plain, ansi, tmux, starship, waybar, polybar, powershell, or json"
+          );
+          process.exit(1);
+        }
+        args.barFormat = val as CliArgs["barFormat"];
+        break;
+      }
+      case "--snippet": {
+        const val = rest[++i];
+        const valid = new Set([
+          "tmux",
+          "starship",
+          "waybar",
+          "polybar",
+          "zsh",
+          "fish",
+          "powershell",
+        ]);
+        if (!val || !valid.has(val)) {
+          console.error(
+            "Error: --snippet must be tmux, starship, waybar, polybar, zsh, fish, or powershell"
+          );
+          process.exit(1);
+        }
+        args.barSnippet = val as CliArgs["barSnippet"];
         break;
       }
       case "backfill":

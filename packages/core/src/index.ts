@@ -133,6 +133,18 @@ export {
   yesterdayDateKey,
 } from "./date-utils.js";
 export { sanitizeDataLabel } from "./display-safety.js";
+export type {
+  AttributeGitBranchOptions,
+  GitBranchCostReport,
+  GitBranchWindow,
+  InspectGitBranchOptions,
+} from "./git-cost.js";
+export {
+  attributeGitBranchCost,
+  inspectGitBranch,
+  renderGitCostMarkdown,
+  renderGitCostText,
+} from "./git-cost.js";
 export { invalidateHistorySnapshot } from "./history-snapshot.js";
 export type { ModelRateCard, ModelRatesResponse, Rate } from "./model-rates.js";
 export { computeModelRates } from "./model-rates.js";
@@ -193,6 +205,21 @@ export {
   recordQuotaSamples,
   windowLabel,
 } from "./quota.js";
+export type {
+  BuildReceiptOptions,
+  ReceiptAlternative,
+  ReceiptData,
+  ReceiptModelRow,
+  ReceiptProjectRow,
+  ReceiptProviderRow,
+  ReceiptStyle,
+} from "./receipt.js";
+export {
+  buildReceiptData,
+  renderReceiptMarkdown,
+  renderReceiptSvg,
+  renderReceiptText,
+} from "./receipt.js";
 export { UnsafeArchiveError } from "./restore-guard.js";
 export * from "./session-health.js";
 export { computeStatbarSignals } from "./signals.js";

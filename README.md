@@ -11,7 +11,8 @@ Tokmeter reads the session files your agents already write to disk and turns the
 [![release](https://img.shields.io/badge/release-v1.25.0-8b5cf6)](https://github.com/sriinnu/tokmeter/releases)
 [![npm](https://img.shields.io/npm/v/%40sriinnu%2Ftokmeter?color=cb3837&label=npm)](https://www.npmjs.com/package/@sriinnu/tokmeter)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
+[![platforms](https://img.shields.io/badge/CLI%20%26%20MCP-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-22c55e)](#-multi-os-surfaces)
+[![macOS Bar](https://img.shields.io/badge/macOS%20Bar-14%2B-000000?logo=apple)](packages/macos-bar/README.md)
 [![sriinnu/tokmeter MCP server](https://glama.ai/mcp/servers/sriinnu/tokmeter/badges/score.svg)](https://glama.ai/mcp/servers/sriinnu/tokmeter)
 
 </div>
@@ -44,6 +45,23 @@ Docs and the theme gallery: **[tokmeter.srinivas.dev](https://tokmeter.srinivas.
 </div>
 
 There is also a terminal UI (`tokmeter-tui`), a local web dashboard, a statusline for Claude Code, and an MCP server so an agent can query its own spending.
+
+## Multi-OS Surfaces
+
+The CLI, TUI, local web dashboard, ambient status feed, and MCP server all run identically across **macOS, Linux, and Windows** — while `TokmeterBar` provides a native SwiftUI menubar companion on macOS:
+
+```sh
+# 1. Shareable privacy-scrubbed receipt (Thermal / Broadsheet, terminal or SVG)
+tokmeter receipt --today --style thermal
+tokmeter receipt --week --style broadsheet --svg receipt.svg
+
+# 2. Per-branch / per-PR AI cost attribution (paste right into GitHub PRs)
+tokmeter git --markdown
+
+# 3. Ambient statusline on Linux, Windows & macOS terminals (<25ms via daemon)
+tokmeter bar --format tmux        # or: waybar | polybar | starship | powershell | json
+tokmeter bar --snippet waybar     # ready-to-paste config snippet
+```
 
 ## Install
 
@@ -117,7 +135,7 @@ tokmeter-mcp live              # live terminal UI
 
 The daemon uses local HTTP port `9877` for queries and WebSocket port `9876` for live registration. Private reads and WebSocket connections require the per-user token in `~/.tokmeter/daemon/daemon.token`; `/api/ready` is the public health check. The macOS app, statusline, and MCP server read that credential at use time. Daemon commands belong to `@sriinnu/tokmeter-mcp`; install it for these surfaces.
 
-MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, forecasts, export, and cleanup previews. All 22 are read-only: deleting and restoring sessions stays in the CLI and TUI, where you confirm it. See the [MCP tool reference](docs/mcp-tools.md) for every tool grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
+MCP tools use the `tokmeter_` prefix and cover usage queries, comparisons, receipts, git-branch cost attribution, forecasts, export, and cleanup previews. All 24 are read-only: deleting and restoring sessions stays in the CLI and TUI, where you confirm it. See the [MCP tool reference](docs/mcp-tools.md) for every tool grouped by purpose, and the [package MCP README](packages/mcp/README.md) for configuration and programmatic exports.
 
 `tokmeter-mcp editors` lists installer targets. `tokmeter-mcp install-mcp` and `tokmeter-mcp install-statusline` write editor configuration; inspect the generated settings for your editor. For Claude Code, register the MCP server with `claude mcp add tokmeter --scope user -- npx -y @sriinnu/tokmeter-mcp serve` (from 1.15.0, `install-mcp` runs `claude mcp add` itself; 1.14.1 and earlier wrote the entry to `~/.claude/settings.json`, which Claude Code doesn't read). See [architecture](docs/architecture.md) for registration, authentication, refresh, storage, and daemon lifecycle details.
 
@@ -156,7 +174,7 @@ The [synthetic walkthrough](docs/assets/demo/README.md) documents how the exampl
 
 ## Documentation
 
-- [MCP tool reference](docs/mcp-tools.md) — all 22 `tokmeter_` tools, grouped
+- [MCP tool reference](docs/mcp-tools.md) — all 24 `tokmeter_` tools, grouped
 - [Consuming tokmeter](docs/consuming-tokmeter.md) — MCP, daemon HTTP, CLI, and in-process integration
 - [How the numbers work](docs/how-the-numbers-work.md) — bucket semantics and where estimates enter
 - [Backup, snapshot & restore](docs/backup-restore.md) — the confirmation/backup model and cross-machine restore

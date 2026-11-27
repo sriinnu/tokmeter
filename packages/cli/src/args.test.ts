@@ -94,4 +94,42 @@ describe("parseArgs", () => {
       exitSpy.mockRestore();
     }
   });
+
+  it("parses receipt, git, and bar subcommands and their flags", () => {
+    const receipt = parseArgs([
+      "node",
+      "tokmeter",
+      "receipt",
+      "--style",
+      "broadsheet",
+      "--svg",
+      "out.svg",
+      "--include-projects",
+      "--week",
+    ]);
+    expect(receipt.command).toBe("receipt");
+    expect(receipt.receiptStyle).toBe("broadsheet");
+    expect(receipt.svgPath).toBe("out.svg");
+    expect(receipt.includeProjects).toBe(true);
+    expect(receipt.week).toBe(true);
+
+    const gitArgs = parseArgs([
+      "node",
+      "tokmeter",
+      "git",
+      "--base",
+      "main",
+      "--lead-minutes",
+      "45",
+      "--markdown",
+    ]);
+    expect(gitArgs.command).toBe("git");
+    expect(gitArgs.gitBase).toBe("main");
+    expect(gitArgs.gitLeadMinutes).toBe(45);
+    expect(gitArgs.markdown).toBe(true);
+
+    const barArgs = parseArgs(["node", "tokmeter", "bar", "--format", "waybar"]);
+    expect(barArgs.command).toBe("bar");
+    expect(barArgs.barFormat).toBe("waybar");
+  });
 });

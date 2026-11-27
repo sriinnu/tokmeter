@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Shareable editorial receipts (`tokmeter receipt` + MCP `tokmeter_receipt`)**: privacy-scrubbed Thermal and Broadsheet receipts (project paths omitted by default unless `--include-projects` is passed) across plain/ANSI terminal output, self-contained vector SVG (`--svg <path>`), Markdown (`--markdown`), and JSON across macOS, Linux, and Windows.
+- **Per-branch / PR cost attribution (`tokmeter git` + MCP `tokmeter_git_cost`)**: attributes AI spend, token breakdown, cache-hit share, subagent share, and compaction tax to a git branch's commit window and repository root with transparent caveats and paste-ready GitHub PR Markdown (`--markdown`).
+- **Multi-OS ambient status feed (`tokmeter bar`)**: fast daemon-backed ambient output with disk-cache fallback in `--format plain|ansi|tmux|starship|waybar|polybar|powershell|json` and `--snippet <target>` setup templates for Linux, Windows, and macOS environments.
+- **Instant daemon startup & push invalidation (`#314`, `#315`)**: disk-cache cold hydration (`TokmeterCore.hydrateFromDiskCache()`), non-blocking `/api/bar-snapshot`, WebSocket `subscribe_events` / `daemon_event` push updates, Antigravity enum-name disk caching, and fast Muse directory discovery.
+
+### Fixed
+
+- **macOS bar refresh & recovery reliability (`#314`, `#315`)**: prevented `DaemonEventStream` retain cycles, kept `.live` state during warm restarts with existing data, triggered immediate reload after daemon auto-start, and hardened HTTP retry/timeout behavior in `DaemonClient`.
+- **Parser, pricing, and daemon concurrency hardening (`#315`)**: serialized `PricingService.init()` to eliminate concurrent lookup cache poisoning, excluded active/incomplete Muse day directories from caching, prevented epoch-0 `computedAt` and stale-floor poisoning during disk hydration, and increased Windows PowerShell `readProcessEvidence` CI timeout headroom.
+
 ## [1.25.0] - 2026-11-25
 
 ### Added

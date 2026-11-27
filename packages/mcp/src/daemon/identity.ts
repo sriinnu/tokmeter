@@ -25,12 +25,16 @@ export function readProcessEvidence(pid: number): ProcessEvidence | null {
     if (process.platform === "win32") {
       const script = `$tokmeterProcess = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($tokmeterProcess) { @{ startedAt = $tokmeterProcess.CreationDate.ToUniversalTime().ToString('o'); command = $tokmeterProcess.CommandLine } | ConvertTo-Json -Compress }`;
       const value = JSON.parse(
-        execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-          encoding: "utf8",
-          timeout: 5000,
-          maxBuffer: 16_384,
-          stdio: ["ignore", "pipe", "ignore"],
-        })
+        execFileSync(
+          "powershell.exe",
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+          {
+            encoding: "utf8",
+            timeout: 15_000,
+            maxBuffer: 16_384,
+            stdio: ["ignore", "pipe", "ignore"],
+          }
+        )
       );
       return typeof value.startedAt === "string" && typeof value.command === "string"
         ? value
