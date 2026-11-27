@@ -138,6 +138,7 @@ export class TokmeterCore {
   private aliases: AliasMap | null = null;
   private scanChain: Promise<unknown> = Promise.resolve();
   private hasCompletedLiveScan = false;
+  private hydratedOnly = false;
 
   constructor(config?: TokmeterConfig) {
     this.homeDir = config?.homeDir || homedir();
@@ -153,7 +154,15 @@ export class TokmeterCore {
    * while the first live scan warms in the background.
    */
   hydrateFromDiskCache(now: number = Date.now()): boolean {
-    const aggregates = loadAggregates(this.homeDir);
+    const warnings: ScanWarning[] = [];
+    let aggregates: Map<string, DailyAggregate>;
+    try {
+      aggregates = loadAggregates(this.homeDir, {
+        onWarning: (message) => warnings.push({ scope: "history", message }),
+      });
+    } catch {
+      return false;
+    }
     const todayKey = localDateKey(now);
     aggregates.delete(todayKey);
     const todayRecords = peekTodayJournalRecords(this.homeDir, todayKey);
@@ -165,6 +174,10 @@ export class TokmeterCore {
     const acc = new DailyAccumulator(todayKey);
     if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
     this.todayAccumulator = acc;
+    this.hasCompletedLiveScan = false;
+    this.hydratedOnly = true;
+    this.heldSeals.clear();
+    this.lastPricedCards = null;
     this.lastTickStartedAt = null;
     const dates = [...aggregates.keys()].sort();
     this.scanMeta = {
@@ -172,7 +185,7 @@ export class TokmeterCore {
       historySource: "snapshot",
       todayState: "snapshot-only",
       lastScanAt: 0,
-      warnings: [],
+      warnings,
       unpricedModels: [],
       unpricedRecords: 0,
     };
@@ -303,14 +316,33 @@ export class TokmeterCore {
     // Historical days are frozen on disk; only today reprices here.
     const unpricedTracker = { models: new Set<string>(), records: 0 };
     if (todayRecords.length > 0 && !this.skipPricing) {
-      if (koshaChanged) resetCalculatedCosts(todayRecords);
-      const enriched = await enrichCosts(
-        todayRecords,
-        this.pricing,
-        "today",
-        todayWarnings,
-        unpricedTracker
-      );
+      let enriched = 0;
+      if (koshaChanged) {
+        const repriced = todayRecords.map((r) => ({
+          ...r,
+          ...(r.usage ? { usage: { ...r.usage } } : {}),
+        }));
+        resetCalculatedCosts(repriced);
+        enriched = await enrichCosts(
+          repriced,
+          this.pricing,
+          "today",
+          todayWarnings,
+          unpricedTracker
+        );
+        for (let i = 0; i < todayRecords.length; i++) {
+          todayRecords[i]!.cost = repriced[i]!.cost;
+          if (repriced[i]!.usage !== undefined) todayRecords[i]!.usage = repriced[i]!.usage;
+        }
+      } else {
+        enriched = await enrichCosts(
+          todayRecords,
+          this.pricing,
+          "today",
+          todayWarnings,
+          unpricedTracker
+        );
+      }
       if (enriched > 0) markRecordCacheDirty(this.homeDir);
       const latestKoshaMtime = this.pricing.getRegistryMtime();
       if (latestKoshaMtime > 0) setCachedKoshaMtime(latestKoshaMtime, this.homeDir);
@@ -347,14 +379,15 @@ export class TokmeterCore {
       scannedToday.stragglers,
       koshaChanged
     );
-    this.recentRecords = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
+    const nextRecent = this.sliceRecent([...carriedRecent, ...stateToday], referenceTimestamp);
     await this.refreshTodayAccumulator(
       stateToday,
       referenceTimestamp,
       scannedToday.stragglers,
       sealPrices,
       (date) => !options?.providers?.length && !warningsBlockDay(todayWarnings, date),
-      todayWarnings
+      todayWarnings,
+      nextRecent
     );
     todayWarnings.push(...this.heldSealWarnings());
     if (!options?.providers?.length) this.lastTickStartedAt = referenceTimestamp;
@@ -397,6 +430,7 @@ export class TokmeterCore {
 
     if (!isTodayOnlyScan && !options?.providers?.length) {
       this.hasCompletedLiveScan = true;
+      this.hydratedOnly = false;
     }
 
     await this.capturePricedCards();
@@ -470,14 +504,22 @@ export class TokmeterCore {
     if (this.skipPricing) {
       markPricingSkipped(today);
     } else if (koshaChanged && today.length > 0) {
-      resetCalculatedCosts(today);
+      const repriced = today.map((r) => ({
+        ...r,
+        ...(r.usage ? { usage: { ...r.usage } } : {}),
+      }));
+      resetCalculatedCosts(repriced);
       const enriched = await enrichCosts(
-        today,
+        repriced,
         this.pricing,
         "today",
         todayWarnings,
         unpricedTracker
       );
+      for (let i = 0; i < today.length; i++) {
+        today[i]!.cost = repriced[i]!.cost;
+        if (repriced[i]!.usage !== undefined) today[i]!.usage = repriced[i]!.usage;
+      }
       if (enriched > 0) markRecordCacheDirty(this.homeDir);
       const mtime = this.pricing.getRegistryMtime();
       if (mtime > 0) setCachedKoshaMtime(mtime, this.homeDir);
@@ -491,7 +533,7 @@ export class TokmeterCore {
 
     const sealPrices = await this.pricesForSeal(now, stragglers, koshaChanged);
     const recentHistory = this.recentRecords.filter((r) => isBeforeToday(r.timestamp, now));
-    this.recentRecords = this.sliceRecent([...recentHistory, ...today], now);
+    const nextRecent = this.sliceRecent([...recentHistory, ...today], now);
     // Only a fault that can hide a past day's records may hold its seal; any
     // other fault (a broken file not written since before that day, or whose
     // unread tail is newer) used to stall the rollover indefinitely.
@@ -501,7 +543,8 @@ export class TokmeterCore {
       stragglers,
       sealPrices,
       (date) => !warningsBlockDay(todayWarnings, date),
-      todayWarnings
+      todayWarnings,
+      nextRecent
     );
     todayWarnings.push(...this.heldSealWarnings());
     this.lastTickStartedAt = now;
@@ -561,6 +604,8 @@ export class TokmeterCore {
    * 300 s and the first post-midnight tick sealed at 00:00:04.
    */
   private stragglerFloor(now: number): number {
+    // Never treat disk-hydrated state as a live previous tick for rollover stragglers.
+    if (this.hydratedOnly) return startOfLocalDay(now);
     // A held day is re-read from its own rollover floor on every tick until it
     // seals, so the records that tick found still reach the seal.
     let floor = startOfLocalDay(now);
@@ -600,6 +645,7 @@ export class TokmeterCore {
     stragglers: TokenRecord[],
     koshaChanged: boolean
   ): Promise<DayPrices | undefined> {
+    if (this.hydratedOnly) return undefined;
     const prev = this.todayAccumulator;
     if (!prev || this.skipPricing) return undefined;
     if (prev.date >= localDateKey(referenceTimestamp)) return undefined;
@@ -630,7 +676,8 @@ export class TokmeterCore {
     stragglers: TokenRecord[] = [],
     sealPrices: DayPrices | undefined,
     canSeal: (date: string) => boolean,
-    warnings: ScanWarning[] = []
+    warnings: ScanWarning[] = [],
+    nextRecent?: TokenRecord[]
   ): Promise<string[]> {
     const todayKey = localDateKey(referenceTimestamp);
 
@@ -762,6 +809,7 @@ export class TokmeterCore {
     const [todayAgg] = aggregateRecordsByDay(todayRecords);
     const acc = new DailyAccumulator(todayKey);
     if (todayAgg && todayAgg.date === todayKey) acc.hydrate(todayAgg);
+    if (nextRecent) this.recentRecords = nextRecent;
     this.todayAccumulator = acc;
     return sealedNow;
   }
@@ -873,14 +921,11 @@ export class TokmeterCore {
 
     const todayKey = localDateKey(referenceTimestamp);
     const affectedDates = new Set<string>();
-    let touchedToday = false;
     for (const r of allRaw) {
       if (!matchesSet(r.sourceFile, restoredSet)) continue;
       const date = localDateKey(r.timestamp);
       if (date < todayKey) affectedDates.add(date);
-      else touchedToday = true;
     }
-    if (touchedToday) this.todayAccumulator = null;
     if (affectedDates.size === 0) return;
 
     if (!this.skipPricing) {
@@ -1080,8 +1125,10 @@ export class TokmeterCore {
     });
   }
 
-  getTodayAggregate(): DailyAggregate | null {
-    return this.todayAccumulator?.toAggregate() ?? null;
+  getTodayAggregate(todayDate?: string): DailyAggregate | null {
+    if (!this.todayAccumulator) return null;
+    if (todayDate !== undefined && this.todayAccumulator.date !== todayDate) return null;
+    return this.todayAccumulator.toAggregate();
   }
 
   /** Rolling 14-day window; lifetime callers should use the aggregate getters. */
@@ -1112,10 +1159,16 @@ export class TokmeterCore {
     return { ...this.scanMeta, warnings: [...this.scanMeta.warnings] };
   }
 
-  getAllProjects(options?: { today?: boolean }): ProjectSummary[] {
+  getAllProjects(options?: { today?: boolean; todayDate?: string }): ProjectSummary[] {
+    const todayAcc =
+      options?.today &&
+      options.todayDate !== undefined &&
+      this.todayAccumulator?.date !== options.todayDate
+        ? null
+        : this.todayAccumulator;
     return computeAllProjectsFromState(
       options?.today ? new Map() : this.aggregates,
-      this.todayAccumulator,
+      todayAcc,
       this.getAliases()
     );
   }
@@ -1138,6 +1191,7 @@ export class TokmeterCore {
     since?: string;
     until?: string;
     today?: boolean;
+    todayDate?: string;
     providers?: ProviderId[];
   }): ModelSummary[] {
     return computeModelCostsFromState(
@@ -1200,9 +1254,10 @@ export class TokmeterCore {
     );
   }
 
-  async getCrossToolComparison(): Promise<CrossToolComparison> {
+  async getCrossToolComparison(todayDate?: string): Promise<CrossToolComparison> {
+    if (!this.skipPricing) await this.pricing.init();
     const top = this.getModelCosts().slice(0, 6);
-    return computeCrossToolComparison(this.pricing, this.getTodayAggregate(), top);
+    return computeCrossToolComparison(this.pricing, this.getTodayAggregate(todayDate), top);
   }
 
   getDailyBreakdown(options?: {

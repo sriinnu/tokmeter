@@ -378,12 +378,13 @@ export function computeModelCostsFromState(
     since?: string;
     until?: string;
     today?: boolean;
+    todayDate?: string;
     project?: string;
     providers?: ProviderId[];
   },
   aliases: AliasMap = {}
 ): ModelSummary[] {
-  const todayKey = todayAccumulator?.date;
+  const todayKey = opts?.todayDate ?? todayAccumulator?.date;
   const filter = makeFilter(opts?.providers);
   const totals = new Map<string, ModelTotal>();
   let grandTotalCost = 0;

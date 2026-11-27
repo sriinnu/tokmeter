@@ -103,8 +103,8 @@ extension TokmeterLoader {
                     timeout: 120
                 )
                 self.eventStream?.reconnectNow()
-                self.recoveryAttempts = 0
-                self.scheduleRecoveryRetry()
+                self.cancelRecoveryRetry()
+                await self.reloadAfterChange()
             } catch {
                 let message = "Couldn't start the usage service: \(error.localizedDescription)"
                 self.daemonStartError = message

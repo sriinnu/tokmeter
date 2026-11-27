@@ -10,15 +10,25 @@
  * has its cached portion stripped.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MuseParser } from "./muse.js";
+import { localDateKey } from "../date-utils.js";
+import { clearMuseDayListingCache, MuseParser } from "./muse.js";
 
 let tmpDir: string;
 
 beforeEach(() => {
+  clearMuseDayListingCache();
   tmpDir = mkdtempSync(join(tmpdir(), "muse-parser-test-"));
 });
 
@@ -182,4 +192,62 @@ describe("MuseParser: the today refresh doesn't re-parse old sessions", () => {
     expect(records).toHaveLength(1);
     expect(records[0]?.sourceFile).toBe(file);
   });
+
+  it("never caches today's day dir so a session.jsonl written after subdir creation is still discovered", async () => {
+    const now = Date.now();
+    const [yyyy, mm, dd] = localDateKey(now).split("-");
+    const dayDir = join(tmpDir, ".local", "share", "muse", "sessions", yyyy!, mm!, dd!);
+    const sessionDir = join(dayDir, "session-created-first");
+    mkdirSync(sessionDir, { recursive: true });
+    const dayStatBefore = statSync(dayDir);
+
+    const parser = new MuseParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(0);
+
+    const file = join(sessionDir, "session.jsonl");
+    writeFileSync(
+      file,
+      JSON.stringify({ ...modelCompleted("r-late", usage), recorded_at: now * 1000 })
+    );
+    // Restore DD dir mtime to simulate session.jsonl creation leaving parent DD mtime unchanged.
+    utimesSync(dayDir, dayStatBefore.atime, dayStatBefore.mtime);
+
+    const records = await parser.scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.sourceFile).toBe(file);
+  });
+
+  it("skips caching past day dirs that contain an incomplete session subdir", async () => {
+    const dayDir = join(tmpDir, ".local", "share", "muse", "sessions", "2026", "05", "01");
+    const sessionDir = join(dayDir, "session-pending-file");
+    mkdirSync(sessionDir, { recursive: true });
+    const oldTime = new Date(Date.now() - 2 * 3600_000);
+    utimesSync(dayDir, oldTime, oldTime);
+
+    const parser = new MuseParser();
+    expect(await parser.scan(tmpDir)).toHaveLength(0);
+
+    const file = join(sessionDir, "session.jsonl");
+    writeFileSync(file, JSON.stringify(modelCompleted("r-past-late", usage)));
+    utimesSync(dayDir, oldTime, oldTime);
+
+    const records = await parser.scan(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.sourceFile).toBe(file);
+  });
+
+  const unixNonRootIt = process.platform === "win32" || process.getuid?.() === 0 ? it.skip : it;
+  unixNonRootIt(
+    "propagates non-ENOENT directory read errors instead of silently returning empty",
+    async () => {
+      const dayDir = join(tmpDir, ".local", "share", "muse", "sessions", "2026", "05", "02");
+      mkdirSync(dayDir, { recursive: true });
+      chmodSync(dayDir, 0o000);
+      try {
+        await expect(new MuseParser().scan(tmpDir)).rejects.toThrow();
+      } finally {
+        chmodSync(dayDir, 0o755);
+      }
+    }
+  );
 });

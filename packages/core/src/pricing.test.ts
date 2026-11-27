@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PricingService, parseUserOverrides } from "./pricing.js";
 
@@ -249,6 +252,34 @@ describe("calculateCost", () => {
     });
     const cost = await pricing.calculateCost("internal-llama-deployment", 10_000_000, 10_000_000);
     expect(cost).toBe(0);
+  });
+  it("does not poison pricing cache during concurrent init() and preserves seeded rates", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tokmeter-pricing-race-"));
+    try {
+      mkdirSync(join(home, ".tokmeter"), { recursive: true });
+      writeFileSync(
+        join(home, ".tokmeter", "pricing-overrides.json"),
+        JSON.stringify({
+          "race-override-model": { inputPerMillion: 12, outputPerMillion: 48 },
+        })
+      );
+      const pricing = new PricingService(undefined, home);
+      pricing.seedPricing("preseeded-model", { inputPerMillion: 7, outputPerMillion: 21 });
+
+      const initPromise = pricing.init();
+      const midInitPrice = await pricing.getPricing("race-override-model");
+      expect(midInitPrice).toBeNull();
+      await initPromise;
+
+      const resolved = await pricing.getPricing("race-override-model");
+      expect(resolved?.inputPerMillion).toBe(12);
+      expect(resolved?.outputPerMillion).toBe(48);
+
+      const seeded = await pricing.getPricing("preseeded-model");
+      expect(seeded?.inputPerMillion).toBe(7);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

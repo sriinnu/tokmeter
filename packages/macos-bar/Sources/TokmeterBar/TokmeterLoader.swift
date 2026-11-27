@@ -150,7 +150,7 @@ final class TokmeterLoader: ObservableObject {
     func handlePopoverOpened() async {
         guard pollingEnabled, shouldReloadOnPopoverOpen() else { return }
         if !isDaemonAlive || isWarming || lastError != nil {
-            eventStream?.reconnectNow()
+            eventStream?.ensureConnected()
         }
         await reloadAfterChange()
     }
@@ -188,14 +188,18 @@ final class TokmeterLoader: ObservableObject {
         isDaemonAlive ? statbarSignals?.liveSession : nil
     }
 
+    var showWarmingSkeleton: Bool {
+        isWarming && !hasFreshData
+    }
+
     var daemonPhase: DaemonPhase {
         if needsNodeSetup { return .needsNode }
         // The daemon PROCESS being up (isDaemonAlive) does not mean its first
         // scan is done: /api/quick returns ready=false (and zero stats) during
         // a cold scan, which sets isWarming. Treat alive-but-not-ready as
-        // .warming so the UI shows the skeleton instead of rendering genuine-
-        // looking zeros. Only a ready (or stale-data) daemon is .live.
-        if isDaemonAlive { return isWarming ? .warming : .live }
+        // .warming only when no prior fresh numbers exist; if we already hold
+        // live values, stay .live so a brief warmup doesn't flash skeletons.
+        if isDaemonAlive { return showWarmingSkeleton ? .warming : .live }
         // Not reachable: a start genuinely in flight is .warming, else
         // offline. This used to return .live when hasFreshData was still set,
         // so a hero could say LIVE while the footer (isDaemonAlive) said
@@ -228,7 +232,13 @@ final class TokmeterLoader: ObservableObject {
         // 5-minute-plus refresh the hero kept yesterday's numbers well past
         // midnight, and a Mac waking from sleep waited a full interval.
         NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
-            .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.eventStream?.ensureConnected()
+                Task { await self?.reloadAfterChange() }
+            }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.eventStream?.reconnectNow()
@@ -390,7 +400,11 @@ final class TokmeterLoader: ObservableObject {
             // Instead we start the singleton daemon once (debounced) and show
             // the warming skeleton; the next poll tick reads from HTTP.
             await handleDaemonOffline()
-            scheduleRecoveryRetry()
+            if needsNodeSetup {
+                cancelRecoveryRetry()
+            } else {
+                scheduleRecoveryRetry()
+            }
             return
         } catch {
             // A live service with incompatible/malformed data cannot be
@@ -435,7 +449,11 @@ final class TokmeterLoader: ObservableObject {
                 noAnim: noAnim
             )
             lastSuccessfulFetchAt = Date()
-            cancelRecoveryRetry()
+            if !partialStaleSections.isEmpty {
+                scheduleRecoveryRetry()
+            } else {
+                cancelRecoveryRetry()
+            }
         } catch {
             withTransaction(noAnim) {
                 self.partialStaleSections = ["bar-snapshot"]

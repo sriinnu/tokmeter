@@ -2,18 +2,20 @@
  * Daemon HTTP REST API, bearer-token auth, warm TokmeterCore lifecycle, and test server factory.
  */
 
+import { readdirSync, statSync } from "node:fs";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   localDateKey,
   pollAntigravityLiveStatus,
   type QuotaWindow,
   refreshKoshaRegistry,
-  type TokmeterCore,
+  TokmeterCore,
   type TokmeterSummary,
 } from "@sriinnu/tokmeter";
 import { API_HEADER, apiVersionHeaders, LEGACY_API_HEADER } from "./compat-names.js";
@@ -46,12 +48,14 @@ import {
 export const HTTP_PORT = DAEMON_PORT + 1;
 const API_VERSION = 1;
 const TODAY_REFRESH_TTL = 12_000;
+const REFRESH_FAILURE_BACKOFF_MS = 15_000;
 const DEEP_RESCAN_WINDOW_DAYS = 30;
 
 export interface HttpCoreEntry {
   core: TokmeterCore;
   ts: number;
   lastScanDurationMs: number;
+  hydratedOnly: boolean;
 }
 
 export type DaemonEventListener = (
@@ -63,49 +67,98 @@ export type DaemonEventListener = (
 let httpServer: ReturnType<typeof createHttpServer> | null = null;
 let _httpCore: HttpCoreEntry | null = null;
 let _httpCoreReady = false;
+let _hasCompletedLiveScan = false;
 let _rescanInFlight = false;
 let _onCoreEvent: DaemonEventListener | null = null;
 let _lastCompletedLocalDate: string | null = null;
+let _lastRefreshFailure: { at: number; message: string } | null = null;
 
 function emitCoreEvent(event: DaemonEventKind, computedAt: number): void {
   _onCoreEvent?.(event, computedAt, localDateKey(computedAt));
 }
 
+function computeHydratedTimestamp(homeDir: string): number {
+  const todayFile = join(homeDir, ".cache", "tokmeter", "today", `${localDateKey()}.json`);
+  try {
+    const mtime = statSync(todayFile).mtimeMs;
+    if (Number.isFinite(mtime) && mtime > 0) return mtime;
+  } catch {
+    /* ignore */
+  }
+  const aggDir = join(homeDir, ".cache", "tokmeter", "aggregates");
+  try {
+    let newest = 0;
+    for (const entry of readdirSync(aggDir)) {
+      if (!entry.endsWith(".json")) continue;
+      try {
+        const mtime = statSync(join(aggDir, entry)).mtimeMs;
+        if (Number.isFinite(mtime) && mtime > newest) newest = mtime;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (newest > 0) return newest;
+  } catch {
+    /* ignore */
+  }
+  return Date.now();
+}
+
+function isCoreStale(entry: HttpCoreEntry, now = Date.now()): boolean {
+  if (entry.hydratedOnly) return true;
+  if (localDateKey(entry.ts) !== localDateKey(now)) return true;
+  return now - entry.ts >= TODAY_REFRESH_TTL;
+}
+
+function safeComputedAt(): number {
+  return _httpCore && _httpCore.ts > 0 ? _httpCore.ts : Date.now();
+}
+
+function isLiveScanned(): boolean {
+  return Boolean(_httpCore && !_httpCore.hydratedOnly);
+}
+
 const coreRefresh = new RefreshCoordinator<TokmeterCore>(async (full) => {
-  const wasReady = _httpCoreReady;
+  const wasLiveScanned = _hasCompletedLiveScan;
   const startedAt = Date.now();
-  let core: TokmeterCore;
-  if (_httpCore) {
-    if (full) await _httpCore.core.scan();
-    else await _httpCore.core.refreshToday();
-    core = _httpCore.core;
-  } else {
-    const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
-    core = new CoreCtor();
-    await core.scan();
+  try {
+    let core: TokmeterCore;
+    if (_httpCore) {
+      if (full) await _httpCore.core.scan();
+      else await _httpCore.core.refreshToday();
+      core = _httpCore.core;
+    } else {
+      core = new TokmeterCore();
+      await core.scan();
+    }
+    const finishedAt = Date.now();
+    const todayKey = localDateKey(finishedAt);
+    _httpCore = {
+      core,
+      ts: finishedAt,
+      lastScanDurationMs: finishedAt - startedAt,
+      hydratedOnly: false,
+    };
+    _httpCoreReady = true;
+    _hasCompletedLiveScan = true;
+    _lastRefreshFailure = null;
+    if (!wasLiveScanned) {
+      emitCoreEvent("core_warmed", finishedAt);
+    } else if (_lastCompletedLocalDate && _lastCompletedLocalDate !== todayKey) {
+      emitCoreEvent("day_rolled_over", finishedAt);
+    } else {
+      emitCoreEvent("refresh_completed", finishedAt);
+    }
+    _lastCompletedLocalDate = todayKey;
+    return core;
+  } catch (err) {
+    _lastRefreshFailure = { at: Date.now(), message: toErrorMessage(err) };
+    throw err;
   }
-  const finishedAt = Date.now();
-  const todayKey = localDateKey(finishedAt);
-  _httpCore = { core, ts: finishedAt, lastScanDurationMs: finishedAt - startedAt };
-  _httpCoreReady = true;
-  if (!wasReady) {
-    emitCoreEvent("core_warmed", finishedAt);
-  } else if (_lastCompletedLocalDate && _lastCompletedLocalDate !== todayKey) {
-    emitCoreEvent("day_rolled_over", finishedAt);
-  } else {
-    emitCoreEvent("refresh_completed", finishedAt);
-  }
-  _lastCompletedLocalDate = todayKey;
-  return core;
 });
 
 async function ensureCoreFresh(forceFullRescan = false): Promise<TokmeterCore> {
-  if (
-    !forceFullRescan &&
-    !coreRefresh.busy &&
-    _httpCore &&
-    Date.now() - _httpCore.ts < TODAY_REFRESH_TTL
-  ) {
+  if (!forceFullRescan && !coreRefresh.busy && _httpCore && !isCoreStale(_httpCore)) {
     return _httpCore.core;
   }
   return coreRefresh.run(forceFullRescan);
@@ -117,14 +170,18 @@ async function getHttpCore(): Promise<TokmeterCore> {
 
 async function getHttpCoreNoWait(): Promise<TokmeterCore> {
   if (!_httpCore) return getHttpCore();
-  return coreRefresh.serveStale(
-    _httpCore.core,
-    Date.now() - _httpCore.ts,
-    TODAY_REFRESH_TTL,
-    (err) => {
-      console.error("Background today refresh failed:", toErrorMessage(err));
-    }
-  );
+  const now = Date.now();
+  if (_lastRefreshFailure && now - _lastRefreshFailure.at < REFRESH_FAILURE_BACKOFF_MS) {
+    return _httpCore.core;
+  }
+  const effectiveAge =
+    _httpCore.hydratedOnly || localDateKey(_httpCore.ts) !== localDateKey(now)
+      ? Number.POSITIVE_INFINITY
+      : now - _httpCore.ts;
+  return coreRefresh.serveStale(_httpCore.core, effectiveAge, TODAY_REFRESH_TTL, (err) => {
+    _lastRefreshFailure = { at: Date.now(), message: toErrorMessage(err) };
+    console.error("Background today refresh failed:", _lastRefreshFailure.message);
+  });
 }
 
 async function rescanHttpCore(): Promise<void> {
@@ -132,21 +189,27 @@ async function rescanHttpCore(): Promise<void> {
 }
 
 export function warmHttpCore(): void {
+  let hydrated = false;
+  if (!_httpCore && !coreRefresh.busy) {
+    const core = new TokmeterCore();
+    if (typeof core.hydrateFromDiskCache === "function" && core.hydrateFromDiskCache()) {
+      const hydratedAt = computeHydratedTimestamp(core.getHomeDir?.() ?? homedir());
+      _httpCore = { core, ts: hydratedAt, lastScanDurationMs: 0, hydratedOnly: true };
+      _httpCoreReady = true;
+      hydrated = true;
+      console.log("【♾️】 HTTP core hydrated from disk cache — warming live scan");
+    }
+  }
   void (async () => {
     try {
-      const { TokmeterCore: CoreCtor } = await import("@sriinnu/tokmeter");
-      const core = new CoreCtor();
-      if (!_httpCore && core.hydrateFromDiskCache()) {
-        _httpCore = { core, ts: 0, lastScanDurationMs: 0 };
-        _httpCoreReady = true;
-        console.log("【♾️】 HTTP core hydrated from disk cache — warming live scan");
+      if (hydrated) {
         await coreRefresh.run(true);
-        console.log("【♾️】 HTTP core warm — ready to serve");
-        return;
+      } else {
+        await getHttpCore();
       }
-      await getHttpCore();
       console.log("【♾️】 HTTP core warm — ready to serve");
     } catch (err) {
+      _lastRefreshFailure = { at: Date.now(), message: toErrorMessage(err) };
       console.error("HTTP core warmup failed:", err);
     }
   })();
@@ -163,6 +226,8 @@ export function flushHttpCoreRecordCache(): void {
 export function closeHttpApi(): void {
   _onCoreEvent = null;
   _lastCompletedLocalDate = null;
+  _hasCompletedLiveScan = false;
+  _lastRefreshFailure = null;
   if (httpServer) {
     httpServer.close();
     httpServer = null;
@@ -269,7 +334,8 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
         if (pathname === "/api/quick") {
           const liveContextFillPct = sessionManager?.getAggregated().maxContextFillPct;
           if (_httpCore) {
-            const stats = applyStatsFloor(_httpCore.core.getStats());
+            const rawStats = _httpCore.core.getStats();
+            const stats = isLiveScanned() ? applyStatsFloor(rawStats) : rawStats;
             const blockElapsedPct = _httpCore.core.getStatbarSignals().billingWindow?.elapsedPct;
             json(res, { ready: true, stats, liveContextFillPct, blockElapsedPct });
           } else {
@@ -326,9 +392,10 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
 
         if (pathname === "/api/today") {
           const warm = await getHttpCoreNoWait();
+          const totals = computeTodayTotals(warm);
           json(res, {
-            ...applyTodayFloor(computeTodayTotals(warm)),
-            computedAt: _httpCore?.ts ?? Date.now(),
+            ...(isLiveScanned() ? applyTodayFloor(totals) : totals),
+            computedAt: safeComputedAt(),
           });
           return;
         }
@@ -339,8 +406,9 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
           const project = params.get("project")?.trim() || undefined;
           const agent = params.get("agent")?.trim() || undefined;
           const warm = await getHttpCoreNoWait();
-          const todayFloored = applyTodayFloor(computeTodayTotals(warm));
-          const computedAt = _httpCore?.ts ?? Date.now();
+          const baseToday = computeTodayTotals(warm);
+          const todayFloored = isLiveScanned() ? applyTodayFloor(baseToday) : baseToday;
+          const computedAt = safeComputedAt();
           json(
             res,
             await buildStatuslineContext(warm, {
@@ -360,10 +428,12 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
           json(
             res,
             await buildBarSnapshot(warm, {
-              applyFloor: true,
+              applyFloor: isLiveScanned(),
               homeDir: homedir(),
               refreshing: coreRefresh.busy,
-              computedAt: _httpCore?.ts ?? Date.now(),
+              computedAt: safeComputedAt(),
+              todayDate: localDateKey(),
+              extraPartialErrors: _lastRefreshFailure ? ["refresh"] : undefined,
             })
           );
           return;
@@ -384,7 +454,7 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
           json(res, core.getAllProjects());
         } else if (pathname === "/api/sessions") {
           const today = new URL(url, "http://localhost").searchParams.get("today") === "true";
-          json(res, readSessionsPayload(core, today));
+          json(res, readSessionsPayload(core, today, today ? localDateKey() : undefined));
         } else if (pathname.startsWith("/api/projects/")) {
           const name = decodeURIComponent(pathname.slice("/api/projects/".length));
           json(res, core.getProjectSummary(name) ?? { error: "Not found" });
@@ -403,13 +473,13 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
         } else if (pathname === "/api/health") {
           json(res, readHealthPayload(core));
         } else if (pathname === "/api/today-models") {
-          json(res, core.getModelCosts({ today: true }));
+          json(res, core.getModelCosts({ today: true, todayDate: localDateKey() }));
         } else if (pathname === "/api/rates") {
           const scope =
             new URL(url, "http://localhost").searchParams.get("scope") === "all" ? "all" : "today";
           json(res, await core.getModelRates(scope));
         } else if (pathname === "/api/cross-tool") {
-          json(res, await core.getCrossToolComparison());
+          json(res, await core.getCrossToolComparison(localDateKey()));
         } else if (pathname === "/api/pricing-status") {
           json(res, readPricingStatusPayload(homedir()));
         } else if (pathname === "/api/anomalies") {
@@ -524,6 +594,7 @@ export function startHttpApi(handlers: HttpApiHandlers): void {
                     core,
                     ts: finishedAt,
                     lastScanDurationMs: _httpCore?.lastScanDurationMs ?? 0,
+                    hydratedOnly: false,
                   };
                   emitCoreEvent("refresh_completed", finishedAt);
                 })
