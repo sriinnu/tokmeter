@@ -3,7 +3,7 @@
  *
  * Tokmeter — token usage observatory for AI coding agents.
  *
- * Exposes 22 read-only tools via the Model Context Protocol that let AI agents and CLIs
+ * Exposes 24 read-only tools via the Model Context Protocol that let AI agents and CLIs
  * query, analyze, forecast, and export token usage data collected by tokmeter.
  */
 
@@ -17,6 +17,7 @@ import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerInsightTools } from "./tools/insights.js";
 import { registerOverviewTools } from "./tools/overview.js";
 import { registerQueryTools } from "./tools/query.js";
+import { registerReceiptAndGitTools } from "./tools/receipt-git.js";
 
 export { resolveScopeWindow } from "./scoped-view.js";
 export { csvCell, fmtDate, fmtDatetime, READ_ONLY_TOOL } from "./tools/context.js";
@@ -114,6 +115,7 @@ export function createServer(): McpServer {
   registerAnalyticsTools(server);
   registerInsightTools(server);
   registerAdvisorAndCleanupTools(server);
+  registerReceiptAndGitTools(server);
 
   for (const spec of SLASH_PROMPTS) {
     server.registerPrompt(

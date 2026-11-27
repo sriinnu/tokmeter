@@ -131,9 +131,10 @@ Once connected, the server exposes these tools to the AI agent:
 | `tokmeter_cache_efficiency`, `tokmeter_efficiency`, `tokmeter_anomaly` | Efficiency and anomalies |
 | `tokmeter_model_advisor`, `tokmeter_cost_optimization_tips` | Cost suggestions |
 | `tokmeter_leaderboard`, `tokmeter_digest`, `tokmeter_streaks` | Reports and usage patterns |
+| `tokmeter_receipt`, `tokmeter_git_cost` | Privacy-scrubbed receipts and per-branch PR cost attribution |
 | `tokmeter_cleanup_preview`, `tokmeter_backups` | Preview a cleanup and list backups (deleting and restoring are CLI/TUI only) |
 
-Every tool declares MCP annotations, and all 22 are
+Every tool declares MCP annotations, and all 24 are
 `readOnlyHint: true, openWorldHint: false`. Nothing an agent can call deletes
 or restores session data: `tokmeter_cleanup_preview` ends by pointing the user
 at `tokmeter cleanup`, which previews again, always writes a backup and asks for

@@ -17,7 +17,10 @@ import { homedir } from "node:os";
 import { localDateKey, sanitizeDataLabel, TokmeterCore } from "@sriinnu/tokmeter";
 import Table from "cli-table3";
 import { olderThanToIsoCutoff, parseArgs } from "./args.js";
+import { runBar } from "./commands/bar.js";
+import { runGit } from "./commands/git.js";
 import { runPricingAudit } from "./commands/pricing-audit.js";
+import { runReceipt } from "./commands/receipt.js";
 import { runRoutes } from "./commands/routes.js";
 import { runCursorSyncCommand } from "./cursor-sync.js";
 import { tryServeFromDaemon } from "./daemon-bridge.js";
@@ -298,6 +301,21 @@ async function main() {
       json: args.json === true,
       project: args.project,
     });
+    return;
+  }
+
+  if (args.command === "receipt") {
+    await runReceipt(args);
+    return;
+  }
+
+  if (args.command === "git") {
+    await runGit(args);
+    return;
+  }
+
+  if (args.command === "bar") {
+    await runBar(args);
     return;
   }
 

@@ -102,7 +102,7 @@ function text(result: Awaited<ReturnType<Client["callTool"]>>): string {
 describe("MCP tool annotations", () => {
   it("annotates every tool read-only and closed-world", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(24);
     for (const tool of tools) {
       expect(tool.annotations, tool.name).toMatchObject({
         readOnlyHint: true,
@@ -158,6 +158,8 @@ describe("MCP input bounds", () => {
     ["tokmeter_models", { limit: 0 }],
     ["tokmeter_search", { model: "x".repeat(513) }],
     ["tokmeter_search", { min_cost: -1 }],
+    ["tokmeter_receipt", { style: "invalid-style" }],
+    ["tokmeter_git_cost", { lead_minutes: 999 }],
     ["tokmeter_compare", { compare_type: "models", names: Array(65).fill("x") }],
     ["tokmeter_cache_efficiency", { provider: "x".repeat(513) }],
   ])("rejects invalid bounded input for %s", async (name, args) => {
