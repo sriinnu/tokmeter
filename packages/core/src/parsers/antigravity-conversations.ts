@@ -34,10 +34,10 @@
  * same files without tokmeter's code.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, join } from "node:path";
-import { ensurePrivateDirectory, writePrivateFile } from "../private-files.js";
+import { basename, join, resolve } from "node:path";
+import { ensurePrivateDirectory, ensurePrivateFile, writePrivateFile } from "../private-files.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, TokenRecord } from "../types.js";
 import { mapWithConcurrency } from "./utils/fs-helpers.js";
@@ -314,6 +314,7 @@ async function decodeDb(dbPath: string): Promise<DecodedDb> {
 const MAX_DECODED_CACHE_ENTRIES = 256;
 const ENUM_CACHE_VERSION = 1;
 const ENUM_CACHE_STAT_CONCURRENCY = 32;
+const MAX_ENUM_CACHE_BYTES = 10 * 1024 * 1024;
 const decodedCache = new Map<string, { key: string; decoded: DecodedDb }>();
 
 interface EnumCacheEntry {
@@ -332,35 +333,61 @@ interface SerializedEnumCacheFile {
 
 const enumNamesByHome = new Map<string, Map<string, EnumCacheEntry>>();
 const loadedEnumHomes = new Set<string>();
+const dirtyEnumHomes = new Set<string>();
 
 function enumCachePath(homeDir: string): string {
   return join(homeDir, ".cache", "tokmeter", "antigravity-enum-names.json");
 }
 
+function parseStringMap(raw: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string" && v.length > 0) out.set(k, v);
+  }
+  return out;
+}
+
 function getHomeEnumCache(homeDir: string): Map<string, EnumCacheEntry> {
-  let cache = enumNamesByHome.get(homeDir);
+  const homeKey = resolve(homeDir);
+  let cache = enumNamesByHome.get(homeKey);
   if (!cache) {
     cache = new Map();
-    enumNamesByHome.set(homeDir, cache);
+    enumNamesByHome.set(homeKey, cache);
   }
-  if (!loadedEnumHomes.has(homeDir)) {
-    loadedEnumHomes.add(homeDir);
-    const path = enumCachePath(homeDir);
+  if (!loadedEnumHomes.has(homeKey)) {
+    loadedEnumHomes.add(homeKey);
+    const path = enumCachePath(homeKey);
     if (existsSync(path)) {
       try {
-        const parsed = JSON.parse(readFileSync(path, "utf-8")) as SerializedEnumCacheFile;
-        if (
-          parsed?.version === ENUM_CACHE_VERSION &&
-          parsed.entries &&
-          typeof parsed.entries === "object"
-        ) {
-          for (const [dbPath, entry] of Object.entries(parsed.entries)) {
-            if (!entry || typeof entry.key !== "string") continue;
-            cache.set(dbPath, {
-              key: entry.key,
-              ids: new Map(Object.entries(entry.ids ?? {})),
-              displays: new Map(Object.entries(entry.displays ?? {})),
-            });
+        ensurePrivateFile(path);
+        const st = statSync(path);
+        if (st.size <= MAX_ENUM_CACHE_BYTES) {
+          const parsed = JSON.parse(readFileSync(path, "utf-8")) as SerializedEnumCacheFile;
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed) &&
+            parsed.version === ENUM_CACHE_VERSION &&
+            parsed.entries &&
+            typeof parsed.entries === "object" &&
+            !Array.isArray(parsed.entries)
+          ) {
+            for (const [dbPath, entry] of Object.entries(parsed.entries)) {
+              if (
+                !entry ||
+                typeof entry !== "object" ||
+                Array.isArray(entry) ||
+                typeof entry.key !== "string"
+              ) {
+                continue;
+              }
+              cache.set(dbPath, {
+                key: entry.key,
+                ids: parseStringMap(entry.ids),
+                displays: parseStringMap(entry.displays),
+              });
+            }
           }
         }
       } catch {
@@ -371,9 +398,10 @@ function getHomeEnumCache(homeDir: string): Map<string, EnumCacheEntry> {
   return cache;
 }
 
-function saveHomeEnumCache(homeDir: string, cache: Map<string, EnumCacheEntry>): void {
+function saveHomeEnumCache(homeDir: string, cache: Map<string, EnumCacheEntry>): boolean {
+  const homeKey = resolve(homeDir);
   try {
-    ensurePrivateDirectory(join(homeDir, ".cache", "tokmeter"));
+    ensurePrivateDirectory(join(homeKey, ".cache", "tokmeter"));
     const entries: SerializedEnumCacheFile["entries"] = {};
     for (const [dbPath, entry] of cache) {
       entries[dbPath] = {
@@ -383,9 +411,24 @@ function saveHomeEnumCache(homeDir: string, cache: Map<string, EnumCacheEntry>):
       };
     }
     const payload: SerializedEnumCacheFile = { version: ENUM_CACHE_VERSION, entries };
-    writePrivateFile(enumCachePath(homeDir), JSON.stringify(payload));
+    writePrivateFile(enumCachePath(homeKey), JSON.stringify(payload));
+    return true;
   } catch {
     // Best effort: tests or read-only homes still keep the in-memory map.
+    return false;
+  }
+}
+
+function flushHomeEnumCache(homeDir: string): void {
+  const homeKey = resolve(homeDir);
+  if (!dirtyEnumHomes.has(homeKey)) return;
+  const cache = enumNamesByHome.get(homeKey);
+  if (!cache) {
+    dirtyEnumHomes.delete(homeKey);
+    return;
+  }
+  if (saveHomeEnumCache(homeKey, cache)) {
+    dirtyEnumHomes.delete(homeKey);
   }
 }
 
@@ -393,9 +436,11 @@ export function clearAntigravityCaches(): void {
   decodedCache.clear();
   enumNamesByHome.clear();
   loadedEnumHomes.clear();
+  dirtyEnumHomes.clear();
 }
 
 function recordEnumMappingsToCache(
+  homeDir: string,
   cache: Map<string, EnumCacheEntry>,
   dbPath: string,
   key: string,
@@ -409,47 +454,57 @@ function recordEnumMappingsToCache(
     if (g.display && !displays.has(g.modelEnum)) displays.set(g.modelEnum, g.display);
   }
   cache.set(dbPath, { key, ids, displays });
+  dirtyEnumHomes.add(resolve(homeDir));
 }
 
 /**
  * Lightweight SQLite pass for uncached historical DBs during `modelNames()`:
  * reads only `gen_metadata.data` in `idx` order without querying `steps` or
- * `trajectory_metadata_blob`.
+ * `trajectory_metadata_blob`, matching `decodeDb`'s immutable torn-read guard.
  */
 async function readEnumNamesOnly(dbPath: string): Promise<{
+  key: string;
   ids: Map<string, string>;
   displays: Map<string, string>;
 }> {
-  const before = await fileState(dbPath);
-  const liveWal = walBytes(before) > 0;
-  const db = await openConversationDb(dbPath, liveWal);
-  try {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = await fileState(dbPath);
+    const liveWal = walBytes(before) > 0;
+    const db = await openConversationDb(dbPath, liveWal);
     const ids = new Map<string, string>();
     const displays = new Map<string, string>();
-    for (const r of db.all<{ data: unknown }>("SELECT data FROM gen_metadata ORDER BY idx")) {
-      const bytes = asBytes(r.data);
-      if (!bytes) continue;
-      const gen = one(fields(bytes), 1)?.bytes;
-      if (!gen) continue;
-      const g = fields(gen);
-      let modelEnum = "";
-      for (const e of all(g, 20)) {
-        const kv = fields(e.bytes);
-        if (text(one(kv, 1)) === "model_enum") {
-          modelEnum = text(one(kv, 2));
-          break;
+    try {
+      for (const r of db.all<{ data: unknown }>("SELECT data FROM gen_metadata ORDER BY idx")) {
+        const bytes = asBytes(r.data);
+        if (!bytes) continue;
+        const gen = one(fields(bytes), 1)?.bytes;
+        if (!gen) continue;
+        const g = fields(gen);
+        const meta = new Map<string, string>();
+        for (const e of all(g, 20)) {
+          const kv = fields(e.bytes);
+          meta.set(text(one(kv, 1)), text(one(kv, 2)));
         }
+        const modelEnum = meta.get("model_enum") ?? "";
+        if (!modelEnum) continue;
+        const modelId = text(one(g, 19));
+        const display = text(one(g, 21));
+        if (isRealId(modelId) && !ids.has(modelEnum)) ids.set(modelEnum, modelId);
+        if (display && !displays.has(modelEnum)) displays.set(modelEnum, display);
       }
-      if (!modelEnum) continue;
-      const modelId = text(one(g, 19));
-      const display = text(one(g, 21));
-      if (isRealId(modelId) && !ids.has(modelEnum)) ids.set(modelEnum, modelId);
-      if (display && !displays.has(modelEnum)) displays.set(modelEnum, display);
+    } finally {
+      db.close();
     }
-    return { ids, displays };
-  } finally {
-    db.close();
+    const verified = liveWal ? await fileState(dbPath) : null;
+    if (verified) {
+      return { key: `${verified.db}|${verified.wal}`, ids, displays };
+    }
+    const after = await fileState(dbPath);
+    if (after.db === before.db && after.wal === before.wal) {
+      return { key: `${before.db}|${before.wal}`, ids, displays };
+    }
   }
+  throw new Error("it changed while being read, twice");
 }
 
 async function decodeCached(dbPath: string, homeDir?: string): Promise<DecodedDb> {
@@ -463,7 +518,7 @@ async function decodeCached(dbPath: string, homeDir?: string): Promise<DecodedDb
   }
   const decoded = await decodeDb(dbPath);
   if (homeDir) {
-    recordEnumMappingsToCache(getHomeEnumCache(homeDir), dbPath, key, decoded);
+    recordEnumMappingsToCache(homeDir, getHomeEnumCache(homeDir), dbPath, key, decoded);
   }
   decodedCache.set(dbPath, { key, decoded });
   if (decodedCache.size > MAX_DECODED_CACHE_ENTRIES) {
@@ -499,15 +554,15 @@ interface ModelNames {
  * was filtered. Databases are visited in path order; the first name wins.
  */
 async function modelNames(homeDir: string): Promise<ModelNames> {
-  const cache = getHomeEnumCache(homeDir);
-  const dbs = listConversationDbs(homeDir);
+  const homeKey = resolve(homeDir);
+  const cache = getHomeEnumCache(homeKey);
+  const dbs = listConversationDbs(homeKey);
   const dbSet = new Set(dbs);
-  let dirty = false;
 
   for (const cachedPath of [...cache.keys()]) {
     if (!dbSet.has(cachedPath)) {
       cache.delete(cachedPath);
-      dirty = true;
+      dirtyEnumHomes.add(homeKey);
     }
   }
 
@@ -530,15 +585,14 @@ async function modelNames(homeDir: string): Promise<ModelNames> {
     if (!mapping || mapping.key !== key) {
       const decodedHit = decodedCache.get(dbPath);
       if (decodedHit?.key === key) {
-        recordEnumMappingsToCache(cache, dbPath, key, decodedHit.decoded);
+        recordEnumMappingsToCache(homeKey, cache, dbPath, key, decodedHit.decoded);
         mapping = cache.get(dbPath);
-        dirty = true;
       } else {
         try {
-          const { ids, displays } = await readEnumNamesOnly(dbPath);
-          mapping = { key, ids, displays };
+          const read = await readEnumNamesOnly(dbPath);
+          mapping = { key: read.key, ids: read.ids, displays: read.displays };
           cache.set(dbPath, mapping);
-          dirty = true;
+          dirtyEnumHomes.add(homeKey);
         } catch {
           continue;
         }
@@ -549,7 +603,7 @@ async function modelNames(homeDir: string): Promise<ModelNames> {
     for (const [k, v] of mapping.displays) if (!names.displays.has(k)) names.displays.set(k, v);
   }
 
-  if (dirty) saveHomeEnumCache(homeDir, cache);
+  flushHomeEnumCache(homeKey);
   return names;
 }
 
@@ -707,5 +761,6 @@ export async function scanConversations(
       prev.reasoningTokens = Math.max(prev.reasoningTokens, r.reasoningTokens);
     }
   }
+  flushHomeEnumCache(homeDir);
   return { records: [...byId.values()], cascades };
 }

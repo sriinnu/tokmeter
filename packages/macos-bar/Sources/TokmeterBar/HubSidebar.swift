@@ -177,7 +177,7 @@ struct HubSidebar: View {
     /// Skins: today's figures on the skin's own card, in its faces.
     @ViewBuilder
     private var skinTodayCard: some View {
-        let warming = loader.isWarming || !loader.hasFreshData
+        let warming = loader.showWarmingSkeleton || !loader.hasFreshData
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 HubSkinLabel(text: "Today", theme: theme)
@@ -268,7 +268,7 @@ struct HubSidebar: View {
     /// the day's signals as plain tracked capitals, closed by a rule.
     @ViewBuilder
     private var paperTodayCard: some View {
-        let warming = loader.isWarming || !loader.hasFreshData
+        let warming = loader.showWarmingSkeleton || !loader.hasFreshData
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Kicker(text: "Today", inverted: true)
@@ -334,7 +334,7 @@ struct HubSidebar: View {
 
     @ViewBuilder
     private var standardTodayCard: some View {
-        let warming = loader.isWarming || !loader.hasFreshData
+        let warming = loader.showWarmingSkeleton || !loader.hasFreshData
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text("TODAY")
@@ -494,7 +494,7 @@ struct HubSidebar: View {
 
     private var connection: ConnectionStatus {
         if !loader.isDaemonAlive { return .offline }
-        if loader.isWarming || !loader.hasFreshData { return .warming }
+        if loader.showWarmingSkeleton || !loader.hasFreshData { return .warming }
         return .live
     }
 

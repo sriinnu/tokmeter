@@ -7,7 +7,15 @@
  * (what macOS SQLite leaves). Ids, paths and text are made up.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -487,5 +495,64 @@ INSERT INTO ItemTable VALUES ('antigravityUnifiedStateSync.trajectorySummaries',
     clearAntigravityCaches();
     const second = await new AntigravityParser().scan(home, { modifiedSinceMs: T0 - 86_400_000 });
     expect(second.map((r) => r.model)).toEqual(["gemini-3.1-pro"]);
+  });
+
+  it("flushes enum-name cache from decodeCached even when modelNames() is not called", async () => {
+    const { clearAntigravityCaches } = await import("./antigravity-conversations.js");
+    clearAntigravityCaches();
+    seedConversation(
+      "cascade-real-id-only",
+      [
+        generation({
+          startMs: T0,
+          lastStep: 0,
+          modelId: "gemini-3.8-flash",
+          display: "Gemini 3.8 Flash",
+          modelEnum: "M77",
+          calls: [{ input: 3, thinking: 0, response: 4, id: "r77" }],
+        }),
+      ],
+      [{ idx: 0, ms: T0 }]
+    );
+
+    const records = await new AntigravityParser().scan(home);
+    expect(records).toHaveLength(1);
+    const cacheFile = join(home, ".cache", "tokmeter", "antigravity-enum-names.json");
+    expect(existsSync(cacheFile)).toBe(true);
+    expect(readFileSync(cacheFile, "utf-8")).toContain("M77");
+  });
+
+  it("ignores malformed non-string entries in persisted enum cache instead of crashing", async () => {
+    const { clearAntigravityCaches } = await import("./antigravity-conversations.js");
+    clearAntigravityCaches();
+    const db = seedConversation(
+      "cascade-malformed-cache",
+      [
+        generation({
+          startMs: T0,
+          lastStep: 0,
+          modelId: "gemini-pro-default",
+          display: "Gemini 3.1 Pro (High)",
+          modelEnum: "M55",
+          calls: [{ input: 1, thinking: 0, response: 1, id: "m55" }],
+        }),
+      ],
+      [{ idx: 0, ms: T0 }]
+    );
+    const cacheDir = join(home, ".cache", "tokmeter");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(
+      join(cacheDir, "antigravity-enum-names.json"),
+      JSON.stringify({
+        version: 1,
+        entries: {
+          [db]: { key: "fake", ids: { M55: 12345 }, displays: { M55: { bad: true } } },
+        },
+      }),
+      { mode: 0o600 }
+    );
+
+    const records = await new AntigravityParser().scan(home);
+    expect(records.map((r) => r.model)).toEqual(["gemini-3.1-pro"]);
   });
 });

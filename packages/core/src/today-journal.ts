@@ -377,18 +377,18 @@ export function journalDates(homeDir: string): string[] {
  * immediately while the first live scan runs in the background.
  */
 export function peekTodayJournalRecords(homeDir: string, date: string): TokenRecord[] {
-  const path = journalPath(homeDir, date);
-  if (!existsSync(path)) return [];
-  let journal: JournalFile | null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
   try {
-    journal = readJournal(homeDir, date);
+    const path = journalPath(homeDir, date);
+    if (!existsSync(path)) return [];
+    const journal = readJournal(homeDir, date);
+    if (!journal) return [];
+    const seen = [...toMap(journal.seen).values()].flat();
+    const carried = [...toMap(journal.carried).values()].flat();
+    return withCarried(seen, carried).filter((r) => localDateKey(r.timestamp) === date);
   } catch {
     return [];
   }
-  if (!journal) return [];
-  const seen = [...toMap(journal.seen).values()].flat();
-  const carried = [...toMap(journal.carried).values()].flat();
-  return withCarried(seen, carried).filter((r) => localDateKey(r.timestamp) === date);
 }
 
 /**

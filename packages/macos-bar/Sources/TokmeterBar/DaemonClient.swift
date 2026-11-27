@@ -56,6 +56,7 @@ final class DaemonClient {
 
     private static let baseURL = URL(string: "http://127.0.0.1:9877")!
     static let wsURL = URL(string: "ws://127.0.0.1:9876")!
+    static let fastGetTimeout: TimeInterval = 10
     // Prefer the private canonical file. The /tmp path is compatibility-only
     // and is read with O_NOFOLLOW plus owner/type/size validation below.
     private let pidPaths: [String]
@@ -204,16 +205,16 @@ final class DaemonClient {
     /// Consolidated Phase-2 snapshot (models, daily, sessions, signals, quota,
     /// health, cron, anomalies, cross-tool, antigravity) in one HTTP call.
     func fetchBarSnapshot() async throws -> BarSnapshotResponse {
-        try await get("/api/bar-snapshot", as: BarSnapshotResponse.self)
+        try await get("/api/bar-snapshot", as: BarSnapshotResponse.self, timeout: Self.fastGetTimeout)
     }
 
     func fetchQuick() async throws -> QuickResponse {
-        try await get("/api/quick", as: QuickResponse.self)
+        try await get("/api/quick", as: QuickResponse.self, timeout: Self.fastGetTimeout)
     }
 
     /// Daemon health/warmup status. Cheap call, never blocks on a scan.
     func fetchReady() async throws -> ReadyResponse {
-        try await get("/api/ready", as: ReadyResponse.self)
+        try await get("/api/ready", as: ReadyResponse.self, timeout: Self.fastGetTimeout)
     }
 
     func fetchStats() async throws -> StatsData {
@@ -223,7 +224,7 @@ final class DaemonClient {
     /// Fetch the live "right now" signals — burn rate, cache hit, pace,
     /// compaction tax, live session. Cheap call (single pass over records).
     func fetchStatbarSignals() async throws -> StatbarSignals {
-        try await get("/api/statbar-signals", as: StatbarSignals.self)
+        try await get("/api/statbar-signals", as: StatbarSignals.self, timeout: Self.fastGetTimeout)
     }
 
     func fetchDaily() async throws -> [DailyData] {
@@ -264,12 +265,12 @@ final class DaemonClient {
     /// Fetch the mtime of ~/.kosha/registry.json so the bar can display
     /// "Pricing fetched 2h ago". Returns 0 if the registry is missing.
     func fetchPricingStatus() async throws -> PricingStatus {
-        try await get("/api/pricing-status", as: PricingStatus.self)
+        try await get("/api/pricing-status", as: PricingStatus.self, timeout: Self.fastGetTimeout)
     }
 
     /// Fetch the daily-cron install + last-run state for the Settings panel.
     func fetchCronStatus() async throws -> CronStatus {
-        try await get("/api/cron-status", as: CronStatus.self)
+        try await get("/api/cron-status", as: CronStatus.self, timeout: Self.fastGetTimeout)
     }
 
     /// Fetch unpriced-record counters so the bar can flip to amber when
@@ -279,14 +280,14 @@ final class DaemonClient {
             let unpricedModels: [String]
             let unpricedRecords: Int
         }
-        let w = try await get("/api/health", as: Wire.self)
+        let w = try await get("/api/health", as: Wire.self, timeout: Self.fastGetTimeout)
         return HealthStatus(unpricedModels: w.unpricedModels, unpricedRecords: w.unpricedRecords)
     }
 
     /// Fetch kosha's recent pricing anomalies (rate movements >25% in 24h).
     /// Drives the "⚠ N price changes" pill in the bar footer.
     func fetchAnomalies() async throws -> AnomaliesResponse {
-        try await get("/api/anomalies", as: AnomaliesResponse.self)
+        try await get("/api/anomalies", as: AnomaliesResponse.self, timeout: Self.fastGetTimeout)
     }
 
     /// Project today's tokens against the user's top lifetime models.
@@ -316,7 +317,7 @@ final class DaemonClient {
     /// interval (if the user turned it on) or a manual "Fetch now" last
     /// captured; nil fields mean nothing has been captured yet.
     func fetchAntigravityLive() async throws -> AntigravityLiveResponse {
-        try await get("/api/antigravity-live", as: AntigravityLiveResponse.self)
+        try await get("/api/antigravity-live", as: AntigravityLiveResponse.self, timeout: Self.fastGetTimeout)
     }
 
     /// One-shot manual fetch: asks the daemon to poll Antigravity's
@@ -354,43 +355,69 @@ final class DaemonClient {
         URL(string: path, relativeTo: baseURL)!.absoluteURL
     }
 
-    /// Writes need the bearer token. Check the cached bearer token first so
-    /// steady-state POSTs avoid per-request `proc_pidinfo` kernel probes.
-    private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
-        var token = currentBearerToken()
-        guard !(token ?? "").isEmpty || isDaemonRunning else { throw DaemonError.daemonNotRunning }
-
-        let url = Self.requestURL(for: path)
-        let bodyData = try? JSONSerialization.data(withJSONObject: body)
-        func makeRequest(with bearer: String?) -> URLRequest {
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Accept")
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
-            if let bearer, !bearer.isEmpty {
-                req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-            }
-            req.httpBody = bodyData
-            return req
-        }
-
-        do {
-            var (data, response) = try await session.data(for: makeRequest(with: token))
+    private func performAuthorizedRequest(
+        _ buildRequest: @escaping (String?) -> URLRequest
+    ) async throws -> (Data, HTTPURLResponse) {
+        func performAttempt() async throws -> (Data, HTTPURLResponse) {
+            let token = currentBearerToken()
+            var (data, response) = try await session.data(for: buildRequest(token))
             guard var http = response as? HTTPURLResponse else {
                 throw DaemonError.networkError("non-HTTP response")
             }
             if http.statusCode == 401 {
                 invalidateBearerToken()
-                let refreshed = currentBearerToken(forceReload: true)
+                var refreshed = currentBearerToken(forceReload: true)
+                if refreshed == token {
+                    // Daemon restart may still be atomically swapping daemon.token.
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    try Task.checkCancellation()
+                    invalidateBearerToken()
+                    refreshed = currentBearerToken(forceReload: true)
+                }
                 if let refreshed, !refreshed.isEmpty, refreshed != token {
-                    token = refreshed
-                    (data, response) = try await session.data(for: makeRequest(with: refreshed))
+                    (data, response) = try await session.data(for: buildRequest(refreshed))
                     guard let retryHttp = response as? HTTPURLResponse else {
                         throw DaemonError.networkError("non-HTTP response")
                     }
                     http = retryHttp
                 }
+            }
+            return (data, http)
+        }
+
+        do {
+            return try await performAttempt()
+        } catch let err as URLError where err.code == .networkConnectionLost {
+            // Stale keep-alive socket after Mac sleep/wake or daemon restart:
+            // wait briefly, reload bearer token in case the daemon restarted, and retry once.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            try Task.checkCancellation()
+            invalidateBearerToken()
+            return try await performAttempt()
+        }
+    }
+
+    /// Writes need the bearer token. Check the cached bearer token first so
+    /// steady-state POSTs avoid per-request `proc_pidinfo` kernel probes.
+    private func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
+        let token = currentBearerToken()
+        guard !(token ?? "").isEmpty || isDaemonRunning else { throw DaemonError.daemonNotRunning }
+
+        let url = Self.requestURL(for: path)
+        let bodyData = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, http) = try await performAuthorizedRequest { bearer in
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Accept")
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+                if let bearer, !bearer.isEmpty {
+                    req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+                }
+                req.httpBody = bodyData
+                return req
             }
             guard (200..<300).contains(http.statusCode) else {
                 throw DaemonError.httpError(http.statusCode)
@@ -402,6 +429,8 @@ final class DaemonClient {
             }
         } catch let err as DaemonError {
             throw err
+        } catch let err as URLError where Self.meansNothingListening(err) {
+            throw DaemonError.daemonNotRunning
         } catch {
             throw DaemonError.networkError(error.localizedDescription)
         }
@@ -411,55 +440,20 @@ final class DaemonClient {
     /// avoiding synchronous `proc_pidinfo` / pidfile I/O on every request.
     /// On 401 Unauthorized (e.g. daemon restarted with a new bearer token),
     /// invalidates the cached token, reloads from disk, and retries once.
-    func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+    func get<T: Decodable>(_ path: String, as type: T.Type, timeout: TimeInterval? = nil) async throws -> T {
         let url = Self.requestURL(for: path)
-        func makeRequest(with bearer: String?) -> URLRequest {
-            var req = URLRequest(url: url)
-            req.httpMethod = "GET"
-            req.setValue("application/json", forHTTPHeaderField: "Accept")
-            req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
-            if let bearer, !bearer.isEmpty {
-                req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-            }
-            return req
-        }
-        func performAttempt() async throws -> (Data, HTTPURLResponse) {
-            var token = currentBearerToken()
-            var (data, response) = try await session.data(for: makeRequest(with: token))
-            guard var http = response as? HTTPURLResponse else {
-                throw DaemonError.networkError("non-HTTP response")
-            }
-            if http.statusCode == 401 {
-                invalidateBearerToken()
-                var refreshed = currentBearerToken(forceReload: true)
-                if refreshed == token {
-                    // Daemon restart may still be atomically swapping daemon.token.
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    invalidateBearerToken()
-                    refreshed = currentBearerToken(forceReload: true)
-                }
-                if let refreshed, !refreshed.isEmpty, refreshed != token {
-                    token = refreshed
-                    (data, response) = try await session.data(for: makeRequest(with: refreshed))
-                    guard let retryHttp = response as? HTTPURLResponse else {
-                        throw DaemonError.networkError("non-HTTP response")
-                    }
-                    http = retryHttp
-                }
-            }
-            return (data, http)
-        }
 
         do {
-            let (data, http): (Data, HTTPURLResponse)
-            do {
-                (data, http) = try await performAttempt()
-            } catch let err as URLError where err.code == .networkConnectionLost {
-                // Stale keep-alive socket after Mac sleep/wake or daemon restart:
-                // wait briefly, reload bearer token in case the daemon restarted, and retry once.
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                invalidateBearerToken()
-                (data, http) = try await performAttempt()
+            let (data, http) = try await performAuthorizedRequest { bearer in
+                var req = URLRequest(url: url)
+                req.httpMethod = "GET"
+                if let timeout { req.timeoutInterval = timeout }
+                req.setValue("application/json", forHTTPHeaderField: "Accept")
+                req.setValue("TokmeterBar/0.1", forHTTPHeaderField: "User-Agent")
+                if let bearer, !bearer.isEmpty {
+                    req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+                }
+                return req
             }
 
             let apiHeader = Self.apiVersionHeader(from: http)

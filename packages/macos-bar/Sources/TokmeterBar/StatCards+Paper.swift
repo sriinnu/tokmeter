@@ -13,13 +13,13 @@ extension StatsGrid {
                 value: Fmt.number(loader.totalTokens),
                 trend: recordedDayTrend(metric: .tokens) { Double($0.tokens) },
                 spark: settledDaily.map { Double($0.tokens) }, sparkDays: settledDaily,
-                isWarming: loader.isWarming),
+                isWarming: loader.showWarmingSkeleton),
             LedgerRowData(
                 id: "cost", name: "Cost", note: "all time",
                 value: Fmt.cost(loader.totalCost),
                 trend: recordedDayTrend(metric: .cost) { $0.cost },
                 spark: settledDaily.map { $0.cost }, sparkDays: settledDaily,
-                isWarming: loader.isWarming),
+                isWarming: loader.showWarmingSkeleton),
         ]
         if let signals = loader.statbarSignals,
            let multiple = signals.pace.multiple,
@@ -59,7 +59,7 @@ extension StatsGrid {
                 value: Fmt.number(loader.totalTokens),
                 trend: recordedDayTrend(metric: .tokens) { Double($0.tokens) },
                 spark: settledDaily.map { Double($0.tokens) }, sparkDays: settledDaily,
-                isWarming: loader.isWarming, theme: theme
+                isWarming: loader.showWarmingSkeleton, theme: theme
             )
             InkRule(weight: 0.5, color: Broadsheet.ink.opacity(0.3))
             PaperLedgerRow(
@@ -67,7 +67,7 @@ extension StatsGrid {
                 value: Fmt.cost(loader.totalCost),
                 trend: recordedDayTrend(metric: .cost) { $0.cost },
                 spark: settledDaily.map { $0.cost }, sparkDays: settledDaily,
-                isWarming: loader.isWarming, theme: theme
+                isWarming: loader.showWarmingSkeleton, theme: theme
             )
             if let signals = loader.statbarSignals,
                let multiple = signals.pace.multiple,

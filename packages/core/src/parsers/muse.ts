@@ -27,8 +27,9 @@
  */
 
 import type { Dirent } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { localDateKey } from "../date-utils.js";
 import { sanitizeDataLabel } from "../display-safety.js";
 import { canonicalizeProjectName } from "../project-name.js";
 import type { ScanFilterOptions, SessionParser, TokenRecord } from "../types.js";
@@ -44,7 +45,18 @@ import {
 
 const DAY_LISTING_CACHE_MAX = 2000;
 const DAY_DIR_STAT_CONCURRENCY = 32;
+const RECENT_DAY_CACHE_GUARD_MS = 60_000;
 const dayListingCache = new Map<string, { mtimeMs: number; sessionFiles: string[] }>();
+
+/** Reset Muse's in-memory historical day-directory cache (intended for tests). */
+export function clearMuseDayListingCache(): void {
+  dayListingCache.clear();
+}
+
+function isMissingPathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
 
 function cacheDayListing(dayPath: string, mtimeMs: number, sessionFiles: string[]): void {
   if (dayListingCache.has(dayPath)) dayListingCache.delete(dayPath);
@@ -61,45 +73,69 @@ async function readVisibleDirs(dir: string): Promise<Dirent[] | null> {
       (entry) => !entry.name.startsWith(".") && entry.name !== "approval-review"
     );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (isMissingPathError(error)) return null;
     throw error;
   }
 }
 
-async function listDaySessionFiles(dayPath: string): Promise<string[]> {
+async function listDaySessionFiles(
+  dayPath: string,
+  dayDateKey: string,
+  todayKey: string,
+  nowMs: number
+): Promise<string[]> {
+  let s: Awaited<ReturnType<typeof lstat>>;
   try {
-    const s = await stat(dayPath);
+    s = await lstat(dayPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+    throw error;
+  }
+  if (!s.isDirectory()) return [];
+
+  const cacheEligible = dayDateKey < todayKey && nowMs - s.mtimeMs >= RECENT_DAY_CACHE_GUARD_MS;
+  if (cacheEligible) {
     const cached = dayListingCache.get(dayPath);
     if (cached && cached.mtimeMs === s.mtimeMs) {
       dayListingCache.delete(dayPath);
       dayListingCache.set(dayPath, cached);
       return cached.sessionFiles;
     }
-    const entries = await readVisibleDirs(dayPath);
-    if (!entries) return [];
-    const candidates: string[] = [];
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        candidates.push(join(dayPath, entry.name, "session.jsonl"));
-      } else if (entry.name === "session.jsonl") {
-        candidates.push(join(dayPath, entry.name));
-      }
+  }
+
+  const entries = await readVisibleDirs(dayPath);
+  if (!entries) return [];
+  const candidates: Array<{ filePath: string; fromSubdir: boolean }> = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      candidates.push({ filePath: join(dayPath, entry.name, "session.jsonl"), fromSubdir: true });
+    } else if (entry.isFile() && entry.name === "session.jsonl") {
+      candidates.push({ filePath: join(dayPath, entry.name), fromSubdir: false });
     }
-    const existing = (
-      await mapWithConcurrency(candidates, DAY_DIR_STAT_CONCURRENCY, async (filePath) => {
-        try {
-          await stat(filePath);
-          return filePath;
-        } catch {
+  }
+
+  let hasIncompleteSubdir = false;
+  const existing = (
+    await mapWithConcurrency(candidates, DAY_DIR_STAT_CONCURRENCY, async (candidate) => {
+      try {
+        const st = await lstat(candidate.filePath);
+        if (st.isFile()) return candidate.filePath;
+        if (candidate.fromSubdir) hasIncompleteSubdir = true;
+        return null;
+      } catch (error) {
+        if (isMissingPathError(error)) {
+          if (candidate.fromSubdir) hasIncompleteSubdir = true;
           return null;
         }
-      })
-    ).filter((filePath): filePath is string => filePath !== null);
+        throw error;
+      }
+    })
+  ).filter((filePath): filePath is string => filePath !== null);
+
+  if (cacheEligible && !hasIncompleteSubdir) {
     cacheDayListing(dayPath, s.mtimeMs, existing);
-    return existing;
-  } catch {
-    return [];
   }
+  return existing;
 }
 
 /**
@@ -114,6 +150,8 @@ async function discoverMuseSessionFiles(
   const topEntries = await readVisibleDirs(sessionsDir);
   if (!topEntries) return [];
 
+  const nowMs = Date.now();
+  const todayKey = localDateKey(nowMs);
   const sessionFiles: string[] = [];
   const walkFallback = async (dir: string, depth: number): Promise<void> => {
     if (depth <= 0) return;
@@ -144,7 +182,12 @@ async function discoverMuseSessionFiles(
             (d) => !(d.isDirectory() && /^\d{2}$/.test(d.name))
           );
           const dayBatches = await mapWithConcurrency(dayDirs, 16, (dayEntry) =>
-            listDaySessionFiles(join(monthPath, dayEntry.name))
+            listDaySessionFiles(
+              join(monthPath, dayEntry.name),
+              `${yearEntry.name}-${monthEntry.name}-${dayEntry.name}`,
+              todayKey,
+              nowMs
+            )
           );
           for (const batch of dayBatches) sessionFiles.push(...batch);
           for (const extra of nonDayEntries) {

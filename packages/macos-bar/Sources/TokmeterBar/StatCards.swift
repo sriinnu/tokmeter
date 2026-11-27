@@ -64,7 +64,7 @@ struct StatsGrid: View {
                 sparkValues: settledDaily.map { Double($0.tokens) },
                 sparkDays: settledDaily,
                 theme: theme,
-                isWarming: loader.isWarming,
+                isWarming: loader.showWarmingSkeleton,
                 index: 0
             )
             StatCard(
@@ -76,7 +76,7 @@ struct StatsGrid: View {
                 sparkValues: settledDaily.map { $0.cost },
                 sparkDays: settledDaily,
                 theme: theme,
-                isWarming: loader.isWarming,
+                isWarming: loader.showWarmingSkeleton,
                 index: 1
             )
             paceCard

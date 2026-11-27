@@ -111,7 +111,8 @@ final class TokmeterLoaderRecoveryTests: XCTestCase {
 
     func testDaemonClientRetriesOnceOnTransientNetworkConnectionLost() async throws {
         SequenceURLProtocol.reset()
-        SequenceURLProtocol.handler = { _, attempt in
+        SequenceURLProtocol.handler = { request, attempt in
+            XCTAssertEqual(request.timeoutInterval, DaemonClient.fastGetTimeout)
             if attempt == 1 {
                 return (0, nil, URLError(.networkConnectionLost))
             }
@@ -137,5 +138,35 @@ final class TokmeterLoaderRecoveryTests: XCTestCase {
         let live = try JSONDecoder().decode(BarSnapshotResponse.self, from: Data(liveJSON.utf8))
         XCTAssertEqual(live.refreshing, true)
         XCTAssertEqual(live.computedAt, 1_795_760_000_123)
+    }
+
+    @MainActor
+    func testDaemonPhaseStaysLiveWhenWarmingWithExistingFreshData() {
+        let loader = TokmeterLoader(startPolling: false)
+        loader.isDaemonAlive = true
+        loader.isWarming = true
+        loader.hasFreshData = false
+        XCTAssertTrue(loader.showWarmingSkeleton)
+        XCTAssertEqual(loader.daemonPhase, .warming)
+
+        loader.hasFreshData = true
+        XCTAssertFalse(loader.showWarmingSkeleton)
+        XCTAssertEqual(loader.daemonPhase, .live)
+    }
+
+    @MainActor
+    func testDaemonEventStreamDoesNotRetainSelfAcrossStartStopCycle() async {
+        var stream: DaemonEventStream? = DaemonEventStream(
+            wsURL: URL(string: "ws://127.0.0.1:1")!,
+            tokenProvider: { _ in nil },
+            onEvent: { _ in }
+        )
+        weak let weakStream = stream
+        stream?.start()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        stream?.stop()
+        stream = nil
+        await Task.yield()
+        XCTAssertNil(weakStream)
     }
 }

@@ -351,4 +351,60 @@ describe("daemon /api/bar-snapshot contract", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  test("forwards todayDate across today sections and records extraPartialErrors", async () => {
+    const { buildBarSnapshot } = await import("./snapshots.js");
+    const seenTodayModelDates: Array<string | undefined> = [];
+    const seenTodayProjectDates: Array<string | undefined> = [];
+    const seenCrossToolDates: Array<string | undefined> = [];
+    const fakeCore = {
+      getDailyBreakdown: () => [],
+      getModelCosts: (opts?: { today?: boolean; todayDate?: string }) => {
+        if (opts?.today) seenTodayModelDates.push(opts.todayDate);
+        return [];
+      },
+      getAllProjects: (opts?: { today?: boolean; todayDate?: string }) => {
+        if (opts?.today) seenTodayProjectDates.push(opts.todayDate);
+        return [];
+      },
+      getScanMeta: () => ({
+        stableThrough: null,
+        historySource: "snapshot",
+        todayState: "live",
+        lastScanAt: 1,
+        warnings: [],
+        unpricedModels: [],
+        unpricedRecords: 0,
+      }),
+      getStatbarSignals: () => ({
+        burnRate: { costPerHour: 0, tokensPerHour: 0, windowMinutes: 60, recordsInWindow: 0 },
+        cacheHitToday: { rate: 0, cacheReadTokens: 0, inputTokens: 0 },
+        contextPressure: null,
+        projectContextToday: [],
+        pace: { multiple: null, typicalCostByNow: 0, actualCostByNow: 0, daysOfHistory: 0 },
+        compactionToday: { cost: 0, tokens: 0, share: 0, events: 0 },
+        subagentToday: { cost: 0, records: 0, share: 0 },
+        reasoningToday: { tokens: 0, outputTokens: 0, share: 0, records: 0 },
+        toolCallsToday: { byTool: [], totalCost: 0, callCount: 0, turnsWithTools: 0 },
+        billingWindow: null,
+        liveSession: null,
+      }),
+      getCrossToolComparison: async (todayDate?: string) => {
+        seenCrossToolDates.push(todayDate);
+        throw new Error("boom");
+      },
+    } as never;
+
+    const snap = await buildBarSnapshot(fakeCore, {
+      applyFloor: false,
+      quotasOverride: [],
+      todayDate: "2099-01-01",
+      extraPartialErrors: ["refresh", "refresh"],
+    });
+    expect(seenTodayModelDates).toEqual(["2099-01-01"]);
+    expect(seenTodayProjectDates).toEqual(["2099-01-01"]);
+    expect(seenCrossToolDates).toEqual(["2099-01-01"]);
+    expect(snap.crossTool).toBeNull();
+    expect(snap.partialErrors).toEqual(["refresh", "crossTool"]);
+  });
 });

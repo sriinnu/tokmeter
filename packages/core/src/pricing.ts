@@ -384,6 +384,7 @@ export class PricingService {
   private userOverridesMtime = 0;
   private registry: any = null;
   private initialized = false;
+  private initInFlight: Promise<void> | null = null;
   private cacheDir?: string;
   private configuredHomeDir?: string;
   private registryMtime = 0;
@@ -431,6 +432,9 @@ export class PricingService {
    * cache is cleared so the next `getPricing()` call returns fresh rates.
    */
   async init(): Promise<void> {
+    while (this.initInFlight) {
+      await this.initInFlight;
+    }
     const homeDir = this.effectiveHomeDir();
     const currentMtime = getKoshaRegistryMtime(homeDir);
     const overridesMtime = userOverridesMtime(homeDir);
@@ -441,26 +445,51 @@ export class PricingService {
     ) {
       return;
     }
-    // Registry file or overrides changed (or first init) — drop stale lookups.
-    if (this.initialized) {
-      this.cache.clear();
-      this.sources.clear();
+    const run = this.runInit(homeDir, currentMtime, overridesMtime);
+    this.initInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (this.initInFlight === run) this.initInFlight = null;
     }
+  }
+
+  private async runInit(
+    homeDir: string,
+    currentMtime: number,
+    overridesMtime: number
+  ): Promise<void> {
+    let nextRegistry: any = null;
+    let nextUnavailable = false;
     try {
       const { createKosha } = await import("@sriinnu/kosha-discovery");
-      this.registry = await createKosha(koshaConfig(this.getCacheDir()));
-      this.pricingUnavailable = false;
+      nextRegistry = await createKosha(koshaConfig(this.getCacheDir()));
     } catch {
-      this.registry = null;
-      this.pricingUnavailable = true;
+      nextRegistry = null;
+      nextUnavailable = true;
     }
     const loaded = loadUserOverrides(homeDir);
     const postInitMtime = getKoshaRegistryMtime(homeDir);
+    this.registry = nextRegistry;
+    this.pricingUnavailable = nextUnavailable;
     this.userOverrides = loaded.prices;
     this.userPriceAs = loaded.priceAs;
     this.userOverridesMtime = overridesMtime;
     this.registryMtime = Math.max(currentMtime, postInitMtime);
     this.initialized = true;
+    // Purge non-seeded lookups AFTER the registry/override swap so a
+    // concurrent getPricing() cannot re-populate stale or uninitialized rates
+    // mid-await; keep test-seeded entries intact.
+    for (const [modelId, source] of [...this.sources.entries()]) {
+      if (source.tier === "seeded") continue;
+      this.cache.delete(modelId);
+      this.sources.delete(modelId);
+    }
+    for (const modelId of [...this.cache.keys()]) {
+      if (this.sources.get(modelId)?.tier !== "seeded") {
+        this.cache.delete(modelId);
+      }
+    }
   }
 
   /**
@@ -518,6 +547,12 @@ export class PricingService {
    * except on a "-free"/":free" route (see `lookupServedBy`), and a free id
    * skips tiers 3 and 4, which would drop its tag and price the paid model.
    */
+  private setCached(modelId: string, pricing: FullPricing | null, source: PricingSource): void {
+    if (this.initInFlight !== null) return;
+    this.cache.set(modelId, pricing);
+    this.sources.set(modelId, source);
+  }
+
   async getPricing(modelId: string): Promise<FullPricing | null> {
     if (this.cache.has(modelId)) return this.cache.get(modelId) ?? null;
 
@@ -527,29 +562,28 @@ export class PricingService {
       // then the serving provider's own kosha entry; failing all, price as the bare model.
       const routeOverride = this.userOverrides.get(modelId);
       if (routeOverride) {
-        this.cache.set(modelId, routeOverride);
-        this.sources.set(modelId, { tier: "override" });
+        this.setCached(modelId, routeOverride, { tier: "override" });
         return routeOverride;
       }
       const routePriceAs = this.userPriceAs.get(modelId);
       if (routePriceAs) return this.resolvePriceAs(modelId, routePriceAs);
       const route = this.lookupServedBy(baseModel, servedBy);
       if (route) {
-        this.cache.set(modelId, route.pricing);
-        this.sources.set(modelId, { tier: "kosha-provider", matchedId: route.matchedId });
+        this.setCached(modelId, route.pricing, {
+          tier: "kosha-provider",
+          matchedId: route.matchedId,
+        });
         return route.pricing;
       }
       const bare = await this.getPricing(baseModel);
-      this.cache.set(modelId, bare);
-      this.sources.set(modelId, this.sources.get(baseModel) ?? { tier: "unpriced" });
+      this.setCached(modelId, bare, this.sources.get(baseModel) ?? { tier: "unpriced" });
       return bare;
     }
 
     // Tier 2: user-config overrides (highest priority after the cache).
     const userOverride = this.userOverrides.get(modelId);
     if (userOverride) {
-      this.cache.set(modelId, userOverride);
-      this.sources.set(modelId, { tier: "override" });
+      this.setCached(modelId, userOverride, { tier: "override" });
       return userOverride;
     }
     const priceAs = this.userPriceAs.get(modelId);
@@ -563,9 +597,9 @@ export class PricingService {
     const freeTagged = FREE_TAG_RE.test(modelId);
     if (freeTagged) {
       const freeRow = this.lookupBareFree(modelId);
-      this.cache.set(modelId, freeRow?.pricing ?? null);
-      this.sources.set(
+      this.setCached(
         modelId,
+        freeRow?.pricing ?? null,
         freeRow
           ? { tier: freeRow.tier, ...(freeRow.matchedId ? { matchedId: freeRow.matchedId } : {}) }
           : { tier: "unpriced" }
@@ -589,8 +623,7 @@ export class PricingService {
         const raw = card ? pickUsablePricing(card, { inputOnly: true }) : null;
         if (raw) {
           const p = this.roundPricing(raw);
-          this.cache.set(modelId, p);
-          this.sources.set(modelId, p ? { tier: "kosha-exact" } : { tier: "unpriced" });
+          this.setCached(modelId, p, p ? { tier: "kosha-exact" } : { tier: "unpriced" });
           return p;
         }
       } catch {
@@ -601,8 +634,7 @@ export class PricingService {
       try {
         const fuzzy = this.koshaFuzzyMatch(modelId);
         if (fuzzy) {
-          this.cache.set(modelId, fuzzy.pricing);
-          this.sources.set(modelId, { tier: "kosha-fuzzy", matchedId: fuzzy.id });
+          this.setCached(modelId, fuzzy.pricing, { tier: "kosha-fuzzy", matchedId: fuzzy.id });
           return fuzzy.pricing;
         }
       } catch {
@@ -619,9 +651,9 @@ export class PricingService {
     // today's spend was showing $0.00 in the bar.
     const fromManifest = this.lookupFromRegistryManifest(modelId);
     if (fromManifest) {
-      this.cache.set(modelId, fromManifest.pricing);
-      this.sources.set(
+      this.setCached(
         modelId,
+        fromManifest.pricing,
         fromManifest.matchedId && fromManifest.matchedId !== modelId
           ? { tier: "manifest", matchedId: fromManifest.matchedId }
           : { tier: "manifest" }
@@ -629,8 +661,7 @@ export class PricingService {
       return fromManifest.pricing;
     }
 
-    this.cache.set(modelId, null);
-    this.sources.set(modelId, { tier: "unpriced" });
+    this.setCached(modelId, null, { tier: "unpriced" });
     return null;
   }
 
@@ -756,9 +787,9 @@ export class PricingService {
   private async resolvePriceAs(modelId: string, priceAs: string): Promise<FullPricing | null> {
     // One hop: the target resolves as itself, never through its own `as`.
     const target = this.userPriceAs.has(priceAs) ? null : await this.getPricing(priceAs);
-    this.cache.set(modelId, target);
-    this.sources.set(
+    this.setCached(
       modelId,
+      target,
       target ? { tier: "override", matchedId: priceAs } : { tier: "unpriced" }
     );
     return target;

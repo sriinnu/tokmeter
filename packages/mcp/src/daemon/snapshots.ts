@@ -53,28 +53,46 @@ const _quotaCache = new Map<
   string,
   { windows: QuotaWindow[]; at: number; refreshing?: Promise<void> }
 >();
+const _quotaInFlight = new Map<string, Promise<QuotaWindow[]>>();
+
+/** Reset cached quota entries (intended for tests). */
+export function clearQuotaCacheForTests(): void {
+  _quotaCache.clear();
+  _quotaInFlight.clear();
+}
 
 export async function getCachedQuota(homeDir: string): Promise<QuotaWindow[]> {
   const now = Date.now();
   const entry = _quotaCache.get(homeDir);
   const fetchFresh = async (): Promise<QuotaWindow[]> => {
-    try {
-      const { getQuota } = await import("@sriinnu/tokmeter");
-      const windows = await getQuota(homeDir, Date.now());
-      _quotaCache.set(homeDir, { windows, at: Date.now() });
-      return windows;
-    } catch {
-      return entry?.windows ?? [];
-    }
+    const existing = _quotaInFlight.get(homeDir);
+    if (existing) return existing;
+    let p!: Promise<QuotaWindow[]>;
+    p = (async () => {
+      try {
+        const { getQuota } = await import("@sriinnu/tokmeter");
+        const windows = await getQuota(homeDir, Date.now(), (msg) =>
+          console.warn(`[quota] ${msg}`)
+        );
+        _quotaCache.set(homeDir, { windows, at: Date.now() });
+        return windows;
+      } finally {
+        if (_quotaInFlight.get(homeDir) === p) _quotaInFlight.delete(homeDir);
+      }
+    })();
+    _quotaInFlight.set(homeDir, p);
+    return p;
   };
   if (!entry) {
     return fetchFresh();
   }
   if (now - entry.at >= QUOTA_CACHE_TTL_MS && !entry.refreshing) {
-    entry.refreshing = fetchFresh().then(() => {
-      const cur = _quotaCache.get(homeDir);
-      if (cur) delete cur.refreshing;
-    });
+    entry.refreshing = fetchFresh()
+      .catch(() => entry.windows)
+      .then(() => {
+        const cur = _quotaCache.get(homeDir);
+        if (cur) delete cur.refreshing;
+      });
   }
   return entry.windows;
 }
@@ -186,7 +204,16 @@ export async function buildStatuslineContext(
     };
   });
 
-  const quotas = opts.quotasOverride ?? (await getCachedQuota(homeDir));
+  let quotas: QuotaWindow[] = [];
+  if (opts.quotasOverride !== undefined) {
+    quotas = opts.quotasOverride;
+  } else {
+    try {
+      quotas = await getCachedQuota(homeDir);
+    } catch {
+      quotas = [];
+    }
+  }
 
   return {
     today,
@@ -219,9 +246,9 @@ export function readDailyFloored(core: TokmeterCore, applyFloor: boolean) {
   return daily;
 }
 
-export function readSessionsPayload(core: TokmeterCore, today: boolean) {
+export function readSessionsPayload(core: TokmeterCore, today: boolean, todayDate?: string) {
   return core
-    .getAllProjects({ today })
+    .getAllProjects({ today, ...(todayDate !== undefined ? { todayDate } : {}) })
     .slice()
     .sort((a: { lastUsed: number }, b: { lastUsed: number }) => b.lastUsed - a.lastUsed)
     .slice(0, 50);
@@ -380,10 +407,15 @@ export async function buildBarSnapshot(
     quotasOverride?: QuotaWindow[];
     refreshing?: boolean;
     computedAt?: number;
+    todayDate?: string;
+    extraPartialErrors?: string[];
   } = {}
 ): Promise<BarSnapshotResponse> {
   const home = opts.homeDir ?? core.getHomeDir?.() ?? homedir();
   const partialErrors: string[] = [];
+  for (const err of opts.extraPartialErrors ?? []) {
+    if (!partialErrors.includes(err)) partialErrors.push(err);
+  }
 
   const capture = <T>(name: string, fn: () => T): T | null => {
     try {
@@ -404,9 +436,12 @@ export async function buildBarSnapshot(
 
   const daily = readDailyFloored(core, opts.applyFloor === true);
   const models = core.getModelCosts();
-  const todayModels = core.getModelCosts({ today: true });
+  const todayModels = core.getModelCosts({
+    today: true,
+    ...(opts.todayDate !== undefined ? { todayDate: opts.todayDate } : {}),
+  });
   const sessions = readSessionsPayload(core, false);
-  const todayProjects = readSessionsPayload(core, true);
+  const todayProjects = readSessionsPayload(core, true, opts.todayDate);
   const pricingStatus = capture("pricingStatus", () => readPricingStatusPayload(home));
   const cronStatus = capture("cronStatus", () => readCronStatusPayload(home));
   const health = capture("health", () => readHealthPayload(core));
@@ -414,7 +449,7 @@ export async function buildBarSnapshot(
   const statbarSignals = capture("statbarSignals", () => core.getStatbarSignals());
 
   const [crossTool, quotaWindows, antigravityLive] = await Promise.all([
-    captureAsync("crossTool", () => core.getCrossToolComparison()),
+    captureAsync("crossTool", () => core.getCrossToolComparison(opts.todayDate)),
     opts.quotasOverride !== undefined
       ? Promise.resolve(opts.quotasOverride)
       : captureAsync("quota", () => getCachedQuota(home)),
